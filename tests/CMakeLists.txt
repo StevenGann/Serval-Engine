@@ -22,6 +22,13 @@ if(SERVAL_TARGET_GBA)
     else()
         message(STATUS "mgba-rom-test not found: ROM tests are built but not run")
     endif()
+
+    # ROMs of 256 KiB or less can be mistaken for multiboot images by older
+    # emulators (white screen in mGBA 0.8); tools/gbafix.py pads them.
+    add_test(NAME rom_is_never_multiboot_sized
+        COMMAND "${Python3_EXECUTABLE}" -c
+            "import os, sys; size = os.path.getsize(sys.argv[1]); print(size); sys.exit(size <= 256 * 1024)"
+            "$<TARGET_FILE_DIR:serval_tests>/serval_tests.gba")
 else()
     add_executable(serval_host_tests host/main.c)
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)

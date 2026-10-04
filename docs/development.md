@@ -37,6 +37,8 @@ ctest --preset host
 
 ROMs are written next to their ELF files, e.g. `build/gba-debug/examples/hello.gba`, with a linker map (`.map`). Open them in any GBA emulator.
 
+Each example's `main.c` opens with a comment describing what it demonstrates and what to expect when the ROM boots: what appears on screen, what each button does, and whether there is sound. Keep it accurate when changing an example.
+
 To build every example for a demo:
 
 ```sh
@@ -66,6 +68,8 @@ Each example builds separately, so one that fails to build doesn't stop the rest
 ```cmake
 serval_add_rom(my_game SOURCES main.c TITLE "MY GAME" GAME_CODE "MYGM")
 ```
+
+ROMs are padded with `0xFF` to at least 512 KiB. Emulators guess whether a small file is a cartridge or a multiboot image (which runs from RAM and is at most 256 KiB); older mGBA releases (0.8.x) mistake small Serval ROMs for multiboot and show a white screen. Anything over 256 KiB is always treated as a cartridge.
 
 ## Tests
 
