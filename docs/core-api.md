@@ -8,6 +8,9 @@ void serval_init(void);               // once at startup: interrupts, display, O
 void frame_begin(void);
 void frame_end(void);                 // VBlank sync + flush shadow OAM/palettes/queues
 
+u32  frame_cpu_cycles(void);           // previous frame's work, in CPU cycles
+u32  frame_budget_cycles(void);        // 280,896 per frame at 60 Hz
+
 bool button_down(u16 buttons);        // BUTTON_A, BUTTON_LEFT, ... (OR-able)
 bool button_pressed(u16 buttons);
 
@@ -19,6 +22,17 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 ```
 
 Headers: `serval/serval.h` includes everything. All of the above is implemented; sprite loading is described in [sprites.md](sprites.md#api).
+
+Other modules, all in `include/serval/`:
+
+| Header | Provides |
+| --- | --- |
+| `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
+| `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)` |
+| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer) |
+| `debug.h` | `debug_log()` (mGBA debug log) and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |
+
+**Hardware the engine reserves:** timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
 
 ## Dependencies stay behind the API
 

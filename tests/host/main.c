@@ -9,6 +9,6 @@ void test_output(const char* line) {
 }
 
 int main(void) {
-    static const TestSuite* const suites[] = {&ecs_tests};
+    static const TestSuite* const suites[] = {&ecs_tests, &random_tests, &text_format_tests};
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

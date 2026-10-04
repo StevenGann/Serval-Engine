@@ -30,10 +30,13 @@ typedef s32 FIXED;
 #define SERVAL_IWRAM_DATA __attribute__((section(".iwram.data")))
 // Initialized data placed in the larger, slower EWRAM.
 #define SERVAL_EWRAM_DATA __attribute__((section(".ewram.data")))
+// Zero-initialized data placed in EWRAM: large buffers that would crowd IWRAM.
+#define SERVAL_EWRAM_BSS __attribute__((section(".sbss")))
 #else
 #define SERVAL_IWRAM_CODE
 #define SERVAL_IWRAM_DATA
 #define SERVAL_EWRAM_DATA
+#define SERVAL_EWRAM_BSS
 #endif
 
 #endif // SERVAL_PLATFORM_H

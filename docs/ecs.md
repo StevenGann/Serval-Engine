@@ -44,7 +44,10 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 - Bit 31 of `ent_mask` is reserved as `C_ALIVE`, so free slots never match a system's required mask.
 - Generations start at 1 and skip 0 when wrapping, so no handle ever equals `ENTITY_NONE` (0).
 - Free slots are kept on a stack: creation and destruction are O(1), with no scan.
-- Component pools beyond the mask are added as engine modules need them.
+- Component bits 0-15 belong to the engine and 16-30 to games (`C_GAME(n)`); bit 31 is `C_ALIVE`.
+- Engine components so far: `C_POS` (`pos_x`, `pos_y`), `C_VEL` (`vel_x`, `vel_y`), both 24.8 `FIXED`, and `C_SPR` (`spr_id`, `spr_frame`). `entity_create()` zeroes them.
+- Engine systems so far: `sys_movement()` (position += velocity) and `sys_render()` (`sprite_draw()` for `C_POS | C_SPR`). Games call them once per frame, alongside their own systems.
+- None of this is optimized yet (Thumb code in ROM, no IWRAM placement); bunnymark measures it ([development.md](development.md#benchmark)).
 
 ## Sprite component
 

@@ -25,6 +25,7 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 - New example: `examples/<name>/main.c`, registered in `examples/CMakeLists.txt` as `serval_add_rom(<name> ...)` (target name = directory name, which `examples/build-all.sh` relies on) and added to `serval_api_only_check` in `tests/CMakeLists.txt`.
 - ROMs: `serval_add_rom()` in `cmake/Serval.cmake`. After changing link flags, check the `.map` for `libc.a` (must not appear) and `objdump -d | grep blx` (must be empty: ARMv4T has no BLX).
 - Never modify files in `third_party/libtonc/`; see its `VENDORED.md`.
+- Performance work is measured with `tools/bench.sh` (bunnymark, 128 bunnies, CPU cycles per frame; deterministic). Run it before and after, put both numbers in the commit message, and add a row to the table in `docs/development.md#benchmark`.
 - Release: bump `version` in `serval.json`, tag `vX.Y.Z` → draft release; publish it on GitHub. See `docs/development.md`.
 
 ## Repository relationships

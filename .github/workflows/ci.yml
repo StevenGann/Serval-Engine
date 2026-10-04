@@ -73,6 +73,9 @@ jobs:
       - name: Build every example
         run: examples/build-all.sh
 
+      - name: Benchmark (bunnymark)
+        run: tools/bench.sh
+
       - uses: actions/upload-artifact@v7
         with:
           name: roms

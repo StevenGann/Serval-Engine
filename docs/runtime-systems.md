@@ -10,6 +10,8 @@ Support SRAM, Flash and EEPROM, detected by emulators and flash carts from ROM I
 
 Variable-width font renderer drawing glyphs into BG tiles; text boxes with typewriter effect and choices; localization support. Japanese glyph sets need early planning.
 
+**Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, and `text_format()` for numbers without a C library. The full system above will build on or replace it.
+
 ## Special effects
 
 Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and mosaic, exposed as API calls and script ops for transitions.
@@ -17,6 +19,8 @@ Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and m
 ## Math
 
 Standardize on fixed-point types and lookup tables for trig early. There is no FPU or hardware divider.
+
+**Implemented so far:** 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
 
 ## Entity collision
 

@@ -6,12 +6,18 @@
 // Entities are slots in struct-of-arrays component pools. A system loops over
 // the pools and processes entities whose mask contains the components it needs.
 
+#include "serval/fixed.h"
 #include "serval/platform.h"
 
 #define MAX_ENT 128
 
-// Component bits are assigned by engine modules and games. Bit 31 is reserved:
-// it marks a slot as alive, so free slots never match any system.
+// Component bits. Bits 0-15 belong to the engine, bits 16-30 to games
+// (C_GAME(0) to C_GAME(14)). Bit 31 marks a slot as alive, so free slots never
+// match any system.
+#define C_POS (1u << 0) // pos_x, pos_y
+#define C_VEL (1u << 1) // vel_x, vel_y
+#define C_SPR (1u << 2) // spr_id, spr_frame
+#define C_GAME(n) (1u << (16 + (n)))
 #define C_ALIVE (1u << 31)
 
 // Generational handle: low 8 bits are the slot index, high 8 bits the slot's
@@ -23,6 +29,12 @@ typedef u16 Entity;
 
 // Component mask per slot, including C_ALIVE. Systems read this directly.
 extern u32 ent_mask[MAX_ENT];
+
+// Engine component pools, indexed by entity_index(). Zeroed by entity_create().
+extern FIXED pos_x[MAX_ENT], pos_y[MAX_ENT]; // C_POS: top-left position in pixels
+extern FIXED vel_x[MAX_ENT], vel_y[MAX_ENT]; // C_VEL: pixels per frame
+extern u16 spr_id[MAX_ENT];                  // C_SPR: sprite ID (sprites.h)
+extern u8 spr_frame[MAX_ENT];                // C_SPR: animation frame
 
 // Destroys every entity, e.g. on room change. Outstanding handles go stale.
 void ecs_reset(void);
@@ -36,6 +48,12 @@ void entity_destroy(Entity e);
 
 // True if the handle refers to a live entity.
 bool entity_alive(Entity e);
+
+// Systems, run once per frame by the game.
+// sys_movement: position += velocity for entities with C_POS and C_VEL.
+void sys_movement(void);
+// sys_render: draws entities with C_POS and C_SPR using sprite_draw().
+void sys_render(void);
 
 static inline u8 entity_index(Entity e) {
     return (u8)(e & 0xFF);

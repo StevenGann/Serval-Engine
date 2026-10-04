@@ -1,6 +1,7 @@
 #include "serval/core.h"
 #include "serval/ecs.h"
 #include "serval/gba.h"
+#include "serval/random.h"
 #include "serval/screen.h"
 #include "serval/sprites.h"
 
@@ -18,6 +19,32 @@ _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SE
 static OBJ_ATTR shadow_oam[128] ALIGN4;
 static u32 oam_used;
 
+// CPU cycles per frame: 228 scanlines of 1232 cycles.
+#define FRAME_BUDGET_CYCLES 280896u
+
+static u32 frame_start_cycles;
+static u32 last_frame_cycles;
+
+// Timers 2 and 3 cascade into a free-running 32-bit CPU cycle counter.
+static void cycle_counter_start(void) {
+    REG_TM2CNT = 0;
+    REG_TM3CNT = 0;
+    REG_TM2D = 0;
+    REG_TM3D = 0;
+    REG_TM3CNT = TM_CASCADE | TM_ENABLE;
+    REG_TM2CNT = TM_FREQ_1 | TM_ENABLE;
+}
+
+static u32 cycles_now(void) {
+    // Re-read if the low half wrapped between reading the two halves.
+    u32 hi, lo;
+    do {
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+}
+
 void serval_init(void) {
     irq_init(NULL);
     irq_enable(II_VBLANK);
@@ -31,9 +58,15 @@ void serval_init(void) {
 
     sprite_groups_reset();
     ecs_reset();
+    random_seed(0);
+
+    cycle_counter_start();
+    frame_start_cycles = cycles_now();
+    last_frame_cycles = 0;
 }
 
 void frame_begin(void) {
+    frame_start_cycles = cycles_now();
     key_poll();
     oam_used = 0;
 }
@@ -42,8 +75,17 @@ void frame_end(void) {
     for (u32 i = oam_used; i < 128; i++)
         shadow_oam[i].attr0 = ATTR0_HIDE;
 
+    last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
     oam_copy(oam_mem, shadow_oam, 128);
+}
+
+u32 frame_cpu_cycles(void) {
+    return last_frame_cycles;
+}
+
+u32 frame_budget_cycles(void) {
+    return FRAME_BUDGET_CYCLES;
 }
 
 bool button_down(u16 buttons) {

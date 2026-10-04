@@ -5,9 +5,13 @@
 // headers required.
 
 #include "serval/core.h"
+#include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/fixed.h"
 #include "serval/platform.h"
+#include "serval/random.h"
 #include "serval/screen.h"
 #include "serval/sprites.h"
+#include "serval/text.h"
 
 #endif // SERVAL_H

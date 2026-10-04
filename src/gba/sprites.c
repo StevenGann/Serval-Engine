@@ -1,4 +1,5 @@
 #include "serval/sprites.h"
+#include "serval/ecs.h"
 #include "serval/gba.h"
 #include "serval/screen.h"
 
@@ -118,4 +119,11 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
                       ATTR2_PALBANK(sprite_palette_bank[sprite_id]));
 
     gba_oam_submit(attr0, attr1, attr2);
+}
+
+void sys_render(void) {
+    for (u32 i = 0; i < MAX_ENT; i++) {
+        if ((ent_mask[i] & (C_POS | C_SPR)) == (C_POS | C_SPR))
+            sprite_draw(spr_id[i], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]), 0);
+    }
 }

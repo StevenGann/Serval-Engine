@@ -53,13 +53,13 @@ Each example builds separately, so one that fails to build doesn't stop the rest
 | Path | Contents |
 | --- | --- |
 | `include/serval/` | Public headers: `serval.h` (umbrella), `core.h`, `screen.h`, `sprites.h`, `ecs.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
-| `src/ecs/` | Platform-neutral modules (`serval_portable`), built for the GBA and for the host |
-| `src/gba/` | GBA-only code (`serval`): core API (`core.c`), sprites (`sprites.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
+| `src/ecs/`, `src/core/` | Platform-neutral modules (`serval_portable`: ECS, random numbers, text formatting), built for the GBA and for the host |
+| `src/gba/` | GBA-only code (`serval`): core API and frame timing (`core.c`), sprites and `sys_render` (`sprites.c`), text layer (`text.c`), debug output (`debug.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |
 | `examples/` | Example ROMs, one directory each, plus `build-all.sh` |
 | `cmake/` | Toolchain file and `serval_add_rom()` |
-| `tools/` | ROM header fixer, mGBA test runner build, release packaging |
+| `tools/` | ROM header fixer, mGBA test runner build, release packaging, benchmark (`bench.sh`) |
 
 ## Building a game
 
@@ -85,6 +85,21 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 - **Host build:** `tests/public_headers.c` and every example's sources compile without libtonc on the include path. Add new examples to `serval_api_only_check` in `tests/CMakeLists.txt`.
 - **Test ROM:** `tests/rom/compat_*.c` include `<tonc.h>` and Serval's headers in both orders.
 
+## Benchmark
+
+`examples/bunnymark` doubles as the engine's CPU benchmark: built as `bunnymark_bench`, it starts with 128 bunnies (the entity limit) from a fixed random seed, runs 600 frames headless in mGBA and reports the CPU cycles spent per frame. Lower is better; the frame budget is 280,896 cycles.
+
+```sh
+tools/bench.sh            # optional preset argument, default gba-release
+# bunnymark: 128 bunnies, 600 frames: avg 149564 cycles (53.2%), peak 149822 (gba-release)
+```
+
+The result is deterministic for a given build, so any change in the number comes from the code. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
+
+| Date | Commit | avg cycles | % of frame | Change |
+| --- | --- | --- | --- | --- |
+| 2026-10-04 | (bunnymark added) | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
+
 ## Code style
 
 - C17 with GNU extensions. `.clang-format` (clang-format 18) is enforced by CI on everything outside `third_party/`.
@@ -97,7 +112,7 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 
 - `clang-format` check.
 - Host tests with sanitizers.
-- GBA build with warnings as errors, the test ROM run in mGBA, a check that the release archive builds on its own, and the ROMs uploaded as artifacts.
+- GBA build with warnings as errors, the test ROM run in mGBA, a check that the release archive builds on its own, every example built, the bunnymark benchmark (result in the job summary), and the ROMs uploaded as artifacts.
 
 The ARM toolchain and mGBA versions are set in `.github/actions/setup-gba/action.yml`; `mgba-rom-test` is built once and cached.
 

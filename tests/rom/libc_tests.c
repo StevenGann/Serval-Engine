@@ -9,11 +9,13 @@ void* memcpy(void* restrict dst, const void* restrict src, size_t n);
 void* memset(void* dst, int c, size_t n);
 void* memmove(void* dst, const void* src, size_t n);
 int memcmp(const void* a, const void* b, size_t n);
+size_t strlen(const char* s);
 
 static void* (*volatile p_memcpy)(void* restrict, const void* restrict, size_t) = memcpy;
 static void* (*volatile p_memset)(void*, int, size_t) = memset;
 static void* (*volatile p_memmove)(void*, const void*, size_t) = memmove;
 static int (*volatile p_memcmp)(const void*, const void*, size_t) = memcmp;
+static size_t (*volatile p_strlen)(const char*) = strlen;
 
 static void fill_sequence(unsigned char* buf, unsigned n) {
     for (unsigned i = 0; i < n; i++)
@@ -57,7 +59,13 @@ static void memcmp_orders_bytes(void) {
     CHECK(p_memcmp(b, a, 3) > 0);
 }
 
+static void strlen_counts_chars(void) {
+    CHECK(p_strlen("") == 0);
+    CHECK(p_strlen("serval") == 6);
+}
+
 TEST_SUITE(libc_tests, "libc", {"memcpy_copies_unaligned", memcpy_copies_unaligned},
            {"memset_fills_bytes", memset_fills_bytes},
            {"memmove_handles_overlap", memmove_handles_overlap},
-           {"memcmp_orders_bytes", memcmp_orders_bytes});
+           {"memcmp_orders_bytes", memcmp_orders_bytes},
+           {"strlen_counts_chars", strlen_counts_chars});

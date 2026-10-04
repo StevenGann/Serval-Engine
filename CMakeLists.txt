@@ -30,6 +30,8 @@ include(cmake/Serval.cmake)
 # Platform-neutral engine code. Builds for the GBA and for the host, so its
 # logic can be unit tested natively. See docs/platforms.md.
 add_library(serval_portable STATIC
+    src/core/random.c
+    src/core/text_format.c
     src/ecs/ecs.c
 )
 target_include_directories(serval_portable PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -43,8 +45,10 @@ if(SERVAL_TARGET_GBA)
 
     add_library(serval STATIC
         src/gba/core.c
+        src/gba/debug.c
         src/gba/libc.c
         src/gba/sprites.c
+        src/gba/text.c
     )
     # libtonc stays available to games that want it, but public engine headers
     # never require it.

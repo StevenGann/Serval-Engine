@@ -1,6 +1,10 @@
 #include "serval/ecs.h"
 
 u32 ent_mask[MAX_ENT];
+FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
+FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
+u16 spr_id[MAX_ENT];
+u8 spr_frame[MAX_ENT];
 
 static u8 ent_gen[MAX_ENT];
 
@@ -35,6 +39,10 @@ Entity entity_create(u32 components) {
         return ENTITY_NONE;
     u32 index = free_slots[--free_count];
     ent_mask[index] = components | C_ALIVE;
+    pos_x[index] = pos_y[index] = 0;
+    vel_x[index] = vel_y[index] = 0;
+    spr_id[index] = 0;
+    spr_frame[index] = 0;
     return make_handle(index);
 }
 
@@ -50,4 +58,13 @@ void entity_destroy(Entity e) {
     ent_mask[index] = 0;
     ent_gen[index] = next_generation(ent_gen[index]);
     free_slots[free_count++] = (u8)index;
+}
+
+void sys_movement(void) {
+    for (u32 i = 0; i < MAX_ENT; i++) {
+        if ((ent_mask[i] & (C_POS | C_VEL)) == (C_POS | C_VEL)) {
+            pos_x[i] += vel_x[i];
+            pos_y[i] += vel_y[i];
+        }
+    }
 }

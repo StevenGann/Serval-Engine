@@ -1,11 +1,11 @@
-add_library(serval_test_harness STATIC test.c ecs_tests.c)
+add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c)
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
 
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
-        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c
+        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c rom/gba_text_tests.c
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")
@@ -39,7 +39,8 @@ else()
     # examples use nothing but Serval's API.
     add_library(serval_api_only_check OBJECT
         public_headers.c
-        "${PROJECT_SOURCE_DIR}/examples/hello/main.c")
+        "${PROJECT_SOURCE_DIR}/examples/hello/main.c"
+        "${PROJECT_SOURCE_DIR}/examples/bunnymark/main.c")
     target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
     target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
     add_dependencies(serval_host_tests serval_api_only_check)

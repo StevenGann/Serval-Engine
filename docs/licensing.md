@@ -27,7 +27,7 @@ Verified against upstream on 2026-10-04. Verbatim license texts for the librarie
 
 - **Never include `tonc_libgba.h`.** It is removed from the vendored copy ([VENDORED.md](../third_party/libtonc/VENDORED.md)). libtonc's libgba compatibility header carries libgba's LGPL v2+ notice and is standalone (nothing else in libtonc includes it). LGPL code statically linked into a ROM would oblige games to allow relinking.
 - **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license at all. The engine also needs its own ROM header anyway, without the Nintendo logo.
-- **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset` and `memmove` (libtonc's `tonccpy`/`toncset` can back them), so newlib and its many notices are not linked. Check the link map when adding code.
+- **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset`, `memmove`, `memcmp` and `strlen` (libtonc's `tonccpy`/`toncset` can back them), so newlib and its many notices are not linked. Check the link map when adding code.
 
 ### Provenance note for legal review
 

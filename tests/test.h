@@ -36,5 +36,7 @@ void test_output(const char* line);
 
 // Suites shared by all runners.
 extern const TestSuite ecs_tests;
+extern const TestSuite random_tests;
+extern const TestSuite text_format_tests;
 
 #endif // SERVAL_TEST_H
