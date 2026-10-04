@@ -1,0 +1,27 @@
+# Other runtime systems
+
+These systems are scoped but not yet designed in detail.
+
+## Save data
+
+Support SRAM, Flash and EEPROM, detected by emulators and flash carts from ROM ID strings (`SRAM_V`, `FLASH1M_V`, etc.). Slot-based API with checksums and a version number so saves survive game updates. Verify each save type on real flash carts.
+
+## Text and dialogue
+
+Variable-width font renderer drawing glyphs into BG tiles; text boxes with typewriter effect and choices; localization support. Japanese glyph sets need early planning.
+
+## Special effects
+
+Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and mosaic, exposed as API calls and script ops for transitions.
+
+## Math
+
+Standardize on fixed-point types and lookup tables for trig early. There is no FPU or hardware divider.
+
+## Entity collision
+
+Avoid all-pairs checks (about 8,000 pairs at 128 entities). Use a coarse spatial grid or collision groups as the broad phase. The collision system emits collision events to the VM ([vm.md](vm.md)).
+
+## Camera
+
+Follows a target entity, clamps to room bounds, and drives BG streaming ([tilemaps.md](tilemaps.md#streaming)).

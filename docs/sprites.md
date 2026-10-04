@@ -1,0 +1,55 @@
+# Sprites and asset management
+
+Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
+
+**Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes) with 16 OBJ palette banks of 16 colors.
+
+## Residency modes
+
+Set per group.
+
+| Mode | How it works | Best for | Compression |
+| --- | --- | --- | --- |
+| Resident | All frames copied to VRAM at room start | Small enemies, pickups, HUD | LZ77 allowed (BIOS `LZ77UnCompVram`) |
+| Streamed | One-frame VRAM slot per instance; new frame DMA'd in VBlank | Large, heavily animated characters | Must be uncompressed |
+
+## VRAM allocation
+
+```
+OBJ VRAM tile 0 ─────────────────────────────── tile 1023
+[ global groups | room groups →      ← streamed slots ]
+```
+
+- Global groups (player, HUD, common FX) load once at boot.
+- Room groups use a bump allocator reset to the global watermark on each room change.
+- Streamed slots allocate downward from the top, with per-OBJ-size free lists.
+- Room loads run during a fade with forced blank (`REG_DISPCNT` bit 7) for unrestricted VRAM access.
+
+## Palettes
+
+The tooling assigns each group logical banks. A runtime palette manager maps them to physical banks with reference counting, so identical palettes share one bank. A shadow palette is copied in VBlank, enabling fades, flashes and swaps.
+
+## ROM data format
+
+Emitted as constant C tables by the build tooling.
+
+```c
+typedef struct {
+    u8  shape, size;          // OBJ shape/size, or metasprite
+    u8  frame_count, tiles_per_frame;
+    const u32 *tiles;         // ROM tile data
+    const u8  *frame_times;   // animation timing
+    s8  origin_x, origin_y;
+    u8  palette_slot;         // logical bank within group
+    u8  flags;                // STREAMED, METASPRITE, ...
+} SpriteAsset;
+
+typedef struct {
+    u8  sprite_count, palette_count, flags; // RESIDENT, LZ77...
+    const SpriteAsset *const *sprites;
+    const u16 *palettes;
+    u16 tile_count;
+} SpriteGroup;
+```
+
+The sprite component stores only `(sprite_id, frame)`. The render system resolves it to a VRAM tile index through the group's load offset or the instance's streamed slot.
