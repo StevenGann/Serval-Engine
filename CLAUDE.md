@@ -19,6 +19,7 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 
 - `src/ecs/` etc. → `serval_portable`: must compile on the host (no libtonc calls, no hardware access); unit tested natively and in the test ROM. GBA-only code goes in `src/gba/` → `serval`.
 - Public headers in `include/serval/`. Portable API matches the docs' names; GBA-only API goes in `gba.h` with a `gba_` prefix.
+- **Games must never need a dependency directly.** Public headers include no third-party headers, and no public name may collide with libtonc's (check with `grep` in `third_party/libtonc/include`). Examples use only Serval API; when an example needs something, add engine API for it. Enforced by `serval_api_only_check` (host build) and `tests/rom/compat_*.c`.
 - New tests: shared suites in `tests/*.c` (register in both `tests/host/main.c` and `tests/rom/main.c`), hardware suites in `tests/rom/`. Verify a new test can fail.
 - ROMs: `serval_add_rom()` in `cmake/Serval.cmake`. After changing link flags, check the `.map` for `libc.a` (must not appear) and `objdump -d | grep blx` (must be empty: ARMv4T has no BLX).
 - Never modify files in `third_party/libtonc/`; see its `VENDORED.md`.

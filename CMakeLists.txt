@@ -38,14 +38,16 @@ target_link_libraries(serval_portable PRIVATE serval_warnings)
 if(SERVAL_TARGET_GBA)
     enable_language(ASM)
     target_compile_definitions(serval_portable PUBLIC SERVAL_GBA)
-    target_link_libraries(serval_portable PUBLIC tonc) # tonc_types.h
 
     add_subdirectory(third_party)
 
     add_library(serval STATIC
         src/gba/core.c
         src/gba/libc.c
+        src/gba/sprites.c
     )
+    # libtonc stays available to games that want it, but public engine headers
+    # never require it.
     target_link_libraries(serval
         PUBLIC serval_portable tonc
         PRIVATE serval_warnings

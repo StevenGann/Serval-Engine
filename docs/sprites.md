@@ -46,10 +46,28 @@ typedef struct {
 
 typedef struct {
     u8  sprite_count, palette_count, flags; // RESIDENT, LZ77...
-    const SpriteAsset *const *sprites;
+    const u16 *sprite_ids;    // sprite table indices of the group's sprites
     const u16 *palettes;
     u16 tile_count;
 } SpriteGroup;
 ```
 
+**Sprite IDs** are indices into a project-wide sprite table (`const SpriteAsset *const table[]`) emitted by the build. IDs rather than pointers keep the sprite component compact and keep addresses out of bytecode ([vm.md](vm.md)); groups list their sprites by ID for the same reason.
+
 The sprite component stores only `(sprite_id, frame)`. The render system resolves it to a VRAM tile index through the group's load offset or the instance's streamed slot.
+
+## API
+
+`include/serval/sprites.h`:
+
+```c
+void sprite_table_set(const SpriteAsset *const *table, u16 count);
+bool sprite_group_load(const SpriteGroup *group);   // false if VRAM/palettes run out
+void sprite_groups_reset(void);                     // unload all
+void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
+                                                    // SPRITE_FLIP_H/V, SPRITE_PRIORITY(n)
+```
+
+`sprite_draw` subtracts the sprite's origin, skips sprites that are fully off screen (so they don't use one of the 128 hardware sprites), and does nothing for sprites that are not loaded.
+
+**Implemented so far:** resident, uncompressed groups with 4bpp regular sprites; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.

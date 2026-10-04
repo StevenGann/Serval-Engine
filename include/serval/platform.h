@@ -6,13 +6,14 @@
 // SERVAL_GBA is defined when building for the Game Boy Advance. Without it
 // (host builds for unit tests), the placement macros expand to nothing, so
 // platform-neutral modules compile natively.
+//
+// Public engine headers never include third-party headers. The typedefs below
+// are identical to libtonc's, so games may still include <tonc.h> alongside
+// (tests/rom/compat_*.c check this).
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#ifdef SERVAL_GBA
-#include <tonc_types.h> // u8..u32, s8..s32, FIXED: identical to the host definitions below
-#else
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -20,7 +21,6 @@ typedef int8_t s8;
 typedef int16_t s16;
 typedef int32_t s32;
 typedef s32 FIXED;
-#endif
 
 #ifdef SERVAL_GBA
 // Hot code: placed in IWRAM and compiled as ARM code (32-bit bus, no wait states).

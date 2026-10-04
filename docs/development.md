@@ -41,9 +41,9 @@ ROMs are written next to their ELF files, e.g. `build/gba-debug/examples/hello.g
 
 | Path | Contents |
 | --- | --- |
-| `include/serval/` | Public headers. `serval.h` is the umbrella; `gba.h` holds GBA-only escape hatches |
+| `include/serval/` | Public headers: `serval.h` (umbrella), `core.h`, `screen.h`, `sprites.h`, `ecs.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
 | `src/ecs/` | Platform-neutral modules (`serval_portable`), built for the GBA and for the host |
-| `src/gba/` | GBA-only code (`serval`): core API, startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
+| `src/gba/` | GBA-only code (`serval`): core API (`core.c`), sprites (`sprites.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |
 | `examples/` | Example ROMs |
@@ -66,6 +66,11 @@ Test cases use the small harness in `tests/test.h` (`CHECK(cond)`, `TEST_SUITE(.
 - **Hardware suites** (`tests/rom/`) run only in the test ROM.
 
 The test ROM writes results to mGBA's debug log and ends with `swi 3`, passing the number of failed checks in `r0`; `mgba-rom-test -S 3 -R r0` turns that into its exit code. Register new suites in `tests/host/main.c` and/or `tests/rom/main.c`.
+
+Two compile-only checks keep third-party libraries behind the API ([core-api.md](core-api.md#dependencies-stay-behind-the-api)):
+
+- **Host build:** `tests/public_headers.c` and every example's sources compile without libtonc on the include path. Add new examples to `serval_api_only_check` in `tests/CMakeLists.txt`.
+- **Test ROM:** `tests/rom/compat_*.c` include `<tonc.h>` and Serval's headers in both orders.
 
 ## Code style
 

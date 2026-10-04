@@ -3,6 +3,7 @@
 #include "../test.h"
 #include "serval/core.h"
 #include "serval/gba.h"
+#include "serval/screen.h"
 
 #include <tonc.h>
 
@@ -39,15 +40,28 @@ static void oam_submit_stops_at_128(void) {
     frame_end();
 }
 
-static void no_keys_held_without_input(void) {
+static void no_buttons_held_without_input(void) {
     frame_begin();
-    CHECK(!key_down(KEY_ANY));
-    CHECK(!key_pressed(KEY_A));
+    CHECK(!button_down(BUTTON_ANY));
+    CHECK(!button_pressed(BUTTON_A));
     frame_end();
+}
+
+static void init_enables_sprites(void) {
+    CHECK((REG_DISPCNT & (DCNT_OBJ | DCNT_OBJ_1D)) == (DCNT_OBJ | DCNT_OBJ_1D));
+    CHECK((REG_DISPCNT & 7) == DCNT_MODE0);
+}
+
+static void backdrop_sets_bg_color_0(void) {
+    screen_set_backdrop(COLOR_RGB(255, 0, 0));
+    CHECK(pal_bg_mem[0] == RGB15(31, 0, 0));
+    CHECK(COLOR_RGB(8, 16, 255) == RGB15(1, 2, 31));
 }
 
 TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns_in_vblank},
            {"frame_end_flushes_submitted_sprites", frame_end_flushes_submitted_sprites},
            {"sprites_disappear_when_not_drawn", sprites_disappear_when_not_drawn},
            {"oam_submit_stops_at_128", oam_submit_stops_at_128},
-           {"no_keys_held_without_input", no_keys_held_without_input});
+           {"no_buttons_held_without_input", no_buttons_held_without_input},
+           {"init_enables_sprites", init_enables_sprites},
+           {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0});

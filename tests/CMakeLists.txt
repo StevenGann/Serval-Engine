@@ -5,7 +5,8 @@ target_link_libraries(serval_test_harness
 
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
-        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c
+        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c
+                rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")
     target_link_libraries(serval_tests PRIVATE serval_test_harness serval_warnings)
@@ -25,4 +26,14 @@ else()
     add_executable(serval_host_tests host/main.c)
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
     add_test(NAME host_tests COMMAND serval_host_tests)
+
+    # Games must never need a third-party header. libtonc is not on the host
+    # include path, so these compile only if the public headers and the
+    # examples use nothing but Serval's API.
+    add_library(serval_api_only_check OBJECT
+        public_headers.c
+        "${PROJECT_SOURCE_DIR}/examples/hello/main.c")
+    target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
+    target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
+    add_dependencies(serval_host_tests serval_api_only_check)
 endif()

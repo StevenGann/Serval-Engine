@@ -1,8 +1,17 @@
 #include "serval/core.h"
 #include "serval/ecs.h"
 #include "serval/gba.h"
+#include "serval/screen.h"
+#include "serval/sprites.h"
 
 #include <tonc.h>
+
+// The portable button bits are the GBA's KEYINPUT bits, so no translation is needed.
+_Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SELECT &&
+                   BUTTON_START == KEY_START && BUTTON_RIGHT == KEY_RIGHT &&
+                   BUTTON_LEFT == KEY_LEFT && BUTTON_UP == KEY_UP && BUTTON_DOWN == KEY_DOWN &&
+                   BUTTON_R == KEY_R && BUTTON_L == KEY_L && BUTTON_ANY == KEY_ANY,
+               "button bits must match KEYINPUT");
 
 // Rebuilt from draw calls every frame and copied to OAM in VBlank, so sprites
 // that are not drawn disappear. See "Sprite submission model" in docs/core-api.md.
@@ -17,6 +26,10 @@ void serval_init(void) {
     oam_init(shadow_oam, 128);
     oam_used = 0;
 
+    // Mode 0 (tiled backgrounds), sprites on, sprite tiles mapped linearly.
+    REG_DISPCNT = DCNT_MODE0 | DCNT_OBJ | DCNT_OBJ_1D;
+
+    sprite_groups_reset();
     ecs_reset();
 }
 
@@ -33,12 +46,16 @@ void frame_end(void) {
     oam_copy(oam_mem, shadow_oam, 128);
 }
 
-bool key_down(u16 key) {
-    return key_is_down(key) != 0;
+bool button_down(u16 buttons) {
+    return key_is_down(buttons) != 0;
 }
 
-bool key_pressed(u16 key) {
-    return key_hit(key) != 0;
+bool button_pressed(u16 buttons) {
+    return key_hit(buttons) != 0;
+}
+
+void screen_set_backdrop(Color color) {
+    pal_bg_mem[0] = color;
 }
 
 bool gba_oam_submit(u16 attr0, u16 attr1, u16 attr2) {

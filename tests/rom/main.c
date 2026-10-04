@@ -7,6 +7,7 @@
 
 extern const TestSuite core_tests;
 extern const TestSuite libc_tests;
+extern const TestSuite sprite_tests;
 
 // mGBA debug output registers (ignored by hardware and other emulators).
 #define REG_MGBA_DEBUG_ENABLE (*(volatile u16*)0x04FFF780)
@@ -34,6 +35,6 @@ int main(void) {
     REG_MGBA_DEBUG_ENABLE = 0xC0DE;
     serval_init();
 
-    static const TestSuite* const suites[] = {&ecs_tests, &core_tests, &libc_tests};
+    static const TestSuite* const suites[] = {&ecs_tests, &core_tests, &libc_tests, &sprite_tests};
     exit_with(test_run(suites, sizeof(suites) / sizeof(suites[0])));
 }

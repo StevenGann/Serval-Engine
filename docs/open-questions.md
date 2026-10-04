@@ -10,7 +10,8 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [ ] Choose the Maxmod fork: BlocksDS (actively maintained) or devkitPro.
 - [x] Write the engine's own crt0, linker script and ROM header (avoids devkitARM's MPL startup code and unlicensed linker script).
 - [x] Provide `memcpy`/`memset`/`memmove` in the engine so newlib is never linked.
-- [ ] Define the sprite asset format and implement `sprite_draw` ([sprites.md](sprites.md)).
+- [x] Define the sprite asset format and implement `sprite_draw` for resident groups ([sprites.md](sprites.md#api)).
+- [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, palette sharing, shadow palette, global/room watermark ([sprites.md](sprites.md#api)).
 - [ ] Optimize `frame_end`'s OAM rebuild as ARM code in IWRAM ([core-api.md](core-api.md#sprite-submission-model)).
 - [ ] Choose the toolchain: devkitARM vs ARM `arm-none-eabi-gcc`.
 - [ ] Decide whether raster effects make 1.0 ([tilemaps.md](tilemaps.md#raster-effects)).
