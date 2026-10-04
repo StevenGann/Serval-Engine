@@ -1,7 +1,20 @@
-// Moves a square sprite with the D-pad. Hold A to move faster.
+// hello: the smallest complete Serval Engine game.
 //
-// Uses only Serval Engine's API. The sprite data below is written by hand in
-// the same form Studio Advance's build generates for a game's assets.
+// Demonstrates:
+//   - Defining a sprite's data by hand (tiles, palette, SpriteAsset, sprite
+//     table, SpriteGroup) in the same form Studio Advance's build generates
+//   - Loading a sprite group and drawing a sprite every frame
+//   - The frame loop (frame_begin / frame_end) and reading buttons
+//   - Setting the backdrop color
+//
+// What to expect when booting the ROM:
+//   - A dark blue screen with a small yellow square (8x8 pixels) in the center.
+//   - The D-pad moves the square one pixel per frame; holding A moves it three.
+//   - The square stops at the edges of the screen.
+//   - No sound and no other graphics.
+//   (In mGBA's default keyboard mapping, the D-pad is the arrow keys and A is X.)
+//
+// Uses only Serval Engine's API; no third-party headers.
 
 #include "serval/serval.h"
 
