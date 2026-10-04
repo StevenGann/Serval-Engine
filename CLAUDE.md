@@ -4,7 +4,25 @@ Serval Engine: the open-source GBA game runtime (C on libtonc) that every Studio
 
 ## Status
 
-Design phase. There is no code yet; `docs/` is the source of truth. Start with `docs/README.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+Pre-alpha: build system, startup code, frame loop, input, shadow OAM and ECS core, with tests and CI/CD. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+
+## Commands
+
+```sh
+export ARM_GNU_TOOLCHAIN=~/opt/arm-gnu-toolchain-15.3.rel1-x86_64-arm-none-eabi MGBA_ROM_TEST_DIR=~/opt/mgba-rom-test
+cmake --preset gba-ci && cmake --build --preset gba-ci && ctest --preset gba-ci   # GBA build + test ROM in mGBA
+cmake --preset host && cmake --build --preset host && ctest --preset host         # host tests, ASan/UBSan
+git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i              # clang-format 18
+```
+
+## Code layout and conventions
+
+- `src/ecs/` etc. → `serval_portable`: must compile on the host (no libtonc calls, no hardware access); unit tested natively and in the test ROM. GBA-only code goes in `src/gba/` → `serval`.
+- Public headers in `include/serval/`. Portable API matches the docs' names; GBA-only API goes in `gba.h` with a `gba_` prefix.
+- New tests: shared suites in `tests/*.c` (register in both `tests/host/main.c` and `tests/rom/main.c`), hardware suites in `tests/rom/`. Verify a new test can fail.
+- ROMs: `serval_add_rom()` in `cmake/Serval.cmake`. After changing link flags, check the `.map` for `libc.a` (must not appear) and `objdump -d | grep blx` (must be empty: ARMv4T has no BLX).
+- Never modify files in `third_party/libtonc/`; see its `VENDORED.md`.
+- Release: bump `version` in `serval.json`, tag `vX.Y.Z` → draft release; publish it on GitHub. See `docs/development.md`.
 
 ## Repository relationships
 

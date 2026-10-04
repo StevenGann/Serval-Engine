@@ -1,0 +1,37 @@
+name: Set up GBA build environment
+description: Installs CMake, Ninja, the ARM GNU toolchain and mgba-rom-test.
+
+inputs:
+  gcc-release:
+    description: ARM GNU Toolchain release. Keep serval.json's toolchain.gcc in sync.
+    default: "15.3.Rel1"
+  mgba-version:
+    description: mGBA version to build mgba-rom-test from.
+    default: "0.10.5"
+
+runs:
+  using: composite
+  steps:
+    - name: Install CMake and Ninja
+      uses: lukka/get-cmake@v4.4.2
+
+    - name: Install ARM GNU Toolchain ${{ inputs.gcc-release }}
+      uses: carlosperate/arm-none-eabi-gcc-action@v1
+      with:
+        release: ${{ inputs.gcc-release }}
+
+    - name: Restore mgba-rom-test
+      id: mgba-cache
+      uses: actions/cache@v6
+      with:
+        path: ~/mgba-rom-test
+        key: mgba-rom-test-${{ inputs.mgba-version }}-${{ runner.os }}-${{ hashFiles('tools/build-mgba-rom-test.sh') }}
+
+    - name: Build mgba-rom-test
+      if: steps.mgba-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: tools/build-mgba-rom-test.sh ~/mgba-rom-test "${{ inputs.mgba-version }}"
+
+    - name: Expose mgba-rom-test to CMake
+      shell: bash
+      run: echo "MGBA_ROM_TEST_DIR=$HOME/mgba-rom-test" >> "$GITHUB_ENV"

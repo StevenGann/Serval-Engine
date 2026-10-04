@@ -19,15 +19,19 @@ Verified against upstream on 2026-10-04. Verbatim license texts for the librarie
 | Maxmod | [blocksds/maxmod](https://github.com/blocksds/maxmod) or [devkitPro/maxmod](https://github.com/devkitPro/maxmod) | ISC | Include copyright and permission notice |
 | libgcc (compiler runtime, e.g. division helpers) | GCC | GPL v3 + GCC Runtime Library Exception | None: the exception covers code compiled by GCC |
 | newlib (C library) | toolchain | Mix of BSD-style licenses per file | Mostly "reproduce notice in documentation"; avoid linking it (see below) |
-| C runtime startup + linker script | Serval Engine (to be written) | Engine license | Same as Serval Engine |
+| C runtime startup + linker script | Serval Engine (`src/gba/crt0.s`, `src/gba/gba.ld`) | MIT | Same as Serval Engine |
 
 **Bottom line:** every game must include the notices of Serval Engine, libtonc and Maxmod. The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
 
 ### Rules that keep it this way
 
-- **Never include `tonc_libgba.h`.** libtonc's libgba compatibility header carries libgba's LGPL v2+ notice. It is standalone (nothing else in libtonc includes it), so exclude it when vendoring libtonc. LGPL code statically linked into a ROM would oblige games to allow relinking.
+- **Never include `tonc_libgba.h`.** It is removed from the vendored copy ([VENDORED.md](../third_party/libtonc/VENDORED.md)). libtonc's libgba compatibility header carries libgba's LGPL v2+ notice and is standalone (nothing else in libtonc includes it). LGPL code statically linked into a ROM would oblige games to allow relinking.
 - **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license at all. The engine also needs its own ROM header anyway, without the Nintendo logo.
 - **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset` and `memmove` (libtonc's `tonccpy`/`toncset` can back them), so newlib and its many notices are not linked. Check the link map when adding code.
+
+### Provenance note for legal review
+
+Two libtonc headers say parts came from libgba: `tonc_bios.h` ("pretty much copied verbatim from Pern and dkARM's libgba", itself from the CowBite spec and GBATEK) and `tonc_memdef.h` ("comms items taken from libgba"). Both contain hardware facts (register addresses, bit definitions, BIOS call numbers and prototypes), which are generally not copyrightable, and libtonc as a whole is MIT. Worth confirming in the planned legal review.
 
 ## Host tools
 

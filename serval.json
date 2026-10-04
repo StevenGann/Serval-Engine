@@ -1,0 +1,5 @@
+{
+  "name": "serval-engine",
+  "version": "0.1.0",
+  "toolchain": { "gcc": ">=15.3" }
+}

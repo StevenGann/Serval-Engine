@@ -1,0 +1,67 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "gba",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/arm-gba-toolchain.cmake"
+    },
+    {
+      "name": "gba-debug",
+      "displayName": "GBA Debug",
+      "inherits": "gba",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "gba-release",
+      "displayName": "GBA Release",
+      "inherits": "gba",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "gba-ci",
+      "displayName": "GBA CI (RelWithDebInfo, warnings as errors)",
+      "inherits": "gba",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SERVAL_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "host",
+      "displayName": "Host unit tests (platform-neutral code)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SERVAL_WARNINGS_AS_ERRORS": "ON",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gba-debug", "configurePreset": "gba-debug" },
+    { "name": "gba-release", "configurePreset": "gba-release" },
+    { "name": "gba-ci", "configurePreset": "gba-ci" },
+    { "name": "host", "configurePreset": "host" }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "gba-debug", "inherits": "base", "configurePreset": "gba-debug" },
+    { "name": "gba-release", "inherits": "base", "configurePreset": "gba-release" },
+    { "name": "gba-ci", "inherits": "base", "configurePreset": "gba-ci" },
+    { "name": "host", "inherits": "base", "configurePreset": "host" }
+  ]
+}

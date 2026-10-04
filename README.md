@@ -10,7 +10,20 @@ It is built as three layers:
 2. **World**: a fixed-pool, bitmask ECS for entity data.
 3. **Game logic**: GameMaker-style objects and events, run by a compact bytecode VM.
 
-> **Status:** pre-alpha. The design is documented in [`docs/`](docs/README.md); no code has been written yet.
+> **Status:** pre-alpha. The build system, startup code, frame loop, input, shadow OAM and ECS core are in place, with tests running natively and on emulated hardware. The design is documented in [`docs/`](docs/README.md).
+
+## Building
+
+Requires CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC ([ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses).
+
+```sh
+export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain   # or put arm-none-eabi-gcc on PATH
+cmake --preset gba-release
+cmake --build --preset gba-release
+# -> build/gba-release/examples/hello.gba
+```
+
+See [docs/development.md](docs/development.md) for tests, the source layout and the release process.
 
 ## License
 

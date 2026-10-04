@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install clang-format
+        run: pipx install clang-format==18.1.8
+
+      - name: Check formatting
+        run: git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format --dry-run --Werror
+
+  host:
+    name: Host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@v4.4.2
+
+      - name: Configure
+        run: cmake --preset host
+
+      - name: Build
+        run: cmake --build --preset host
+
+      - name: Test (AddressSanitizer + UBSan)
+        run: ctest --preset host
+
+  gba:
+    name: GBA build and ROM tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-gba
+
+      - name: Configure
+        run: cmake --preset gba-ci
+
+      - name: Build
+        run: cmake --build --preset gba-ci
+
+      - name: Run test ROM in mGBA
+        run: ctest --preset gba-ci
+
+      - name: Check the release archive builds on its own
+        run: |
+          tools/package-release.sh dist
+          mkdir package-check
+          python3 -m zipfile -e dist/serval-engine-*.zip package-check
+          cd package-check/serval-engine-*
+          cmake --preset gba-release
+          cmake --build --preset gba-release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: roms
+          path: |
+            build/gba-ci/examples/*.gba
+            build/gba-ci/tests/*.gba
+          if-no-files-found: error

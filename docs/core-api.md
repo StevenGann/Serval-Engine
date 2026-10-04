@@ -3,6 +3,8 @@
 The lowest engine layer is a raylib-style flat C API over libtonc. It is also the abstraction boundary for future platforms: each call means the same thing on every target (see [platforms.md](platforms.md)).
 
 ```c
+void serval_init(void);               // once at startup: interrupts, OAM, ECS
+
 void frame_begin(void);
 void frame_end(void);                 // VBlank sync + flush shadow OAM/palettes/queues
 
@@ -11,6 +13,8 @@ bool key_pressed(u16 key);
 
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 ```
+
+**Implemented:** `serval_init`, `frame_begin`, `frame_end`, `key_down`, `key_pressed` (`include/serval/core.h`). `sprite_draw` waits for the sprite asset format ([sprites.md](sprites.md)); until then, C code can submit raw OAM entries with the GBA-only escape hatch `gba_oam_submit()` (`include/serval/gba.h`). GBA-only API lives in `gba.h` with a `gba_` prefix, so the portable API stays the same on every target.
 
 Audio calls are listed in [audio.md](audio.md).
 

@@ -1,0 +1,67 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching "version" in serval.json) builds and tests the
+# engine, then attaches serval-engine-X.Y.Z.zip and serval.json to a draft
+# GitHub release. Publishing the draft makes it visible to Studio Advance.
+# Running manually produces the archive as a workflow artifact only.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check tag matches serval.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("serval.json"))["version"])')
+          if [[ "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match serval.json version $version"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-gba
+
+      - name: Build
+        run: |
+          cmake --preset gba-release
+          cmake --build --preset gba-release
+
+      - name: Run test ROM in mGBA
+        run: ctest --preset gba-release
+
+      - name: Package
+        run: tools/package-release.sh dist
+
+      - name: Check the release archive builds on its own
+        run: |
+          mkdir package-check
+          python3 -m zipfile -e dist/serval-engine-*.zip package-check
+          cd package-check/serval-engine-*
+          cmake --preset gba-release
+          cmake --build --preset gba-release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --draft --generate-notes --verify-tag "${prerelease[@]}"

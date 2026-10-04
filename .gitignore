@@ -1,0 +1,12 @@
+# Build trees (CMake presets build into build/<preset>)
+/build/
+/dist/
+/package-check/
+CMakeUserPresets.json
+compile_commands.json
+
+# IDEs and tools
+.vscode/
+.idea/
+.cache/
+.DS_Store

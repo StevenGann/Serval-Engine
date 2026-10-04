@@ -26,14 +26,17 @@ The repository root contains `serval.json`, which describes the engine to the to
 }
 ```
 
-- `version` must match the release tag (without the `v`).
+- `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease.
 - `toolchain.gcc` is the minimum GCC version the engine needs. The editor bundles a single toolchain and warns when it is older than this.
 
 ## Release contents
 
 Each GitHub release attaches a packaged archive, `serval-engine-X.Y.Z.zip`. It contains only what building a game needs: headers, sources, linker scripts, `serval.json`, `LICENSE` and `third_party/licenses/`.
 
-Tooling uses this attached archive rather than GitHub's auto-generated source archives, which include development-only files and are not guaranteed to be byte-stable.
+`serval.json` is also attached as a separate asset, so tools can read a release's manifest without downloading the archive.
 
+Tooling uses the attached archive rather than GitHub's auto-generated source archives, which include development-only files and are not guaranteed to be byte-stable.
+
+- **Publishing:** the release workflow creates a *draft*; it becomes visible to Studio Advance only once published on GitHub. See [development.md](development.md#cicd).
 - **Prereleases** (`vX.Y.Z-rc.N`, marked as prerelease on GitHub) are hidden by the editor unless the user opts in.
 - **Withdrawing a release:** delete it on GitHub. Projects that already downloaded it keep their cached copy.

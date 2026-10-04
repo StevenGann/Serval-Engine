@@ -1,0 +1,28 @@
+add_library(serval_test_harness STATIC test.c ecs_tests.c)
+target_link_libraries(serval_test_harness
+    PUBLIC serval_portable
+    PRIVATE serval_warnings)
+
+if(SERVAL_TARGET_GBA)
+    serval_add_rom(serval_tests
+        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c
+        TITLE "SERVAL TESTS"
+        GAME_CODE "SVTS")
+    target_link_libraries(serval_tests PRIVATE serval_test_harness serval_warnings)
+
+    # mgba-rom-test runs the ROM headless until SWI 3 and exits with r0, the
+    # number of failed checks. Build it with tools/build-mgba-rom-test.sh.
+    find_program(MGBA_ROM_TEST mgba-rom-test HINTS ENV MGBA_ROM_TEST_DIR)
+    if(MGBA_ROM_TEST)
+        add_test(NAME rom_tests
+            COMMAND "${MGBA_ROM_TEST}" -S 3 -R r0 -l 15
+                    "$<TARGET_FILE_DIR:serval_tests>/serval_tests.gba")
+        set_tests_properties(rom_tests PROPERTIES TIMEOUT 60)
+    else()
+        message(STATUS "mgba-rom-test not found: ROM tests are built but not run")
+    endif()
+else()
+    add_executable(serval_host_tests host/main.c)
+    target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
+    add_test(NAME host_tests COMMAND serval_host_tests)
+endif()

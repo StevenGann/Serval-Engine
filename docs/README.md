@@ -1,9 +1,10 @@
 # Serval Engine documentation
 
-Design documents for the runtime. Code does not exist yet; these documents are the source of truth until it does, and should be updated as decisions are made.
+Design documents for the runtime. They are the source of truth for design and should be updated as decisions are made. For building and contributing, start with [development.md](development.md).
 
 | Document | Contents |
 | --- | --- |
+| [development.md](development.md) | Building, testing, source layout, code style, CI/CD and releases |
 | [overview.md](overview.md) | Goals, scope, layers, relationship to Studio Advance |
 | [core-api.md](core-api.md) | raylib-style C API and the sprite submission model |
 | [ecs.md](ecs.md) | Entity storage, components, systems, handles |

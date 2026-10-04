@@ -36,6 +36,16 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 
 16-bit generational handles: 8-bit index + 8-bit generation. The generation increments when a slot is reused, so scripts holding a stale reference get a detectable mismatch.
 
+## Implementation
+
+`include/serval/ecs.h`, `src/ecs/ecs.c` (platform-neutral, unit tested on the host and in the test ROM).
+
+- `entity_create(mask)`, `entity_destroy(e)`, `entity_alive(e)`, `ecs_reset()` (destroys everything, e.g. on room change).
+- Bit 31 of `ent_mask` is reserved as `C_ALIVE`, so free slots never match a system's required mask.
+- Generations start at 1 and skip 0 when wrapping, so no handle ever equals `ENTITY_NONE` (0).
+- Free slots are kept on a stack: creation and destruction are O(1), with no scan.
+- Component pools beyond the mask are added as engine modules need them.
+
 ## Sprite component
 
 The sprite component stores only `(sprite_id, frame)`. The render system resolves it to a VRAM tile index; see [sprites.md](sprites.md#rom-data-format).
