@@ -2,19 +2,42 @@
 
 ## Engine
 
-The runtime engine and bytecode VM will be released under **MIT or zlib** (not yet chosen). It is linked into every game ROM, so the license must be permissive and attribution-light and must impose no terms on games built with it.
+The runtime engine and bytecode VM are released under the **[MIT License](../LICENSE)**. It is linked into every game ROM, so the license must be permissive, attribution-light and impose no copyleft on games.
 
-Consequently, every dependency linked into the ROM must be compatible with that goal.
+MIT was chosen over zlib for its familiarity and because it matches libtonc's license. zlib would require no attribution in games, but games owe notices for libtonc and Maxmod regardless, so it would only remove one entry from the notices file. That advantage would return only if the engine stopped using both libraries; relicensing later needs every contributor's consent.
 
-## Third-party dependencies
+Consequently, every dependency linked into the ROM must be compatible with that goal, and the obligations they place on games are listed below.
 
-| Dependency | Use | License | Notes |
+## What ends up in a game ROM
+
+Verified against upstream on 2026-10-04. Verbatim license texts for the libraries compiled into ROMs are in [`third_party/licenses/`](../third_party/licenses/).
+
+| Component | Source | License | Obligation for a shipped game |
 | --- | --- | --- | --- |
-| libtonc | Hardware layer | Verify | Use the maintained [gbadev-org fork](https://github.com/gbadev-org/libtonc) |
-| Maxmod | Audio runtime | Permissive (verify) | Linked into ROMs |
-| `mmutil` | Soundbank builder (host tool) | Verify | Not linked into ROMs |
-| GCC (devkitARM or ARM `arm-none-eabi-gcc`) | Toolchain | GPL | Compiled games are not GPL. Check devkitARM's redistribution terms before bundling |
-| mGBA (fork) | Emulator / debugger | MPL 2.0 | File-level copyleft: publish changes to mGBA files only |
+| Serval Engine | this repo | MIT | Include copyright and permission notice |
+| libtonc | [gbadev-org/libtonc](https://github.com/gbadev-org/libtonc) | MIT (© 2005-2009 J Vijn) | Include copyright and permission notice |
+| Maxmod | [blocksds/maxmod](https://github.com/blocksds/maxmod) or [devkitPro/maxmod](https://github.com/devkitPro/maxmod) | ISC | Include copyright and permission notice |
+| libgcc (compiler runtime, e.g. division helpers) | GCC | GPL v3 + GCC Runtime Library Exception | None: the exception covers code compiled by GCC |
+| newlib (C library) | toolchain | Mix of BSD-style licenses per file | Mostly "reproduce notice in documentation"; avoid linking it (see below) |
+| C runtime startup + linker script | Serval Engine (to be written) | Engine license | Same as Serval Engine |
+
+**Bottom line:** every game must include the notices of Serval Engine, libtonc and Maxmod. The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
+
+### Rules that keep it this way
+
+- **Never include `tonc_libgba.h`.** libtonc's libgba compatibility header carries libgba's LGPL v2+ notice. It is standalone (nothing else in libtonc includes it), so exclude it when vendoring libtonc. LGPL code statically linked into a ROM would oblige games to allow relinking.
+- **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license at all. The engine also needs its own ROM header anyway, without the Nintendo logo.
+- **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset` and `memmove` (libtonc's `tonccpy`/`toncset` can back them), so newlib and its many notices are not linked. Check the link map when adding code.
+
+## Host tools
+
+These run on the developer's PC and are not linked into games. Their obligations fall on whoever redistributes them (e.g. the editor package), not on games.
+
+| Tool | License | Notes |
+| --- | --- | --- |
+| `mmutil` (soundbank builder) | BSD-3-Clause (© 2008 Mukunda Johnson) | Binary redistribution must reproduce the notice in documentation |
+| GCC toolchain (devkitARM or ARM `arm-none-eabi-gcc`) | GPL v3 | Compiled games are not GPL. Check devkitARM's redistribution terms before bundling |
+| mGBA fork (emulator / debugger) | MPL 2.0 | File-level copyleft: publish changes to mGBA files |
 
 ## Nintendo material
 

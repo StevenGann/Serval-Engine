@@ -41,7 +41,7 @@ In scope: regular tiled backgrounds, sprites (resident and streamed), the ECS, t
 
 ## Relationship to Studio Advance
 
-- Studio Advance (closed source, sibling repo `../Studio-Advance`) depends on this engine. This engine must never depend on Studio Advance.
+- Studio Advance (closed source, sibling repo `../Studio-Advance`) uses this engine, but the two are versioned independently: each game project picks an engine release, which the editor downloads from this repository's GitHub Releases ([releases.md](releases.md)). This engine must never depend on Studio Advance.
 - Studio Advance's build pipeline emits generated C (constant asset tables and bytecode) that conforms to the data formats defined here, then compiles it together with the engine.
 - The editor's packing, deduplication and palette algorithms are not part of this repository. The engine only defines the formats they produce.
 - The debug link protocol is a shared contract: this repo defines the runtime side ([debug-link.md](debug-link.md)).

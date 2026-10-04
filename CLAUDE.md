@@ -9,7 +9,8 @@ Design phase. There is no code yet; `docs/` is the source of truth. Start with `
 ## Repository relationships
 
 - `../Studio-Advance` is the closed-source Qt editor that depends on this engine. Dependency direction is one-way: **this repo must never depend on, reference code from, or describe proprietary internals of Studio Advance** (e.g. its packing/dedupe/palette algorithms, legal strategy, or business plans). It is fine to mention Studio Advance as the commercial editor.
-- The engine defines the data formats (`SpriteAsset`, `SpriteGroup`, `MapLayer`, bytecode) that the editor's build pipeline emits. Changes to these formats are cross-repo changes.
+- Versioned independently of the editor; each game project pins an engine release, downloaded from GitHub Releases. Breaking changes to the API, data formats, bytecode or debug link require a major version bump. See `docs/releases.md`.
+- The engine defines the data formats (`SpriteAsset`, `SpriteGroup`, `MapLayer`, bytecode) that the editor's build pipeline emits. Changes to these formats are cross-repo changes and breaking for existing projects.
 
 ## Hard constraints
 
@@ -19,7 +20,7 @@ Design phase. There is no code yet; `docs/` is the source of truth. Start with `
 - Prefer build-time precomputation over runtime work.
 - VRAM, palette RAM and OAM writes happen in VBlank or forced blank.
 - VM opcodes must stay platform-neutral (no hardware addresses, no hard 32-bit dependency).
-- Every ROM-linked dependency must keep games free of license obligations beyond light attribution (MIT/zlib-compatible).
+- Every ROM-linked dependency must keep games free of license obligations beyond light attribution (MIT-compatible; the engine itself is MIT). Never include libtonc's `tonc_libgba.h` (LGPL), never use devkitARM's crt0/linker script (MPL / unlicensed), keep newlib out of the link. See `docs/licensing.md`; keep `third_party/licenses/` in sync with dependency updates.
 - Never add Nintendo-owned material (BIOS, header logo bitmap).
 
 ## Style

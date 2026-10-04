@@ -14,4 +14,4 @@ It is built as three layers:
 
 ## License
 
-The engine will be released under a permissive, attribution-light license (MIT or zlib; not yet chosen) so that it can be linked into any game without imposing terms on it. See [docs/licensing.md](docs/licensing.md).
+Serval Engine is released under the [MIT License](LICENSE), so it can be linked into any game, including commercial ones. Games must include the engine's copyright notice, along with those of libtonc and Maxmod; see [docs/licensing.md](docs/licensing.md).

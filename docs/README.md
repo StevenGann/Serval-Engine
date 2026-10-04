@@ -15,5 +15,6 @@ Design documents for the runtime. Code does not exist yet; these documents are t
 | [runtime-systems.md](runtime-systems.md) | Save data, text, effects, math, entity collision, camera |
 | [debug-link.md](debug-link.md) | Runtime side of the editor/emulator debug protocol |
 | [platforms.md](platforms.md) | Portability rules and future targets (GB/GBC, DS) |
-| [licensing.md](licensing.md) | Engine license and third-party dependencies |
+| [releases.md](releases.md) | Versioning, the `serval.json` manifest, release contents |
+| [licensing.md](licensing.md) | Engine license, third-party licenses and what games must ship |
 | [open-questions.md](open-questions.md) | Undecided items that block or shape implementation |
