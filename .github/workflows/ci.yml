@@ -70,10 +70,13 @@ jobs:
           cmake --preset gba-release
           cmake --build --preset gba-release
 
+      - name: Build every example
+        run: examples/build-all.sh
+
       - uses: actions/upload-artifact@v7
         with:
           name: roms
           path: |
-            build/gba-ci/examples/*.gba
+            examples/roms/*.gba
             build/gba-ci/tests/*.gba
           if-no-files-found: error

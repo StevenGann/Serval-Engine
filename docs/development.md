@@ -37,6 +37,15 @@ ctest --preset host
 
 ROMs are written next to their ELF files, e.g. `build/gba-debug/examples/hello.gba`, with a linker map (`.map`). Open them in any GBA emulator.
 
+To build every example for a demo:
+
+```sh
+examples/build-all.sh            # optional preset argument, default gba-release
+# -> examples/roms/<name>.gba (git-ignored)
+```
+
+Each example builds separately, so one that fails to build doesn't stop the rest; failures are listed with the end of their build log, and the script exits non-zero. CI runs it too.
+
 ## Source layout
 
 | Path | Contents |
@@ -46,7 +55,7 @@ ROMs are written next to their ELF files, e.g. `build/gba-debug/examples/hello.g
 | `src/gba/` | GBA-only code (`serval`): core API (`core.c`), sprites (`sprites.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |
-| `examples/` | Example ROMs |
+| `examples/` | Example ROMs, one directory each, plus `build-all.sh` |
 | `cmake/` | Toolchain file and `serval_add_rom()` |
 | `tools/` | ROM header fixer, mGBA test runner build, release packaging |
 
