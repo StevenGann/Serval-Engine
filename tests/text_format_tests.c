@@ -38,6 +38,13 @@ static void accepts_fixed_width_types(void) {
     CHECK(equals(text_format("%u %d", big, negative), "4000000000 -5"));
 }
 
+static void left_alignment(void) {
+    CHECK(equals(text_format("[%-6s]", "UP"), "[UP    ]"));
+    CHECK(equals(text_format("[%-4d]", -7), "[-7  ]"));
+    CHECK(equals(text_format("[%-05u]", 42u), "[42   ]")); // '-' overrides '0'
+    CHECK(equals(text_format("[%-2s]", "LONGER"), "[LONGER]"));
+}
+
 static void strings_and_chars(void) {
     CHECK(equals(text_format("%s=%c", "key", 'v'), "key=v"));
 }
@@ -66,6 +73,7 @@ static void unknown_conversion_is_shown(void) {
 TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_text_and_percent},
            {"integers", integers}, {"width_and_zero_padding", width_and_zero_padding},
            {"accepts_fixed_width_types", accepts_fixed_width_types},
-           {"strings_and_chars", strings_and_chars}, {"buffers_rotate", buffers_rotate},
+           {"left_alignment", left_alignment}, {"strings_and_chars", strings_and_chars},
+           {"buffers_rotate", buffers_rotate},
            {"long_output_is_truncated", long_output_is_truncated},
            {"unknown_conversion_is_shown", unknown_conversion_is_shown});

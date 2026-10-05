@@ -20,7 +20,8 @@ void text_print(int col, int row, const char* s);
 void text_clear(void);
 
 // printf-style formatting without a C library. Supports %d %u %x %s %c %%,
-// an optional '0' flag and a field width (e.g. "%5d", "%03u"). %d, %u and %x
+// the '-' (left-align) and '0' (zero-pad) flags, and a field width (e.g.
+// "%5d", "%03u", "%-10s"). %d, %u and %x
 // take any 32-bit integer: int, unsigned, s32 or u32 (on the GBA, u32 is an
 // unsigned long, which printf's %u would reject). Returns one of four rotating
 // static buffers of TEXT_FORMAT_MAX characters, so a few results can be used

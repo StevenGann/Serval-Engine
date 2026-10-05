@@ -91,14 +91,15 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 149564 cycles (53.2%), peak 149822 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 164650 cycles (58.6%), peak 171675 (gba-release)
 ```
 
-The result is deterministic for a given build, so any change in the number comes from the code. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
+The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
 
 | Date | Commit | avg cycles | % of frame | Change |
 | --- | --- | --- | --- | --- |
-| 2026-10-04 | (bunnymark added) | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
+| 2026-10-04 | `0d320c5` | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
+| 2026-10-04 | (gravity) | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
 
 ## Code style
 

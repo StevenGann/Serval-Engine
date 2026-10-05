@@ -3,28 +3,38 @@
 // Demonstrates:
 //   - Entities built from engine components (position, velocity, sprite),
 //     updated and drawn by the engine's systems (sys_movement, sys_render)
-//   - A game-defined component and system (C_BUNNY, bounce_bunnies) working
-//     alongside the engine's
+//   - A game-defined component and system (C_BUNNY, bunny_physics: gravity
+//     and bounces) working alongside the engine's
 //   - Several colors of one sprite: one SpriteAsset per palette, same tiles
 //   - Random numbers, the HUD text layer, and per-frame CPU timing
 //
 // What to expect when booting the ROM:
 //   - A dark screen with 16 bunnies (16x16 pixels; white, gold, blue or green)
-//     flying out from the top center and bouncing off the screen edges.
-//   - Two lines of white text at the top, which bunnies bounce below:
+//     flying out from the top center. Gravity pulls them down: they bounce
+//     lower and lower, slide to a stop and come to rest along the floor
+//     (overlapping; bunnies don't collide with each other).
+//   - Three lines of white text at the top, which bunnies stay below:
 //       BUNNIES  16/128  A:ADD B:DEL
 //       CPU   x.x%    nnnnn CYCLES
+//       GRAVITY DOWN      START:OFF
+//   - The D-pad changes the direction of gravity, and it stays that way after
+//     you let go; two directions together pull diagonally. The bunnies fall
+//     toward the new side, and the third line shows the direction.
+//   - START turns gravity off: bunnies float and bounce off every edge without
+//     slowing down. Press a direction to turn it back on.
 //   - Hold A to add bunnies (two per frame) up to 128, the engine's entity
 //     limit; hold B to remove them.
 //   - CPU is the share of each frame spent on game work (the previous frame's
 //     measurement). Under 100%, the game keeps a steady 60 frames per second.
 //   - No sound. The bunnies are the same on every boot (fixed random seed).
-//   (In mGBA's default keyboard mapping, A is X and B is Z.)
+//   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
+//   START = Enter.)
 //
 // Benchmark build: compiled with BUNNYMARK_BENCH (target bunnymark_bench, run
 // by tools/bench.sh), the same code starts with 128 bunnies from a fixed seed,
-// runs 600 frames headless in mGBA and logs the average and peak CPU cycles
-// per frame. That figure is what engine optimizations are measured against.
+// gravity down and no input, runs 600 frames headless in mGBA and logs the
+// average and peak CPU cycles per frame. That figure is what engine optimizations are measured
+// against.
 //
 // Uses only Serval Engine's API; no third-party headers.
 
@@ -117,16 +127,30 @@ static const SpriteGroup bunny_group = {
 #define C_BUNNY C_GAME(0)
 
 #define START_BUNNIES 16
-#define HUD_HEIGHT 16 // two text rows; bunnies bounce below them
+#define HUD_HEIGHT 24 // three text rows; bunnies stay below them
 
 // Like raylib's bunnymark: up to 250 pixels per second each way, at 60 fps.
 #define MAX_SPEED (FX(250) / 60)
+
+// Added to a bunny's velocity every frame, in the direction of gravity.
+#define GRAVITY (FX_ONE / 4)
+
+// A bounce against the wall gravity pulls toward keeps 7/8 of the speed; below
+// this speed the bunny stops instead, so it rests without jittering.
+#define REST_SPEED (GRAVITY * 2)
+
+// While touching that wall, friction removes 1/8 of the speed along it each
+// frame, stopping the bunny below this speed.
+#define STOP_SPEED (FX_ONE / 16)
 
 #define BENCH_SEED 12345
 #define BENCH_FRAMES 600
 
 static Entity bunnies[MAX_ENT];
 static int bunny_count;
+
+// Direction of gravity on each axis: -1, 0 or 1. Starts pointing down.
+static int gravity_x = 0, gravity_y = 1;
 
 static void add_bunny(void) {
     if (bunny_count == MAX_ENT)
@@ -150,20 +174,97 @@ static void remove_bunny(void) {
 }
 #endif
 
-// Game system: reverses a bunny's velocity when it moves past a screen edge
-// or up into the HUD.
-static void bounce_bunnies(void) {
+// Speed after bouncing off the wall gravity pulls toward: 7/8 of `speed`, or
+// 0 once the bunny is slow enough to rest.
+static FIXED floor_bounce(FIXED speed) {
+    speed -= speed >> 3;
+    return speed < REST_SPEED ? 0 : speed;
+}
+
+// Friction while sliding along the wall gravity pulls toward.
+static FIXED friction(FIXED speed) {
+    speed -= speed >> 3;
+    return (speed < STOP_SPEED && speed > -STOP_SPEED) ? 0 : speed;
+}
+
+// Bounces one axis of a bunny off the ends of [lo, hi], then applies that
+// axis's gravity (-1, 0 or 1). Returns true if the bunny is on the wall that
+// gravity pulls toward (its floor), bouncing or resting.
+//
+// - A bunny that moved past a wall is mirrored back inside by the distance it
+//   overshot, as if it had bounced mid-frame. (Snapping it onto the wall would
+//   lift it a little on every bounce and keep it hopping forever.)
+// - Gravity is applied after the bounce, so it slows the rebound rather than
+//   adding to it.
+// - Bounces off the floor lose speed (floor_bounce). Once too slow, the bunny
+//   rests: it sits exactly on the floor with zero speed, and the floor cancels
+//   gravity, so it stays put even if gravity is switched off.
+static bool update_axis(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi, int gravity) {
+    bool at_lo = *pos <= lo && *vel <= 0;
+    bool at_hi = *pos >= hi && *vel >= 0;
+    bool on_floor = (at_lo && gravity < 0) || (at_hi && gravity > 0);
+
+    if (at_lo || at_hi) {
+        FIXED wall = at_lo ? lo : hi;
+        FIXED speed = *vel < 0 ? -*vel : *vel;
+        if (on_floor) {
+            speed = floor_bounce(speed);
+            if (speed == 0) {
+                *pos = wall;
+                *vel = 0;
+                return true;
+            }
+        }
+        *pos = 2 * wall - *pos;
+        if (*pos < lo)
+            *pos = lo;
+        if (*pos > hi)
+            *pos = hi;
+        *vel = at_lo ? speed : -speed;
+    }
+
+    *vel += gravity * GRAVITY;
+    return on_floor;
+}
+
+// Game system: bounces every bunny off the screen edges and the bottom of the
+// HUD, applies gravity, and slows bunnies down while they slide along a floor.
+static void bunny_physics(void) {
     const FIXED max_x = FX(screen_width() - BUNNY_SIZE);
     const FIXED min_y = FX(HUD_HEIGHT);
     const FIXED max_y = FX(screen_height() - BUNNY_SIZE);
     for (u32 i = 0; i < MAX_ENT; i++) {
         if (!(ent_mask[i] & C_BUNNY))
             continue;
-        if ((pos_x[i] < 0 && vel_x[i] < 0) || (pos_x[i] > max_x && vel_x[i] > 0))
-            vel_x[i] = -vel_x[i];
-        if ((pos_y[i] < min_y && vel_y[i] < 0) || (pos_y[i] > max_y && vel_y[i] > 0))
-            vel_y[i] = -vel_y[i];
+        if (update_axis(&pos_x[i], &vel_x[i], 0, max_x, gravity_x))
+            vel_y[i] = friction(vel_y[i]);
+        if (update_axis(&pos_y[i], &vel_y[i], min_y, max_y, gravity_y))
+            vel_x[i] = friction(vel_x[i]);
     }
+}
+
+#ifndef BUNNYMARK_BENCH
+// Points gravity along the D-pad directions being held; START turns it off.
+static void control_gravity(void) {
+    int x = button_down(BUTTON_RIGHT) - button_down(BUTTON_LEFT);
+    int y = button_down(BUTTON_DOWN) - button_down(BUTTON_UP);
+    if (x || y) {
+        gravity_x = x;
+        gravity_y = y;
+    } else if (button_pressed(BUTTON_START)) {
+        gravity_x = gravity_y = 0;
+    }
+}
+#endif
+
+static const char* gravity_name(void) {
+    static const char* const names[3][3] = {
+        // [gravity_y + 1][gravity_x + 1]
+        {"UP-LEFT", "UP", "UP-RIGHT"},
+        {"LEFT", "OFF", "RIGHT"},
+        {"DOWN-LEFT", "DOWN", "DOWN-RIGHT"},
+    };
+    return names[gravity_y + 1][gravity_x + 1];
 }
 
 static void draw_hud(void) {
@@ -171,12 +272,13 @@ static void draw_hud(void) {
     u32 tenths = cycles * 1000 / frame_budget_cycles(); // percent, one decimal
     text_print(0, 0, text_format("BUNNIES %3d/%d  A:ADD B:DEL", bunny_count, MAX_ENT));
     text_print(0, 1, text_format("CPU %3u.%u%%  %7u CYCLES", tenths / 10, tenths % 10, cycles));
+    text_print(0, 2, text_format("GRAVITY %-10s START:OFF", gravity_name()));
 }
 
 // Everything bunnymark does in a frame, shared by the demo and the benchmark.
 static void update(void) {
     sys_movement();
-    bounce_bunnies();
+    bunny_physics();
     sys_render();
     draw_hud();
 }
@@ -221,6 +323,7 @@ int main(void) {
 
     for (;;) {
         frame_begin();
+        control_gravity();
         if (button_down(BUTTON_A)) {
             add_bunny();
             add_bunny();
