@@ -48,6 +48,13 @@ static u32 cycles_now(void) {
 }
 
 void serval_init(void) {
+    // Faster cartridge access than the power-on default (4/2 wait states, no
+    // prefetch): ROM at 3/1 wait states with the prefetch buffer on, save RAM
+    // at 8. This is the standard setting commercial games use and every
+    // cartridge and flash cart supports. Code and data in ROM, including the
+    // game's own, run noticeably faster.
+    REG_WAITCNT = WS_STANDARD;
+
     irq_init(NULL);
     irq_enable(II_VBLANK);
 

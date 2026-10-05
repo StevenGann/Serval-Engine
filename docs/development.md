@@ -104,7 +104,8 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-04 | `e3caba8` | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
 | 2026-10-04 | `b79fc9e` | 83,072 | 29.5% | `sprite_draw`/`sys_render` as ARM code in IWRAM, per-sprite draw data resolved at load, no per-sprite call |
 | 2026-10-04 | `245f01f` | 82,929 | 29.5% | Debug checks (compiled out of release builds) |
-| 2026-10-04 | (HUD layering) | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
+| 2026-10-04 | `7a3e296` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
+| 2026-10-04 | (text and ROM speed) | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
 
 ## Code style
 

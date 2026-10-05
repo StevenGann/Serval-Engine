@@ -77,7 +77,9 @@ void entity_destroy(Entity e) {
     free_slots[free_count++] = (u8)index;
 }
 
-void sys_movement(void) {
+// Runs as ARM code from IWRAM on the GBA (SERVAL_IWRAM_CODE): it touches every
+// entity every frame.
+SERVAL_IWRAM_CODE void sys_movement(void) {
     for (u32 i = 0; i < MAX_ENT; i++) {
         if ((ent_mask[i] & (C_POS | C_VEL)) == (C_POS | C_VEL)) {
             pos_x[i] += vel_x[i];

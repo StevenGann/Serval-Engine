@@ -32,17 +32,32 @@ static void put_padded(Buffer* b, const char* s, u32 n, Field f) {
     }
 }
 
-// Digits of `value` in `base`, most significant first; returns the count.
-static u32 digits(u32 value, u32 base, char* out) {
-    char reversed[10];
+// Decimal digits of `value`, most significant first; returns the count. Uses
+// repeated subtraction instead of division, which the GBA does in software.
+static u32 decimal_digits(u32 value, char* out) {
+    static const u32 powers[] = {1000000000, 100000000, 10000000, 1000000, 100000,
+                                 10000,      1000,      100,      10,      1};
     u32 n = 0;
-    do {
-        u32 d = value % base;
-        reversed[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
-        value /= base;
-    } while (value);
-    for (u32 i = 0; i < n; i++)
-        out[i] = reversed[n - 1 - i];
+    for (u32 p = 0; p < 10; p++) {
+        char digit = '0';
+        while (value >= powers[p]) {
+            value -= powers[p];
+            digit++;
+        }
+        if (n || digit != '0' || p == 9) // skip leading zeros, keep a lone 0
+            out[n++] = digit;
+    }
+    return n;
+}
+
+// Lowercase hex digits of `value`, most significant first; returns the count.
+static u32 hex_digits(u32 value, char* out) {
+    u32 n = 0;
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        u32 nibble = (value >> shift) & 0xF;
+        if (n || nibble || shift == 0)
+            out[n++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
+    }
     return n;
 }
 
@@ -80,7 +95,7 @@ const char* text_format(const char* fmt, ...) {
         case 'd': {
             int v = va_arg(args, int);
             u32 magnitude = v < 0 ? 0u - (u32)v : (u32)v;
-            u32 n = digits(magnitude, 10, num + 1);
+            u32 n = decimal_digits(magnitude, num + 1);
             if (v < 0) {
                 if (f.pad == '0') { // sign goes before zero padding: -007
                     put(&b, '-');
@@ -96,10 +111,10 @@ const char* text_format(const char* fmt, ...) {
             break;
         }
         case 'u':
-            put_padded(&b, num, digits(va_arg(args, unsigned), 10, num), f);
+            put_padded(&b, num, decimal_digits(va_arg(args, unsigned), num), f);
             break;
         case 'x':
-            put_padded(&b, num, digits(va_arg(args, unsigned), 16, num), f);
+            put_padded(&b, num, hex_digits(va_arg(args, unsigned), num), f);
             break;
         case 's': {
             const char* s = va_arg(args, const char*);
