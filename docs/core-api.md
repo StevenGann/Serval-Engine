@@ -4,6 +4,7 @@ The lowest engine layer is a raylib-style flat C API over libtonc. It is also th
 
 ```c
 void serval_init(void);               // once at startup: interrupts, display, OAM, ECS
+void serval_splash(void);             // optional: the "Made with Serval Engine" splash
 
 void frame_begin(void);
 void frame_end(void);                 // VBlank sync + flush shadow OAM/palettes/queues
@@ -51,6 +52,10 @@ Each problem is reported once rather than every frame. Release builds compile th
 **Hardware the engine configures:** `serval_init()` sets `WAITCNT` to the standard 3/1 ROM wait states with prefetch (power-on default is 4/2 without prefetch), which speeds up all code and data in ROM, including the game's.
 
 **Hardware the engine reserves:** the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
+
+## Splash screen
+
+`serval_splash()` shows "made with" (grey) and "Serval Engine" (white) on black and returns about three seconds later: a 500 ms fade-in, a 500 ms hold, a coin-like jingle, a 1.5 s hold and a 500 ms fade-out (hardware fade-to-black on the text layer). Any button after the fade-in skips the rest. It borrows the backdrop, the text layer, BG palette banks 14-15 and PSG square 1, and puts them back; the screen is left black. A logo is planned. Pong and Asteroids call it.
 
 ## Dependencies stay behind the API
 

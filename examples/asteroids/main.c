@@ -1,6 +1,7 @@
 // asteroids: the arcade classic. Steer a ship, shoot rocks, survive waves.
 //
 // Demonstrates:
+//   - The engine's splash screen (serval_splash)
 //   - Rotating sprites (sprite_draw_rotated / spr_angle): the ship turns, and
 //     rocks spin while sharing a few rotation matrices
 //   - Wrap-around physics (physics_set_wrap): everything leaving one edge
@@ -15,6 +16,9 @@
 //   - An attract mode: rocks drift behind the title screen
 //
 // What to expect when booting the ROM:
+//   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
+//     on black, a coin-like jingle plays, and they fade out (about 3 seconds;
+//     any button skips it once the text is in).
 //   - Brown, cratered rocks of three sizes drift and spin across a dark blue
 //     screen behind "A S T E R O I D S", "PRESS START" and the controls.
 //   - After START (a rising chime): a silver arrowhead ship in the center,
@@ -586,6 +590,7 @@ static void update_playing(void) {
 
 int main(void) {
     serval_init();
+    serval_splash();
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&asteroids_group);
     psg_table_set(sound_table, SOUND_COUNT);

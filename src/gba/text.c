@@ -1,5 +1,7 @@
 #include "serval/text.h"
 
+#include "internal.h"
+
 #include <tonc.h>
 
 // Layout on background 0: the font's 96 glyphs (ASCII 32-127) are 4bpp tiles
@@ -32,7 +34,19 @@ static void text_init(void) {
     ready = true;
 }
 
-void text_print(int col, int row, const char* s) {
+bool serval_text_active(void) {
+    return ready;
+}
+
+void serval_text_deactivate(void) {
+    if (!ready)
+        return;
+    memset32(&se_mem[TEXT_SCREENBLOCK][0], 0, sizeof(SCREENBLOCK) / 4);
+    REG_DISPCNT &= ~DCNT_BG0;
+    ready = false; // the next text call sets the layer up again
+}
+
+void serval_text_print_bank(int col, int row, const char* s, u32 palbank) {
     if (!ready)
         text_init();
     if (row < 0 || row >= TEXT_ROWS)
@@ -44,8 +58,12 @@ void text_print(int col, int row, const char* s) {
         if (c < FIRST_GLYPH || c >= FIRST_GLYPH + GLYPH_COUNT)
             c = '?';
         se_mem[TEXT_SCREENBLOCK][row * 32 + col] =
-            (SCR_ENTRY)(SE_PALBANK(TEXT_PALBANK) | (c - FIRST_GLYPH));
+            (SCR_ENTRY)(SE_PALBANK(palbank) | (c - FIRST_GLYPH));
     }
+}
+
+void text_print(int col, int row, const char* s) {
+    serval_text_print_bank(col, row, s, TEXT_PALBANK);
 }
 
 void text_print_line(int col, int row, const char* s) {

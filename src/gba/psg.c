@@ -157,6 +157,14 @@ void psg_stop_all(void) {
         silence(c);
 }
 
+static void play(const PsgSound* s) {
+    Voice* v = &voices[s->channel];
+    v->sound = s;
+    v->note = 0;
+    v->frames_left = s->frames;
+    start_tone(s, s->note_count ? s->notes[0] : s->frequency);
+}
+
 void psg_play(u16 sound_id) {
     if (sound_id >= psg_count) {
         SERVAL_WARN("psg_play: sound ID %u is not in the sound table (%u sounds)", sound_id,
@@ -168,11 +176,16 @@ void psg_play(u16 sound_id) {
         SERVAL_WARN("psg_play: sound %u has an invalid channel (%u)", sound_id, s->channel);
         return;
     }
-    Voice* v = &voices[s->channel];
-    v->sound = s;
-    v->note = 0;
-    v->frames_left = s->frames;
-    start_tone(s, s->note_count ? s->notes[0] : s->frequency);
+    play(s);
+}
+
+void serval_psg_play_sound(const PsgSound* sound) {
+    play(sound);
+}
+
+void serval_psg_silence(u32 channel) {
+    if (channel < CHANNELS)
+        silence(channel);
 }
 
 void serval_psg_update(void) {

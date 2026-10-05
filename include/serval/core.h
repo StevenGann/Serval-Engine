@@ -22,6 +22,14 @@
 // subsystems. Call once at the start of main().
 void serval_init(void);
 
+// Shows the "Made with Serval Engine" splash screen, then returns: about three
+// seconds of fading in, a jingle, and fading out on a black screen. Pressing
+// any button once it has faded in skips the rest. Call it after serval_init(),
+// before loading your game's graphics. Leaves the screen black, and puts back
+// what it borrowed (backdrop color, text layer, palette entries, sound
+// channel).
+void serval_splash(void);
+
 // Starts a frame: polls input and clears the sprite draw list.
 void frame_begin(void);
 

@@ -1,6 +1,7 @@
 // pong: single-player Pong against a simple computer opponent.
 //
 // Demonstrates:
+//   - The engine's splash screen (serval_splash)
 //   - A complete small game: title screen, serve, play, pause, game over
 //   - Engine physics for the ball (sys_physics with open left and right edges,
 //     so it bounces off the top and bottom but scores by leaving the screen)
@@ -15,6 +16,9 @@
 //   - Text for the score, the net and messages
 //
 // What to expect when booting the ROM:
+//   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
+//     on black, a coin-like jingle plays, and they fade out (about 3 seconds;
+//     any button skips it once the text is in).
 //   - A dark navy screen with "P O N G", "PRESS START" and the controls.
 //   - After START (a rising four-note chime): a dotted net down the middle,
 //     your glossy blue paddle on the left, the computer's orange one on the
@@ -416,6 +420,7 @@ static void update_flashes(void) {
 
 int main(void) {
     serval_init();
+    serval_splash();
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&pong_group);
     psg_table_set(sound_table, SOUND_COUNT);

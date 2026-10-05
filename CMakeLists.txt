@@ -50,6 +50,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/core.c
         src/gba/debug.c
         src/gba/psg.c
+        src/gba/splash.c
         src/gba/sprites.c
         src/gba/text.c
     )
