@@ -65,8 +65,10 @@ void sprite_table_set(const SpriteAsset *const *table, u16 count);
 bool sprite_group_load(const SpriteGroup *group);   // false if VRAM/palettes run out
 void sprite_groups_reset(void);                     // unload all
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
-                                                    // SPRITE_FLIP_H/V, SPRITE_PRIORITY(n)
+                                                    // SPRITE_FLIP_H/V, layer flags
 ```
+
+**Layering:** by default sprites draw between the foreground (BG1) and the playfield (BG2), so the HUD (BG0) stays on top. `SPRITE_ABOVE_FOREGROUND`, `SPRITE_ABOVE_HUD` and `SPRITE_BEHIND_PLAYFIELD` move a sprite to another layer (see [tilemaps.md](tilemaps.md#default-layer-roles)).
 
 `sprite_draw` subtracts the sprite's origin, skips sprites that are fully off screen (so they don't use one of the 128 hardware sprites), and does nothing for sprites that are not loaded.
 

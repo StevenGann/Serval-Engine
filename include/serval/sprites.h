@@ -47,10 +47,19 @@ typedef struct {
 // Most sprite IDs a sprite table may hold.
 #define SPRITE_MAX 512
 
-// sprite_draw() flags
+// sprite_draw() flags, combinable with |.
 #define SPRITE_FLIP_H (1 << 0)
 #define SPRITE_FLIP_V (1 << 1)
-#define SPRITE_PRIORITY(n) (((n) & 3) << 2) // 0 (front) to 3; relative to backgrounds
+
+// Layering, one of these at most. The screen's layers, front to back, are the
+// HUD (background 0, where text.h draws), the foreground (background 1),
+// sprites, the playfield (background 2) and the background (background 3); see
+// docs/tilemaps.md. By default a sprite sits between the foreground and the
+// playfield, so HUD text always stays readable. Among sprites on the same
+// layer, the one drawn first is in front.
+#define SPRITE_ABOVE_FOREGROUND (3 << 2) // above the foreground, still below the HUD
+#define SPRITE_ABOVE_HUD (2 << 2)        // above everything
+#define SPRITE_BEHIND_PLAYFIELD (1 << 2) // behind the playfield, above the background
 
 // Registers the game's sprite table: table[id] is the sprite with that ID.
 // Unloads all sprite groups.

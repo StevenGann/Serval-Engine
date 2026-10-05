@@ -48,6 +48,17 @@ void text_print(int col, int row, const char* s) {
     }
 }
 
+void text_print_line(int col, int row, const char* s) {
+    text_print(col, row, s);
+    if (row < 0 || row >= TEXT_ROWS)
+        return;
+    int end = col;
+    while (*s++)
+        end++;
+    for (int c = end < 0 ? 0 : end; c < TEXT_COLS; c++)
+        se_mem[TEXT_SCREENBLOCK][row * 32 + c] = 0;
+}
+
 void text_clear(void) {
     if (!ready)
         text_init();

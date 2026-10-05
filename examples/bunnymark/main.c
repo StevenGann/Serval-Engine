@@ -270,9 +270,10 @@ static const char* gravity_name(void) {
 static void draw_hud(void) {
     u32 cycles = frame_cpu_cycles();
     u32 tenths = cycles * 1000 / frame_budget_cycles(); // percent, one decimal
-    text_print(0, 0, text_format("BUNNIES %3d/%d  A:ADD B:DEL", bunny_count, MAX_ENT));
-    text_print(0, 1, text_format("CPU %3u.%u%%  %7u CYCLES", tenths / 10, tenths % 10, cycles));
-    text_print(0, 2, text_format("GRAVITY %-10s START:OFF", gravity_name()));
+    text_print_line(0, 0, text_format("BUNNIES %3d/%d  A:ADD B:DEL", bunny_count, MAX_ENT));
+    text_print_line(0, 1,
+                    text_format("CPU %3u.%u%%  %7u CYCLES", tenths / 10, tenths % 10, cycles));
+    text_print_line(0, 2, text_format("GRAVITY %-10s START:OFF", gravity_name()));
 }
 
 // Everything bunnymark does in a frame, shared by the demo and the benchmark.

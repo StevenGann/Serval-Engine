@@ -218,11 +218,12 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
 
     // Coordinates wrap in hardware (9-bit x, 8-bit y), so negative positions
     // are masked rather than passed through. Flip flags map onto attr1 bits
-    // 12-13, priority onto attr2 bits 10-11.
+    // 12-13. The layer flag (bits 2-3) is the hardware priority XOR 2, so no
+    // flag means priority 2: behind backgrounds 0-1, in front of 2-3.
     OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
     obj->attr0 = (u16)(d->attr0 | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)x & ATTR1_X_MASK) | ((flags & 3) << 12));
-    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((flags & 0xC) << 8));
+    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
 }
 
 SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {

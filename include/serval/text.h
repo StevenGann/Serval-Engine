@@ -16,6 +16,11 @@
 // sets up the font and turns layer 0 on.
 void text_print(int col, int row, const char* s);
 
+// Like text_print, then blanks the rest of the row, so text that got shorter
+// (say a score going from 10 to 9) leaves nothing behind. Use it for lines
+// that are redrawn with changing content, such as a HUD.
+void text_print_line(int col, int row, const char* s);
+
 // Clears every character cell.
 void text_clear(void);
 

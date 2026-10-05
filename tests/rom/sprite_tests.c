@@ -93,10 +93,22 @@ static void draw_applies_frame_origin_and_palette_slot(void) {
 }
 
 static void draw_applies_flags(void) {
-    draw_one(SPR_SMALL, 0, 10, 10, SPRITE_FLIP_H | SPRITE_FLIP_V | SPRITE_PRIORITY(2));
+    draw_one(SPR_SMALL, 0, 10, 10, SPRITE_FLIP_H | SPRITE_FLIP_V);
     CHECK(oam_mem[0].attr1 & ATTR1_HFLIP);
     CHECK(oam_mem[0].attr1 & ATTR1_VFLIP);
+}
+
+static void layers_map_to_hardware_priority(void) {
+    // Default: priority 2, behind the HUD (BG0) and foreground (BG1).
+    draw_one(SPR_SMALL, 0, 10, 10, 0);
     CHECK((oam_mem[0].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(2));
+    draw_one(SPR_SMALL, 0, 10, 10, SPRITE_ABOVE_FOREGROUND);
+    CHECK((oam_mem[0].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(1));
+    draw_one(SPR_SMALL, 0, 10, 10, SPRITE_ABOVE_HUD | SPRITE_FLIP_H);
+    CHECK((oam_mem[0].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(0));
+    CHECK(oam_mem[0].attr1 & ATTR1_HFLIP);
+    draw_one(SPR_SMALL, 0, 10, 10, SPRITE_BEHIND_PLAYFIELD);
+    CHECK((oam_mem[0].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(3));
 }
 
 static void partly_offscreen_wraps_coordinates(void) {
@@ -205,6 +217,7 @@ TEST_SUITE(sprite_tests, "sprites",
            {"draw_applies_frame_origin_and_palette_slot",
             draw_applies_frame_origin_and_palette_slot},
            {"draw_applies_flags", draw_applies_flags},
+           {"layers_map_to_hardware_priority", layers_map_to_hardware_priority},
            {"partly_offscreen_wraps_coordinates", partly_offscreen_wraps_coordinates},
            {"fully_offscreen_is_not_drawn", fully_offscreen_is_not_drawn},
            {"unloaded_sprite_or_bad_frame_is_not_drawn", unloaded_sprite_or_bad_frame_is_not_drawn},

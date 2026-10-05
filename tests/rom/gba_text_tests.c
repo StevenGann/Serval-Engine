@@ -35,6 +35,23 @@ static void print_clips_and_replaces_unprintable(void) {
     text_print(0, -1, "z");
 }
 
+static void print_line_blanks_the_rest_of_the_row(void) {
+    text_clear();
+    text_print(0, 4, "SCORE 10");
+    text_print_line(0, 4, "SCORE 9");
+    CHECK((TEXT_MAP[4 * 32 + 6] & SE_ID_MASK) == GLYPH('9'));
+    CHECK(TEXT_MAP[4 * 32 + 7] == 0); // the old '0' is gone
+    CHECK(TEXT_MAP[4 * 32 + TEXT_COLS - 1] == 0);
+    text_print(0, 5, "keep");
+    text_print_line(0, 4, "x");
+    CHECK((TEXT_MAP[5 * 32] & SE_ID_MASK) == GLYPH('k')); // other rows untouched
+}
+
+static void hud_is_drawn_above_sprites(void) {
+    text_print(0, 0, " ");
+    CHECK((REG_BG0CNT & BG_PRIO_MASK) == BG_PRIO(0)); // sprites default to priority 2
+}
+
 static void clear_blanks_the_map(void) {
     text_print(0, 0, "x");
     text_clear();
@@ -56,4 +73,6 @@ static void font_is_loaded(void) {
 TEST_SUITE(gba_text_tests, "gba_text",
            {"print_writes_glyphs_and_enables_layer", print_writes_glyphs_and_enables_layer},
            {"print_clips_and_replaces_unprintable", print_clips_and_replaces_unprintable},
+           {"print_line_blanks_the_rest_of_the_row", print_line_blanks_the_rest_of_the_row},
+           {"hud_is_drawn_above_sprites", hud_is_drawn_above_sprites},
            {"clear_blanks_the_map", clear_blanks_the_map}, {"font_is_loaded", font_is_loaded});

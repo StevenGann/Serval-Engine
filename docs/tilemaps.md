@@ -15,6 +15,8 @@ Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffe
 
 The editor exposes these as room layers, with hardware limits visible.
 
+Each background's hardware priority equals its number (BG0 = 0, ..., BG3 = 3), and sprites default to priority 2, which gives this order from front to back: HUD, foreground, sprites, playfield, parallax background. Sprites can opt into other positions with layer flags ([sprites.md](sprites.md#api)).
+
 ## Metatiles
 
 Four screen entries plus a collision byte. They cut level data about 4× and give collision a natural granularity. Tile deduplication at build time also matches H/V-flipped tiles.
