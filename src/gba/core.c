@@ -68,6 +68,7 @@ void serval_init(void) {
     sprite_groups_reset();
     ecs_reset();
     random_seed(0);
+    serval_psg_init();
 
     cycle_counter_start();
     frame_start_cycles = cycles_now();
@@ -87,6 +88,7 @@ void frame_end(void) {
     last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
     oam_copy(oam_mem, serval_shadow_oam, 128);
+    serval_psg_update();
 }
 
 u32 random_entropy(void) {

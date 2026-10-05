@@ -48,6 +48,7 @@ if(SERVAL_TARGET_GBA)
         ${SERVAL_PORTABLE_SOURCES}
         src/gba/core.c
         src/gba/debug.c
+        src/gba/psg.c
         src/gba/sprites.c
         src/gba/text.c
     )

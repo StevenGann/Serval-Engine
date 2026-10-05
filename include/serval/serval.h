@@ -4,6 +4,7 @@
 // Serval Engine umbrella header. Everything a game needs; no third-party
 // headers required.
 
+#include "serval/audio.h"
 #include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"

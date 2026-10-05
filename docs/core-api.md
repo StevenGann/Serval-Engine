@@ -29,6 +29,7 @@ Other modules, all in `include/serval/`:
 | Header | Provides |
 | --- | --- |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
+| `audio.h` | PSG sound effects on the tone generators: `psg_table_set()`, `psg_play()`, `psg_stop_all()`; `PsgSound` (frequency, frames, duty, volume, fade, pitch slide, optional melody) |
 | `physics.h` | Bouncing bodies (`C_BODY`): `physics_set_gravity()`, `physics_set_bounds()`, `physics_set_open_edges()`, `sys_physics()`; per-entity size, bounce and friction. For balls, particles and debris, not platformer characters. `body_overlap(a, b)` tests two bodies' rectangles; a body without `C_VEL` is a static collider |
 | `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`) |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`; `random_entropy()` for a seed that varies between runs (e.g. taken when the player presses START) |
@@ -49,7 +50,7 @@ Each problem is reported once rather than every frame. Release builds compile th
 
 **Hardware the engine configures:** `serval_init()` sets `WAITCNT` to the standard 3/1 ROM wait states with prefetch (power-on default is 4/2 without prefetch), which speeds up all code and data in ROM, including the game's.
 
-**Hardware the engine reserves:** timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
+**Hardware the engine reserves:** the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
 
 ## Dependencies stay behind the API
 

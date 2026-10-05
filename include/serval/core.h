@@ -25,7 +25,8 @@ void serval_init(void);
 // Starts a frame: polls input and clears the sprite draw list.
 void frame_begin(void);
 
-// Ends a frame: waits for VBlank, then flushes the shadow OAM to hardware.
+// Ends a frame: waits for VBlank, then flushes the shadow OAM to hardware and
+// advances sound effects (notes and lengths).
 void frame_end(void);
 
 // CPU cycles the previous frame spent between frame_begin() and frame_end()

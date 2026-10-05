@@ -21,6 +21,8 @@ Set per project at build time:
 
 Unused by Maxmod, so exposed as a zero-mixer-cost SFX API for UI bleeps and pickups.
 
+**Implemented** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2 and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests), stepped once per frame by `frame_end()`. Fields left out default sensibly. The wave channel (3) is unused so far. `examples/pong` uses it for every sound.
+
 ## API
 
 ```c

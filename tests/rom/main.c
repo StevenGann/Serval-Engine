@@ -10,6 +10,7 @@ extern const TestSuite core_tests;
 extern const TestSuite libc_tests;
 extern const TestSuite sprite_tests;
 extern const TestSuite gba_text_tests;
+extern const TestSuite audio_tests;
 
 void test_output(const char* line) {
     debug_log(line);
@@ -20,7 +21,7 @@ int main(void) {
 
     static const TestSuite* const suites[] = {
         &ecs_tests,  &math_tests, &physics_tests, &random_tests,   &text_format_tests,
-        &core_tests, &libc_tests, &sprite_tests,  &gba_text_tests,
+        &core_tests, &libc_tests, &sprite_tests,  &gba_text_tests, &audio_tests,
     };
     debug_exit((int)test_run(suites, sizeof(suites) / sizeof(suites[0])));
 }
