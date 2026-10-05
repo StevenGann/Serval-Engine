@@ -8,8 +8,8 @@
 u8 body_w[MAX_ENT], body_h[MAX_ENT];
 u8 body_bounce[MAX_ENT];
 u8 body_friction[MAX_ENT];
-// Word-aligned so limit_loop() can skip four bodies without a limit at once.
-u8 body_max_fall[MAX_ENT] __attribute__((aligned(4)));
+// Word-aligned so limit_loop() can skip two bodies without a limit at once.
+u16 body_max_fall[MAX_ENT] __attribute__((aligned(4)));
 // Word-aligned so sys_physics() can check four at once for a scaled gravity.
 s8 body_gravity[MAX_ENT] __attribute__((aligned(4)));
 // Shared with sys_map_movement (map.h). Word-aligned so sys_physics() can
@@ -338,8 +338,8 @@ static ROM_CALL void report_exits(void) {
 // body_max_fall, after gravity: a separate pass rather than more work in
 // physics_loop(), whose registers are all in use (adding it there cost
 // bunnymark 2,900 cycles per frame). Most bodies have no limit, so the pass
-// reads the limits sixteen at a time (four u32 words; may_alias makes that
-// legal) and skips sixteen zeros at once: about 200 cycles a frame in
+// reads the limits sixteen at a time (eight u32 words; may_alias makes that
+// legal) and skips sixteen zeros at once: about 300 cycles a frame in
 // bunnymark (no limits), with the loop kept rolled to save IWRAM. Groups with limits are handled
 // out of line, in ROM (hence long_call from IWRAM), to keep IWRAM small: games limit a few bodies.
 
@@ -359,9 +359,10 @@ static ROM_CALL void limit_group(u32 first) {
 static inline __attribute__((always_inline)) void limit_loop(void) {
     const Word* words = (const Word*)body_max_fall;
 #pragma GCC unroll 1
-    for (u32 w = 0; w < MAX_ENT / 4; w += 4) {
-        if (words[w] | words[w + 1] | words[w + 2] | words[w + 3])
-            limit_group(w * 4);
+    for (u32 w = 0; w < MAX_ENT / 2; w += 8) {
+        if (words[w] | words[w + 1] | words[w + 2] | words[w + 3] | words[w + 4] | words[w + 5] |
+            words[w + 6] | words[w + 7])
+            limit_group(w * 2);
     }
 }
 
@@ -413,14 +414,37 @@ static FIXED vel_of(const FIXED* vel, u32 i) {
     return (ent_mask[i] & C_VEL) ? vel[i] : 0;
 }
 
+// How far to move a's position to compare it with b's: the camera when a is
+// on the screen (SPRITE_SCREEN) and b in the world, minus it the other way
+// around, otherwise nothing.
+static void screen_to_world(u32 a, u32 b, FIXED* x, FIXED* y) {
+    *x = *y = 0;
+    u32 a_screen = spr_flags[a] & SPRITE_SCREEN, b_screen = spr_flags[b] & SPRITE_SCREEN;
+    if (a_screen == b_screen)
+        return;
+    FIXED cx = FX(camera_x()), cy = FX(camera_y());
+    *x = a_screen ? cx : -cx;
+    *y = a_screen ? cy : -cy;
+}
+
+bool serval_body_overlap_mixed(u32 a, u32 b) {
+    FIXED ox, oy;
+    screen_to_world(a, b, &ox, &oy);
+    FIXED ax = pos_x[a] + ox, ay = pos_y[a] + oy;
+    return ax < pos_x[b] + FX(body_w[b]) && pos_x[b] < ax + FX(body_w[a]) &&
+           ay < pos_y[b] + FX(body_h[b]) && pos_y[b] < ay + FX(body_h[a]);
+}
+
 u32 body_hit_side(u32 a, u32 b) {
     if (a >= MAX_ENT || b >= MAX_ENT || a == b || !body_overlap(a, b))
         return 0;
+    FIXED ox, oy;
+    screen_to_world(a, b, &ox, &oy);
     const FIXED aw = FX(body_w[a]), ah = FX(body_h[a]), bw = FX(body_w[b]), bh = FX(body_h[b]);
     // Relative motion this frame, and a's position relative to b before it.
     const FIXED dx = vel_of(vel_x, a) - vel_of(vel_x, b);
     const FIXED dy = vel_of(vel_y, a) - vel_of(vel_y, b);
-    const FIXED rx = (pos_x[a] - pos_x[b]) - dx, ry = (pos_y[a] - pos_y[b]) - dy;
+    const FIXED rx = (pos_x[a] + ox - pos_x[b]) - dx, ry = (pos_y[a] + oy - pos_y[b]) - dy;
 
     // Gap a had to close along each axis (negative: they already overlapped).
     FIXED gap_x = -1, gap_y = -1;

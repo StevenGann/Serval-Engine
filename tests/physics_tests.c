@@ -245,7 +245,7 @@ static void max_fall_limits_falling(void) {
     physics_set_gravity(0, FX_ONE / 4);
     u32 i = make_body(FX(10), 0, FX(1), 0);
     u32 free = make_body(FX(40), 0, 0, 0); // no limit
-    body_max_fall[i] = 3;
+    body_max_fall[i] = FX(3);
     FIXED fastest = 0;
     for (int f = 0; f < 60; f++) {
         step(1);
@@ -273,7 +273,7 @@ static void max_fall_limits_wrapping_bodies(void) {
     physics_set_wrap(false, true);
     physics_set_gravity(0, FX_ONE);
     u32 i = make_body(FX(10), 0, 0, 0);
-    body_max_fall[i] = 2;
+    body_max_fall[i] = FX(2);
     step(30);
     CHECK(vel_y[i] == FX(2));
     reset();
@@ -594,7 +594,7 @@ static void max_fall_with_gravity_scale(void) {
     physics_set_gravity(0, FX_ONE / 4);
     u32 up = make_body(0, 0, 0, 0);
     body_gravity[up] = BODY_GRAVITY(-16);
-    body_max_fall[up] = 2;
+    body_max_fall[up] = FX(2);
     step(30);
     CHECK(vel_y[up] == -FX(2));
     reset();
@@ -696,6 +696,47 @@ static void wrapping_axes_report_no_contacts(void) {
     reset();
 }
 
+// A screen-space entity (SPRITE_SCREEN) against a world-space one: compared
+// in the world, adding the camera to the screen-space one's position.
+static void screen_and_world_bodies_meet_in_the_world(void) {
+    reset();
+    u32 shot = make_body(FX(20), FX(30), 0, -FX(4)); // on the screen
+    spr_flags[shot] = SPRITE_SCREEN;
+    u32 turret = make_body(FX(20), FX(522), 0, 0); // in the world, its bottom at 532
+    u32 other = make_body(FX(20), FX(30), 0, 0);   // in the world, where the shot is drawn
+    camera_set(0, 500);
+    CHECK(body_overlap(shot, turret) && body_overlap(turret, shot));
+    CHECK(!body_overlap(shot, other) && !body_overlap(other, shot));
+    // The shot flew up into the turret's bottom this frame.
+    CHECK(body_hit_side(shot, turret) == BODY_SIDE_TOP);
+    CHECK(body_hit_side(turret, shot) == BODY_SIDE_BOTTOM);
+    CHECK(body_hit_side(shot, other) == 0);
+    camera_set(0, 520); // out of reach again
+    CHECK(!body_overlap(shot, turret) && body_hit_side(shot, turret) == 0);
+    spr_flags[turret] = SPRITE_SCREEN; // both on the screen: as they are
+    CHECK(body_overlap(shot, other) == false && body_overlap(shot, turret) == false);
+    pos_y[turret] = FX(35);
+    CHECK(body_overlap(shot, turret));
+    camera_set(0, 0);
+}
+
+// body_max_fall is fixed point: a limit of 1.5 pixels per frame, on a body
+// past the first sixteen slots (the pass skips sixteen bodies without limits
+// at once).
+static void max_fall_takes_fractions(void) {
+    reset();
+    physics_set_bounds(-100000, -100000, 100000, 100000);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 i = 0;
+    for (int k = 0; k < 20; k++)
+        i = make_body(FX(10), 0, 0, 0);
+    CHECK(i >= 16);
+    body_max_fall[i] = FX(3) / 2;
+    step(30);
+    CHECK(vel_y[i] == FX(3) / 2);
+    CHECK(vel_y[0] == FX(30) / 4);
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
@@ -729,4 +770,7 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"contacts_report_each_wall", contacts_report_each_wall},
            {"contacts_while_resting_and_off", contacts_while_resting_and_off},
            {"contacts_report_exits_through_open_edges", contacts_report_exits_through_open_edges},
-           {"wrapping_axes_report_no_contacts", wrapping_axes_report_no_contacts});
+           {"wrapping_axes_report_no_contacts", wrapping_axes_report_no_contacts},
+           {"max_fall_takes_fractions", max_fall_takes_fractions},
+           {"screen_and_world_bodies_meet_in_the_world",
+            screen_and_world_bodies_meet_in_the_world});

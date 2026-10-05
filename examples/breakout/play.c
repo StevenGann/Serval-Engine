@@ -61,12 +61,12 @@
 #define DULL_BOUNCES 12
 #define NUDGE ANGLE_DEG(8)
 
-#define SERVE_HOLD 240   // frames a served ball waits before launching itself
-#define CATCH_HOLD 150   // frames a caught ball waits
-#define FLASH_FRAMES 6   // a hit brick that didn't break shows white
-#define POWER_CHANCE 6   // one broken brick in this many drops a capsule...
-#define MAX_POWERS 2     // ...while fewer than this many are falling
-#define POWER_MAX_FALL 2 // pixels per frame (the game's gravity is in game.c)
+#define SERVE_HOLD 240             // frames a served ball waits before launching itself
+#define CATCH_HOLD 150             // frames a caught ball waits
+#define FLASH_FRAMES 6             // a hit brick that didn't break shows white
+#define POWER_CHANCE 6             // one broken brick in this many drops a capsule...
+#define MAX_POWERS 2               // ...while fewer than this many are falling
+#define POWER_MAX_FALL (FX(3) / 2) // pixels per frame (the game's gravity is in game.c)
 #define POWER_POINTS 100
 // Effects (dust) are only created while this many entity slots are free, so
 // bricks, balls and capsules always fit.

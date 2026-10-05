@@ -27,6 +27,7 @@
 #include "serval/ecs.h"
 #include "serval/fixed.h"
 #include "serval/platform.h"
+#include "serval/sprites.h"
 
 // Body component pools (C_BODY), indexed by entity_index(). Zeroed by
 // entity_create(): a zero-sized body that doesn't bounce or slide.
@@ -36,14 +37,13 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
 extern u8 body_friction[MAX_ENT];
-// Maximum fall speed in whole pixels per frame (0 = no limit): after gravity
-// is added, the velocity in the direction gravity pulls is limited to this, on
-// each axis gravity acts on. Speeds the game sets beyond it (a jump against
-// gravity, a dive) are kept until gravity is next applied.
-// Caveat: whole pixels only (a u8, not FIXED), so a cap such as 1.5 pixels
-// per frame can't be expressed; for one, leave this 0 and limit vel_x/vel_y
-// in the game after sys_physics()/sys_map_movement().
-extern u8 body_max_fall[MAX_ENT];
+// Maximum fall speed in pixels per frame, in fixed point like velocities but
+// stored in a u16 (0 = no limit, up to just under 256): body_max_fall[i] =
+// FX(5), or FX(3) / 2 for 1.5. After gravity is added, the velocity in the
+// direction gravity pulls is limited to this, on each axis gravity acts on.
+// Speeds the game sets beyond it (a jump against gravity, a dive) are kept
+// until gravity is next applied.
+extern u16 body_max_fall[MAX_ENT];
 // How strongly gravity pulls this body, as a scale in 16ths written with
 // BODY_GRAVITY(): BODY_GRAVITY(16) is normal gravity, BODY_GRAVITY(8) half,
 // BODY_GRAVITY(0) none (a ball that flies straight while power-ups fall) and
@@ -103,13 +103,15 @@ void physics_set_wrap(bool x, bool y);
 // entity_index() or ECS_FOR_EACH. Works for any entities with C_POS, so a
 // body without C_VEL makes a static collider, like a paddle or a wall the
 // game moves itself.
-// Caveat: compares pos_x/pos_y as stored. An entity drawn with SPRITE_SCREEN
-// (sprites.h) has screen coordinates and world entities world ones, so
-// between the two this tests the wrong rectangles once the camera moves.
-// Compare such a pair in the game instead, adding the camera (camera_x(),
-// camera_y(), map.h) to the screen-space entity's position. The same holds
-// for body_hit_side().
+// An entity drawn with SPRITE_SCREEN (sprites.h) has its position on the
+// screen, other entities in the world; for a pair of one of each, the camera
+// (camera_set(), map.h) is added to the screen-space one's position, so a
+// shooter's bullets (on the screen) hit turrets on a scrolling map (in the
+// world). Pairs of the same kind compare positions as they are.
+bool serval_body_overlap_mixed(u32 a, u32 b); // out of line: one of each kind
 static inline bool body_overlap(u32 a, u32 b) {
+    if ((spr_flags[a] ^ spr_flags[b]) & SPRITE_SCREEN)
+        return serval_body_overlap_mixed(a, b);
     return pos_x[a] < pos_x[b] + FX(body_w[b]) && pos_x[b] < pos_x[a] + FX(body_w[a]) &&
            pos_y[a] < pos_y[b] + FX(body_h[b]) && pos_y[b] < pos_y[a] + FX(body_h[a]);
 }
@@ -147,6 +149,9 @@ static inline bool body_overlap(u32 a, u32 b) {
 // bounce that reversed a velocity this frame (sys_physics, sys_map_movement)
 // or a position the game set directly makes "position minus velocity" a
 // guess. Takes slot indices; 0 if a == b.
+// A screen-space entity (SPRITE_SCREEN) against a world-space one is judged
+// in the world, as body_overlap() does; the camera's own movement this frame
+// doesn't count as motion (a turret scrolling down the screen is still).
 u32 body_hit_side(u32 a, u32 b);
 
 // Which walls of the bounds each body touched in the last sys_physics(), as

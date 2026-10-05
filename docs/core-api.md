@@ -26,6 +26,7 @@ void screen_set_backdrop(Color color); // Color from COLOR_RGB(r, g, b), 0-255 c
 
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
+void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle, FIXED scale_x, FIXED scale_y, u16 flags);
 ```
 
 `serval/serval.h` includes every public header except `gba.h`. Sprite loading is described in [sprites.md](sprites.md#api).
@@ -98,4 +99,4 @@ Immediate-mode submission applies to OAM only. These scarce resources are manage
 - Palette banks: bump-allocated per sprite group today; sharing and a shadow palette are planned ([sprites.md](sprites.md#palettes))
 - Background maps: streamed around the camera from map layers in ROM; the camera is a position the game sets each frame, which `sys_render()` and `sys_render_by_depth()` subtract from entity positions, while `sprite_draw()` takes screen coordinates ([tilemaps.md](tilemaps.md#streaming), [runtime-systems.md](runtime-systems.md#camera))
 
-The 32 sprite rotation matrices are not persistent: like OAM, they are rebuilt each frame from draw calls, shared by sprites with the same angle and flips ([sprites.md](sprites.md#api)).
+The 32 sprite rotation matrices are not persistent: like OAM, they are rebuilt each frame from draw calls, shared by sprites with the same angle, flips and scales ([sprites.md](sprites.md#api)).

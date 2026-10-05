@@ -40,17 +40,18 @@ static inline FIXED serval_slide(FIXED speed, u32 friction) {
     return serval_fx_abs(speed) < SERVAL_STOP_SPEED ? 0 : speed;
 }
 
-// body_max_fall: limits the velocity on an axis to max_fall pixels per frame
+// body_max_fall: limits the velocity on an axis to max_fall (24.8 fixed point,
+// as a u16) pixels per frame
 // in the direction gravity pulls along it. Nothing changes on an axis without
 // gravity or for max_fall 0 (no limit). Checks gravity first: it is the same
 // for every body, so bodies on an axis without gravity skip the lookup.
-static inline FIXED serval_limit_fall(FIXED vel, FIXED gravity, const u8* max_fall) {
+static inline FIXED serval_limit_fall(FIXED vel, FIXED gravity, const u16* max_fall) {
     if (gravity > 0) {
-        FIXED max = FX((int)*max_fall);
+        FIXED max = (FIXED)*max_fall;
         if (max && vel > max)
             return max;
     } else if (gravity < 0) {
-        FIXED max = FX((int)*max_fall);
+        FIXED max = (FIXED)*max_fall;
         if (max && vel < -max)
             return -max;
     }

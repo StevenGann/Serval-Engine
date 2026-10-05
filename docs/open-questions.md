@@ -14,7 +14,8 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Provide `memcpy`/`memset`/`memmove` in the engine so newlib is never linked.
 - [x] Define the sprite asset format and implement `sprite_draw` for resident groups ([sprites.md](sprites.md#api)).
 - [x] Per-draw palettes (`SPRITE_PALETTE`), hidden and screen-space sprites (`SPRITE_HIDDEN`, `SPRITE_SCREEN`), frame sequences with per-step flips (`frame_order`) ([sprites.md](sprites.md#api)).
-- [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, sprite scaling, runtime tile composition, palette sharing, shadow palette and palette writes, global/room watermark ([sprites.md](sprites.md#api)).
+- [x] Sprite scaling (`sprite_draw_ex`, `SPRITE_SCALED` with `spr_scale`) and sprite statistics (`sprite_stats()`: hardware sprites and matrices used, draws dropped) ([sprites.md](sprites.md#api)).
+- [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, runtime tile composition, palette sharing, shadow palette and palette writes, global/room watermark ([sprites.md](sprites.md#api)).
 - [x] Optimize the per-frame path measured by bunnymark: sprite drawing, render, movement and physics systems in IWRAM as ARM code, cartridge wait states, division-free text formatting ([development.md](development.md#benchmark)).
 - [ ] Further optimization: `text_format` stays in ROM (2.5 KB; IWRAM is shared with games), depth sorting costs ~10,000 cycles for 128 sprites.
 - [x] Background and tilemap API (BG1-BG3, metatiles, streaming, camera, map collision) ([tilemaps.md](tilemaps.md)).
@@ -45,7 +46,7 @@ Not bugs, but surprises a game developer hit while writing the examples (details
 
 - [ ] `PathStep` needs designated initializers: a positional initializer that leaves fields out trips `-Wmissing-field-initializers` ([runtime-systems.md](runtime-systems.md#paths)).
 - [ ] `camera_set()` clamps silently: with a playfield smaller than the screen it stays at 0, so moving a small layer with the camera does nothing (Blackjack's swirl; use `map_set_scroll()`) ([runtime-systems.md](runtime-systems.md#camera)).
-- [ ] `body_max_fall` is whole pixels per frame (`u8`), so a top speed of 1.5 is not possible (Breakout's capsules went from 1.5 to 2).
-- [ ] `SPRITE_SCREEN` bodies and world bodies: `body_overlap()` compares positions as they are, so testing a screen-space entity against a world-space one needs the camera added by hand (Shmup's shots against turrets).
+- [x] `body_max_fall` was whole pixels per frame (`u8`), so a top speed of 1.5 was not possible (Breakout's capsules went from 1.5 to 2). Changed: a `u16` in fixed point (`FX(3) / 2`); the capsules fall at 1.5 again.
+- [x] `SPRITE_SCREEN` bodies and world bodies: `body_overlap()` compared positions as they are, so testing a screen-space entity against a world-space one needed the camera added by hand. Changed: `body_overlap()` and `body_hit_side()` add the camera for such pairs (Shmup's shots against turrets).
 - [ ] `BODY_CONTACT_EXIT` counts a body touching an open edge from outside as gone, one frame earlier than a game's own `pos < -w` test; use one test or the other, not both.
 - [ ] `button_repeat()` repeats a button that is still held when a screen opens (say, from gameplay into initials entry); games check `button_pressed()` first when a screen should wait for a fresh press.

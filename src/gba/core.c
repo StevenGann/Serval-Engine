@@ -23,6 +23,9 @@ _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SE
 OBJ_ATTR serval_shadow_oam[128] ALIGN4;
 u32 serval_oam_used;
 u32 serval_matrices_used;
+u32 serval_sprites_dropped;
+u32 serval_sprites_untransformed;
+SpriteStats serval_sprite_stats;
 
 // CPU cycles per frame: 228 scanlines of 1232 cycles.
 #define FRAME_BUDGET_CYCLES 280896u
@@ -96,9 +99,15 @@ void frame_begin(void) {
     serval_repeat_frame(key_curr_state());
     serval_oam_used = 0;
     serval_matrices_used = 0;
+    serval_sprites_dropped = 0;
+    serval_sprites_untransformed = 0;
 }
 
 void frame_end(void) {
+    serval_sprite_stats = (SpriteStats){.drawn = (u16)serval_oam_used,
+                                        .matrices = (u16)serval_matrices_used,
+                                        .dropped = (u16)serval_sprites_dropped,
+                                        .untransformed = (u16)serval_sprites_untransformed};
     for (u32 i = serval_oam_used; i < 128; i++)
         serval_shadow_oam[i].attr0 = ATTR0_HIDE;
     if (serval_map_prepare_hook)

@@ -53,6 +53,8 @@ static EWRAM_BSS u32 warned_ids[SPRITE_MAX / 32 + 1];
 static bool warned_oam_full;
 static bool warned_matrices;
 static bool warned_palette;
+static bool warned_scale_flag;
+static bool warned_scale;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
@@ -94,11 +96,11 @@ static __attribute__((noinline, cold)) void warn_palette(u32 id, u32 palette) {
                 palette, id, sprite_draws[id < SPRITE_MAX ? id : 0].palette_count);
 }
 #define DRAW_REJECTED(id, frame) warn_draw(id, frame)
-#define OAM_FULL() warn_oam_full()
+#define OAM_FULL() (serval_sprites_dropped++, warn_oam_full())
 #define BAD_PALETTE(id, palette) warn_palette(id, palette)
 #else
 #define DRAW_REJECTED(id, frame) ((void)(id), (void)(frame))
-#define OAM_FULL() ((void)0)
+#define OAM_FULL() ((void)serval_sprites_dropped++)
 #define BAD_PALETTE(id, palette) ((void)(id), (void)(palette))
 #endif
 
@@ -138,6 +140,8 @@ void sprite_groups_reset(void) {
     warned_oam_full = false;
     warned_matrices = false;
     warned_palette = false;
+    warned_scale_flag = false;
+    warned_scale = false;
 #endif
 }
 
@@ -273,30 +277,57 @@ static __attribute__((noinline, cold)) void warn_matrices(void) {
     if (warned_matrices)
         return;
     warned_matrices = true;
-    SERVAL_WARN("more than 32 rotation angles in one frame; the extra sprites are drawn unrotated");
+    SERVAL_WARN("more than 32 rotation/scale matrices in one frame; the extra sprites are drawn "
+                "unrotated and unscaled (sprite_stats() counts them)");
 }
-#define MATRICES_FULL() warn_matrices()
+#define MATRICES_FULL() (serval_sprites_untransformed++, warn_matrices())
 #else
-#define MATRICES_FULL() ((void)0)
+#define MATRICES_FULL() ((void)serval_sprites_untransformed++)
 #endif
 
-// The angle and flip flags of each rotation matrix used this frame.
-static u16 matrix_angle[32];
-static u8 matrix_flips[32];
+// What each rotation matrix used this frame was made for: the angle and flip
+// flags (angle | flips << 16) and the scales (x | y << 16, 8.8 fixed point).
+static u32 matrix_turn[32];
+static u32 matrix_scale[32];
 
-// Returns the index of a rotation matrix for `angle` and the flip flags,
-// reusing one already set up this frame, or -1 if all 32 are taken.
-static inline SERVAL_ARM __attribute__((always_inline)) int matrix_for(u32 angle, u32 flips) {
-    for (u32 k = 0; k < serval_matrices_used; k++) {
-        if (matrix_angle[k] == angle && matrix_flips[k] == flips)
-            return (int)k;
-    }
-    if (serval_matrices_used == 32)
-        return -1;
-    // The matrix maps screen offsets back to the sprite's pixels, so it is the
-    // inverse rotation; flips mirror the pixels before rotating.
+// Building a new matrix (at most 32 a frame) is out of line, in ROM on the
+// GBA (so called with a long call from IWRAM): only the search for one
+// already set up runs for every rotated or scaled sprite.
+#ifdef SERVAL_GBA
+#define ROM_CALL __attribute__((long_call, noinline))
+#else
+#define ROM_CALL __attribute__((noinline))
+#endif
+
+// 1 / scale in 8.8 fixed point, for a scale in 8.8 (not 0), limited to what
+// a matrix entry holds. One division per new matrix.
+static s32 inverse_scale(s32 scale) {
+    s32 inv = (s32)(65536 / scale);
+    return inv > 32767 ? 32767 : inv < -32767 ? -32767 : inv;
+}
+
+static s16 matrix_entry(s32 trig, s32 inv) {
+    s32 v = (trig * inv) >> 8;
+    return (s16)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+}
+
+// Sets up matrix k. It maps screen offsets back to the sprite's pixels, so
+// it is the inverse transform: rotate back, then divide by the scales; flips
+// mirror the pixels before rotating.
+static ROM_CALL __attribute__((cold)) void set_matrix(u32 k, u32 angle, u32 flips, s32 scale_x,
+                                                      s32 scale_y) {
     FIXED c = fx_cos((u16)angle), sn = fx_sin((u16)angle);
     FIXED pa = c, pb = sn, pc = -sn, pd = c;
+    if (scale_x != FX_ONE) {
+        s32 inv = inverse_scale(scale_x);
+        pa = matrix_entry(pa, inv);
+        pb = matrix_entry(pb, inv);
+    }
+    if (scale_y != FX_ONE) {
+        s32 inv = inverse_scale(scale_y);
+        pc = matrix_entry(pc, inv);
+        pd = matrix_entry(pd, inv);
+    }
     if (flips & SPRITE_FLIP_H) {
         pa = -pa;
         pb = -pb;
@@ -305,14 +336,29 @@ static inline SERVAL_ARM __attribute__((always_inline)) int matrix_for(u32 angle
         pc = -pc;
         pd = -pd;
     }
-    u32 k = serval_matrices_used++;
     OBJ_AFFINE* m = &((OBJ_AFFINE*)serval_shadow_oam)[k];
     m->pa = (s16)pa;
     m->pb = (s16)pb;
     m->pc = (s16)pc;
     m->pd = (s16)pd;
-    matrix_angle[k] = (u16)angle;
-    matrix_flips[k] = (u8)flips;
+}
+
+// Returns the index of a rotation matrix for `angle`, the flip flags and the
+// scales (8.8; 256 is normal size), reusing one already set up this frame, or
+// -1 if all 32 are taken.
+static inline SERVAL_ARM __attribute__((always_inline)) int matrix_for(u32 angle, u32 flips,
+                                                                       s32 scale_x, s32 scale_y) {
+    u32 turn = angle | flips << 16, scale = (u32)(u16)scale_x | (u32)scale_y << 16;
+    for (u32 k = 0; k < serval_matrices_used; k++) {
+        if (matrix_turn[k] == turn && matrix_scale[k] == scale)
+            return (int)k;
+    }
+    if (serval_matrices_used == 32)
+        return -1;
+    u32 k = serval_matrices_used++;
+    set_matrix(k, angle, flips, scale_x, scale_y);
+    matrix_turn[k] = turn;
+    matrix_scale[k] = scale;
     return (int)k;
 }
 
@@ -333,8 +379,8 @@ static inline SERVAL_ARM __attribute__((always_inline)) u32 palette_attr2(u32 id
 // Appends a sprite to the shadow OAM. Shared by sprite_draw, sys_render and
 // sys_render_by_depth, which all run as ARM code from IWRAM, the fastest place
 // to run code on the GBA. `palettes`: whether flags may hold SPRITE_PALETTE
-// (the render loops send those sprites to draw_rotated, keeping the test out
-// of the usual case).
+// (the render loops send those sprites to draw_transformed, keeping the test
+// out of the usual case).
 static inline SERVAL_ARM __attribute__((always_inline)) void
 draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palettes) {
     if (frame >= d->frame_count) { // also rejects sprites that are not loaded
@@ -365,41 +411,49 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palet
     obj->attr2 = (u16)attr2;
 }
 
-// Like draw, rotated by a non-zero angle: uses the hardware's double-size mode
-// (so the rotated corners aren't cut off), shifted so the sprite stays
-// centered where the unrotated one would be. Flips go into the matrix, whose
-// index takes attr1 bits 9-13. Falls back to an unrotated draw when all 32
-// matrices are taken; sprites that are off screen or don't fit in OAM never
-// take a matrix. draw_affine returns false for that fallback.
-//
-// draw_rotated is kept out of line (but in IWRAM) so the render loops stay as
-// fast as before for the usual unrotated sprites. It is also where
-// draw_entity sends hidden sprites (SPRITE_HIDDEN), which it drops, and
-// sprites with SPRITE_PALETTE, drawn unrotated when the angle is 0.
+// Like draw, rotated by `angle` and scaled by scale_x, scale_y (8.8, 256 is
+// normal size, negative mirrors) around the sprite's center. Rotated or
+// enlarged sprites use the hardware's double-size mode (so corners aren't cut
+// off), shifted so the sprite stays centered where the untransformed one
+// would be; sprites that are only shrunk (angle 0, scales within +-1) fit in
+// their own box and use plain affine mode, which costs half the scanline
+// time. Flips go into the matrix, whose index takes attr1 bits 9-13. Falls
+// back to an untransformed draw when all 32 matrices are taken; sprites that
+// are off screen or don't fit in OAM never take a matrix. draw_affine returns
+// false for that fallback.
 static inline SERVAL_ARM __attribute__((always_inline)) bool
-draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
+draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle, s32 scale_x,
+            s32 scale_y) {
     if (frame >= d->frame_count) {
         DRAW_REJECTED(id, frame);
         return true;
     }
-    // The double-size box's top-left corner.
-    int center_x = d->origin_x + d->width / 2, center_y = d->origin_y + d->height / 2;
-    x -= center_x;
-    y -= center_y;
-    u32 w = 2u * d->width, h = 2u * d->height;
+    bool shrunk = angle == 0 && (u32)(scale_x + FX_ONE) <= 2 * FX_ONE &&
+                  (u32)(scale_y + FX_ONE) <= 2 * FX_ONE;
+    u32 w = d->width, h = d->height, mode = ATTR0_AFF;
+    // The box's top-left corner: the sprite's own, or the double-size box's.
+    x -= d->origin_x;
+    y -= d->origin_y;
+    if (!shrunk) {
+        x -= (int)w / 2;
+        y -= (int)h / 2;
+        w *= 2;
+        h *= 2;
+        mode = ATTR0_AFF_DBL;
+    }
     if ((u32)(x + (int)w - 1) >= 240 + w - 1 || (u32)(y + (int)h - 1) >= 160 + h - 1)
         return true; // off screen
     if (serval_oam_used >= 128) {
         OAM_FULL();
         return true;
     }
-    int matrix = matrix_for(angle, flags & 3);
+    int matrix = matrix_for(angle, flags & 3, scale_x, scale_y);
     if (matrix < 0) {
         MATRICES_FULL();
         return false;
     }
     OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
-    obj->attr0 = (u16)(d->attr0 | ATTR0_AFF_DBL | ((u32)y & ATTR0_Y_MASK));
+    obj->attr0 = (u16)(d->attr0 | mode | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)matrix << 9) | ((u32)x & ATTR1_X_MASK));
     u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
     if (flags & SPRITE_PALETTE_MASK)
@@ -408,14 +462,48 @@ draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32
     return true;
 }
 
+// The out-of-line path for everything but plain sprites: rotated or scaled
+// sprites, and the render loops' hidden sprites (SPRITE_HIDDEN, dropped here)
+// and sprites with SPRITE_PALETTE (drawn untransformed when there is no
+// transform). Kept out of line (but in IWRAM) so the render loops stay as fast
+// as before for the usual plain sprites. Scales are 8.8 with 256 normal size;
+// 0 draws nothing.
 static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
-draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
-    if (flags & SPRITE_HIDDEN)
+draw_transformed(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle,
+                 s32 scale_x, s32 scale_y) {
+    if ((flags & SPRITE_HIDDEN) || scale_x == 0 || scale_y == 0)
         return;
-    // Angle 0 (a sprite with SPRITE_PALETTE), or no matrix left: unrotated.
-    if (angle == 0 || !draw_affine(id, d, frame, x, y, flags, angle))
+    // No transform (a sprite with SPRITE_PALETTE), or no matrix left: plain.
+    if ((angle == 0 && scale_x == FX_ONE && scale_y == FX_ONE) ||
+        !draw_affine(id, d, frame, x, y, flags, angle, scale_x, scale_y))
         draw(id, d, frame, x, y, flags, true);
 }
+
+// draw_transformed for entity i, at (x, y) on the screen.
+static SERVAL_IWRAM_TEXT __attribute__((noinline)) void draw_entity_transformed(u32 i, int x, int y,
+                                                                                u32 flags) {
+    u32 id = spr_id[i];
+    s32 scale = flags & SPRITE_SCALED ? spr_scale[i] : FX_ONE;
+    draw_transformed(id, &sprite_draws[id], spr_frame[i], x, y, flags, spr_angle[i], scale, scale);
+}
+
+#ifdef SERVAL_DEBUG
+static __attribute__((noinline, cold)) void warn_scale_flag(u32 i) {
+    if (warned_scale_flag)
+        return;
+    warned_scale_flag = true;
+    SERVAL_WARN("entity %u has spr_scale %d but no SPRITE_SCALED in spr_flags; drawn at normal "
+                "size",
+                i, spr_scale[i]);
+}
+#define SCALE_WITHOUT_FLAG(i, flags)                                                               \
+    do {                                                                                           \
+        if (spr_scale[i] && !((flags) & SPRITE_SCALED))                                            \
+            warn_scale_flag(i);                                                                    \
+    } while (0)
+#else
+#define SCALE_WITHOUT_FLAG(i, flags) ((void)0)
+#endif
 
 // Draws entity i (known to have C_POS and C_SPR) at its position minus the
 // camera's (or at its position with SPRITE_SCREEN), rotated if it has an
@@ -435,12 +523,17 @@ static inline SERVAL_ARM __attribute__((always_inline)) void draw_entity(u32 i, 
     // conditional moves; the camera is loaded only for the others.
     if (flags & SPRITE_SCREEN)
         camera_x = camera_y = 0;
+    SCALE_WITHOUT_FLAG(i, flags);
     int x = fx_to_int(pos_x[i]) - camera_x, y = fx_to_int(pos_y[i]) - camera_y;
-    // Hidden sprites and sprites with another palette take the rare rotated
-    // path too, which drops the former and draws the latter: one test (the
-    // mask is one ARM immediate) keeps the usual case as fast as before.
-    if (spr_angle[i] | (flags & (SPRITE_HIDDEN | SPRITE_PALETTE_MASK)))
-        draw_rotated(id, &sprite_draws[id], spr_frame[i], x, y, flags, spr_angle[i]);
+    // Rotated, scaled (SPRITE_SCALED) and hidden sprites and sprites with
+    // another palette take the rare transformed path, which drops hidden
+    // ones and draws the others: one test (the mask is one ARM immediate)
+    // keeps the usual case as fast as before. spr_scale is read only there:
+    // loading it for every sprite cost ~1,000 cycles for 128 sprites.
+    // The call takes four arguments, all in registers: passing the sprite's
+    // fields from here spilled to the stack and slowed the usual path too.
+    if (spr_angle[i] | (flags & (SPRITE_HIDDEN | SPRITE_SCALED | SPRITE_PALETTE_MASK)))
+        draw_entity_transformed(i, x, y, flags);
     else
         draw(id, &sprite_draws[id], spr_frame[i], x, y, flags, false);
 }
@@ -461,9 +554,45 @@ SERVAL_IWRAM_CODE void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y
     if (angle == 0) // no rotation: no matrix needed
         sprite_draw(sprite_id, frame, x, y, flags);
     else if (sprite_id < serval_sprite_count)
-        draw_rotated(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, angle);
+        draw_transformed(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, angle, FX_ONE,
+                         FX_ONE);
     else
         DRAW_REJECTED(sprite_id, frame);
+}
+
+#ifdef SERVAL_DEBUG
+static __attribute__((noinline, cold)) void warn_scale(FIXED scale_x, FIXED scale_y) {
+    if (warned_scale)
+        return;
+    warned_scale = true;
+    SERVAL_WARN("sprite_draw_ex: scale %d/256 x %d/256 is outside -128 to 128; limited to it",
+                scale_x, scale_y);
+}
+#define BAD_SCALE(x, y) warn_scale(x, y)
+#else
+#define BAD_SCALE(x, y) ((void)(x), (void)(y))
+#endif
+
+static s32 clamp_scale(FIXED scale) {
+    return scale > 32767 ? 32767 : scale < -32767 ? -32767 : scale;
+}
+
+void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle, FIXED scale_x, FIXED scale_y,
+                    u16 flags) {
+    if (flags & SPRITE_HIDDEN)
+        return;
+    if (sprite_id >= serval_sprite_count) {
+        DRAW_REJECTED(sprite_id, frame);
+        return;
+    }
+    s32 sx = clamp_scale(scale_x), sy = clamp_scale(scale_y);
+    if (sx != scale_x || sy != scale_y)
+        BAD_SCALE(scale_x, scale_y);
+    draw_transformed(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, angle, sx, sy);
+}
+
+SpriteStats sprite_stats(void) {
+    return serval_sprite_stats;
 }
 
 SERVAL_IWRAM_CODE void sys_render(void) {

@@ -19,6 +19,7 @@
 //   A B / C D  a big asteroid (2 x 2)
 //   #  station hull (edges and corners follow its neighbors)
 //   L  hull with a signal lamp    T  hull with a turret
+//   G H / I J  a cannon's emplacement (2 x 2), the cannon on it
 static const char segment_open[SEGMENT_H][STAGE_W + 1] = {
     "...........", "...........", "...........", "...........", "...........", "...........",
     "...........", "...........", "...........", "...........", "...........", "...........",
@@ -43,9 +44,10 @@ static const char segment_hull_a[SEGMENT_H][STAGE_W + 1] = {
     "##T##......", "#####......", "...........", "...........",
 };
 
+// A fort: two cannons on a crossbar between turreted platforms.
 static const char segment_hull_b[SEGMENT_H][STAGE_W + 1] = {
-    "...........", "...#####...", "...#L#T#...", "...#####...", ".....#.....", "#....#....#",
-    "###########", "#T#L###L#T#", "###########", "#....#....#", ".....#.....", "...#####...",
+    "...........", "...#####...", "...#L#T#...", "...#####...", ".....#.....", "####.#.####",
+    "#GH#####GH#", "#IJ#L#L#IJ#", "###########", "#T..###..T#", ".....#.....", "...#####...",
     "...#T#L#...", "...#####...", "...........", "...........",
 };
 
@@ -79,11 +81,13 @@ static const MapLayer stage_layer = {
     .bg = 2,
 };
 
-// Turret positions (metatile coordinates), from the bottom of the stage up,
-// in the order the camera reaches them.
+// Turret and cannon positions (metatile coordinates; a cannon's is its
+// emplacement's top-left), from the bottom of the stage up, in the order the
+// camera reaches them.
 #define MAX_TURRETS 32
 static struct {
     u8 mx;
+    bool cannon;
     u16 my;
 } turrets[MAX_TURRETS];
 static int turret_count, next_turret;
@@ -92,7 +96,16 @@ static bool is_hull(int mx, int my) {
     if (mx < 0 || mx >= STAGE_W || my < 0 || my >= STAGE_ROWS)
         return false;
     char c = stage_text[my][mx];
-    return c == '#' || c == 'L' || c == 'T';
+    return c == '#' || c == 'L' || c == 'T' || (c >= 'G' && c <= 'J');
+}
+
+static void add_turret(int mx, int my, bool cannon) {
+    if (turret_count < MAX_TURRETS) {
+        turrets[turret_count].mx = (u8)mx;
+        turrets[turret_count].my = (u16)my;
+        turrets[turret_count].cannon = cannon;
+        turret_count++;
+    }
 }
 
 void stage_build(void) {
@@ -125,11 +138,15 @@ void stage_build(void) {
                 break;
             case 'T':
                 cell = MT_PAD;
-                if (turret_count < MAX_TURRETS) {
-                    turrets[turret_count].mx = (u8)mx;
-                    turrets[turret_count].my = (u16)my;
-                    turret_count++;
-                }
+                add_turret(mx, my, false);
+                break;
+            case 'G':
+                add_turret(mx, my, true);
+                // fall through
+            case 'H':
+            case 'I':
+            case 'J':
+                cell = (u16)(MT_GUN + (c - 'G'));
                 break;
             case '#':
                 cell = (u16)(MT_HULL + (is_hull(mx, my - 1) ? HULL_UP : 0) +
@@ -163,13 +180,25 @@ void stage_hide(void) {
 // top, and enemies.c removes them once they have scrolled off the bottom.
 void stage_spawn_ground(void) {
     while (next_turret < turret_count && turrets[next_turret].my * 16 + 16 >= cam_y - 16) {
-        spawn_turret(turrets[next_turret].mx * 16 + 8, turrets[next_turret].my * 16 + 8);
+        int x = turrets[next_turret].mx * 16, y = turrets[next_turret].my * 16;
+        if (turrets[next_turret].cannon)
+            spawn_cannon(x + 16, y + 16);
+        else
+            spawn_turret(x + 8, y + 8);
         next_turret++;
     }
 }
 
 void stage_destroy_pad(int x, int y) {
     map_set_cell(x / 16, y / 16, MT_CRATER);
+}
+
+// The four cells of the emplacement around (x, y). With the small turrets'
+// pads, a game makes 30 map changes at most, under MAP_MAX_CHANGES (64).
+void stage_destroy_gun(int x, int y) {
+    int mx = (x - 8) / 16, my = (y - 8) / 16;
+    for (int k = 0; k < 4; k++)
+        map_set_cell(mx + k % 2, my + k / 2, (u16)(MT_GUN_CRATER + k));
 }
 
 // The hull's lamps blink: one tile, swapped in VBlank, changes every lamp.

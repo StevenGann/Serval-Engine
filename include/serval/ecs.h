@@ -18,7 +18,7 @@
 // in debug builds if a mask includes C_ALIVE.
 #define C_POS (1u << 0)  // pos_x, pos_y
 #define C_VEL (1u << 1)  // vel_x, vel_y
-#define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth, spr_angle
+#define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth, spr_angle, spr_scale
 #define C_BODY (1u << 3) // body_w, body_h and the other body_* pools (physics.h)
 // C_MAPBODY (1u << 4), bodies that collide with the map, is in map.h.
 #define C_ANIM                                                                                     \
@@ -50,8 +50,12 @@ extern FIXED vel_x[MAX_ENT], vel_y[MAX_ENT]; // C_VEL: pixels per frame
 extern u16 spr_id[MAX_ENT];                  // C_SPR: sprite ID (sprites.h)
 extern u8 spr_frame[MAX_ENT];                // C_SPR: animation frame
 extern u16 spr_flags[MAX_ENT];               // C_SPR: SPRITE_* draw flags (sprites.h)
-extern s16 spr_depth[MAX_ENT];    // C_SPR: sys_render_by_depth draws higher depths in front
-extern u16 spr_angle[MAX_ENT];    // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
+extern s16 spr_depth[MAX_ENT]; // C_SPR: sys_render_by_depth draws higher depths in front
+extern u16 spr_angle[MAX_ENT]; // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
+// C_SPR: size for sprite_draw_ex(), used only with SPRITE_SCALED in spr_flags
+// (sprites.h): 256ths, so FX_ONE is normal size, FX_ONE / 2 half, FX(2)
+// twice, 0 nothing; negative mirrors. One scale for both axes, -128 to 127.99.
+extern s16 spr_scale[MAX_ENT];
 extern u8 spr_anim_time[MAX_ENT]; // C_ANIM: frames spr_frame has shown so far (sys_animate)
 extern u8 spr_anim_step[MAX_ENT]; // C_ANIM: step of the sprite's frame_order (sys_animate)
 
@@ -135,10 +139,10 @@ u32 ecs_free_count(void);
 // map bodies (C_MAPBODY, map.h), which sys_map_movement() moves.
 void sys_movement(void);
 // sys_render: draws entities with C_POS and C_SPR using sprite_draw() (or
-// sprite_draw_rotated() when spr_angle is not 0), with their spr_flags, at
-// their position minus the camera's (camera_set(), map.h; (0, 0) unless a game
-// scrolls), or at their position with SPRITE_SCREEN. Among sprites on the same
-// layer, lower entity indices are in front.
+// sprite_draw_ex() when spr_angle is not 0 or spr_flags has SPRITE_SCALED), with their spr_flags,
+// at their position minus the camera's (camera_set(), map.h; (0, 0) unless a game scrolls), or at
+// their position with SPRITE_SCREEN. Among sprites on the same layer, lower entity indices are in
+// front.
 void sys_render(void);
 // sys_render_by_depth: like sys_render, but sprites with a higher spr_depth
 // are drawn in front of lower ones (equal depths: lower index in front). For
