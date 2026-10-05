@@ -27,6 +27,7 @@ static void reset(void) {
     ecs_reset();
     physics_set_bounds(0, 0, 100, 100);
     physics_set_gravity(0, 0);
+    physics_set_open_edges(0);
 }
 
 static void gravity_accelerates_bodies(void) {
@@ -111,10 +112,36 @@ static void non_bodies_are_untouched(void) {
     physics_set_bounds(0, 0, SCREEN_W, SCREEN_H);
 }
 
+static void open_edges_let_bodies_out(void) {
+    reset();
+    physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT);
+    u32 i = make_body(FX(50), FX(50), -FX(5), FX(3));
+    step(30);
+    CHECK(pos_x[i] < 0 && vel_x[i] == -FX(5));  // left through the left edge
+    CHECK(pos_y[i] >= 0 && pos_y[i] <= FX(90)); // still bouncing top and bottom
+    CHECK(vel_y[i] == FX(3) || vel_y[i] == -FX(3));
+    physics_set_open_edges(0);
+}
+
+static void overlap_tests_rectangles(void) {
+    reset();
+    u32 a = make_body(FX(10), FX(10), 0, 0); // 10x10 at (10, 10)
+    u32 b = make_body(FX(15), FX(15), 0, 0);
+    CHECK(body_overlap(a, b) && body_overlap(b, a));
+    pos_x[b] = FX(20); // touching edges: not overlapping
+    CHECK(!body_overlap(a, b));
+    pos_x[b] = FX(20) - 1; // overlapping by 1/256 of a pixel
+    CHECK(body_overlap(a, b));
+    pos_y[b] = FX(30);
+    CHECK(!body_overlap(a, b));
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
            {"bodies_come_to_rest_on_the_floor", bodies_come_to_rest_on_the_floor},
            {"resting_bodies_stay_put_without_gravity", resting_bodies_stay_put_without_gravity},
            {"gravity_in_any_direction", gravity_in_any_direction},
-           {"non_bodies_are_untouched", non_bodies_are_untouched});
+           {"non_bodies_are_untouched", non_bodies_are_untouched},
+           {"open_edges_let_bodies_out", open_edges_let_bodies_out},
+           {"overlap_tests_rectangles", overlap_tests_rectangles});

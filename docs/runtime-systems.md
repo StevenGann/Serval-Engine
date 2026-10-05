@@ -24,9 +24,11 @@ Standardize on fixed-point types and lookup tables for trig early. There is no F
 
 ## Physics
 
-**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle with per-entity bounciness and friction, and resting. Bodies don't collide with each other or with tilemaps; a platformer character controller is separate future work.
+**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle (any edge can be left open) with per-entity bounciness and friction, and resting. Bodies don't collide with each other or with tilemaps; a platformer character controller is separate future work.
 
 ## Entity collision
+
+**Implemented so far:** `body_overlap(a, b)` (`include/serval/physics.h`), a rectangle test between two bodies, which the game calls for the pairs it cares about (Pong: ball against each paddle). No broad phase or collision events yet.
 
 Avoid all-pairs checks (about 8,000 pairs at 128 entities). Use a coarse spatial grid or collision groups as the broad phase. The collision system emits collision events to the VM ([vm.md](vm.md)).
 

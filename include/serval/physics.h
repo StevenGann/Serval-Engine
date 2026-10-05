@@ -34,6 +34,28 @@ void physics_set_gravity(FIXED x, FIXED y);
 // and bottom exclusive. Defaults to the whole screen.
 void physics_set_bounds(int left, int top, int right, int bottom);
 
+// Edges of the bounds, for physics_set_open_edges().
+#define PHYSICS_EDGE_LEFT (1 << 0)
+#define PHYSICS_EDGE_RIGHT (1 << 1)
+#define PHYSICS_EDGE_TOP (1 << 2)
+#define PHYSICS_EDGE_BOTTOM (1 << 3)
+
+// Lets bodies pass through the given edges of the bounds instead of bouncing,
+// e.g. PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT for a ball that scores by leaving
+// the screen sideways. The game decides what happens once a body is out.
+// Defaults to 0: every edge bounces.
+void physics_set_open_edges(u32 edges);
+
+// True if the rectangles of two bodies overlap (position plus body_w x
+// body_h; touching edges don't count). Takes entity slot indices, as from
+// entity_index() or ECS_FOR_EACH. Works for any entities with C_POS, so a
+// body without C_VEL makes a static collider, like a paddle or a wall the
+// game moves itself.
+static inline bool body_overlap(u32 a, u32 b) {
+    return pos_x[a] < pos_x[b] + FX(body_w[b]) && pos_x[b] < pos_x[a] + FX(body_w[a]) &&
+           pos_y[a] < pos_y[b] + FX(body_h[b]) && pos_y[b] < pos_y[a] + FX(body_h[a]);
+}
+
 // Bounces bodies off the bounds and applies gravity and friction. Run once per
 // frame, after sys_movement().
 void sys_physics(void);

@@ -7,6 +7,7 @@ u8 body_friction[MAX_ENT];
 
 static FIXED gravity_x, gravity_y;
 static int bounds_left = 0, bounds_top = 0, bounds_right = SCREEN_W, bounds_bottom = SCREEN_H;
+static u32 open_edges;
 
 // Sliding stops below this speed (a sixteenth of a pixel per frame).
 #define STOP_SPEED (FX_ONE / 16)
@@ -14,6 +15,10 @@ static int bounds_left = 0, bounds_top = 0, bounds_right = SCREEN_W, bounds_bott
 void physics_set_gravity(FIXED x, FIXED y) {
     gravity_x = x;
     gravity_y = y;
+}
+
+void physics_set_open_edges(u32 edges) {
+    open_edges = edges;
 }
 
 void physics_set_bounds(int left, int top, int right, int bottom) {
@@ -77,11 +82,17 @@ static inline FIXED slide(FIXED speed, u32 friction) {
 }
 
 // Runs as ARM code from IWRAM on the GBA: it touches every body every frame.
+// Bound used for open edges: far enough that no body reaches it.
+#define OPEN_EDGE (FX(1) << 20)
+
 SERVAL_IWRAM_CODE void sys_physics(void) {
-    const FIXED left = FX(bounds_left), top = FX(bounds_top);
+    const FIXED left = (open_edges & PHYSICS_EDGE_LEFT) ? -OPEN_EDGE : FX(bounds_left);
+    const FIXED top = (open_edges & PHYSICS_EDGE_TOP) ? -OPEN_EDGE : FX(bounds_top);
+    const bool open_right = open_edges & PHYSICS_EDGE_RIGHT;
+    const bool open_bottom = open_edges & PHYSICS_EDGE_BOTTOM;
     ECS_FOR_EACH(i, C_POS | C_VEL | C_BODY) {
-        const FIXED right = FX(bounds_right - body_w[i]);
-        const FIXED bottom = FX(bounds_bottom - body_h[i]);
+        const FIXED right = open_right ? OPEN_EDGE : FX(bounds_right - body_w[i]);
+        const FIXED bottom = open_bottom ? OPEN_EDGE : FX(bounds_bottom - body_h[i]);
         if (update_axis(&pos_x[i], &vel_x[i], left, right, gravity_x, body_bounce[i]))
             vel_y[i] = slide(vel_y[i], body_friction[i]);
         if (update_axis(&pos_y[i], &vel_y[i], top, bottom, gravity_y, body_bounce[i]))
