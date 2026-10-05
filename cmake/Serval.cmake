@@ -43,7 +43,8 @@ endif()
 # contains Nintendo's logo (see docs/licensing.md).
 #
 # In web builds (the web preset), builds <target>.html instead: the game as one
-# self-contained page (cmake/ServalWeb.cmake). GAME_CODE is unused there.
+# self-contained page (cmake/ServalWeb.cmake). TITLE and GAME_CODE name its
+# saves in the browser's localStorage there.
 function(serval_add_rom target)
     cmake_parse_arguments(PARSE_ARGV 1 ARG "" "TITLE;GAME_CODE" "SOURCES")
     if(NOT ARG_TITLE)
@@ -57,7 +58,7 @@ function(serval_add_rom target)
         if(NOT TARGET serval)
             message(FATAL_ERROR "serval_add_rom(${target}): the engine is not configured.")
         endif()
-        _serval_add_web_page(${target} "${ARG_TITLE}" ${ARG_SOURCES})
+        _serval_add_web_page(${target} "${ARG_TITLE}" "${ARG_GAME_CODE}" ${ARG_SOURCES})
         return()
     endif()
 

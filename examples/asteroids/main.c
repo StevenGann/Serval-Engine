@@ -16,7 +16,14 @@
 //   - Sound effects: shots, thrust rumble, explosions, a heartbeat that speeds
 //     up as rocks are cleared, and jingles; sound priorities keep gunfire from
 //     cutting a jingle short and the rumble from cutting an explosion short
-//   - An attract mode: rocks drift behind the title screen
+//   - An attract mode: rocks drift behind the title screen, which alternates
+//     with the high-score table
+//   - Save data (save_read, save_write, save_erase): a top-10 table of scores
+//     and initials, kept in one save slot as a small versioned struct, with
+//     the default table for a first boot or a save that can't be used
+//     (scores.c; how a game picks and raises the version is explained there)
+//   - A game split into files: main.c runs the game, scores.c the table and
+//     the initials entry screen
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
@@ -39,14 +46,32 @@
 //     10,000 points.
 //   - Clearing all rocks starts the next wave with one more large rock (up to
 //     14), placed away from the ship.
-//   - With no ships left: "GAME OVER" with a falling tune; START plays again.
+//   - With no ships left: "GAME OVER" with a falling tune. If the score
+//     doesn't make the high-score table, START plays again, and after 10
+//     seconds the attract mode comes back.
+//   - If it does: after 2 seconds (or START), "NEW HIGH SCORE" with a rising
+//     jingle, the score, its place, and three letters "A  A  A" with a caret
+//     under the one being changed. UP and DOWN cycle it through A-Z, '.' and
+//     space (shown as '_'), with a short blip, repeating while held; A or
+//     RIGHT moves to the next letter, B or LEFT back (a lower blip). A on the
+//     last letter, or START at any time, confirms with a two-note chime: the
+//     table is saved and shown with "> <" blinking around the new entry.
+//   - The attract mode alternates every 5 seconds between the title and the
+//     "HIGH SCORES" table: places 1 to 10, initials and scores. On a first
+//     boot it holds made-up players (SRV 5000 down to MAX 400). The table
+//     survives power-off: in mGBA, in the .sav file next to the ROM.
+//   - For demos: on the title or the table, hold L and R and press SELECT to
+//     erase the saved table. A falling tone plays, and the default table
+//     shows with "HIGH SCORES RESET" under it.
 //   - START pauses and resumes.
-//   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X,
-//   START = Enter.)
+//   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
+//   L = A, R = S, START = Enter, SELECT = Backspace.)
 //
 // Uses only Serval Engine's API; no third-party headers.
 
 #include "serval/serval.h"
+
+#include "scores.h"
 
 // --- Assets ------------------------------------------------------------------
 
@@ -205,17 +230,26 @@ enum {
     SND_EXTRA_SHIP,
     SND_GAME_OVER,
     SND_PAUSE,
+    SND_HIGH_SCORE,
+    SND_LETTER,
+    SND_NEXT_LETTER,
+    SND_CONFIRM,
+    SND_RESET,
     SOUND_COUNT
 };
 
 static const u16 start_notes[] = {392, 523, 659, 784};
 static const u16 extra_ship_notes[] = {784, 988, 1175, 1568};
 static const u16 game_over_notes[] = {392, 330, 262, 196};
+static const u16 high_score_notes[] = {523, 659, 784, 0, 659, 784, 1047, 1047};
+static const u16 confirm_notes[] = {784, 1047};
 
 // Shots, jingles and the pause tick on square 1, the heartbeat on square 2,
 // rumble and explosions on the noise channel. A sound can't replace one of
 // higher priority on its channel: shots don't cut a jingle short, and the
 // thrust rumble (renewed every few frames) doesn't cut an explosion short.
+// The initials entry screen's blips use square 2 (the heartbeat is silent by
+// then), so typing doesn't cut the high-score jingle short either.
 #define JINGLE_PRIORITY 1    // jingles and the pause tick, over shots
 #define EXPLOSION_PRIORITY 1 // explosions, over the rumble
 static const PsgSound sounds[SOUND_COUNT] = {
@@ -262,6 +296,23 @@ static const PsgSound sounds[SOUND_COUNT] = {
                        .note_count = 4,
                        .priority = JINGLE_PRIORITY},
     [SND_PAUSE] = {.duty = PSG_DUTY_12, .frequency = 784, .frames = 3, .priority = JINGLE_PRIORITY},
+    [SND_HIGH_SCORE] = {.duty = PSG_DUTY_12,
+                        .frames = 6,
+                        .notes = high_score_notes,
+                        .note_count = 8,
+                        .priority = JINGLE_PRIORITY},
+    [SND_LETTER] = {.channel = PSG_SQUARE2, .duty = PSG_DUTY_25, .frequency = 1319, .frames = 2},
+    [SND_NEXT_LETTER] = {.channel = PSG_SQUARE2,
+                         .duty = PSG_DUTY_25,
+                         .frequency = 880,
+                         .frames = 4},
+    [SND_CONFIRM] = {.duty = PSG_DUTY_25,
+                     .frames = 5,
+                     .notes = confirm_notes,
+                     .note_count = 2,
+                     .priority = JINGLE_PRIORITY},
+    [SND_RESET] =
+        {.frequency = 880, .frames = 24, .slide = -2, .slide_size = 3, .priority = JINGLE_PRIORITY},
 };
 
 static const PsgSound* const sound_table[SOUND_COUNT] = {
@@ -277,6 +328,11 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
     [SND_EXTRA_SHIP] = &sounds[SND_EXTRA_SHIP],
     [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
     [SND_PAUSE] = &sounds[SND_PAUSE],
+    [SND_HIGH_SCORE] = &sounds[SND_HIGH_SCORE],
+    [SND_LETTER] = &sounds[SND_LETTER],
+    [SND_NEXT_LETTER] = &sounds[SND_NEXT_LETTER],
+    [SND_CONFIRM] = &sounds[SND_CONFIRM],
+    [SND_RESET] = &sounds[SND_RESET],
 };
 
 // --- Game state --------------------------------------------------------------
@@ -310,7 +366,16 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
 // 56 + 1 + 4 + 64 = 125.
 #define MAX_WAVE_ROCKS 14
 
-typedef enum { TITLE, PLAYING, PAUSED, GAME_OVER } State;
+// TITLE is the attract mode, alternating between two pages; NEW_HIGH_SCORE
+// is the initials entry screen (scores.c).
+typedef enum { TITLE, PLAYING, PAUSED, GAME_OVER, NEW_HIGH_SCORE } State;
+typedef enum { PAGE_TITLE, PAGE_SCORES } Page;
+
+#define PAGE_FRAMES 300      // the attract pages alternate every 5 seconds
+#define NEW_ENTRY_FRAMES 600 // the table with a new entry stays 10 seconds
+#define BLINK_FRAMES 16      // the new entry's markers blink at this pace
+#define GAME_OVER_FRAMES 120 // "GAME OVER" before the initials entry screen
+#define GAME_OVER_IDLE 600   // without a high score, then the attract mode
 
 // Per-entity game data, beside the engine's component pools.
 static u8 life[MAX_ENT];      // C_BULLET, C_SPARK: frames left
@@ -331,6 +396,10 @@ static int fire_cooldown, rumble_timer;
 static int beat_timer, beat_phase;
 static int wave_shots; // shots it took to clear the wave when it started
 static u16 spin;       // shared rock rotation: every rock uses spin or -spin
+static Page page;
+static int page_timer; // TITLE: frames left on this page; GAME_OVER: frames shown
+static int rank;       // the last game's place in the high-score table, or -1
+static int highlight;  // the table entry to mark (the newest), or -1
 
 // --- Helpers -----------------------------------------------------------------
 
@@ -607,16 +676,8 @@ static void draw_hud(void) {
     text_print_line(0, 0, text_format(" SCORE %-6d WAVE %-3d SHIPS %d", score, wave, ships));
 }
 
-static void show_title(void) {
-    state = TITLE;
-    text_clear();
-    text_print_centered(6, "A S T E R O I D S");
-    text_print_centered(10, "PRESS START");
-    text_print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
-    text_print_centered(15, "A:FIRE  START:PAUSE");
-}
-
 static void start_game(void) {
+    random_seed(random_entropy()); // every game differs
     destroy_all(C_ROCK);
     destroy_all(C_BULLET);
     destroy_all(C_SPARK);
@@ -645,9 +706,12 @@ static void update_playing(void) {
             spawn_ship();
         } else {
             state = GAME_OVER;
+            page_timer = 0;
+            rank = scores_rank(score);
             psg_play(SND_GAME_OVER);
             text_print_centered(9, "GAME OVER");
-            text_print_centered(11, "PRESS START");
+            if (rank < 0)
+                text_print_centered(11, "PRESS START");
         }
     }
     if (rock_count() == 0) {
@@ -655,6 +719,83 @@ static void update_playing(void) {
         spawn_wave(FIRST_WAVE_ROCKS - 1 + wave);
     }
     draw_hud();
+}
+
+// --- Attract mode, game over and high scores --------------------------------
+
+// Attract mode: the title or the high-score table, shown for some frames.
+static void show_page(Page p, int frames) {
+    state = TITLE;
+    page = p;
+    page_timer = frames;
+    text_clear();
+    if (p == PAGE_TITLE) {
+        text_print_centered(6, "A S T E R O I D S");
+        text_print_centered(10, "PRESS START");
+        text_print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
+        text_print_centered(15, "A:FIRE  START:PAUSE");
+    } else {
+        scores_draw(highlight, true);
+        text_print_centered(18, "PRESS START");
+    }
+}
+
+static void update_title(bool start) {
+    if (start) {
+        start_game();
+        return;
+    }
+    // Hidden, for demos: hold L and R and press SELECT to erase the table.
+    if (button_down(BUTTON_L) && button_down(BUTTON_R) && button_pressed(BUTTON_SELECT)) {
+        scores_reset();
+        highlight = -1;
+        show_page(PAGE_SCORES, PAGE_FRAMES);
+        text_print_centered(16, "HIGH SCORES RESET");
+        psg_play(SND_RESET);
+        return;
+    }
+    if (page == PAGE_SCORES && highlight >= 0 && page_timer % BLINK_FRAMES == 0)
+        scores_draw(highlight, page_timer / BLINK_FRAMES % 2 == 0);
+    if (--page_timer == 0) {
+        highlight = -1; // the newest entry is marked only the first time
+        show_page(page == PAGE_TITLE ? PAGE_SCORES : PAGE_TITLE, PAGE_FRAMES);
+    }
+}
+
+// After "GAME OVER": the initials entry screen if the score made the table
+// (START gets there sooner), otherwise START plays again, and after a while
+// the attract mode comes back.
+static void update_game_over(bool start) {
+    page_timer++;
+    if (rank >= 0) {
+        if (start || page_timer >= GAME_OVER_FRAMES) {
+            state = NEW_HIGH_SCORE;
+            entry_begin(score);
+            psg_play(SND_HIGH_SCORE);
+        }
+    } else if (start) {
+        start_game();
+    } else if (page_timer >= GAME_OVER_IDLE) {
+        show_page(PAGE_SCORES, PAGE_FRAMES);
+    }
+}
+
+static void update_new_high_score(void) {
+    switch (entry_update()) {
+    case ENTRY_LETTER:
+        psg_play(SND_LETTER);
+        break;
+    case ENTRY_MOVE:
+        psg_play(SND_NEXT_LETTER);
+        break;
+    case ENTRY_DONE: // saved: show the table with the new entry marked
+        psg_play(SND_CONFIRM);
+        highlight = rank;
+        show_page(PAGE_SCORES, NEW_ENTRY_FRAMES);
+        break;
+    case ENTRY_NONE:
+        break;
+    }
 }
 
 // --- Main --------------------------------------------------------------------
@@ -668,8 +809,10 @@ int main(void) {
     screen_set_backdrop(COLOR_RGB(5, 5, 16));
     physics_set_wrap(true, true);
 
+    scores_load();
+    rank = highlight = -1;
     spawn_wave(FIRST_WAVE_ROCKS); // drifting behind the title
-    show_title();
+    show_page(PAGE_TITLE, PAGE_FRAMES);
 
     for (;;) {
         frame_begin();
@@ -677,14 +820,17 @@ int main(void) {
         switch (state) {
         case TITLE:
         case GAME_OVER:
-            // Attract mode: the rocks keep drifting and spinning.
+        case NEW_HIGH_SCORE:
+            // The rocks keep drifting and spinning behind these screens.
             sys_movement();
             sys_physics();
             update_objects();
-            if (start) {
-                random_seed(random_entropy()); // every game differs
-                start_game();
-            }
+            if (state == TITLE)
+                update_title(start);
+            else if (state == GAME_OVER)
+                update_game_over(start);
+            else
+                update_new_high_score();
             break;
         case PLAYING:
             if (start) {

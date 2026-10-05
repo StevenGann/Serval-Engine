@@ -24,14 +24,16 @@ function(_serval_web_font output)
          "// Generated from libtonc's src/font/sys8.s (cmake/ServalWeb.cmake).\n\nextern const unsigned int sys8Glyphs[192];\nconst unsigned int sys8Glyphs[192] = {\n${words}};\n")
 endfunction()
 
-# _serval_add_web_page(<target> <title> <sources...>)
+# _serval_add_web_page(<target> <title> <game_code> <sources...>)
 #
 # Builds <target>.html: the game and the engine as one self-contained page
-# (WebAssembly embedded), from the src/web/shell.html template.
-function(_serval_add_web_page target title)
+# (WebAssembly embedded), from the src/web/shell.html template. The title and
+# game code name the game's saves in localStorage.
+function(_serval_add_web_page target title game_code)
     set(engine_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
     set(shell "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}-shell.html")
     set(SERVAL_WEB_TITLE "${title}")
+    set(SERVAL_WEB_GAME_CODE "${game_code}")
     configure_file("${engine_dir}/src/web/shell.html" "${shell}" @ONLY)
 
     # Wasm memory reaches past the GBA's OAM (0x07000000-0x070003FF), where

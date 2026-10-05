@@ -2,7 +2,7 @@
 
 Write a GBA game in C with Serval Engine. This covers building the examples, the shape of a game, and the engine's main pieces. Function details are in [api-reference.md](api-reference.md).
 
-**Status:** describes what is implemented today: sprites, entities, bouncing physics, PSG sound effects, HUD text. Backgrounds/tilemaps, music, save data and the scripting VM are not implemented yet ([README.md](README.md) lists what is planned).
+**Status:** describes what is implemented today: sprites, entities, bouncing physics, PSG sound effects, HUD text. Backgrounds/tilemaps, music and the scripting VM are not implemented yet ([README.md](README.md) lists what is planned).
 
 ## 1. Build the examples
 

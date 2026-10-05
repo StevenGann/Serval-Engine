@@ -12,7 +12,7 @@ Include `serval/serval.h` for everything except `gba.h`, which must be included 
 - A *frame* is one 60 Hz display refresh (about 59.73 per second).
 - **Misuse:** in debug builds (`SERVAL_DEBUG`: Debug and RelWithDebInfo), the calls marked *warns* below write a `serval: ...` warning to the emulator's debug log, once per problem, and count it in `debug_warning_count()`. Release builds compile the checks out; the call still fails safely as described. See [core-api.md](core-api.md#debug-builds-report-misuse).
 
-Contents: [core.h](#coreh) · [screen.h](#screenh) · [sprites.h](#spritesh) · [ecs.h](#ecsh) · [physics.h](#physicsh) · [map.h](#maph) · [audio.h](#audioh) · [text.h](#texth) · [fixed.h](#fixedh) · [math.h](#mathh) · [random.h](#randomh) · [debug.h](#debugh) · [platform.h](#platformh) · [gba.h](#gbah)
+Contents: [core.h](#coreh) · [screen.h](#screenh) · [sprites.h](#spritesh) · [ecs.h](#ecsh) · [physics.h](#physicsh) · [map.h](#maph) · [audio.h](#audioh) · [text.h](#texth) · [fixed.h](#fixedh) · [math.h](#mathh) · [random.h](#randomh) · [save.h](#saveh) · [debug.h](#debugh) · [platform.h](#platformh) · [gba.h](#gbah)
 
 ## core.h
 
@@ -297,6 +297,30 @@ Deterministic xorshift32: the same seed always gives the same sequence. Not for 
 | `u32 random_entropy(void)` | A value that varies with the player, for seeding: a hash of `frame_count()` and the button history since `serval_init()` (which buttons, and on exactly which frame each was pressed or released). Not CPU timing: the same input gives the same value on the GBA and the web and in every build, so recorded input replays the same game. Call it after waiting for the player (e.g. when START is pressed): `random_seed(random_entropy())`. Before any input it returns the same value every time. Changes only from frame to frame. |
 | `u32 random_u32(void)` | The next 32 random bits. |
 | `int random_range(int lo, int hi)` | A random integer in `[lo, hi]`, both inclusive (scaled by multiplication: no division, no modulo bias). Any `int` range works, even the full one. Returns `lo` if `hi <= lo` (*warns* if `hi < lo`). |
+
+## save.h
+
+Save data that survives power-off: `SAVE_SLOTS` (8) numbered slots, each holding one block of game data (typically a struct) of up to `SAVE_SLOT_MAX` (2000) bytes, checked with a CRC-32 and tagged with the game's own version number. GBA: the cartridge's 32 KiB battery-backed SRAM (linking the save code puts the `SRAM_V` ID string in the ROM, so emulators and flash carts provide SRAM; mGBA writes it to a `.sav` file next to the ROM). Web: the browser's `localStorage` ([platforms.md](platforms.md#web)). Format, guarantees and costs: [runtime-systems.md](runtime-systems.md#save-data).
+
+| Function | Description |
+| --- | --- |
+| `bool save_write(u32 slot, const void *data, u32 size, u16 version)` | Saves `size` bytes (1 to `SAVE_SLOT_MAX`) to `slot` (0 to `SAVE_SLOTS - 1`), tagged with `version` (any number the game picks; raise it when the saved struct changes). Returns true once the save is written and read back intact. The slot's previous save stays readable until then: a power loss mid-write leaves it (or an empty slot), never a corrupt one. Returns false, keeping the previous save, if the memory didn't keep the data (no save RAM; *warns*), or for a bad slot, a size of 0 or over `SAVE_SLOT_MAX`, or a data pointer that isn't one (*warns*). GBA cost: about 1.3 ms for 100 bytes, 22 ms (1.3 frames) for 2000: call it at a natural pause, not every frame. |
+| `int save_read(u32 slot, void *data, u32 size, u16 version)` | Copies the slot's save into `data` and returns `SAVE_OK` only if it is intact and of exactly this `version` and `size`. Otherwise `data` is untouched and the result says why: `SAVE_EMPTY` (never saved, erased, or blank memory), `SAVE_CORRUPT` (a save is there but its checksum fails: treat it as empty), `SAVE_OTHER_VERSION` (an intact save of another version or size: read it with the struct and version it was written with, given by `save_slot_version()` and `save_slot_size()`, and convert it). A bad slot or data pointer returns `SAVE_EMPTY` (*warns*); a size of 0 or over `SAVE_SLOT_MAX` never matches (*warns*). GBA cost: about 0.7 ms for 100 bytes, 11 ms for 2000. |
+| `u16 save_slot_version(u32 slot)` | The version of the slot's intact save; 0 if it holds none (empty or corrupt) or for a bad slot (*warns*). |
+| `u32 save_slot_size(u32 slot)` | The size in bytes of the slot's intact save; 0 if it holds none or for a bad slot (*warns*). Never 0 for a save, so it also tells whether the slot holds one. |
+| `void save_erase(u32 slot)` | Empties the slot. All or nothing on power loss. Nothing for an empty slot; *warns* for a bad slot. |
+
+Typical use, with a version to raise whenever `Scores` changes:
+
+```c
+#define SCORES_SLOT 0
+#define SCORES_VERSION 1
+Scores scores;
+if (save_read(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION) != SAVE_OK)
+    scores = default_scores; // first boot, erased, damaged or an old layout
+...
+save_write(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION); // after a game over
+```
 
 ## debug.h
 

@@ -2,7 +2,7 @@
 
 Examples drive the engine: each one is written as a game developer would write it, and what it needs (or has to work around) becomes engine API. This is the list of candidates, chosen to show the engine's strengths, teach its use, and expose its weaknesses. The existing examples are in [`examples/`](../examples/) ([getting-started.md](getting-started.md#1-build-the-examples) has a reading order).
 
-**Status:** `platformer` is implemented ([`examples/platformer`](../examples/platformer/main.c); what it exposed is [below](#what-platformer-exposed)). Everything else on this page is a candidate. ✱ marks examples blocked on engine features that are still only designs.
+**Status:** `platformer` is implemented ([`examples/platformer`](../examples/platformer/main.c); what it exposed is [below](#what-platformer-exposed)), and "Save and high scores" is done in `asteroids` ([`examples/asteroids/scores.c`](../examples/asteroids/scores.c); [below](#what-the-high-score-table-exposed)). Everything else on this page is a candidate. ✱ marks examples blocked on engine features that are still only designs.
 
 Each entry says what the example **shows** and what it would **expose**: missing API, limits, or workarounds that should become engine features.
 
@@ -51,7 +51,7 @@ Each entry says what the example **shows** and what it would **expose**: missing
 | **Input lab** | Held and newly pressed buttons for keyboard, gamepad and touch on the web, the D-pad on hardware | No input remapping, no touch API (the DS will need one) |
 | **Determinism / replay** | Recorded input replayed to an identical result on GBA and web (`random_entropy()` depends only on the input history and `frame_count()`) | No API to record or play back input |
 | **Raster effects** | Wavy water or a split HUD from mid-frame register writes | No HBlank / per-scanline API; the web draws once per frame |
-| **Save and high scores** | Persistent scores | Forces the save API (cartridge SRAM on the GBA, `localStorage` on the web) |
+| **Save and high scores** (done in `asteroids`) | A top-10 table with initials, saved as a versioned struct in one slot; an initials entry screen; a reset combo for demos | Drove `save.h` (cartridge SRAM on the GBA, `localStorage` on the web); see [below](#what-the-high-score-table-exposed) |
 
 ## Order
 
@@ -73,3 +73,12 @@ Written against `map.h` as a game developer would; everything it needed beyond t
 - **A body placed overlapping a solid metatile falls through it** (by design, so bodies can leave walls). A fish rising out of a block still has to be snapped exactly on top before becoming a map body.
 - ~~**Randomness and replays.**~~ Closed: `random_entropy()` now depends only on the input history and `frame_count()`, so the same input plays the same game on the GBA and the web. The frogs hop at random intervals again, seeded when START is pressed.
 - **Levels are text converted at boot** into cells in EWRAM. A game made in Studio Advance would get const cells in ROM from its build; nothing in the engine needs to change for that.
+
+## What the high-score table exposed
+
+Written in `asteroids` against `save.h` as a game developer would (`scores.c`): one `ScoreTable` struct in slot 0, `SCORES_VERSION` 1, the default table on `SAVE_EMPTY`, `SAVE_CORRUPT` or `SAVE_OTHER_VERSION`, one `save_write()` when initials are confirmed, `save_erase()` for the demo reset. The save API itself needed no workaround. What it ran into elsewhere:
+
+- **No text highlight.** `text_set_color` recolors all text, so the new entry is marked with blinking `> <` around its row (the "Game states and menus" candidate above would hit the same).
+- **No text-input or menu helper.** The initials entry (cycling letters, a cursor, held-button repeat) is about 80 lines of game code; held-button repeat in particular (`button_repeat`?) would be useful to every menu.
+- **Sound IDs are one table.** Splitting the game into files means the screen in `scores.c` reports what happened (`EntryEvent`) and `main.c` plays the sounds, since the sound IDs live in `main.c`'s table; fine, but a shared header of IDs is what a generated project would have.
+- **Strings in fixed-size `char` fields.** Initials are `char[3]` without a terminator (GCC 15 warns about `"ABC"` initializing a `char[3]` under `-Wextra`, so the defaults are written as character lists) and copied to a 4-byte buffer to print, since `text_format` has no `%.3s` precision.

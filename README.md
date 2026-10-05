@@ -22,10 +22,11 @@ Implemented:
 - Physics for bouncing bodies: gravity in any direction, bounce and friction, open edges, wrap-around, rectangle overlap tests.
 - PSG sound effects on the tone generators: tones, envelopes, pitch slides, short melodies.
 - HUD and debug text (8x8 font) with printf-style formatting, and a "Made with Serval Engine" splash screen.
+- Save data: 8 slots on cartridge SRAM with checksums, version numbers and power-loss-safe writes (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrounds and scrolling tilemaps, Maxmod music and sampled sound effects, streamed and compressed sprites, palette sharing and fades, save data, dialogue text, the bytecode VM, and the editor debug link.
+Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrounds and scrolling tilemaps, Maxmod music and sampled sound effects, streamed and compressed sprites, palette sharing and fades, Flash and EEPROM saves, dialogue text, the bytecode VM, and the editor debug link.
 
 ## Documentation
 
@@ -41,7 +42,7 @@ Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrou
 | [`hello`](examples/hello/main.c) | The smallest game: one sprite moved with the D-pad |
 | [`bunnymark`](examples/bunnymark/main.c) | ECS, physics with gravity, depth sorting; doubles as the CPU benchmark |
 | [`pong`](examples/pong/main.c) | A complete small game: AI opponent, collisions, effects, sound, splash screen |
-| [`asteroids`](examples/asteroids/main.c) | Rotating sprites, wrap-around, many short-lived entities, sound, splash screen |
+| [`asteroids`](examples/asteroids/main.c) | Rotating sprites, wrap-around, many short-lived entities, sound, splash screen, a saved high-score table with initials entry |
 | [`platformer`](examples/platformer/main.c) | "Serval Dash", a first level in the classic side-scroller style: scrolling tile maps with parallax, map collision, animated sprites and tiles, blocks hit from below, enemies to stomp, screen fades, music, a goal pole |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.

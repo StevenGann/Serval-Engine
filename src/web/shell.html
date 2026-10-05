@@ -13,12 +13,23 @@
   as possible with scripted buttons (KEYS as in mgba-capture: A B s S R L U D r
   l) and no sound. Each shot frame is appended to <pre id="shots"> as
   "frame <F> <PNG data URL>", then "done".
+
+  Saves (src/web/save.c): the game's 32 KiB of save memory is kept in
+  localStorage under "serval-save:<title>:<game code>", loaded when the game
+  first uses it and stored after every save_write() and save_erase(). Without
+  localStorage (some privacy modes) the game still runs; its saves last until
+  the page closes. Test mode leaves localStorage alone, so runs are
+  deterministic: "&save=<base64>" starts from that save memory instead of a
+  blank one, and if the game used its saves, "save <base64>" is appended
+  before "done" (tools/web-shots.py save=FILE does both). "&persist=1" uses
+  localStorage as a normal page does.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="generator" content="Serval Engine">
+<meta name="serval-game-code" content="@SERVAL_WEB_GAME_CODE@">
 <title>@SERVAL_WEB_TITLE@</title>
 <style>
   :root { color-scheme: dark; --fg: #d8d8e0; --dim: #8a8a98; --key: rgba(255, 255, 255, 0.14); --key-on: rgba(255, 255, 255, 0.34); }
@@ -239,6 +250,36 @@
     });
   }
 
+  // Save memory (see the comment at the top), as base64 in localStorage.
+  const saves = {
+    key: "serval-save:" + document.title + ":" + document.querySelector('meta[name="serval-game-code"]').content,
+    persist: !test || params.get("persist") === "1",
+    bytes: null, // the latest save memory, once the game has used it
+    warned: false,
+  };
+  function saveWarn(message) {
+    if (!saves.warned) console.warn("serval: " + message);
+    saves.warned = true;
+  }
+  function saveStorage() {
+    try {
+      return window.localStorage;
+    } catch (e) {
+      saveWarn("saves will be lost when the page closes (localStorage is unavailable: " + e + ")");
+      return null;
+    }
+  }
+  function toBase64(bytes) {
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 4096) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 4096));
+    return btoa(text);
+  }
+  function fromBase64(text) {
+    // URLSearchParams turns "+" into spaces; base64url is accepted too.
+    const raw = atob(text.replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+
   const shots = document.getElementById("shots");
   window.Module = {
     canvas,
@@ -250,10 +291,47 @@
       frame++;
       if (test) {
         if (test.shots.has(frame)) shots.textContent += "frame " + frame + " " + canvas.toDataURL("image/png") + "\n";
-        if (frame >= test.frames) { shots.textContent += "done\n"; return new Promise(() => {}); }
+        if (frame >= test.frames) {
+          if (saves.bytes) shots.textContent += "save " + toBase64(saves.bytes) + "\n";
+          shots.textContent += "done\n";
+          return new Promise(() => {});
+        }
       }
       await nextFrame();
       Module.HEAPU16[KEYINPUT >> 1] = ~buttons() & 0x3FF;
+    },
+    servalSaveLoad(dst, size) {
+      let data = null;
+      try {
+        if (test && params.has("save")) data = fromBase64(params.get("save"));
+        else if (saves.persist) {
+          const storage = saveStorage();
+          const text = storage && storage.getItem(saves.key);
+          if (text) data = fromBase64(text);
+        }
+      } catch (e) {
+        saveWarn("couldn't load the saves (" + e + "); starting without them");
+        data = null;
+      }
+      if (data && data.length !== size) {
+        saveWarn("the stored saves are " + data.length + " bytes, not " + size + "; starting without them");
+        data = null;
+      }
+      if (!data) return 0;
+      Module.HEAPU8.set(data, dst);
+      saves.bytes = data;
+      return 1;
+    },
+    servalSaveStore(src, size) {
+      saves.bytes = Module.HEAPU8.slice(src, src + size);
+      if (!saves.persist) return;
+      const storage = saveStorage();
+      if (!storage) return;
+      try {
+        storage.setItem(saves.key, toBase64(saves.bytes));
+      } catch (e) {
+        saveWarn("couldn't store the saves (" + e + "); they will be lost when the page closes");
+      }
     },
     print: text => console.log(text),
     printErr: text => console.warn(text),

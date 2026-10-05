@@ -14,6 +14,7 @@
 #include "serval/physics.h"
 #include "serval/platform.h"
 #include "serval/random.h"
+#include "serval/save.h"
 #include "serval/screen.h"
 #include "serval/sprites.h"
 #include "serval/text.h"

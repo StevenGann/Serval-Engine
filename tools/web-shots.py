@@ -7,8 +7,11 @@ per frame_end(), and buttons use mgba-capture's letters (A B s S R L U D r l),
 so the shots can be compared with an emulator's.
 
 Usage: tools/web-shots.py [--require-picture] PAGE.html FRAMES OUT_PREFIX
-                          [shot=N]... [key=FRAME:KEYS:LENGTH]...
-Writes OUT_PREFIX-<frame>.png for each shot. --require-picture fails if a shot
+                          [shot=N]... [key=FRAME:KEYS:LENGTH]... [save=FILE]
+Writes OUT_PREFIX-<frame>.png for each shot. save=FILE stands in for the
+cartridge's save memory (32 KiB, like an emulator's .sav): the game starts from
+FILE if it exists, and FILE gets the save memory at the end if the game used it,
+so consecutive runs see each other's saves. --require-picture fails if a shot
 is a single flat color (a smoke test that the game draws). Needs Chrome or
 Chromium (found on PATH, or set SERVAL_CHROME).
 """
@@ -84,13 +87,15 @@ def main():
     if len(args) < 3:
         sys.exit(__doc__)
     page, frames, prefix = args[0], int(args[1]), args[2]
-    shots, keys = [], []
+    shots, keys, save = [], [], None
     for arg in args[3:]:
         name, _, value = arg.partition("=")
         if name == "shot":
             shots.append(value)
         elif name == "key":
             keys.append(value)
+        elif name == "save":
+            save = value
         else:
             sys.exit(f"web-shots: unknown argument {arg}")
 
@@ -105,6 +110,9 @@ def main():
         fragment += "&shot=" + ",".join(shots)
     if keys:
         fragment += "&keys=" + ",".join(keys)
+    if save and os.path.exists(save):
+        with open(save, "rb") as f:
+            fragment += "&save=" + base64.urlsafe_b64encode(f.read()).decode("ascii")
     url = f"http://127.0.0.1:{server.server_address[1]}/{filename}#{fragment}"
     # Virtual time runs the page's timers as fast as it can, and the DOM is
     # dumped once nothing is left to run (the page stops after the last frame).
@@ -123,6 +131,10 @@ def main():
         rows = png_rows(png)
         if len(set(rows)) == 1 and len(set(rows[0][i:i + 4] for i in range(0, len(rows[0]), 4))) == 1:
             flat.append(frame)
+    saved = re.search(r"^save ([A-Za-z0-9+/=]+)$", result.stdout, re.MULTILINE)
+    if save and saved:
+        with open(save, "wb") as f:
+            f.write(base64.b64decode(saved.group(1)))
     if "done" not in result.stdout:
         sys.stderr.write(result.stderr[-2000:])
         sys.exit(f"web-shots: the page did not finish {frames} frames")

@@ -6,6 +6,9 @@
 - newlib's libc.a is not in the link map: games stay free of its license.
 - The code contains no BLX instruction: the ARM7TDMI (ARMv4T) has none, so
   one would crash on hardware.
+- If the game links the save code (save.h), the ROM contains the "SRAM_V"
+  ID string on a 4-byte boundary, which emulators and flash carts look for to
+  give the game save RAM.
 
 Usage: check-rom.py --rom R.gba [--map R.map] [--elf R.elf --objdump OBJDUMP]
                     [--title T] [--game-code C]
@@ -59,6 +62,23 @@ def check_map(path):
     return []
 
 
+def check_save_id(rom_path, map_path):
+    """The SRAM ID string is in the ROM if the save memory code was linked."""
+    with open(map_path, encoding="utf-8", errors="replace") as f:
+        linked = f.read().split("Linker script and memory map", 1)[-1]
+    if not re.search(r"^\s*\.rodata\.serval_save_sram\b", linked, re.MULTILINE):
+        return []
+    with open(rom_path, "rb") as f:
+        rom = f.read()
+    at = rom.find(b"SRAM_V")
+    while at >= 0 and at % 4:
+        at = rom.find(b"SRAM_V", at + 1)
+    if at < 0:
+        return [f"{rom_path}: links the save code but has no \"SRAM_V\" ID string on a 4-byte "
+                "boundary: emulators and flash carts won't give it save RAM"]
+    return []
+
+
 def check_no_blx(elf, objdump):
     result = subprocess.run([objdump, "-d", elf], capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -87,6 +107,7 @@ def main():
         errors = check_rom(args.rom, args.title, args.game_code)
         if args.map:
             errors += check_map(args.map)
+            errors += check_save_id(args.rom, args.map)
         if args.elf:
             errors += check_no_blx(args.elf, args.objdump)
     except OSError as e:
