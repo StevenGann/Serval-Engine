@@ -675,7 +675,7 @@ static void map_bodies_fall_no_faster_than_max_fall(void) {
     LOAD(room);
     physics_set_gravity(0, FX_ONE / 4);
     u32 i = make_body(164, 0, 8, 8); // over the gap at columns 10-11
-    body_max_fall[i] = 3;
+    body_max_fall[i] = FX(3);
     for (int f = 0; f < 40; f++) {
         FIXED before = pos_y[i];
         step(1);
@@ -694,12 +694,12 @@ static void map_bodies_fall_no_faster_than_max_fall(void) {
     CHECK(vel_y[i] == -FX(6) + FX_ONE / 4);
     // Landing from max fall: still flush.
     u32 j = make_body(60, 0, 8, 8);
-    body_max_fall[j] = 5;
+    body_max_fall[j] = FX(5);
     step(60);
     CHECK(pos_y[j] == FX(120) && vel_y[j] == 0);
     map_unload(2);
     u32 k = make_body(0, 0, 8, 8);
-    body_max_fall[k] = 2;
+    body_max_fall[k] = FX(2);
     step(20);
     CHECK(vel_y[k] == FX(2));
     reset();

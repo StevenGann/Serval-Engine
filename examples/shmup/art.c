@@ -243,6 +243,28 @@ static const char* const pad_art[] = {
     "BBBBBBBBBBBBBBBB" "BBBBBBBBBBBBBBBB",
 };
 
+// A cannon's emplacement on the hull (32 x 32, four metatiles) and the
+// crater it leaves: the top-left quarter of each, the others are this one
+// flipped (gun_quarter). BANK_TERRAIN.
+static const char* const gun_art[] = {
+    "BBBBBBBBBBBBBBBB" "BBBBBBBBBBBBBBBB",
+    "B999999999911111" "B999299929911111",
+    "B99999999111AAAA" "B929999291112222",
+    "B99A999111AAAA88" "B999922111222222",
+    "B9999911AAA88888" "B9999911222EEEEE",
+    "B999911AA8888111" "B22991122EEEEEEE",
+    "B99911AA88111BBB" "B9991122EEEEEEEE",
+    "B9911AA8811BBBBB" "B991122EEEFEEEEE",
+    "B991AA881BBBBBBB" "B99122EEEEEEEEEE",
+    "B911A881BBBBBBBB" "B2112EEEEEEEEEFE",
+    "B91AA811BBBBBBBB" "B9122EEEEEEEEEEF",
+    "B11A881BBBBBBBCC" "B112EEEEEEEFEEEE",
+    "B1AA881BBBBBCCCC" "B122EEEEFEEEEEEE",
+    "B1AA81BBBBBBCCDD" "B122EEEEEEEEEFEE",
+    "B1A881BBBBBCCDDD" "B122EEFEEEEEEEEE",
+    "B1A881BBBBBCCDDD" "B122EEEEEEEEEEEE",
+};
+
 // The HUD panel's tiles: its left edge, plain, and grooved. BANK_PANEL.
 static const char* const panel_art[] = {
     "12233333" "33333333" "33334333",
@@ -414,6 +436,77 @@ static const char* const turret_art[] = {
     "...1222222221......1222222221...", "....11111111........11111111....",
 };
 
+// The cannon's head, which turns to track the ship (drawn rotated, facing
+// right like every rotated sprite): a steel dome with a red eye and twin
+// barrels; the second frame has muzzle flashes. It sits on its emplacement
+// (gun_art) on the map. PAL_HEAVY.
+static const char* const cannon_art[] = {
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "...............11..............."
+    "...............11...............",
+    "............11155111............"
+    "............11155111............",
+    "..........115555554411.........."
+    "..........115555554411..........",
+    ".........11555777744411....1111."
+    ".........11555777744411....1111.",
+    ".........1555575574433111114441."
+    ".........1555575574433111114441.",
+    "........15555411114333315555551."
+    "........15555411114333315555555A",
+    "......1215554199991333314444441."
+    "......121555419999133331444444AA",
+    "......121555199AA99132211112221."
+    "......121555199AA99132211112221.",
+    "......12555519AAAA9122221..1111."
+    "......12555519AAAA9122221..1111.",
+    "......12555519AAAA9122221..1111."
+    "......12555519AAAA9122221..1111.",
+    "......121554199AA99122211114441."
+    "......121554199AA99122211114441.",
+    "......1214444199991222215555551."
+    "......1214444199991222215555555A",
+    "........14443311112222214444441."
+    "........1444331111222221444444AA",
+    ".........1433362262222111112221."
+    ".........1433362262222111112221.",
+    ".........11333666622211....1111."
+    ".........11333666622211....1111.",
+    "..........113322222211.........."
+    "..........113322222211..........",
+    "............11122111............"
+    "............11122111............",
+    "...............11..............."
+    "...............11...............",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+    "................................"
+    "................................",
+};
+
 // Power-ups: a blue P capsule and a pink B capsule, each plain and glowing.
 // PAL_ITEM.
 static const char* const item_art[] = {
@@ -508,7 +601,8 @@ static const char* const nebula_art[] = {
 #define T_ITEMS 83   // 4 frames of 16x16: power (2), bomb (2)
 #define T_BOSS 99    // 64x64
 #define T_POD 163    // 32x32
-#define SPRITE_TILES 179
+#define T_CANNON 179 // 2 frames of 32x32
+#define SPRITE_TILES 211
 
 // Background tiles, in tileset order.
 #define BT_STARS 1     // 6 tiles: dim, mid, cross, blue, warm, two
@@ -520,9 +614,10 @@ static const char* const nebula_art[] = {
 #define BT_LAMP 52
 #define BT_PAD 53    // 16x16
 #define BT_CRATER 57 // 16x16
-#define BT_PANEL 61  // edge, plain, grooved
-#define BG_TILES 64
-#define BT_LAMP_ON 64 // past the tileset: the lit lamp, copied over BT_LAMP to blink
+#define BT_GUN 61    // 16x16 quarters: the emplacement, then its crater
+#define BT_PANEL 69  // edge, plain, grooved
+#define BG_TILES 72
+#define BT_LAMP_ON 72 // past the tileset: the lit lamp, copied over BT_LAMP to blink
 
 // Converted at boot into EWRAM (about 8 KB): sprite_group_load and
 // tileset_load copy tiles from anywhere.
@@ -678,6 +773,12 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                  .palette_slot = PAL_BOSS,
                  .origin_x = 6,
                  .origin_y = 4}, // hitbox 20 x 20
+    [SPR_CANNON] = {.size = SPRITE_32x32,
+                    .tiles = sprite_tiles + T_CANNON * 8,
+                    .frame_count = 2,
+                    .palette_slot = PAL_HEAVY,
+                    .origin_x = 6,
+                    .origin_y = 6}, // hitbox 20 x 20 around the dome; rotates about its center
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
@@ -697,9 +798,10 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_ITEM_BOMB] = &sprites[SPR_ITEM_BOMB],
     [SPR_BOSS] = &sprites[SPR_BOSS],
     [SPR_POD] = &sprites[SPR_POD],
+    [SPR_CANNON] = &sprites[SPR_CANNON],
 };
 
-// One group: 179 tiles. The white "hit" flash, the boss's red phase and the
+// One group: 211 tiles. The white "hit" flash, the boss's red phase and the
 // orange carrier are the same sprites drawn with another of the group's
 // palettes (SPRITE_PALETTE), not copies of their tiles.
 const SpriteGroup sprite_group = {
@@ -747,6 +849,18 @@ Metatile stage_metatiles[MT_COUNT] = {
                    0},
     [MT_HULL_LIGHT] = {{SE(BT_LAMP, 0), SE(BT_LAMP, H), SE(BT_LAMP, V), SE(BT_LAMP, H | V)}, 0},
 };
+
+// One quarter of a 32 x 32 picture whose top-left quarter is the four tiles
+// from `first`: the others are those tiles flipped and swapped, so the
+// emplacement and its crater take 8 tiles instead of 32.
+static Metatile gun_quarter(u16 first, u32 quarter) {
+    static const u8 order[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+    u16 flips = (quarter & 1 ? H : 0) | (quarter & 2 ? V : 0);
+    Metatile m = {{0, 0, 0, 0}, 0};
+    for (u32 k = 0; k < 4; k++)
+        m.se[k] = SE(first + order[quarter][k], flips);
+    return m;
+}
 
 // One corner of a hull metatile: plating where the hull goes on both ways,
 // an edge where it stops on one side, an outer corner where it stops on
@@ -848,6 +962,7 @@ void art_build(void) {
     convert(s + T_ITEMS * 8, item_art, 16, 16, 0, 4, false, 64);
     convert(s + T_BOSS * 8, boss_art, 64, 64, 0, 1, false, 64);
     convert(s + T_POD * 8, pod_art, 32, 32, 0, 1, false, 32);
+    convert(s + T_CANNON * 8, cannon_art, 32, 32, 0, 2, false, 64);
 
     u32* b = bg_tiles; // tile 0 stays blank
     convert(b + BT_STARS * 8, stars_art, 8, 8, 0, 6, false, 48);
@@ -859,7 +974,13 @@ void art_build(void) {
     convert(b + BT_LAMP * 8, lamp_art, 8, 8, 0, 1, false, 16);
     convert(b + BT_LAMP_ON * 8, lamp_art, 8, 8, 1, 1, false, 16);
     convert(b + BT_PAD * 8, pad_art, 16, 16, 0, 2, false, 32);
+    convert(b + BT_GUN * 8, gun_art, 16, 16, 0, 2, false, 32);
     convert(b + BT_PANEL * 8, panel_art, 8, 8, 0, 3, false, 24);
+
+    for (u32 q = 0; q < 4; q++) {
+        stage_metatiles[MT_GUN + q] = gun_quarter(BT_GUN, q);
+        stage_metatiles[MT_GUN_CRATER + q] = gun_quarter(BT_GUN + 4, q);
+    }
 
     // The 16 hull pieces, one per combination of neighbors.
     for (u32 n = 0; n < 16; n++) {

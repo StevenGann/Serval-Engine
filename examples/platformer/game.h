@@ -129,6 +129,6 @@ extern const PsgSong goal_song;  // a short fanfare after the goal pole, once
 #define C_SPARKLE C_GAME(6)
 
 #define GRAVITY (FX_ONE / 4) // pixels per frame per frame (physics_set_gravity)
-#define MAX_FALL 5           // terminal speed in pixels per frame (body_max_fall)
+#define MAX_FALL FX(5)       // terminal speed in pixels per frame (body_max_fall)
 
 #endif // PLATFORMER_GAME_H

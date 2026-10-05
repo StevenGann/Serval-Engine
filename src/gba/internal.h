@@ -6,6 +6,7 @@
 #include <tonc_oam.h>
 
 #include "serval/audio.h"
+#include "serval/sprites.h"
 #include <tonc_types.h>
 
 // Code generation for the GBA backend's hot paths: ARM code (for helpers
@@ -26,6 +27,12 @@ extern u32 serval_oam_used;
 // Rotation matrices used this frame. The 32 matrices live in the shadow OAM's
 // otherwise unused fourth halfwords (OBJ_AFFINE overlay), copied with it.
 extern u32 serval_matrices_used;
+// Draws lost this frame because all 128 hardware sprites were used, and
+// rotated or scaled draws drawn plain because all 32 matrices were; with the
+// two above, saved by frame_end() for sprite_stats().
+extern u32 serval_sprites_dropped;
+extern u32 serval_sprites_untransformed;
+extern SpriteStats serval_sprite_stats;
 
 // PSG sound effects (psg.c): set up by serval_init(), advanced once per frame
 // by frame_end().

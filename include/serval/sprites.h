@@ -8,6 +8,7 @@
 // registered with sprite_table_set(). A sprite can be drawn once a group
 // containing it has been loaded into VRAM.
 
+#include "serval/fixed.h"
 #include "serval/platform.h"
 
 // SpriteAsset.size: the sprite's dimensions in pixels (width x height). These
@@ -102,6 +103,13 @@ typedef struct {
 #define SPRITE_ANIM_FLIP_H (1 << 5)
 #define SPRITE_ANIM_FLIP_V (1 << 6)
 
+// For entities (spr_flags): drawn scaled by spr_scale (ecs.h), like
+// sprite_draw_ex() with that scale on both axes. A flag rather than a nonzero
+// spr_scale, so the render systems test it with the other flags and sprites
+// without it don't pay for scaling (debug builds warn about a spr_scale set
+// without it). sprite_draw() and its variants ignore it.
+#define SPRITE_SCALED (1 << 7)
+
 // For entities (spr_flags): drawn at the entity's position on the screen, not
 // at its world position minus the camera, so it stays put while the camera
 // scrolls the map (a shooter's ship, enemies and bullets; a HUD icon).
@@ -147,5 +155,40 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 // (reported in debug builds). Sprites that are off screen or not drawn take no
 // matrix, and angle 0 draws exactly like sprite_draw (no matrix).
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
+
+// Like sprite_draw_rotated, also scaled around the sprite's center: scale_x
+// and scale_y are FIXED factors along the art's own axes (FX_ONE is normal
+// size, FX(2) twice as big, FX_ONE / 2 half; negative mirrors along that
+// axis, so a card flip runs scale_x from FX_ONE through 0 to -FX_ONE). A
+// scale of 0 draws nothing. Scales beyond +-128 are limited to it (warning in
+// debug builds). Shares the 32 matrices with sprite_draw_rotated: draws with
+// the same angle, flips and scales share one, so animate a scale in a few
+// steps rather than giving every sprite its own.
+//
+// The hardware draws a rotated or enlarged sprite inside a box twice its size
+// (double-size mode), centered on it: art that grows past that box is cut
+// off (beyond scale 2 unrotated, about 1.4 at 45 degrees). Sprites that are
+// only shrunk or mirrored (angle 0, scales within +-FX_ONE) are drawn in
+// their own box, which costs half the scanline time of a rotated one. With
+// no rotation and both scales FX_ONE it draws exactly like sprite_draw.
+void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle, FIXED scale_x, FIXED scale_y,
+                    u16 flags);
+
+// What the hardware sprites did in the last frame (counted between
+// frame_begin() and frame_end(); zero before the first frame_end()).
+typedef struct {
+    u16 drawn;         // hardware sprites used, of 128
+    u16 matrices;      // rotation/scale matrices used, of 32
+    u16 dropped;       // draws not shown because all 128 hardware sprites were used
+    u16 untransformed; // rotated or scaled draws shown plain: all 32 matrices were used
+} SpriteStats;
+
+// The last frame's sprite counts: how close a game runs to the hardware's
+// limits, and what it lost past them, in release builds too (debug builds
+// also warn once per problem). Not counted: sprites the hardware itself skips
+// on a scanline that runs out of time (about 1,210 cycles a line: an
+// unrotated sprite costs its width, a rotated or enlarged one 2 x its doubled
+// width + 10), since only the screen shows those.
+SpriteStats sprite_stats(void);
 
 #endif // SERVAL_SPRITES_H

@@ -13,6 +13,9 @@ u8 spr_frame[MAX_ENT];
 u16 spr_flags[MAX_ENT];
 s16 spr_depth[MAX_ENT];
 u16 spr_angle[MAX_ENT];
+// Read only for sprites with SPRITE_SCALED, out of the render loops' usual
+// path: EWRAM spares IWRAM.
+SERVAL_EWRAM_BSS s16 spr_scale[MAX_ENT];
 // Only sys_animate reads them, once per frame: EWRAM spares IWRAM.
 SERVAL_EWRAM_BSS u8 spr_anim_time[MAX_ENT];
 SERVAL_EWRAM_BSS u8 spr_anim_step[MAX_ENT];
@@ -102,6 +105,7 @@ Entity entity_create(u32 components) {
     spr_flags[index] = 0;
     spr_depth[index] = 0;
     spr_angle[index] = 0;
+    spr_scale[index] = 0;
     spr_anim_time[index] = 0;
     spr_anim_step[index] = 0;
     body_w[index] = body_h[index] = 0;

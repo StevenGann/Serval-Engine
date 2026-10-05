@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** resident, uncompressed groups of 4bpp sprites, drawn regular or rotated, with any palette of their group, in world or screen coordinates, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, metasprites, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
+**Status:** resident, uncompressed groups of 4bpp sprites, drawn regular, rotated or scaled, with any palette of their group, in world or screen coordinates, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, metasprites, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes) with 16 OBJ palette banks of 16 colors.
 
@@ -85,11 +85,18 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
                                                     // SPRITE_FLIP_H/V, layer flags,
                                                     // SPRITE_HIDDEN, SPRITE_PALETTE(n)
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
+void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle,
+                    FIXED scale_x, FIXED scale_y, u16 flags);   // rotated and scaled
+SpriteStats sprite_stats(void);                     // last frame: drawn, matrices, dropped
 ```
 
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
 **Rotation:** `sprite_draw_rotated(id, frame, x, y, angle, flags)`, or a non-zero `spr_angle` with `sys_render`, rotates a sprite around its center with the hardware's affine mode (double size, so corners aren't clipped). The 32 rotation matrices are allocated per frame and shared by sprites with the same angle and flips; past 32, sprites are drawn unrotated and debug builds warn. Off-screen sprites take no matrix, and angle 0 draws like `sprite_draw` (no matrix). Unrotated sprites don't pay for rotation support beyond one check per entity (bunnymark: +1,530 cycles for 128 sprites).
+
+**Scaling:** `sprite_draw_ex(id, frame, x, y, angle, scale_x, scale_y, flags)` also scales around the center, along the art's own axes: `FX_ONE` is normal size, a negative scale mirrors (a card flip is `scale_x` going from `FX_ONE` through 0 to `-FX_ONE`), 0 draws nothing. The matrix is the inverse of the transform (rotate back, divide by the scales: one division per new matrix, at most 32 a frame), and matrices are shared by draws with the same angle, flips and scales, so animate scales in steps (a shrinking effect in sixteenths of its size, as the shooter's cannon debris does) rather than giving every sprite its own. Rotated or enlarged sprites use the double-size box: art grown beyond it is cut off (scale 2 unrotated, about 1.4 at 45°). Sprites that are only shrunk or mirrored (angle 0, scales within ±`FX_ONE`) are drawn in plain affine mode, in their own box, which costs half the per-scanline time of the double-size box. For entities, `SPRITE_SCALED` in `spr_flags` draws them scaled by `spr_scale` (one scale for both axes, 256ths). It is a flag rather than a non-zero `spr_scale` because reading `spr_scale` for every entity cost bunnymark ~1,000 cycles (the render loop is out of registers); the flag joins the existing one-instruction test of `spr_angle` and the flags, so unscaled sprites pay nothing measurable (~+75). Debug builds warn about a `spr_scale` set without the flag.
+
+**Limits made visible:** `sprite_stats()` returns the last frame's counts: hardware sprites `drawn` (of 128) and `matrices` used (of 32), draws `dropped` because OAM was full, and rotated or scaled draws shown `untransformed` because the matrices ran out. Counted in release builds too, only on the rare paths, so it costs nothing in the usual case; debug builds also warn once per problem. Sprites the hardware itself skips on a scanline that runs out of time (1,210 cycles a line: an unrotated sprite costs its width, a double-size affine one 2 × its doubled width + 10) aren't counted. Shmup shows them in its debug readout.
 
 **Layering:** by default sprites draw between the foreground (BG1) and the playfield (BG2), so the HUD (BG0) stays on top. `SPRITE_ABOVE_FOREGROUND`, `SPRITE_ABOVE_HUD` and `SPRITE_BEHIND_PLAYFIELD` move a sprite to another layer (see [tilemaps.md](tilemaps.md#default-layer-roles)).
 
@@ -113,4 +120,4 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.
+Resident, uncompressed groups with 4bpp sprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.

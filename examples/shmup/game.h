@@ -55,9 +55,11 @@
 // and a rotated one 2 x its doubled width + 10 (74 for a 16x16 spinner). All
 // 48 enemy bullets on one line cost 384, so bullets bunching up don't reach
 // it; what could is many rotated spinners on one line (waves have at most 4)
-// next to the 64-pixel boss. Should a line run out, the hardware drops the
-// sprites with the highest OAM numbers, which sys_render_by_depth gives to the
-// lowest depth: the player's own shots go first, enemy bullets last.
+// next to the 64-pixel boss. The forts' cannons are rotated 32 x 32 sprites
+// (138 cycles a line each), at most two on a line. Should a line run out, the
+// hardware drops the sprites with the highest OAM numbers, which
+// sys_render_by_depth gives to the lowest depth: the player's own shots go
+// first, enemy bullets last.
 enum {
     DEPTH_BOSS = 0,
     DEPTH_GROUND,
@@ -152,6 +154,7 @@ typedef enum {
     ENEMY_SPINNER, // spinning seed: weaves, three-way shots
     ENEMY_GUNSHIP, // armored: hovers and fires spreads and rings
     ENEMY_TURRET,  // on the station hull: aimed bursts
+    ENEMY_CANNON,  // big turret on the hull: turns to track the ship, fires along its barrels
     ENEMY_BOSS,    // the boss's core (boss.c)
     ENEMY_POD,     // the boss's gun pods (boss.c)
 } EnemyKind;
@@ -161,6 +164,7 @@ typedef enum { ITEM_NONE, ITEM_POWER, ITEM_BOMB } ItemKind;
 void enemies_reset(void);
 void enemies_spawn_waves(void);  // the stage's wave table, by stage_frame
 void spawn_turret(int x, int y); // world pixels, the center (stage.c)
+void spawn_cannon(int x, int y); // world pixels, the center of its 2 x 2 emplacement
 void enemies_update(void);       // movement patterns and firing: before sys_movement
 void enemies_collide(void);      // shots against enemies, the player against danger
 void enemies_cull(void);         // removes what has left the field
@@ -196,6 +200,7 @@ void stage_show(void);                // loads the layers (the map's turret pads
 void stage_hide(void);                // unloads them (the title has only the stars)
 void stage_spawn_ground(void);        // creates turrets as their pads scroll into view
 void stage_destroy_pad(int x, int y); // a turret's pad becomes a crater
+void stage_destroy_gun(int x, int y); // a cannon's emplacement too (its center)
 void stage_animate(void);             // the hull's blinking lights (tileset_set_tiles)
 
 // --- Art (art.c) -------------------------------------------------------------
@@ -217,6 +222,7 @@ enum {
     SPR_ITEM_BOMB,
     SPR_BOSS,
     SPR_POD,
+    SPR_CANNON, // closed, firing; drawn rotated toward the ship
     SPRITE_COUNT
 };
 
@@ -249,7 +255,9 @@ enum {
     MT_PAD,
     MT_CRATER,
     MT_HULL_LIGHT,
-    MT_HULL, // 16 auto-tiled pieces: MT_HULL + neighbors (HULL_UP | ...)
+    MT_GUN,                      // 2 x 2: a cannon's emplacement, MT_GUN + 0..3, row by row
+    MT_GUN_CRATER = MT_GUN + 4,  // 2 x 2: what a destroyed cannon leaves
+    MT_HULL = MT_GUN_CRATER + 4, // 16 auto-tiled pieces: MT_HULL + neighbors (HULL_UP | ...)
     MT_COUNT = MT_HULL + 16
 };
 #define HULL_UP 1

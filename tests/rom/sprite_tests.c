@@ -515,6 +515,110 @@ static void entities_draw_with_their_sprite_palette(void) {
     ecs_reset();
 }
 
+// --- Scaling and sprite statistics ---------------------------------------------
+
+#define AFFINE_MODE(k) (oam_mem[k].attr0 & ATTR0_AFF_DBL)
+
+static void scaling_enlarges_in_a_double_size_box(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&second); // SPR_WIDE: 16x8
+    frame_begin();
+    sprite_draw_ex(SPR_WIDE, 0, 100, 50, 0, FX(2), FX(3) / 2, 0);
+    frame_end();
+    CHECK(AFFINE_MODE(0) == ATTR0_AFF_DBL);
+    CHECK(OAM_X(0) == 100 - 8 && OAM_Y(0) == 50 - 4); // centered, as when rotated
+    // The inverse: a pixel on screen is half (two thirds of) a texture pixel.
+    const OBJ_AFFINE* m = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    CHECK(m->pa == 128 && m->pb == 0 && m->pc == 0 && m->pd == 170);
+}
+
+static void shrinking_and_mirroring_use_the_sprites_own_box(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, 0, FX_ONE / 2, FX_ONE, SPRITE_FLIP_V);
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, 0, -FX_ONE, FX_ONE, 0); // a mirror, as in a card flip
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, ANGLE_DEG(10), FX_ONE / 2, FX_ONE / 2, 0); // rotated
+    frame_end();
+    CHECK(AFFINE_MODE(0) == ATTR0_AFF && AFFINE_MODE(1) == ATTR0_AFF);
+    CHECK(AFFINE_MODE(2) == ATTR0_AFF_DBL);
+    CHECK(OAM_X(0) == 100 - 4 && OAM_Y(0) == 50 - 2); // minus the origin, like sprite_draw
+    CHECK(OAM_X(1) == 100 - 4 && OAM_Y(1) == 50 - 2);
+    CHECK(OAM_X(2) == 100 - 4 - 4 && OAM_Y(2) == 50 - 2 - 4);
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 2); // frame 1 of SPR_ANIM
+    const OBJ_AFFINE* a = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    const OBJ_AFFINE* b = &matrices[MATRIX_INDEX(oam_mem[1].attr1)];
+    CHECK(a->pa == 512 && a->pd == -256); // half as wide, flipped vertically
+    CHECK(b->pa == -256 && b->pd == 256);
+}
+
+static void scales_share_matrices_and_zero_draws_nothing(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw_ex(SPR_SMALL, 0, 10, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE / 2, 0);
+    sprite_draw_ex(SPR_SMALL, 0, 30, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE / 2, 0); // shared
+    sprite_draw_ex(SPR_SMALL, 0, 50, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE, 0);     // own
+    sprite_draw_ex(SPR_SMALL, 0, 70, 10, ANGLE_DEG(45), FX_ONE, FX_ONE, 0);         // rotated only
+    sprite_draw_rotated(SPR_SMALL, 0, 90, 10, ANGLE_DEG(45), 0);            // the same matrix
+    sprite_draw_ex(SPR_SMALL, 0, 50, 50, 0, 0, FX_ONE, 0);                  // no width: nothing
+    sprite_draw_ex(SPR_SMALL, 0, 60, 60, 0, FX_ONE, FX_ONE, SPRITE_FLIP_H); // plain
+    CHECK(serval_oam_used == 6 && serval_matrices_used == 3);
+    frame_end();
+    CHECK(MATRIX_INDEX(oam_mem[0].attr1) == MATRIX_INDEX(oam_mem[1].attr1));
+    CHECK(MATRIX_INDEX(oam_mem[3].attr1) == MATRIX_INDEX(oam_mem[4].attr1));
+    CHECK(!(oam_mem[5].attr0 & ATTR0_AFF) && (oam_mem[5].attr1 & ATTR1_HFLIP));
+}
+
+static void entities_scale_with_sprite_scaled(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    ecs_reset();
+    u32 scaled = entity_index(entity_create(C_POS | C_SPR));
+    u32 forgot = entity_index(entity_create(C_POS | C_SPR));
+    u32 gone = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[scaled] = pos_x[forgot] = pos_x[gone] = FX(40);
+    spr_flags[scaled] = SPRITE_SCALED;
+    spr_scale[scaled] = FX(2);
+    spr_scale[forgot] = FX(2);       // no SPRITE_SCALED: normal size, reported in debug builds
+    spr_flags[gone] = SPRITE_SCALED; // spr_scale 0: no size, not drawn
+    u32 warnings = debug_warning_count();
+    for (int by_depth = 0; by_depth < 2; by_depth++) {
+        render(by_depth);
+        // Equal depths: by depth draws them in the same order.
+        CHECK(AFFINE_MODE(0) == ATTR0_AFF_DBL && !(oam_mem[1].attr0 & ATTR0_AFF));
+        CHECK(oam_mem[2].attr0 & ATTR0_HIDE);
+        CHECK(matrices[MATRIX_INDEX(oam_mem[0].attr1)].pa == 128);
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    ecs_reset();
+}
+
+static void sprite_stats_count_the_last_frame(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    for (u32 k = 0; k < 33; k++)
+        sprite_draw_rotated(SPR_SMALL, 0, 10, 10, (u16)(1000 + k * 100), 0);
+    for (u32 k = 0; k < 100; k++)
+        sprite_draw(SPR_SMALL, 0, 10, 10, 0);
+    SpriteStats during = sprite_stats(); // still the frame before
+    frame_end();
+    SpriteStats s = sprite_stats();
+    CHECK(s.drawn == 128 && s.matrices == 32 && s.dropped == 5 && s.untransformed == 1);
+    CHECK(during.drawn != 128 || during.dropped != 5);
+
+    frame_begin(); // counts start over each frame
+    sprite_draw(SPR_SMALL, 0, 10, 10, 0);
+    frame_end();
+    s = sprite_stats();
+    CHECK(s.drawn == 1 && s.matrices == 0 && s.dropped == 0 && s.untransformed == 0);
+}
+
 TEST_SUITE(
     sprite_tests, "sprites", {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
     {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
@@ -543,4 +647,10 @@ TEST_SUITE(
     {"screen_space_entities_ignore_the_camera", screen_space_entities_ignore_the_camera},
     {"sprite_palette_selects_a_palette_of_the_group",
      sprite_palette_selects_a_palette_of_the_group},
-    {"entities_draw_with_their_sprite_palette", entities_draw_with_their_sprite_palette});
+    {"entities_draw_with_their_sprite_palette", entities_draw_with_their_sprite_palette},
+    {"scaling_enlarges_in_a_double_size_box", scaling_enlarges_in_a_double_size_box},
+    {"shrinking_and_mirroring_use_the_sprites_own_box",
+     shrinking_and_mirroring_use_the_sprites_own_box},
+    {"scales_share_matrices_and_zero_draws_nothing", scales_share_matrices_and_zero_draws_nothing},
+    {"entities_scale_with_sprite_scaled", entities_scale_with_sprite_scaled},
+    {"sprite_stats_count_the_last_frame", sprite_stats_count_the_last_frame});
