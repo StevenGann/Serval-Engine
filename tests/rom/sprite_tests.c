@@ -4,6 +4,8 @@
 #include "../test.h"
 #include "serval/core.h"
 #include "serval/debug.h"
+#include "serval/ecs.h"
+#include "serval/math.h"
 #include "serval/sprites.h"
 
 #include <tonc.h>
@@ -225,19 +227,95 @@ static void defaults_and_computed_tile_counts(void) {
     CHECK(oam_mem[1].attr0 & ATTR0_HIDE);
 }
 
-TEST_SUITE(sprite_tests, "sprites",
-           {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
-           {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
-           {"draw_applies_frame_origin_and_palette_slot",
-            draw_applies_frame_origin_and_palette_slot},
-           {"draw_applies_flags", draw_applies_flags},
-           {"layers_map_to_hardware_priority", layers_map_to_hardware_priority},
-           {"partly_offscreen_wraps_coordinates", partly_offscreen_wraps_coordinates},
-           {"fully_offscreen_is_not_drawn", fully_offscreen_is_not_drawn},
-           {"unloaded_sprite_or_bad_frame_is_not_drawn", unloaded_sprite_or_bad_frame_is_not_drawn},
-           {"groups_are_allocated_one_after_another", groups_are_allocated_one_after_another},
-           {"load_fails_when_out_of_vram_or_palettes", load_fails_when_out_of_vram_or_palettes},
-           {"load_rejects_unsupported_groups", load_rejects_unsupported_groups},
-           {"reset_unloads_everything", reset_unloads_everything},
-           {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds},
-           {"defaults_and_computed_tile_counts", defaults_and_computed_tile_counts});
+static const OBJ_AFFINE* const matrices = (const OBJ_AFFINE*)oam_mem;
+#define MATRIX_INDEX(attr1) (((attr1) >> 9) & 31)
+
+static void rotation_uses_a_double_size_affine_sprite(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&second); // SPR_WIDE: 16x8
+    frame_begin();
+    sprite_draw_rotated(SPR_WIDE, 0, 100, 50, ANGLE_DEG(90), 0);
+    frame_end();
+    CHECK((oam_mem[0].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL);
+    // Double size: 32x16 box, shifted by half the size to stay centered.
+    CHECK((oam_mem[0].attr1 & ATTR1_X_MASK) == 100 - 8);
+    CHECK((oam_mem[0].attr0 & ATTR0_Y_MASK) == 50 - 4);
+    // Clockwise quarter turn: the inverse rotation maps screen to texture.
+    const OBJ_AFFINE* m = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    CHECK(m->pa == 0 && m->pb == 256 && m->pc == -256 && m->pd == 0);
+}
+
+static void sprites_share_matrices_by_angle_and_flips(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw_rotated(SPR_SMALL, 0, 10, 10, ANGLE_DEG(45), 0);
+    sprite_draw_rotated(SPR_SMALL, 0, 30, 10, ANGLE_DEG(45), 0);             // same: shared
+    sprite_draw_rotated(SPR_SMALL, 0, 50, 10, ANGLE_DEG(45), SPRITE_FLIP_H); // flipped: own
+    sprite_draw_rotated(SPR_SMALL, 0, 70, 10, ANGLE_DEG(30), 0);             // other angle
+    frame_end();
+    u32 a = MATRIX_INDEX(oam_mem[0].attr1), b = MATRIX_INDEX(oam_mem[1].attr1);
+    u32 c = MATRIX_INDEX(oam_mem[2].attr1), d = MATRIX_INDEX(oam_mem[3].attr1);
+    CHECK(a == b && a != c && c != d && a != d);
+    CHECK(matrices[c].pa == -matrices[a].pa && matrices[c].pb == -matrices[a].pb);
+    CHECK(matrices[c].pc == matrices[a].pc && matrices[c].pd == matrices[a].pd);
+
+    frame_begin(); // matrices start over each frame
+    sprite_draw_rotated(SPR_SMALL, 0, 10, 10, ANGLE_DEG(30), 0);
+    frame_end();
+    CHECK(MATRIX_INDEX(oam_mem[0].attr1) == 0);
+}
+
+static void past_32_angles_sprites_are_drawn_unrotated(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    u32 warnings = debug_warning_count();
+    frame_begin();
+    for (u32 k = 0; k < 33; k++)
+        sprite_draw_rotated(SPR_SMALL, 0, 10, 10, (u16)(1000 + k * 100), 0);
+    frame_end();
+    CHECK(oam_mem[31].attr0 & ATTR0_AFF);
+    CHECK(!(oam_mem[32].attr0 & ATTR0_AFF) && !(oam_mem[32].attr0 & ATTR0_HIDE));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+}
+
+static void sys_render_rotates_entities_with_an_angle(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    ecs_reset();
+    u32 still = entity_index(entity_create(C_POS | C_SPR));
+    u32 turned = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[still] = pos_x[turned] = FX(40);
+    spr_angle[turned] = ANGLE_DEG(180);
+    frame_begin();
+    sys_render();
+    frame_end();
+    CHECK(!(oam_mem[0].attr0 & ATTR0_AFF));
+    CHECK((oam_mem[1].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL);
+    CHECK(matrices[MATRIX_INDEX(oam_mem[1].attr1)].pa == -256);
+    ecs_reset();
+}
+
+TEST_SUITE(
+    sprite_tests, "sprites", {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
+    {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
+    {"draw_applies_frame_origin_and_palette_slot", draw_applies_frame_origin_and_palette_slot},
+    {"draw_applies_flags", draw_applies_flags},
+    {"layers_map_to_hardware_priority", layers_map_to_hardware_priority},
+    {"partly_offscreen_wraps_coordinates", partly_offscreen_wraps_coordinates},
+    {"fully_offscreen_is_not_drawn", fully_offscreen_is_not_drawn},
+    {"unloaded_sprite_or_bad_frame_is_not_drawn", unloaded_sprite_or_bad_frame_is_not_drawn},
+    {"groups_are_allocated_one_after_another", groups_are_allocated_one_after_another},
+    {"load_fails_when_out_of_vram_or_palettes", load_fails_when_out_of_vram_or_palettes},
+    {"load_rejects_unsupported_groups", load_rejects_unsupported_groups},
+    {"reset_unloads_everything", reset_unloads_everything},
+    {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds},
+    {"defaults_and_computed_tile_counts", defaults_and_computed_tile_counts},
+    {"rotation_uses_a_double_size_affine_sprite", rotation_uses_a_double_size_affine_sprite},
+    {"sprites_share_matrices_by_angle_and_flips", sprites_share_matrices_by_angle_and_flips},
+    {"past_32_angles_sprites_are_drawn_unrotated", past_32_angles_sprites_are_drawn_unrotated},
+    {"sys_render_rotates_entities_with_an_angle", sys_render_rotates_entities_with_an_angle});

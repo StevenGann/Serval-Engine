@@ -57,7 +57,7 @@ Each example builds separately, so one that fails to build doesn't stop the rest
 | `src/gba/` | GBA-only code (`serval`): core API and frame timing (`core.c`), sprites and `sys_render` (`sprites.c`), text layer (`text.c`), debug output (`debug.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |
-| `examples/` | Example ROMs, one directory each, plus `build-all.sh`: `hello` (smallest game), `bunnymark` (ECS, physics, benchmark), `pong` (a complete small game with AI, shaded sprites, effects and sound) |
+| `examples/` | Example ROMs, one directory each, plus `build-all.sh`: `hello` (smallest game), `bunnymark` (ECS, physics, benchmark), `pong` (a complete small game with AI, shaded sprites, effects and sound), `asteroids` (rotation, wrap-around, many short-lived entities, sound) |
 | `cmake/` | Toolchain file and `serval_add_rom()` |
 | `tools/` | ROM header fixer, mGBA test runner build, release packaging, benchmark (`bench.sh`) |
 

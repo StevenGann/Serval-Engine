@@ -46,6 +46,12 @@ void physics_set_bounds(int left, int top, int right, int bottom);
 // Defaults to 0: every edge bounces.
 void physics_set_open_edges(u32 edges);
 
+// Makes bodies wrap around horizontally (x) and/or vertically (y) instead of
+// bouncing: a body that has completely left one edge of the bounds reappears
+// just outside the opposite edge and slides back in, as in Asteroids. A
+// wrapping axis has no floor. Defaults to no wrapping.
+void physics_set_wrap(bool x, bool y);
+
 // True if the rectangles of two bodies overlap (position plus body_w x
 // body_h; touching edges don't count). Takes entity slot indices, as from
 // entity_index() or ECS_FOR_EACH. Works for any entities with C_POS, so a

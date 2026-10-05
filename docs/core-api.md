@@ -30,8 +30,8 @@ Other modules, all in `include/serval/`:
 | --- | --- |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
 | `audio.h` | PSG sound effects on the tone generators: `psg_table_set()`, `psg_play()`, `psg_stop_all()`; `PsgSound` (frequency, frames, duty, volume, fade, pitch slide, optional melody) |
-| `physics.h` | Bouncing bodies (`C_BODY`): `physics_set_gravity()`, `physics_set_bounds()`, `physics_set_open_edges()`, `sys_physics()`; per-entity size, bounce and friction. For balls, particles and debris, not platformer characters. `body_overlap(a, b)` tests two bodies' rectangles; a body without `C_VEL` is a static collider |
-| `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`) |
+| `physics.h` | Bouncing bodies (`C_BODY`): `physics_set_gravity()`, `physics_set_bounds()`, `physics_set_open_edges()`, `physics_set_wrap()`, `sys_physics()`; per-entity size, bounce and friction. For balls, particles and debris, not platformer characters. `body_overlap(a, b)` tests two bodies' rectangles; a body without `C_VEL` is a static collider |
+| `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`); angles as u16 turns (`ANGLE_DEG(d)`, clockwise on screen) with `fx_sin`/`fx_cos` from a 1024-step table |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`; `random_entropy()` for a seed that varies between runs (e.g. taken when the player presses START) |
 | `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_print_line()` (also blanks the rest of the row), `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer; not compiler-checked, but a NULL `%s` prints `(null)` and debug builds catch a `%s` that isn't a pointer) |
 | `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |

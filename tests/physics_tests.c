@@ -28,6 +28,7 @@ static void reset(void) {
     physics_set_bounds(0, 0, 100, 100);
     physics_set_gravity(0, 0);
     physics_set_open_edges(0);
+    physics_set_wrap(false, false);
 }
 
 static void gravity_accelerates_bodies(void) {
@@ -136,6 +137,24 @@ static void overlap_tests_rectangles(void) {
     CHECK(!body_overlap(a, b));
 }
 
+static void wrapping_brings_bodies_back_on_the_other_side(void) {
+    reset();
+    physics_set_wrap(true, true);
+    u32 i = make_body(FX(95), FX(50), FX(4), 0); // 10 wide, bounds 0-100
+    step(1);
+    CHECK(pos_x[i] == FX(99) && vel_x[i] == FX(4)); // still partly visible: no wrap yet
+    step(1);
+    CHECK(pos_x[i] == FX(103) - FX(110)); // fully past: re-enters from just left of 0
+    step(3);
+    CHECK(pos_x[i] == FX(5)); // sliding back in, same speed
+    pos_y[i] = FX(2);
+    vel_y[i] = -FX(5);
+    step(3); // y: 2 -> -3 -> -8 -> -13, which is fully above 0 (10 tall): wraps
+    CHECK(pos_y[i] == -FX(13) + FX(110));
+    CHECK(vel_y[i] == -FX(5));
+    physics_set_wrap(false, false);
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
@@ -144,4 +163,6 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"gravity_in_any_direction", gravity_in_any_direction},
            {"non_bodies_are_untouched", non_bodies_are_untouched},
            {"open_edges_let_bodies_out", open_edges_let_bodies_out},
-           {"overlap_tests_rectangles", overlap_tests_rectangles});
+           {"overlap_tests_rectangles", overlap_tests_rectangles},
+           {"wrapping_brings_bodies_back_on_the_other_side",
+            wrapping_brings_bodies_back_on_the_other_side});

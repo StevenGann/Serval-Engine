@@ -40,14 +40,14 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 
 `include/serval/ecs.h`, `src/ecs/ecs.c` (platform-neutral, unit tested on the host and in the test ROM).
 
-- `entity_create(mask)`, `entity_destroy(e)`, `entity_alive(e)`, `ecs_reset()` (destroys everything, e.g. on room change).
+- `entity_create(mask)`, `entity_destroy(e)`, `entity_alive(e)`, `entity_at(index)` (the handle in a slot, e.g. to destroy the entity an `ECS_FOR_EACH` loop is on), `ecs_reset()` (destroys everything, e.g. on room change).
 - Bit 31 of `ent_mask` is reserved as `C_ALIVE`, so free slots never match a system's required mask.
 - Generations start at 1 and skip 0 when wrapping, so no handle ever equals `ENTITY_NONE` (0).
 - Free slots are kept on a stack: creation and destruction are O(1), with no scan.
 - Component bits 0-15 belong to the engine and 16-30 to games (`C_GAME(n)`); bit 31 is `C_ALIVE`.
 - Engine components so far: `C_POS` (`pos_x`, `pos_y`), `C_VEL` (`vel_x`, `vel_y`), both 24.8 `FIXED`, and `C_SPR` (`spr_id`, `spr_frame`, `spr_flags`). `entity_create()` zeroes them.
 - Writing systems: `ECS_FOR_EACH(i, C_POS | C_VEL) { ... }` loops over matching entities, and `ent_has(i, mask)` tests one; both require *every* component in the mask (a hand-written `ent_mask[i] & (A | B)` is true for either).
-- Engine components also include `C_BODY` (`body_w`, `body_h`, `body_bounce`, `body_friction`; `include/serval/physics.h`) and, under `C_SPR`, `spr_depth`.
+- Engine components also include `C_BODY` (`body_w`, `body_h`, `body_bounce`, `body_friction`; `include/serval/physics.h`) and, under `C_SPR`, `spr_depth` and `spr_angle` (rotation).
 - Engine systems so far, called once per frame by games alongside their own systems:
   - `sys_movement()`: position += velocity.
   - `sys_physics()`: gravity, bounces off the world bounds, friction and resting for `C_BODY` entities. Bounces mirror the overshoot and gravity is applied after the bounce, so no energy is created; floor bounces lose speed, so bodies come to rest.

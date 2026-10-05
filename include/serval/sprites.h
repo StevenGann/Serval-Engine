@@ -91,4 +91,12 @@ void sprite_groups_reset(void);
 // sprites are used.
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 
+// Like sprite_draw, rotated around the sprite's center by `angle` (math.h
+// angles: ANGLE_DEG(90) is a quarter turn clockwise). Art drawn facing right
+// then faces (fx_cos(angle), fx_sin(angle)). The hardware has 32 rotation
+// matrices per frame, shared by sprites with the same angle and flips; give
+// many sprites few distinct angles. Past 32, sprites are drawn unrotated
+// (reported in debug builds).
+void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
+
 #endif // SERVAL_SPRITES_H

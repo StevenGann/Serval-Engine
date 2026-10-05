@@ -10,6 +10,9 @@
 // VBlank by frame_end(). serval_oam_used counts this frame's entries.
 extern OBJ_ATTR serval_shadow_oam[128];
 extern u32 serval_oam_used;
+// Rotation matrices used this frame. The 32 matrices live in the shadow OAM's
+// otherwise unused fourth halfwords (OBJ_AFFINE overlay), copied with it.
+extern u32 serval_matrices_used;
 
 // PSG sound effects (psg.c): set up by serval_init(), advanced once per frame
 // by frame_end().

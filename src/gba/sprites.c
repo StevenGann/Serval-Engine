@@ -1,6 +1,7 @@
 #include "serval/sprites.h"
 #include "serval/ecs.h"
 #include "serval/gba.h"
+#include "serval/math.h"
 #include "serval/screen.h"
 
 #include <tonc.h>
@@ -44,6 +45,7 @@ static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
 // Each problem is reported once per sprite ID, not every frame.
 static EWRAM_BSS u32 warned_ids[SPRITE_MAX / 32];
 static bool warned_oam_full;
+static bool warned_matrices;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
@@ -116,6 +118,7 @@ void sprite_groups_reset(void) {
 #ifdef SERVAL_DEBUG
     memset32(warned_ids, 0, sizeof(warned_ids) / 4);
     warned_oam_full = false;
+    warned_matrices = false;
 #endif
 }
 
@@ -211,8 +214,57 @@ bool sprite_group_load(const SpriteGroup* group) {
     return true;
 }
 
-// Appends a sprite to the shadow OAM. Shared by sprite_draw and sys_render;
-// both run as ARM code from IWRAM, the fastest place to run code on the GBA.
+#ifdef SERVAL_DEBUG
+static __attribute__((noinline, cold)) void warn_matrices(void) {
+    if (warned_matrices)
+        return;
+    warned_matrices = true;
+    SERVAL_WARN("more than 32 rotation angles in one frame; the extra sprites are drawn unrotated");
+}
+#define MATRICES_FULL() warn_matrices()
+#else
+#define MATRICES_FULL() ((void)0)
+#endif
+
+// The angle and flip flags of each rotation matrix used this frame.
+static u16 matrix_angle[32];
+static u8 matrix_flips[32];
+
+// Returns the index of a rotation matrix for `angle` and the flip flags,
+// reusing one already set up this frame, or -1 if all 32 are taken.
+static inline __attribute__((always_inline, target("arm"))) int matrix_for(u32 angle, u32 flips) {
+    for (u32 k = 0; k < serval_matrices_used; k++) {
+        if (matrix_angle[k] == angle && matrix_flips[k] == flips)
+            return (int)k;
+    }
+    if (serval_matrices_used == 32)
+        return -1;
+    // The matrix maps screen offsets back to the sprite's pixels, so it is the
+    // inverse rotation; flips mirror the pixels before rotating.
+    FIXED c = fx_cos((u16)angle), sn = fx_sin((u16)angle);
+    FIXED pa = c, pb = sn, pc = -sn, pd = c;
+    if (flips & SPRITE_FLIP_H) {
+        pa = -pa;
+        pb = -pb;
+    }
+    if (flips & SPRITE_FLIP_V) {
+        pc = -pc;
+        pd = -pd;
+    }
+    u32 k = serval_matrices_used++;
+    OBJ_AFFINE* m = &((OBJ_AFFINE*)serval_shadow_oam)[k];
+    m->pa = (s16)pa;
+    m->pb = (s16)pb;
+    m->pc = (s16)pc;
+    m->pd = (s16)pd;
+    matrix_angle[k] = (u16)angle;
+    matrix_flips[k] = (u8)flips;
+    return (int)k;
+}
+
+// Appends a sprite to the shadow OAM. Shared by sprite_draw, sys_render and
+// sys_render_by_depth, which all run as ARM code from IWRAM, the fastest place
+// to run code on the GBA.
 static inline __attribute__((always_inline, target("arm"))) void
 draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
     if (frame >= d->frame_count) { // also rejects sprites that are not loaded
@@ -240,6 +292,53 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
     obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
 }
 
+// Like draw, rotated by a non-zero angle: uses the hardware's double-size mode
+// (so the rotated corners aren't cut off), shifted so the sprite stays
+// centered where the unrotated one would be. Flips go into the matrix, whose
+// index takes attr1 bits 9-13. Falls back to an unrotated draw when all 32
+// matrices are taken. Kept out of line (but in IWRAM) so the render loops stay
+// as fast as before for the usual unrotated sprites.
+static __attribute__((noinline, section(".iwram.text"), target("arm"))) void
+draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
+    if (frame >= d->frame_count) {
+        DRAW_REJECTED(id, frame);
+        return;
+    }
+    int matrix = matrix_for(angle, flags & 3);
+    if (matrix < 0) {
+        MATRICES_FULL();
+        draw(id, d, frame, x, y, flags);
+        return;
+    }
+    x -= d->origin_x + d->width / 2;
+    y -= d->origin_y + d->height / 2;
+    u32 w = 2u * d->width, h = 2u * d->height;
+    if ((u32)(x + (int)w - 1) >= 240 + w - 1 || (u32)(y + (int)h - 1) >= 160 + h - 1)
+        return;
+    if (serval_oam_used >= 128) {
+        OAM_FULL();
+        return;
+    }
+    OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
+    obj->attr0 = (u16)(d->attr0 | ATTR0_AFF_DBL | ((u32)y & ATTR0_Y_MASK));
+    obj->attr1 = (u16)(d->attr1 | ((u32)matrix << 9) | ((u32)x & ATTR1_X_MASK));
+    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
+}
+
+// Draws entity i (known to have C_POS and C_SPR), rotated if it has an angle.
+static inline __attribute__((always_inline, target("arm"))) void draw_entity(u32 i) {
+    u32 id = spr_id[i];
+    if (id >= sprite_count) {
+        DRAW_REJECTED(id, spr_frame[i]);
+        return;
+    }
+    int x = fx_to_int(pos_x[i]), y = fx_to_int(pos_y[i]);
+    if (spr_angle[i])
+        draw_rotated(id, &sprite_draws[id], spr_frame[i], x, y, spr_flags[i], spr_angle[i]);
+    else
+        draw(id, &sprite_draws[id], spr_frame[i], x, y, spr_flags[i]);
+}
+
 SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
     if (sprite_id < sprite_count)
         draw(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags);
@@ -247,16 +346,18 @@ SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 fl
         DRAW_REJECTED(sprite_id, frame);
 }
 
+SERVAL_IWRAM_CODE void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle,
+                                           u16 flags) {
+    if (sprite_id < sprite_count)
+        draw_rotated(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, angle);
+    else
+        DRAW_REJECTED(sprite_id, frame);
+}
+
 SERVAL_IWRAM_CODE void sys_render(void) {
     for (u32 i = 0; i < MAX_ENT; i++) {
-        if ((ent_mask[i] & (C_POS | C_SPR)) != (C_POS | C_SPR))
-            continue;
-        u32 id = spr_id[i];
-        if (id < sprite_count)
-            draw(id, &sprite_draws[id], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]),
-                 spr_flags[i]);
-        else
-            DRAW_REJECTED(id, spr_frame[i]);
+        if ((ent_mask[i] & (C_POS | C_SPR)) == (C_POS | C_SPR))
+            draw_entity(i);
     }
 }
 
@@ -309,12 +410,6 @@ SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
     }
 
     for (u32 k = 0; k < n; k++) {
-        u32 i = order[k];
-        u32 id = spr_id[i];
-        if (id < sprite_count)
-            draw(id, &sprite_draws[id], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]),
-                 spr_flags[i]);
-        else
-            DRAW_REJECTED(id, spr_frame[i]);
+        draw_entity(order[k]);
     }
 }

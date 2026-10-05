@@ -38,6 +38,7 @@ extern u16 spr_id[MAX_ENT];                  // C_SPR: sprite ID (sprites.h)
 extern u8 spr_frame[MAX_ENT];                // C_SPR: animation frame
 extern u16 spr_flags[MAX_ENT];               // C_SPR: sprite_draw flags (flip, layer)
 extern s16 spr_depth[MAX_ENT]; // C_SPR: sys_render_by_depth draws higher depths in front
+extern u16 spr_angle[MAX_ENT]; // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
 
 // True if entity slot i has every component in `mask` (and is alive, when
 // `mask` is not 0). Prefer this to testing ent_mask by hand: `ent_mask[i] &
@@ -73,6 +74,11 @@ void entity_destroy(Entity e);
 
 // True if the handle refers to a live entity.
 bool entity_alive(Entity e);
+
+// The handle of the live entity in slot `index` (as from ECS_FOR_EACH), or
+// ENTITY_NONE if the slot is free. Use it to destroy or keep the entity a
+// system is looking at: ECS_FOR_EACH(i, C_ROCK) entity_destroy(entity_at(i));
+Entity entity_at(u32 index);
 
 // Systems, run once per frame by the game.
 // sys_movement: position += velocity for entities with C_POS and C_VEL.

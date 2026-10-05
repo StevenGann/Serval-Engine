@@ -44,7 +44,8 @@ else()
         "${PROJECT_SOURCE_DIR}/examples/bunnymark/main.c"
         "${PROJECT_SOURCE_DIR}/examples/bunnymark/bunnymark.c"
         "${PROJECT_SOURCE_DIR}/examples/bunnymark/bench.c"
-        "${PROJECT_SOURCE_DIR}/examples/pong/main.c")
+        "${PROJECT_SOURCE_DIR}/examples/pong/main.c"
+        "${PROJECT_SOURCE_DIR}/examples/asteroids/main.c")
     target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
     target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
     add_dependencies(serval_host_tests serval_api_only_check)

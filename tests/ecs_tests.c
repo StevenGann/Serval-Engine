@@ -157,6 +157,17 @@ static void for_each_visits_matching_entities(void) {
     CHECK(else_taken);
 }
 
+static void entity_at_returns_the_live_handle(void) {
+    ecs_reset();
+    Entity e = entity_create(C_POS);
+    u32 i = entity_index(e);
+    CHECK(entity_at(i) == e);
+    entity_destroy(entity_at(i)); // destroy from a system's loop index
+    CHECK(!entity_alive(e));
+    CHECK(entity_at(i) == ENTITY_NONE);
+    CHECK(entity_at(MAX_ENT) == ENTITY_NONE);
+}
+
 TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"slots_are_handed_out_in_order", slots_are_handed_out_in_order},
            {"destroy_makes_handle_stale", destroy_makes_handle_stale},
@@ -168,4 +179,5 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"create_zeroes_components", create_zeroes_components},
            {"movement_adds_velocity_to_position", movement_adds_velocity_to_position},
            {"ent_has_requires_every_component", ent_has_requires_every_component},
-           {"for_each_visits_matching_entities", for_each_visits_matching_entities});
+           {"for_each_visits_matching_entities", for_each_visits_matching_entities},
+           {"entity_at_returns_the_live_handle", entity_at_returns_the_live_handle});

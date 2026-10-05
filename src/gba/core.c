@@ -20,6 +20,7 @@ _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SE
 // that are not drawn disappear. See "Sprite submission model" in docs/core-api.md.
 OBJ_ATTR serval_shadow_oam[128] ALIGN4;
 u32 serval_oam_used;
+u32 serval_matrices_used;
 
 // CPU cycles per frame: 228 scanlines of 1232 cycles.
 #define FRAME_BUDGET_CYCLES 280896u
@@ -79,6 +80,7 @@ void frame_begin(void) {
     frame_start_cycles = cycles_now();
     key_poll();
     serval_oam_used = 0;
+    serval_matrices_used = 0;
 }
 
 void frame_end(void) {

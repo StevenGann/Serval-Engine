@@ -20,11 +20,11 @@ Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and m
 
 Standardize on fixed-point types and lookup tables for trig early. There is no FPU or hardware divider.
 
-**Implemented so far:** 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
+**Implemented so far:** sine and cosine from a 1024-step table, with u16 angles (`include/serval/math.h`); 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
 
 ## Physics
 
-**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle (any edge can be left open) with per-entity bounciness and friction, and resting. Bodies don't collide with each other or with tilemaps; a platformer character controller is separate future work.
+**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle (any edge can be left open) with per-entity bounciness and friction, and resting; or wrapping around the edges instead (`physics_set_wrap`). Bodies don't collide with each other or with tilemaps; a platformer character controller is separate future work.
 
 ## Entity collision
 

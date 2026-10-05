@@ -32,6 +32,7 @@ include(cmake/Serval.cmake)
 set(SERVAL_PORTABLE_SOURCES
     src/core/random.c
     src/core/text_format.c
+    src/core/trig.c
     src/ecs/ecs.c
     src/ecs/physics.c
 )

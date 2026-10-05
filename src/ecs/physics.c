@@ -8,6 +8,7 @@ u8 body_friction[MAX_ENT];
 static FIXED gravity_x, gravity_y;
 static int bounds_left = 0, bounds_top = 0, bounds_right = SCREEN_W, bounds_bottom = SCREEN_H;
 static u32 open_edges;
+static bool wrap_x, wrap_y;
 
 // Sliding stops below this speed (a sixteenth of a pixel per frame).
 #define STOP_SPEED (FX_ONE / 16)
@@ -19,6 +20,11 @@ void physics_set_gravity(FIXED x, FIXED y) {
 
 void physics_set_open_edges(u32 edges) {
     open_edges = edges;
+}
+
+void physics_set_wrap(bool x, bool y) {
+    wrap_x = x;
+    wrap_y = y;
 }
 
 void physics_set_bounds(int left, int top, int right, int bottom) {
@@ -76,6 +82,19 @@ static inline bool update_axis(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi, FIXED
     return on_floor;
 }
 
+// Wraps one axis: a body entirely past `hi` (the far bound) or entirely before
+// `lo` (it is `size` long) moves by the span of the bounds plus its size, so
+// it re-enters from the other side.
+static inline void wrap_axis(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi, FIXED size,
+                             FIXED gravity) {
+    FIXED span = hi - lo + size;
+    if (*pos >= hi)
+        *pos -= span;
+    else if (*pos <= lo - size)
+        *pos += span;
+    *vel += gravity;
+}
+
 static inline FIXED slide(FIXED speed, u32 friction) {
     speed -= (FIXED)(((s32)speed * (s32)friction) >> 8);
     return fx_abs(speed) < STOP_SPEED ? 0 : speed;
@@ -85,7 +104,11 @@ static inline FIXED slide(FIXED speed, u32 friction) {
 // Bound used for open edges: far enough that no body reaches it.
 #define OPEN_EDGE (FX(1) << 20)
 
-SERVAL_IWRAM_CODE void sys_physics(void) {
+// The physics loop. `wrapping` is a constant at each call site, so the
+// compiler builds one copy without any wrap checks (the usual case) and one
+// with them, and the per-body loop never tests a setting that can't change
+// within the frame.
+static inline __attribute__((always_inline)) void physics_loop(bool wrapping) {
     const FIXED left = (open_edges & PHYSICS_EDGE_LEFT) ? -OPEN_EDGE : FX(bounds_left);
     const FIXED top = (open_edges & PHYSICS_EDGE_TOP) ? -OPEN_EDGE : FX(bounds_top);
     const bool open_right = open_edges & PHYSICS_EDGE_RIGHT;
@@ -93,9 +116,23 @@ SERVAL_IWRAM_CODE void sys_physics(void) {
     ECS_FOR_EACH(i, C_POS | C_VEL | C_BODY) {
         const FIXED right = open_right ? OPEN_EDGE : FX(bounds_right - body_w[i]);
         const FIXED bottom = open_bottom ? OPEN_EDGE : FX(bounds_bottom - body_h[i]);
-        if (update_axis(&pos_x[i], &vel_x[i], left, right, gravity_x, body_bounce[i]))
+        if (wrapping && wrap_x)
+            wrap_axis(&pos_x[i], &vel_x[i], FX(bounds_left), FX(bounds_right), FX(body_w[i]),
+                      gravity_x);
+        else if (update_axis(&pos_x[i], &vel_x[i], left, right, gravity_x, body_bounce[i]))
             vel_y[i] = slide(vel_y[i], body_friction[i]);
-        if (update_axis(&pos_y[i], &vel_y[i], top, bottom, gravity_y, body_bounce[i]))
+        if (wrapping && wrap_y)
+            wrap_axis(&pos_y[i], &vel_y[i], FX(bounds_top), FX(bounds_bottom), FX(body_h[i]),
+                      gravity_y);
+        else if (update_axis(&pos_y[i], &vel_y[i], top, bottom, gravity_y, body_bounce[i]))
             vel_x[i] = slide(vel_x[i], body_friction[i]);
     }
+}
+
+// Runs as ARM code from IWRAM on the GBA: it touches every body every frame.
+SERVAL_IWRAM_CODE void sys_physics(void) {
+    if (wrap_x || wrap_y)
+        physics_loop(true);
+    else
+        physics_loop(false);
 }

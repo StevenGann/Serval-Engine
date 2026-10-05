@@ -10,6 +10,7 @@ u16 spr_id[MAX_ENT];
 u8 spr_frame[MAX_ENT];
 u16 spr_flags[MAX_ENT];
 s16 spr_depth[MAX_ENT];
+u16 spr_angle[MAX_ENT];
 
 static u8 ent_gen[MAX_ENT];
 
@@ -65,8 +66,15 @@ Entity entity_create(u32 components) {
     spr_frame[index] = 0;
     spr_flags[index] = 0;
     spr_depth[index] = 0;
+    spr_angle[index] = 0;
     body_w[index] = body_h[index] = 0;
     body_bounce[index] = body_friction[index] = 0;
+    return make_handle(index);
+}
+
+Entity entity_at(u32 index) {
+    if (index >= MAX_ENT || !(ent_mask[index] & C_ALIVE))
+        return ENTITY_NONE;
     return make_handle(index);
 }
 
