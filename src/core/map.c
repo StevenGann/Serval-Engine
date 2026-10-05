@@ -1,0 +1,237 @@
+// Map layers, the camera, runtime cell changes and collision queries: the
+// platform-neutral part of map.h. Drawing the layers is the platform's job
+// (src/gba/map.c); sys_map_movement is in src/ecs/map_movement.c.
+
+#include "serval/map.h"
+#include "serval/screen.h"
+
+#include "map_internal.h"
+#include "warn.h"
+
+int serval_camera_x, serval_camera_y;
+
+const MapLayer* serval_map_layers[4];
+u8 serval_map_reload;
+
+// The changes are in IWRAM: every collision query looks through them. The
+// redraw list is read once per frame, so it can be in the slower EWRAM.
+MapChange serval_map_changes[MAP_MAX_CHANGES];
+u32 serval_map_change_count;
+SERVAL_EWRAM_BSS MapChange serval_map_redraw[MAP_MAX_CHANGES];
+u32 serval_map_redraw_count;
+bool serval_map_redraw_all;
+
+#ifdef SERVAL_DEBUG
+// Each kind of problem is reported once, not on every call.
+enum {
+    W_LAYER_POINTER,
+    W_LAYER_BG,
+    W_LAYER_SIZE,
+    W_LAYER_DATA,
+    W_LAYER_CELL,
+    W_UNLOAD_BG,
+    W_SET_NO_MAP,
+    W_SET_OUTSIDE,
+    W_SET_METATILE,
+    W_SET_FULL,
+};
+static u32 warned;
+
+static bool first_warning(u32 kind) {
+    if (warned & (1u << kind))
+        return false;
+    warned |= 1u << kind;
+    return true;
+}
+#define WARN_ONCE(kind, ...)                                                                       \
+    do {                                                                                           \
+        if (first_warning(kind))                                                                   \
+            SERVAL_WARN(__VA_ARGS__);                                                              \
+    } while (0)
+#else
+#define WARN_ONCE(kind, ...) ((void)0)
+#endif
+
+static int clamp(int v, int lo, int hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+static void clamp_camera(void) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield)
+        return;
+    int max_x = playfield->width * 16 - SCREEN_W, max_y = playfield->height * 16 - SCREEN_H;
+    serval_camera_x = clamp(serval_camera_x, 0, max_x < 0 ? 0 : max_x);
+    serval_camera_y = clamp(serval_camera_y, 0, max_y < 0 ? 0 : max_y);
+}
+
+void camera_set(int x, int y) {
+    serval_camera_x = x;
+    serval_camera_y = y;
+    clamp_camera();
+}
+
+int camera_x(void) {
+    return serval_camera_x;
+}
+
+int camera_y(void) {
+    return serval_camera_y;
+}
+
+static void forget_changes(void) {
+    serval_map_change_count = 0;
+    serval_map_redraw_count = 0;
+    serval_map_redraw_all = false;
+}
+
+#ifdef SERVAL_DEBUG
+// Debug builds check every cell once at load time; at run time, a cell
+// naming a metatile the layer doesn't have shows (and collides) as empty.
+static void check_cells(const MapLayer* layer) {
+    u32 count = (u32)layer->width * layer->height;
+    for (u32 k = 0; k < count; k++) {
+        if (layer->cells[k] >= layer->metatile_count) {
+            WARN_ONCE(W_LAYER_CELL,
+                      "map_load: cell (%u, %u) of the layer on background %u uses metatile %u, "
+                      "but it has only %u metatiles; it shows as empty",
+                      k % layer->width, k / layer->width, layer->bg, layer->cells[k],
+                      layer->metatile_count);
+            return;
+        }
+    }
+}
+#endif
+
+bool map_load(const MapLayer* layer) {
+    if (!serval_plausible_pointer(layer)) {
+        WARN_ONCE(W_LAYER_POINTER, "map_load: the layer pointer is NULL or not valid");
+        return false;
+    }
+    if (layer->bg < 1 || layer->bg > 3) {
+        WARN_ONCE(W_LAYER_BG,
+                  "map_load: .bg is %u, but map layers go on backgrounds 1-3 (background 0 "
+                  "is the text layer)",
+                  layer->bg);
+        return false;
+    }
+    if (layer->width == 0 || layer->height == 0) {
+        WARN_ONCE(W_LAYER_SIZE,
+                  "map_load: the layer for background %u is %ux%u metatiles; set .width and "
+                  ".height",
+                  layer->bg, layer->width, layer->height);
+        return false;
+    }
+    if (!serval_plausible_pointer(layer->cells) || !serval_plausible_pointer(layer->metatiles) ||
+        layer->metatile_count == 0) {
+        WARN_ONCE(W_LAYER_DATA,
+                  "map_load: the layer for background %u needs .cells, .metatiles and "
+                  ".metatile_count",
+                  layer->bg);
+        return false;
+    }
+#ifdef SERVAL_DEBUG
+    check_cells(layer);
+#endif
+    serval_map_layers[layer->bg] = layer;
+    serval_map_reload |= (u8)(1u << layer->bg);
+    if (layer->bg == 2) {
+        forget_changes();
+        clamp_camera();
+    }
+    serval_map_attach();
+    return true;
+}
+
+void map_unload(u32 bg) {
+    if (bg < 1 || bg > 3) {
+        WARN_ONCE(W_UNLOAD_BG, "map_unload(%u): map layers are on backgrounds 1-3", bg);
+        return;
+    }
+    if (!serval_map_layers[bg])
+        return;
+    serval_map_layers[bg] = NULL;
+    serval_map_reload |= (u8)(1u << bg);
+    if (bg == 2)
+        forget_changes();
+}
+
+u32 serval_map_cell_in(const MapLayer* layer, u32 mx, u32 my) {
+    for (u32 k = 0; k < serval_map_change_count; k++) {
+        if (serval_map_changes[k].mx == mx && serval_map_changes[k].my == my)
+            return serval_map_changes[k].cell;
+    }
+    return layer->cells[my * layer->width + mx];
+}
+
+u16 map_cell(int mx, int my) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield || (u32)mx >= playfield->width || (u32)my >= playfield->height)
+        return 0;
+    return (u16)serval_map_cell_in(playfield, (u32)mx, (u32)my);
+}
+
+void map_set_cell(int mx, int my, u16 metatile) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield) {
+        WARN_ONCE(W_SET_NO_MAP, "map_set_cell: no map is loaded on background 2 (the playfield)");
+        return;
+    }
+    if ((u32)mx >= playfield->width || (u32)my >= playfield->height) {
+        WARN_ONCE(W_SET_OUTSIDE, "map_set_cell(%d, %d): outside the playfield (%ux%u metatiles)",
+                  mx, my, playfield->width, playfield->height);
+        return;
+    }
+    if (metatile >= playfield->metatile_count) {
+        WARN_ONCE(W_SET_METATILE, "map_set_cell(%d, %d, %u): the playfield has only %u metatiles",
+                  mx, my, metatile, playfield->metatile_count);
+        return;
+    }
+
+    // A cell set back to its original metatile leaves the table, so changes
+    // that are undone (a door closing again) don't use it up.
+    bool original = playfield->cells[(u32)my * playfield->width + (u32)mx] == metatile;
+    u32 k = 0;
+    while (k < serval_map_change_count &&
+           (serval_map_changes[k].mx != (u32)mx || serval_map_changes[k].my != (u32)my))
+        k++;
+    if (k < serval_map_change_count) {
+        if (serval_map_changes[k].cell == metatile)
+            return;
+        if (original)
+            serval_map_changes[k] = serval_map_changes[--serval_map_change_count];
+        else
+            serval_map_changes[k].cell = metatile;
+    } else {
+        if (original)
+            return;
+        if (serval_map_change_count == MAP_MAX_CHANGES) {
+            WARN_ONCE(W_SET_FULL,
+                      "map_set_cell(%d, %d): already %u changed cells in this room; the change "
+                      "is ignored",
+                      mx, my, MAP_MAX_CHANGES);
+            return;
+        }
+        serval_map_changes[serval_map_change_count++] =
+            (MapChange){(u16)mx, (u16)my, (u16)metatile};
+    }
+
+    if (serval_map_redraw_count < MAP_MAX_CHANGES)
+        serval_map_redraw[serval_map_redraw_count++] = (MapChange){(u16)mx, (u16)my, 0};
+    else
+        serval_map_redraw_all = true;
+}
+
+u8 map_collision_at(int x, int y) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield)
+        return MAP_EMPTY;
+    // Arithmetic shifts: pixels -1 to -16 are metatile -1.
+    int mx = x >> 4, my = y >> 4;
+    if ((u32)mx >= playfield->width)
+        return MAP_SOLID;
+    if ((u32)my >= playfield->height)
+        return MAP_EMPTY;
+    u32 cell = serval_map_cell_in(playfield, (u32)mx, (u32)my);
+    return cell < playfield->metatile_count ? playfield->metatiles[cell].collision : MAP_EMPTY;
+}

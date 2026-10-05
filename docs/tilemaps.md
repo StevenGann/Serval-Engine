@@ -2,7 +2,7 @@
 
 Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffered screenblocks as the camera scrolls. 1.0 uses regular tiled backgrounds only; affine (Mode 7) is post-1.0.
 
-**Not implemented yet:** there is no background or tilemap API; only the text layer uses BG0 (`text.h`).
+**Status:** partly implemented (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)). Implemented: one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax and wrapping layers, the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles`), and map collision for map bodies (solid and one-way metatiles, plus four tag bits for the game). Planned: tileset groups with a bump allocator, LZ77-compressed tilesets, slopes, ladders and other collision types, 8bpp layers, raster effects.
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
 
@@ -19,43 +19,103 @@ The editor exposes these as room layers, with hardware limits visible.
 
 Each background's hardware priority equals its number (BG0 = 0, ..., BG3 = 3), and sprites default to priority 2, which gives this order from front to back: HUD, foreground, sprites, playfield, parallax background. Sprites can opt into other positions with layer flags ([sprites.md](sprites.md#api)).
 
+World coordinates are pixels from the top-left of the playfield (BG2) map; collision, the camera and entity positions all use them.
+
+## VRAM layout
+
+**Implemented:**
+
+| Region | Holds |
+| --- | --- |
+| Charblock 0 | Text layer font (BG0, [text.h](api-reference.md#texth)) |
+| Charblocks 1-2 | Tileset tiles 0-1023 (`MAP_MAX_TILES`), shared by every map layer (BGxCNT character base 1) |
+| Charblock 3 | No tiles: screenblocks 28, 29, 30 (BG1, BG2, BG3 maps, 32×32 entries each) and 31 (text layer map) |
+| Charblocks 4-5 | Sprite tiles ([sprites.md](sprites.md)) |
+| BG palette banks 0-14 | Tileset palettes (`MAP_MAX_PALETTES`); color 0 of bank 0 is the backdrop, and `tileset_load()` skips color 0 of every bank |
+| BG palette bank 15 | Text layer |
+
+Map layers are 4bpp, 32×32-entry (256×256 pixel) regular backgrounds; `map_load()` sets their BGxCNT (character base 1, their screenblock, priority = BG number) and DISPCNT enable bit at once, and `map_unload()` clears the bit at the next `frame_end()`.
+
 ## Metatiles
 
 Four screen entries plus a collision byte. They cut level data about 4× and give collision a natural granularity. Tile deduplication at build time also matches H/V-flipped tiles.
 
-## Streaming
-
-- When the camera crosses an 8-pixel boundary, write the newly exposed column or row at index `(tile_x & 31)`.
-- Queue writes during the frame; flush them in VBlank ([frame-loop.md](frame-loop.md)).
-- Use 32×32 screenblocks for streamed layers; 64-wide maps complicate wrap math.
-- Parallax layers use a per-layer scroll factor. Small repeating backgrounds just wrap.
-
-## Tilesets
-
-Loaded per room as groups into charblocks with a bump allocator; LZ77 allowed. Animated tiles (water, lava) swap tile graphics in VRAM during VBlank.
-
-## Collision
-
-Read directly from ROM per metatile (solid, one-way, slope, ladder, hazard), separate from graphics. Dynamic changes (breakable blocks, doors) go in a small RAM overlay checked before ROM and applied during streaming.
-
 ## ROM data format
+
+**Implemented** (`include/serval/map.h`; the editor's build pipeline emits these, hand-written data uses designated initializers):
 
 ```c
 typedef struct {
-    u16 se[4];        // 2x2 screen entries: tile, flip, palette
-    u8  collision;    // SOLID, ONEWAY, SLOPE_L, LADDER...
+    const u32 *tiles;     // 4bpp 8x8 tiles, 8 words each
+    u16 tile_count;       // at most MAP_MAX_TILES (1024)
+    const u16 *palettes;  // palette_count banks of 16 colors (color 0 transparent)
+    u8  palette_count;    // at most MAP_MAX_PALETTES (15), loaded into BG banks 0, 1, ...
+} Tileset;
+
+typedef struct {
+    u16 se[4];            // screen entries: top-left, top-right, bottom-left, bottom-right
+                          // MAP_SE(tile, palette, MAP_SE_FLIP_H | MAP_SE_FLIP_V)
+    u8  collision;        // type (low 4 bits: MAP_EMPTY, MAP_SOLID, MAP_ONEWAY) | MAP_TAG(0..3)
 } Metatile;
 
 typedef struct {
     u16 width, height;          // in metatiles
-    const u16 *cells;           // metatile index per cell
-    const Metatile *metatiles;  // definitions
-    u8  tileset_group;
-    u8  bg_layer, priority;
-    FIXED scroll_factor;        // parallax
-    u8  flags;                  // STREAMED, WRAP, ...
+    const u16 *cells;           // width x height metatile indices, row by row
+    const Metatile *metatiles;  // the definitions cells index
+    u16 metatile_count;
+    u8  bg;                     // 1-3; priority = bg
+    u8  flags;                  // MAP_LAYER_WRAP
+    FIXED scroll_factor;        // parallax: layer scroll = camera * factor (0 means FX_ONE)
 } MapLayer;
 ```
+
+- Tileset tile 0 should be blank: a layer that doesn't wrap shows screen entry 0 outside its map.
+- A cell naming a metatile the layer doesn't have shows and collides as empty (debug builds warn when the layer loads).
+- Every layer is streamed, whatever its size, so the draft's `STREAMED` flag is gone; its priority is its BG number; one tileset serves all layers of a room (tileset groups are planned, below).
+- The four tag bits of the collision byte are for the game (bonus block, hazard...); only the type affects `sys_map_movement()`.
+
+## Streaming
+
+**Implemented** (`src/gba/map.c`):
+
+- Each layer's screenblock is a 32×32 ring buffer: layer tile `(tx, ty)` goes to entry `(tx & 31, ty & 31)`, and the background's scroll registers hold the layer's scroll position (the hardware wraps at 256 pixels too).
+- The valid part is the *window*: the 31×21 tiles that a 240×160 screen can touch at the current scroll position. When the camera moves, only tiles entering the window are written: whole columns (21 entries) and rows (31 entries). A move of a whole window or more, a newly loaded layer or `map_load()` redraws the window.
+- A layer scrolls by `camera * scroll_factor` (rounded down). `MAP_LAYER_WRAP` layers repeat their cells in both directions (small parallax backgrounds); other layers show entry 0 outside their map.
+- Playfield cells changed with `map_set_cell()` are redrawn where they are in the window; changes outside it appear when they scroll in (streaming reads the changes too).
+- `map_load()` draws the new layer's window straight to VRAM and turns the background on (a load-time VRAM write, like `tileset_load()`), so the frame after loading a room already shows it rather than only the backdrop; loading during a fade to black hides the write. Set the camera before loading the playfield.
+- After that, everything happens in `frame_end()`, in two steps. Before it waits for VBlank (as CPU work of the frame), entries are written to a copy of each screenblock in EWRAM (6 KB). In VBlank, the changed rows (and columns, written 64 bytes apart) are copied to VRAM, and the scroll and control registers are set. So VRAM writes stay in VBlank, and the VBlank part stays short even for a full redraw. Nothing runs (or links) in games that never call `map_load()`.
+- The entry loops run as ARM code from IWRAM (1.4 KB, only in games that use maps): as Thumb code in ROM they took about 70 cycles per entry, and a full redraw of three layers about 140,000 cycles.
+
+Costs, measured by the test ROM (`tests/rom/map_tests.c`, Release build; VBlank is 83,776 cycles):
+
+| Work | Before VBlank | In VBlank |
+| --- | --- | --- |
+| Full redraw of three layers (map load, camera jump) | 41,300 cycles (15% of a frame, for one frame) | 14,500 cycles |
+| One new row and one new column on each of three layers | 10,100 cycles | 3,650 cycles |
+
+A camera moving less than 8 pixels per frame writes at most one row and one column per layer, usually less.
+
+## Tilesets
+
+**Implemented:** `tileset_load()` copies one tileset to charblocks 1-2 and its palettes to BG banks 0-14 immediately (like `sprite_group_load()`), so call it while loading a room, before its layers are shown.
+
+**Animated tiles:** `tileset_set_tiles(first, tiles, count)` replaces tiles of the loaded tileset, so every cell using them changes at once (water, lava, a shimmering bonus block): the game keeps each animation frame's tiles in ROM and passes the next frame's when it is due. The copies are queued (`MAP_MAX_TILE_UPDATES`, 8 per frame; a second call for the same `first` replaces the first) and done in VBlank at the next `frame_end()`, before the map rows and columns: 32 bytes per tile, so a few dozen tiles per frame fit comfortably beside a full map redraw. Calls outside the tileset, or past the queue, are ignored with a warning in debug builds; `tileset_load()` drops queued updates.
+
+**Planned:** loaded per room as groups into charblocks with a bump allocator; LZ77 allowed.
+
+## Collision
+
+Read directly from ROM per metatile, separate from graphics. Dynamic changes (breakable blocks, doors) go in a small RAM overlay checked before ROM and applied during streaming.
+
+**Implemented** (`src/core/map.c`, `src/ecs/map_movement.c`, platform-neutral and unit tested on the host):
+
+- `map_collision_at(x, y)` reads the playfield's collision byte at a world pixel. Outside the map, the sides are `MAP_SOLID` (also above and below the map, so bodies can't get around them) and above and below is `MAP_EMPTY` (bodies can jump above the map and fall out of the bottom). Without a playfield everything is empty.
+- `map_set_cell()` keeps up to `MAP_MAX_CHANGES` (64) changed playfield cells in a table in IWRAM that `map_cell()`, `map_collision_at()` and streaming check first; a cell set back to its original metatile leaves the table; loading the playfield clears it.
+- Map bodies (`C_POS | C_VEL | C_BODY | C_MAPBODY`) move with `sys_map_movement()`, which `sys_movement()` and `sys_physics()` skip. Each frame it adds gravity (`physics_set_gravity()`) and limits the fall speed (`body_max_fall`), then moves the body along x, then y, in steps of at most 7 pixels (less than a metatile, so the leading edge enters at most one new row or column of metatiles per step, and fast bodies can't pass through one). A body covers `[x, x + body_w) × [y, y + body_h)` in 24.8 fixed point; a step that would take its leading edge into a blocking metatile puts the body flush against it on a whole pixel instead, records the side in `body_contact`, and bounces the velocity on that axis: it becomes `-velocity * body_bounce / 256` (0, the default, stops the body), and the rest of that axis's movement this frame is dropped. On a floor (the side gravity pulls toward), a rebound slower than twice one frame's gravity is a rest, and `body_friction` slows a sliding body, as in `sys_physics()`; unlike `sys_physics()`'s bounds, walls and ceilings use `body_bounce` too, so the default stops a character at a wall. Every metatile along the edge is checked, so bodies of any size up to 255×255 work.
+- Only metatiles the leading edge newly enters block it. A body overlapping a solid metatile (placed there, or a cell changed under it) can move out, and one-way platforms follow naturally: a body moving down enters a `MAP_ONEWAY` row only from above, while one that jumped into it from below is already inside its row and falls through. Sideways movement ignores one-way metatiles.
+- A body standing on a floor touches it every frame while gravity pulls it down (`MAP_CONTACT_FLOOR`); a body stopped by a wall touches it again only when pushed into it again.
+
+**Planned:** slopes, ladders and hazards as collision types; collision events for scripts ([vm.md](vm.md)).
 
 ## Raster effects
 

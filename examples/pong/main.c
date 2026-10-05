@@ -19,7 +19,8 @@
 //   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
 //     on black, a coin-like jingle plays, and they fade out (about 3 seconds;
 //     any button skips it once the text is in).
-//   - A dark navy screen with "P O N G", "PRESS START" and the controls.
+//   - A dark navy screen with "P O N G", "PRESS START" and the controls
+//     ("UP/DOWN:MOVE  START:PAUSE").
 //   - After START (a rising four-note chime): a dotted net down the middle,
 //     your glossy blue paddle on the left, the computer's orange one on the
 //     right, a shaded white ball in the center and the score line at the top:
@@ -31,7 +32,8 @@
 //     hit makes it a little faster and makes that paddle flash white.
 //   - Up and Down move your paddle. The computer follows the ball, a bit slower
 //     than you and not perfectly, so it can be beaten.
-//   - A ball past a paddle scores for the other side: the background glows
+//   - A ball past a paddle's face scores for the other side (the paddle's
+//     ends don't catch a ball that is already past it): the background glows
 //     blue (your point, with a rising tone) or orange (the computer's, with a
 //     falling tone), and the ball is served again toward whoever conceded.
 //   - First to 7 wins: "YOU WIN!" with a fanfare, or "CPU WINS" with a sad
@@ -130,7 +132,13 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
 };
 
 static const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
-    &sprites[0], &sprites[1], &sprites[2], &sprites[3], &sprites[4], &sprites[5], &sprites[6],
+    [SPR_BALL] = &sprites[SPR_BALL],
+    [SPR_PADDLE_PLAYER] = &sprites[SPR_PADDLE_PLAYER],
+    [SPR_PADDLE_CPU] = &sprites[SPR_PADDLE_CPU],
+    [SPR_PADDLE_FLASH] = &sprites[SPR_PADDLE_FLASH],
+    [SPR_TRAIL1] = &sprites[SPR_TRAIL1],
+    [SPR_TRAIL2] = &sprites[SPR_TRAIL2],
+    [SPR_TRAIL3] = &sprites[SPR_TRAIL3],
 };
 
 static const SpriteGroup pong_group = {
@@ -188,8 +196,16 @@ static const PsgSound sounds[SOUND_COUNT] = {
 };
 
 static const PsgSound* const sound_table[SOUND_COUNT] = {
-    &sounds[0], &sounds[1], &sounds[2], &sounds[3], &sounds[4],
-    &sounds[5], &sounds[6], &sounds[7], &sounds[8], &sounds[9],
+    [SND_START] = &sounds[SND_START],
+    [SND_SERVE] = &sounds[SND_SERVE],
+    [SND_HIT_PLAYER] = &sounds[SND_HIT_PLAYER],
+    [SND_HIT_CPU] = &sounds[SND_HIT_CPU],
+    [SND_WALL] = &sounds[SND_WALL],
+    [SND_POINT_PLAYER] = &sounds[SND_POINT_PLAYER],
+    [SND_POINT_CPU] = &sounds[SND_POINT_CPU],
+    [SND_WIN] = &sounds[SND_WIN],
+    [SND_LOSE] = &sounds[SND_LOSE],
+    [SND_PAUSE] = &sounds[SND_PAUSE],
 };
 
 // --- Game --------------------------------------------------------------------
@@ -211,7 +227,7 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
 
 #define FLASH_FRAMES 6        // a paddle glows this long after a hit
 #define SCORE_FLASH_FRAMES 24 // the background glows this long after a point
-#define TRAIL_LENGTH 6        // ball positions remembered for the trail
+#define TRAIL_LENGTH 7        // ball positions remembered: now and 6 frames back
 #define BACKDROP_R 8          // the court's dark navy
 #define BACKDROP_G 8
 #define BACKDROP_B 20
@@ -231,8 +247,13 @@ static u8 score_flash_r, score_flash_g, score_flash_b;   // its color
 static int trail_x[TRAIL_LENGTH], trail_y[TRAIL_LENGTH]; // recent ball positions
 static int trail_head, trail_count;
 
+// Creates an entity with a sprite and a w x h body. Returns its slot index, or
+// MAX_ENT if the engine's entity pool is full.
 static u32 create(u32 sprite, int w, int h, u32 components) {
-    u32 i = entity_index(entity_create(C_POS | C_SPR | C_BODY | components));
+    Entity e = entity_create(C_POS | C_SPR | C_BODY | components);
+    if (e == ENTITY_NONE)
+        return MAX_ENT;
+    u32 i = entity_index(e);
     spr_id[i] = (u16)sprite;
     body_w[i] = (u8)w;
     body_h[i] = (u8)h;
@@ -252,21 +273,12 @@ static void draw_score(void) {
     text_print_line(0, 0, text_format("    YOU %-2d          %2d CPU", player_score, cpu_score));
 }
 
-// Prints a line of text centered on a row, clearing the rest of the row.
-static void print_centered(int row, const char* s) {
-    int length = 0;
-    while (s[length])
-        length++;
-    text_print_line(0, row, "");
-    text_print((TEXT_COLS - length) / 2, row, s);
-}
-
 // The title or game-over screen: the game's name and two lines of text.
 static void show_message(const char* line1, const char* line2) {
     text_clear();
-    print_centered(7, "P O N G");
-    print_centered(10, line1);
-    print_centered(12, line2);
+    text_print_centered(7, "P O N G");
+    text_print_centered(10, line1);
+    text_print_centered(12, line2);
 }
 
 static void center_paddles(void) {
@@ -320,9 +332,19 @@ static void control_cpu(void) {
 
 // Bounces the ball off a paddle it overlaps: sends it back toward the other
 // side, faster, at an angle set by how far from the paddle's center it hit.
+// Only the paddle's face counts: a ball that was already past it last frame
+// (pos - vel) can't be caught by the paddle's end or from behind; it scores.
+// (body_hit_side() isn't enough here: once the ball is inside a paddle that
+// moved onto it, it reports the side of least overlap, which can be the face.)
 static void hit_paddle(u32 paddle, int direction) {
     if (!body_overlap(ball, paddle) || (direction > 0) == (vel_x[ball] > 0))
         return; // no contact, or already moving away from this paddle
+    // The ball's left edge last frame.
+    FIXED was_x = pos_x[ball] - vel_x[ball];
+    bool was_in_front = direction > 0 ? was_x >= pos_x[paddle] + FX(PADDLE_W)
+                                      : was_x + FX(BALL_SIZE) <= pos_x[paddle];
+    if (!was_in_front)
+        return;
     ball_speed = int_clamp(ball_speed + BALL_SPEEDUP, 0, BALL_MAX_SPEED);
     FIXED offset = center_y(ball) - center_y(paddle); // -20 to 20 pixels
     vel_x[ball] = direction * ball_speed;
@@ -432,13 +454,15 @@ int main(void) {
     spr_flags[ball] = SPRITE_ABOVE_HUD; // over the net, which is text
     player = create(SPR_PADDLE_PLAYER, PADDLE_W, PADDLE_H, 0);
     cpu = create(SPR_PADDLE_CPU, PADDLE_W, PADDLE_H, 0);
+    if (ball == MAX_ENT || player == MAX_ENT || cpu == MAX_ENT)
+        return 1; // can't happen: all 128 entities are free at startup
     pos_x[player] = FX(PLAYER_X);
     pos_x[cpu] = FX(CPU_X);
     center_paddles();
     start_serve(1);
 
     state = TITLE;
-    show_message("PRESS START", "UP/DOWN:MOVE");
+    show_message("PRESS START", "UP/DOWN:MOVE  START:PAUSE");
 
     for (;;) {
         frame_begin();
@@ -459,7 +483,7 @@ int main(void) {
             if (start) {
                 state = PAUSED;
                 psg_play(SND_PAUSE);
-                print_centered(10, "PAUSED");
+                text_print_centered(10, "PAUSED");
             } else if (--serve_timer == 0) {
                 state = PLAY;
                 psg_play(SND_SERVE);
@@ -472,7 +496,7 @@ int main(void) {
             if (start) {
                 state = PAUSED;
                 psg_play(SND_PAUSE);
-                print_centered(10, "PAUSED");
+                text_print_centered(10, "PAUSED");
             } else {
                 update_play();
             }

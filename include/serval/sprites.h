@@ -28,6 +28,7 @@
 // SpriteAsset.flags
 #define SPRITE_ASSET_STREAMED (1 << 0)   // not supported yet
 #define SPRITE_ASSET_METASPRITE (1 << 1) // not supported yet
+#define SPRITE_ASSET_ANIM_ONCE (1 << 2)  // sys_animate stops on the last frame instead of looping
 
 // A sprite: its pixels and how to draw them. Fields left out of an
 // initializer take sensible defaults; only .size and .tiles are required.
@@ -36,11 +37,14 @@ typedef struct {
                            // frame after frame (each frame row by row, tile by tile)
     u8 size;               // SPRITE_16x16 etc. (required)
     u8 frame_count;        // animation frames; 0 means 1
-    u8 tiles_per_frame;    // 0: computed from size (the usual case)
+    u8 tiles_per_frame;    // 0: computed from size (the usual case); if set, at least
+                           // what the size needs (more leaves padding between frames)
     u8 palette_slot;       // which of its group's palettes it uses
     s8 origin_x, origin_y; // drawn position = (x, y) - origin
     u8 flags;              // SPRITE_ASSET_*
-    const u8* frame_times; // animation timing, may be NULL
+    const u8* frame_times; // animation timing for sys_animate (ecs.h): how many frames
+                           // (1/60 s) each animation frame shows, frame_count entries;
+                           // 0 holds that frame. NULL: every frame shows for one frame
 } SpriteAsset;
 
 // SpriteGroup.flags
@@ -74,13 +78,19 @@ typedef struct {
 #define SPRITE_ABOVE_HUD (2 << 2)        // above everything
 #define SPRITE_BEHIND_PLAYFIELD (1 << 2) // behind the playfield, above the background
 
+// Not drawn at all, e.g. to make an entity blink by toggling it in spr_flags.
+// The sprite keeps its place in the game; it just takes no hardware sprite.
+#define SPRITE_HIDDEN (1 << 4)
+
 // Registers the game's sprite table: table[id] is the sprite with that ID.
 // Unloads all sprite groups.
 void sprite_table_set(const SpriteAsset* const* table, u16 count);
 
 // Copies a group's tiles and palettes to VRAM so its sprites can be drawn.
 // Returns false, leaving nothing loaded from this group, if sprite VRAM or
-// palette banks would run out or the group uses an unsupported feature.
+// palette banks would run out, the group uses an unsupported feature, or its
+// data is incomplete (e.g. a missing .tiles or .palettes; reported in debug
+// builds).
 bool sprite_group_load(const SpriteGroup* group);
 
 // Unloads every sprite group, freeing all sprite VRAM and palette banks.
@@ -96,7 +106,8 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 // then faces (fx_cos(angle), fx_sin(angle)). The hardware has 32 rotation
 // matrices per frame, shared by sprites with the same angle and flips; give
 // many sprites few distinct angles. Past 32, sprites are drawn unrotated
-// (reported in debug builds).
+// (reported in debug builds). Sprites that are off screen or not drawn take no
+// matrix, and angle 0 draws exactly like sprite_draw (no matrix).
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
 
 #endif // SERVAL_SPRITES_H

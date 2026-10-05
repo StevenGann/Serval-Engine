@@ -23,8 +23,9 @@
 //   - The D-pad changes the direction of gravity, and it stays that way after
 //     you let go; two directions together pull diagonally. The bunnies fall
 //     toward the new side, and the third line shows the direction.
-//   - START turns gravity off: bunnies float and bounce off every edge without
-//     slowing down. Press a direction to turn it back on.
+//   - START (with no direction held) turns gravity off: resting bunnies jump
+//     off in random directions, and all of them float and bounce off every
+//     edge without slowing down. Press a direction to turn it back on.
 //   - Hold A to add bunnies (two per frame) up to 128, the engine's entity
 //     limit; hold B to remove them.
 //   - CPU is the share of each frame spent on game work (the previous frame's

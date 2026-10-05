@@ -1,8 +1,11 @@
 name: Release
 
-# Pushing a tag vX.Y.Z (matching "version" in serval.json) builds and tests the
-# engine, then attaches serval-engine-X.Y.Z.zip and serval.json to a draft
-# GitHub release. Publishing the draft makes it visible to Studio Advance.
+# Pushing a tag vX.Y.Z (matching "version" in serval.json) runs the whole CI
+# (ci.yml: format check, host tests, GBA builds and ROM tests) on the tagged
+# commit, builds and tests the engine again with warnings as errors, checks
+# that a game builds against the archive, then attaches
+# serval-engine-X.Y.Z.zip, its .sha256 and serval.json to a draft GitHub
+# release. Publishing the draft makes it visible to Studio Advance.
 # Running manually produces the archive as a workflow artifact only.
 on:
   push:
@@ -13,7 +16,11 @@ permissions:
   contents: read
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -33,7 +40,7 @@ jobs:
 
       - name: Build
         run: |
-          cmake --preset gba-release
+          cmake --preset gba-release -DSERVAL_WARNINGS_AS_ERRORS=ON -DSERVAL_REQUIRE_ROM_TESTS=ON
           cmake --build --preset gba-release
 
       - name: Run test ROM in mGBA
@@ -49,6 +56,9 @@ jobs:
           cd package-check/serval-engine-*
           cmake --preset gba-release
           cmake --build --preset gba-release
+
+      - name: Build a game against the release archive and run it in mGBA
+        run: tools/check-consumer.sh dist/serval-engine-*.zip
 
       - uses: actions/upload-artifact@v7
         with:

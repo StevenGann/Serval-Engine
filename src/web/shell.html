@@ -1,0 +1,281 @@
+<!doctype html>
+<!--
+  Page template for Serval Engine web builds (serval_add_rom() with the web
+  preset). Emscripten replaces the SCRIPT placeholder below with the game,
+  WebAssembly included, so the build is one self-contained HTML file.
+
+  The game runs on virtual GBA hardware (src/web/platform.c): every frame,
+  Module.servalPresent() gets the rendered picture and that frame's sound,
+  waits for the next frame's turn and writes the buttons held to KEYINPUT.
+
+  Test mode, for comparing frames with an emulator: open the page with the
+  hash "frames=N[&shot=F1,F2...][&keys=FRAME:KEYS:LENGTH,...]" to run N frames as fast
+  as possible with scripted buttons (KEYS as in mgba-capture: A B s S R L U D r
+  l) and no sound. Each shot frame is appended to <pre id="shots"> as
+  "frame <F> <PNG data URL>", then "done".
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="generator" content="Serval Engine">
+<title>@SERVAL_WEB_TITLE@</title>
+<style>
+  :root { color-scheme: dark; --fg: #d8d8e0; --dim: #8a8a98; --key: rgba(255, 255, 255, 0.14); --key-on: rgba(255, 255, 255, 0.34); }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--fg); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #screen { image-rendering: pixelated; image-rendering: crisp-edges; background: #000; display: block; }
+  #help { color: var(--dim); margin-top: 10px; text-align: center; padding: 0 16px; }
+  #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.6); cursor: pointer; font-size: 18px; }
+  #start[hidden], #pad[hidden], #help[hidden] { display: none; }
+  #shots { display: none; }
+  #pad { position: fixed; inset: 0; pointer-events: none; }
+  #pad > * { position: absolute; pointer-events: auto; background: var(--key); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--fg); font-weight: 600; touch-action: none; }
+  #pad > .on { background: var(--key-on); }
+  #dpad { left: 16px; bottom: 32px; width: 132px; height: 132px; border-radius: 20px; }
+  #dpad::before, #dpad::after { content: ""; position: absolute; background: rgba(255, 255, 255, 0.12); border-radius: 6px; }
+  #dpad::before { left: 44px; top: 8px; width: 44px; height: 116px; }
+  #dpad::after { top: 44px; left: 8px; height: 44px; width: 116px; }
+  [data-button="A"] { right: 16px; bottom: 88px; width: 64px; height: 64px; }
+  [data-button="B"] { right: 92px; bottom: 40px; width: 64px; height: 64px; }
+  [data-button="L"], [data-button="R"] { top: 16px; width: 72px; height: 40px; border-radius: 12px; }
+  [data-button="L"] { left: 16px; }
+  [data-button="R"] { right: 16px; }
+  [data-button="SELECT"], [data-button="START"] { bottom: 12px; width: 72px; height: 28px; border-radius: 14px; font-size: 11px; }
+  [data-button="SELECT"] { left: calc(50% - 80px); }
+  [data-button="START"] { left: calc(50% + 8px); }
+</style>
+</head>
+<body>
+<canvas id="screen" width="240" height="160" aria-label="Game screen"></canvas>
+<div id="help">Arrows: D-pad &middot; X: A &middot; Z: B &middot; A/S: L/R &middot; Enter: Start &middot; Backspace: Select &middot; F: full screen</div>
+<div id="start" hidden>Click or press any key to play</div>
+<div id="pad" hidden>
+  <div id="dpad"></div>
+  <div data-button="A">A</div><div data-button="B">B</div>
+  <div data-button="L">L</div><div data-button="R">R</div>
+  <div data-button="SELECT">SELECT</div><div data-button="START">START</div>
+</div>
+<pre id="shots"></pre>
+<script>
+"use strict";
+(() => {
+  // GBA button bits (KEYINPUT, and BUTTON_* in serval/core.h).
+  const BUTTON = { A: 1, B: 2, SELECT: 4, START: 8, RIGHT: 16, LEFT: 32, UP: 64, DOWN: 128, R: 256, L: 512 };
+  const KEYINPUT = 0x04000130;
+  const FRAME_MS = 1000 / 59.7275; // the GBA's refresh rate
+  const W = 240, H = 160;
+
+  const canvas = document.getElementById("screen");
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(W, H);
+  const touch = matchMedia("(pointer: coarse)").matches;
+
+  // Test mode (see the comment at the top).
+  const params = new URLSearchParams(location.hash.slice(1));
+  const test = params.has("frames") ? {
+    frames: Number(params.get("frames")),
+    shots: new Set((params.get("shot") || "").split(",").filter(Boolean).map(Number)),
+    keys: (params.get("keys") || "").split(",").filter(Boolean).map(k => {
+      const [frame, letters, length] = k.split(":");
+      const codes = { A: BUTTON.A, B: BUTTON.B, s: BUTTON.SELECT, S: BUTTON.START, R: BUTTON.R, L: BUTTON.L, U: BUTTON.UP, D: BUTTON.DOWN, r: BUTTON.RIGHT, l: BUTTON.LEFT };
+      let mask = 0;
+      for (const c of letters) mask |= codes[c] || 0;
+      return { from: Number(frame), to: Number(frame) + Number(length || 1), mask };
+    }),
+  } : null;
+  let frame = 0;
+
+  // Scale to the largest whole multiple that fits (any size if none does).
+  function layout() {
+    const reserve = touch ? 0 : 40;
+    const fit = Math.min(innerWidth / W, (innerHeight - reserve) / H);
+    const scale = fit >= 1 ? Math.floor(fit) : fit;
+    canvas.style.width = W * scale + "px";
+    canvas.style.height = H * scale + "px";
+    document.body.style.justifyContent = touch && innerHeight > innerWidth ? "flex-start" : "center";
+  }
+  addEventListener("resize", layout);
+  layout();
+  document.getElementById("help").hidden = touch || !!test;
+  document.getElementById("pad").hidden = !touch || !!test;
+
+  // Input: keyboard, gamepads and the on-screen pad, merged every frame.
+  const KEYS = {
+    ArrowUp: BUTTON.UP, ArrowDown: BUTTON.DOWN, ArrowLeft: BUTTON.LEFT, ArrowRight: BUTTON.RIGHT,
+    KeyX: BUTTON.A, KeyZ: BUTTON.B, KeyA: BUTTON.L, KeyS: BUTTON.R,
+    Enter: BUTTON.START, Backspace: BUTTON.SELECT,
+  };
+  let keyboard = 0, touchButtons = 0, dpad = 0;
+  addEventListener("keydown", e => {
+    if (e.code === "KeyF" && !e.repeat) return toggleFullscreen();
+    if (KEYS[e.code]) { keyboard |= KEYS[e.code]; e.preventDefault(); }
+  });
+  addEventListener("keyup", e => { if (KEYS[e.code]) keyboard &= ~KEYS[e.code]; });
+  addEventListener("blur", () => { keyboard = 0; });
+
+  function gamepadButtons() {
+    let mask = 0;
+    for (const pad of navigator.getGamepads ? navigator.getGamepads() : []) {
+      if (!pad) continue;
+      const b = i => pad.buttons[i] && pad.buttons[i].pressed;
+      // Standard mapping, by position: bottom face button is B, right is A.
+      if (b(1)) mask |= BUTTON.A;
+      if (b(0)) mask |= BUTTON.B;
+      if (b(4) || b(6)) mask |= BUTTON.L;
+      if (b(5) || b(7)) mask |= BUTTON.R;
+      if (b(8)) mask |= BUTTON.SELECT;
+      if (b(9)) mask |= BUTTON.START;
+      if (b(12) || pad.axes[1] < -0.5) mask |= BUTTON.UP;
+      if (b(13) || pad.axes[1] > 0.5) mask |= BUTTON.DOWN;
+      if (b(14) || pad.axes[0] < -0.5) mask |= BUTTON.LEFT;
+      if (b(15) || pad.axes[0] > 0.5) mask |= BUTTON.RIGHT;
+    }
+    return mask;
+  }
+
+  // On-screen buttons, multi-touch.
+  for (const el of document.querySelectorAll("[data-button]")) {
+    const bit = BUTTON[el.dataset.button];
+    const pointers = new Set();
+    const update = () => { el.classList.toggle("on", pointers.size > 0); touchButtons = pointers.size ? touchButtons | bit : touchButtons & ~bit; };
+    el.addEventListener("pointerdown", e => { pointers.add(e.pointerId); el.releasePointerCapture(e.pointerId); update(); e.preventDefault(); });
+    for (const type of ["pointerup", "pointercancel", "pointerleave"])
+      el.addEventListener(type, e => { pointers.delete(e.pointerId); update(); });
+  }
+  // The D-pad reads the direction from the center, so sliding and diagonals work.
+  const dpadEl = document.getElementById("dpad");
+  const dpadPointers = new Map();
+  function updateDpad() {
+    dpad = 0;
+    const r = dpadEl.getBoundingClientRect();
+    for (const [x, y] of dpadPointers.values()) {
+      const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2), dead = r.width * 0.15;
+      if (dx < -dead) dpad |= BUTTON.LEFT;
+      if (dx > dead) dpad |= BUTTON.RIGHT;
+      if (dy < -dead) dpad |= BUTTON.UP;
+      if (dy > dead) dpad |= BUTTON.DOWN;
+    }
+    dpadEl.classList.toggle("on", dpadPointers.size > 0);
+  }
+  dpadEl.addEventListener("pointerdown", e => { dpadEl.setPointerCapture(e.pointerId); dpadPointers.set(e.pointerId, [e.clientX, e.clientY]); updateDpad(); e.preventDefault(); });
+  dpadEl.addEventListener("pointermove", e => { if (dpadPointers.has(e.pointerId)) { dpadPointers.set(e.pointerId, [e.clientX, e.clientY]); updateDpad(); } });
+  for (const type of ["pointerup", "pointercancel"])
+    dpadEl.addEventListener(type, e => { dpadPointers.delete(e.pointerId); updateDpad(); });
+
+  function buttons() {
+    if (test) {
+      let mask = 0;
+      for (const k of test.keys) if (frame >= k.from && frame < k.to) mask |= k.mask;
+      return mask;
+    }
+    return keyboard | gamepadButtons() | touchButtons | dpad;
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  }
+  canvas.addEventListener("dblclick", toggleFullscreen);
+
+  // Sound: an AudioWorklet plays the samples each frame produces, keeping a
+  // small queue (about three frames) to ride out timing jitter.
+  const sound = { ctx: null, node: null };
+  if (!test && window.AudioContext) {
+    try { sound.ctx = new AudioContext({ latencyHint: "interactive" }); } catch (e) { sound.ctx = null; }
+  }
+  const WORKLET = `
+    class ServalPsg extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.queue = []; this.offset = 0; this.queued = 0; this.waiting = true;
+        this.port.onmessage = e => {
+          this.queue.push(e.data); this.queued += e.data.length / 2;
+          while (this.queued > sampleRate * 0.15 && this.queue.length > 1) {
+            const old = this.queue.shift(); this.queued -= (old.length - this.offset) / 2; this.offset = 0;
+          }
+        };
+      }
+      process(inputs, outputs) {
+        const [left, right] = outputs[0];
+        if (this.waiting && this.queued < sampleRate * 0.04) { left.fill(0); right.fill(0); return true; }
+        this.waiting = false;
+        for (let i = 0; i < left.length; i++) {
+          if (!this.queue.length) { left[i] = right[i] = 0; this.waiting = true; continue; }
+          const block = this.queue[0];
+          left[i] = block[this.offset]; right[i] = block[this.offset + 1];
+          this.offset += 2; this.queued--;
+          if (this.offset >= block.length) { this.queue.shift(); this.offset = 0; }
+        }
+        return true;
+      }
+    }
+    registerProcessor("serval-psg", ServalPsg);`;
+  async function startSound() {
+    if (!sound.ctx || sound.node) return;
+    try {
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
+      await sound.ctx.audioWorklet.addModule(url);
+      sound.node = new AudioWorkletNode(sound.ctx, "serval-psg", { numberOfInputs: 0, outputChannelCount: [2] });
+      sound.node.connect(sound.ctx.destination);
+    } catch (e) {
+      console.warn("serval: no sound (" + e + ")");
+    }
+  }
+  function resumeSound() { if (sound.ctx && sound.ctx.state !== "running") sound.ctx.resume(); }
+  addEventListener("pointerdown", resumeSound);
+  addEventListener("keydown", resumeSound);
+
+  // Frame pacing: one game frame per 1/59.7275 s, on the display's refresh.
+  let next = 0;
+  function nextFrame() {
+    if (test) return new Promise(resolve => setTimeout(resolve, 0));
+    return new Promise(resolve => {
+      function tick(now) {
+        if (!next || now - next > 250) next = now; // first frame, or back from a hidden tab
+        if (now >= next - 2) { next += FRAME_MS; resolve(); } else requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+
+  const shots = document.getElementById("shots");
+  window.Module = {
+    canvas,
+    servalSampleRate: () => (sound.ctx ? sound.ctx.sampleRate : 48000),
+    async servalPresent(rgba, audio, samples) {
+      image.data.set(Module.HEAPU8.subarray(rgba, rgba + W * H * 4));
+      ctx.putImageData(image, 0, 0);
+      if (sound.node && samples) sound.node.port.postMessage(Module.HEAPF32.slice(audio >> 2, (audio >> 2) + samples * 2));
+      frame++;
+      if (test) {
+        if (test.shots.has(frame)) shots.textContent += "frame " + frame + " " + canvas.toDataURL("image/png") + "\n";
+        if (frame >= test.frames) { shots.textContent += "done\n"; return new Promise(() => {}); }
+      }
+      await nextFrame();
+      Module.HEAPU16[KEYINPUT >> 1] = ~buttons() & 0x3FF;
+    },
+    print: text => console.log(text),
+    printErr: text => console.warn(text),
+    onRuntimeInitialized() {
+      if (test) return Module.callMain([]);
+      // Browsers only start sound after a click or key press, so wait for one
+      // (the game's first sounds, like the splash jingle, would be lost).
+      const start = document.getElementById("start");
+      start.hidden = false;
+      const go = () => {
+        removeEventListener("keydown", go);
+        start.removeEventListener("pointerdown", go);
+        start.hidden = true;
+        resumeSound();
+        startSound().then(() => Module.callMain([]));
+      };
+      addEventListener("keydown", go);
+      start.addEventListener("pointerdown", go);
+    },
+  };
+})();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

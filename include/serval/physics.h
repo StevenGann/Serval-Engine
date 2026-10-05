@@ -3,17 +3,21 @@
 
 // Bouncing bodies: gravity, plus bounces off the edges of the world. Suits
 // balls, particles, debris and bunnies; it is not a platformer character
-// controller (bodies don't collide with each other or with tilemaps).
+// controller (bodies don't collide with each other or with tilemaps). For
+// characters that walk on a tilemap, see map bodies (C_MAPBODY and
+// sys_map_movement() in map.h), which sys_physics() skips.
 //
 // An entity with C_POS, C_VEL and C_BODY is a body. Each frame, after
 // sys_movement() has moved it, sys_physics():
 //   - bounces it off the world bounds, using its size (body_w x body_h);
-//   - applies gravity to its velocity.
+//   - applies gravity to its velocity, then limits its fall speed
+//     (body_max_fall).
 // A wall that gravity pulls toward is a floor. Bounces off a floor keep
-// body_bounce/256 of the speed, and sliding along a floor loses
-// body_friction/256 of the speed each frame; other walls bounce perfectly.
-// A body too slow to bounce comes to rest on the floor (zero velocity) and
-// stays put until gravity changes direction or the game moves it.
+// body_bounce/256 of the speed, and a body touching a floor loses
+// body_friction/256 of its speed along it each frame (rounded up, so any
+// non-zero friction eventually stops it); other walls bounce perfectly. A
+// body too slow to bounce comes to rest on the floor (zero velocity) and stays
+// put until gravity changes direction or the game moves it.
 
 #include "serval/ecs.h"
 #include "serval/fixed.h"
@@ -22,16 +26,35 @@
 // Body component pools (C_BODY), indexed by entity_index(). Zeroed by
 // entity_create(): a zero-sized body that doesn't bounce or slide.
 extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the bounds
-extern u8 body_bounce[MAX_ENT];             // speed kept by a floor bounce, in 256ths (224 = 7/8)
-extern u8 body_friction[MAX_ENT];           // speed lost per frame sliding along a floor, in 256ths
+// Speed kept by a floor bounce, in 256ths (224 = 7/8). At most 255/256: a u8
+// can't express 256, so a floor bounce always loses a little speed.
+extern u8 body_bounce[MAX_ENT];
+// Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
+extern u8 body_friction[MAX_ENT];
+// Maximum fall speed in pixels per frame (0 = no limit): after gravity is
+// added, the velocity in the direction gravity pulls is limited to this, on
+// each axis gravity acts on. Speeds the game sets beyond it (a jump against
+// gravity, a dive) are kept until gravity is next applied.
+extern u8 body_max_fall[MAX_ENT];
+// Map bodies (C_MAPBODY, map.h) use the same three to bounce off, slide along
+// and fall onto the map; see sys_map_movement().
 
 // Acceleration added to every body's velocity each frame, in pixels per frame
 // per frame (FX_ONE / 4 is a quarter pixel). Zero (the default) turns gravity
 // off.
 void physics_set_gravity(FIXED x, FIXED y);
 
-// The rectangle bodies stay inside, in pixels: left and top inclusive, right
-// and bottom exclusive. Defaults to the whole screen.
+// The rectangle bodies stay inside, in world pixels (the coordinates of
+// pos_x/pos_y, not of the screen): left and top inclusive, right and bottom
+// exclusive. Defaults to (0, 0, SCREEN_W, SCREEN_H), which is the screen only
+// while the camera (map.h) stays at 0, 0. In a scrolling world, set them to
+// the area bodies may use, e.g. the whole map of a level:
+//
+//     physics_set_bounds(0, 0, level.width * 16, level.height * 16);
+//
+// Nothing else changes them (map_load() and camera_set() leave them alone).
+// Ignored (warning in debug builds) if right < left or bottom < top. A body
+// bigger than the bounds is pinned to their left or top edge.
 void physics_set_bounds(int left, int top, int right, int bottom);
 
 // Edges of the bounds, for physics_set_open_edges().
@@ -62,8 +85,30 @@ static inline bool body_overlap(u32 a, u32 b) {
            pos_y[a] < pos_y[b] + FX(body_h[b]) && pos_y[b] < pos_y[a] + FX(body_h[a]);
 }
 
-// Bounces bodies off the bounds and applies gravity and friction. Run once per
-// frame, after sys_movement().
+// Sides of a body, for body_hit_side(). The same bits as map.h's
+// MAP_CONTACT_FLOOR, _CEILING, _LEFT and _RIGHT.
+#define BODY_SIDE_BOTTOM (1 << 0)
+#define BODY_SIDE_TOP (1 << 1)
+#define BODY_SIDE_LEFT (1 << 2)
+#define BODY_SIDE_RIGHT (1 << 3)
+
+// Which side of body a met body b: 0 if they don't overlap (body_overlap),
+// otherwise exactly one BODY_SIDE_*, e.g. BODY_SIDE_BOTTOM when a came down
+// onto b (a stomp) and BODY_SIDE_LEFT when a ran into b's right side. Judged
+// from where they were before this frame's movement (position minus
+// velocity; an entity without C_VEL counts as still), using their motion
+// relative to each other, so it is right for fast bodies that moved deep into
+// each other in one frame, and for two moving bodies. The side is the one a
+// crossed last to overlap b; an exact corner hit counts as top or bottom.
+// Bodies that already overlapped before the frame get the side where they
+// overlap least (top or bottom on a tie). Call it after the movement systems,
+// before changing velocities: a bounce that reversed a velocity this frame
+// (sys_physics, sys_map_movement) or a position the game set directly makes
+// "position minus velocity" a guess. Takes slot indices; 0 if a == b.
+u32 body_hit_side(u32 a, u32 b);
+
+// Bounces bodies off the bounds and applies gravity, maximum fall speed and
+// friction. Run once per frame, after sys_movement().
 void sys_physics(void);
 
 #endif // SERVAL_PHYSICS_H

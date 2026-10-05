@@ -16,20 +16,28 @@ Verified against upstream on 2026-10-04. Verbatim license texts for the librarie
 | --- | --- | --- | --- |
 | Serval Engine | this repo | MIT | Include copyright and permission notice |
 | libtonc | [gbadev-org/libtonc](https://github.com/gbadev-org/libtonc) | MIT (© 2005-2009 J Vijn) | Include copyright and permission notice |
-| Maxmod | [blocksds/maxmod](https://github.com/blocksds/maxmod) or [devkitPro/maxmod](https://github.com/devkitPro/maxmod) | ISC | Include copyright and permission notice |
+| Maxmod (planned: not linked yet) | [blocksds/maxmod](https://github.com/blocksds/maxmod) or [devkitPro/maxmod](https://github.com/devkitPro/maxmod) | ISC | Include copyright and permission notice |
 | libgcc (compiler runtime, e.g. division helpers) | GCC | GPL v3 + GCC Runtime Library Exception | None: the exception covers code compiled by GCC |
 | newlib (C library) | toolchain | Mix of BSD-style licenses per file | Mostly "reproduce notice in documentation"; avoid linking it (see below) |
 | C runtime startup + linker script | Serval Engine (`src/gba/crt0.s`, `src/gba/gba.ld`) | MIT | Same as Serval Engine |
 
 The text layer's 8x8 font (`sys8`) comes from libtonc and is covered by its notice.
 
-**Bottom line:** every game must include the notices of Serval Engine, libtonc and Maxmod. The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
+**Web builds** ([platforms.md](platforms.md#web)) contain the same engine and libtonc code, compiled by Emscripten, plus code Emscripten adds to every page:
+
+| Component | Source | License | Obligation for a shipped game |
+| --- | --- | --- | --- |
+| Emscripten runtime (JavaScript glue, `emmalloc`) | [emscripten-core/emscripten](https://github.com/emscripten-core/emscripten) | MIT (or University of Illinois/NCSA) | Include copyright and permission notice |
+| musl (C library routines such as `memcpy`) | bundled with Emscripten | MIT | Include copyright and permission notice |
+| compiler-rt (compiler runtime) | bundled with Emscripten | Apache 2.0 with LLVM Exception | None: the exception covers compiled code |
+
+**Bottom line:** every game must include the notices of Serval Engine and libtonc (plus Emscripten and musl for web builds), and of Maxmod once the engine links it (planned music and sampled SFX, [audio.md](audio.md)). The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
 
 ### Rules that keep it this way
 
 - **Never include `tonc_libgba.h`.** It is removed from the vendored copy ([VENDORED.md](../third_party/libtonc/VENDORED.md)). libtonc's libgba compatibility header carries libgba's LGPL v2+ notice and is standalone (nothing else in libtonc includes it). LGPL code statically linked into a ROM would oblige games to allow relinking.
 - **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license at all. The engine also needs its own ROM header anyway, without the Nintendo logo.
-- **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset`, `memmove`, `memcmp` and `strlen` (`src/gba/libc.c`, backed by libtonc's `tonccpy`/`toncset` and linked into every ROM as an object), so newlib and its many notices are not linked. Check the link map when adding code.
+- **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset`, `memmove`, `memcmp` and `strlen` (`src/gba/libc.c`, backed by libtonc's `tonccpy`/`toncset` and linked into every ROM as an object), so newlib and its many notices are not linked. Check the link map when adding code; every ROM's `*_rom_checks` test fails if `libc.a` appears in it ([development.md](development.md#tests)).
 
 ### Provenance note for legal review
 

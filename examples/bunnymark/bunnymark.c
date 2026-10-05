@@ -50,17 +50,17 @@ static const u16 bunny_palettes[SPRITE_COUNT][16] = {
 #define BUNNY_SPRITE(color) {.size = SPRITE_16x16, .tiles = bunny_tiles, .palette_slot = (color)}
 
 static const SpriteAsset bunny_sprites[SPRITE_COUNT] = {
-    BUNNY_SPRITE(SPR_BUNNY_WHITE),
-    BUNNY_SPRITE(SPR_BUNNY_GOLD),
-    BUNNY_SPRITE(SPR_BUNNY_BLUE),
-    BUNNY_SPRITE(SPR_BUNNY_GREEN),
+    [SPR_BUNNY_WHITE] = BUNNY_SPRITE(SPR_BUNNY_WHITE),
+    [SPR_BUNNY_GOLD] = BUNNY_SPRITE(SPR_BUNNY_GOLD),
+    [SPR_BUNNY_BLUE] = BUNNY_SPRITE(SPR_BUNNY_BLUE),
+    [SPR_BUNNY_GREEN] = BUNNY_SPRITE(SPR_BUNNY_GREEN),
 };
 
 static const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
-    &bunny_sprites[0],
-    &bunny_sprites[1],
-    &bunny_sprites[2],
-    &bunny_sprites[3],
+    [SPR_BUNNY_WHITE] = &bunny_sprites[SPR_BUNNY_WHITE],
+    [SPR_BUNNY_GOLD] = &bunny_sprites[SPR_BUNNY_GOLD],
+    [SPR_BUNNY_BLUE] = &bunny_sprites[SPR_BUNNY_BLUE],
+    [SPR_BUNNY_GREEN] = &bunny_sprites[SPR_BUNNY_GREEN],
 };
 
 // Every sprite in the table (no sprite_ids), one palette each.
@@ -130,10 +130,24 @@ int bunny_count(void) {
     return count;
 }
 
+// Bunnies that came to rest on the floor, or are sliding along it, would stay
+// there once gravity is off: this pushes them off in a random direction, so
+// every bunny floats.
+static void kick_resting_bunnies(void) {
+    ECS_FOR_EACH(i, C_BUNNY) {
+        if (vel_x[i] == 0 || vel_y[i] == 0) {
+            vel_x[i] = random_range(-MAX_SPEED, MAX_SPEED);
+            vel_y[i] = random_range(-MAX_SPEED, MAX_SPEED);
+        }
+    }
+}
+
 void gravity_set(int x, int y) {
     gravity_x = x;
     gravity_y = y;
     physics_set_gravity(x * GRAVITY, y * GRAVITY);
+    if (x == 0 && y == 0)
+        kick_resting_bunnies();
 }
 
 // Game system: turns each bunny to face the way it's moving (the art faces

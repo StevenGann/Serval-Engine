@@ -11,3 +11,7 @@ compile_commands.json
 .cache/
 .DS_Store
 /examples/roms/
+/examples/html/
+
+# Python
+__pycache__/

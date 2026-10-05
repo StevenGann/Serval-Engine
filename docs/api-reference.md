@@ -1,0 +1,322 @@
+# API reference
+
+**Status:** implemented. Every public function, macro and type in `include/serval/`, grouped by header. Behaviour described here is what the code does today; planned API lives in the design docs and is marked there.
+
+Include `serval/serval.h` for everything except `gba.h`, which must be included explicitly. For a guided introduction, see [getting-started.md](getting-started.md); for the design behind the API, [core-api.md](core-api.md).
+
+**Conventions**
+
+- Types: `u8`/`u16`/`u32`, `s8`/`s16`/`s32` and `FIXED` (`s32`), identical to libtonc's, from `platform.h`.
+- `FIXED` is 24.8 fixed point: `FX(1)` (= `FX_ONE` = 256) is 1.0. Positions are in pixels, velocities in pixels per frame.
+- Angles are `u16` turns: `0x10000` is a full circle (`ANGLE_DEG(90)` is a quarter turn), clockwise on screen.
+- A *frame* is one 60 Hz display refresh (about 59.73 per second).
+- **Misuse:** in debug builds (`SERVAL_DEBUG`: Debug and RelWithDebInfo), the calls marked *warns* below write a `serval: ...` warning to the emulator's debug log, once per problem, and count it in `debug_warning_count()`. Release builds compile the checks out; the call still fails safely as described. See [core-api.md](core-api.md#debug-builds-report-misuse).
+
+Contents: [core.h](#coreh) · [screen.h](#screenh) · [sprites.h](#spritesh) · [ecs.h](#ecsh) · [physics.h](#physicsh) · [map.h](#maph) · [audio.h](#audioh) · [text.h](#texth) · [fixed.h](#fixedh) · [math.h](#mathh) · [random.h](#randomh) · [debug.h](#debugh) · [platform.h](#platformh) · [gba.h](#gbah)
+
+## core.h
+
+Startup, the frame loop, CPU timing and buttons.
+
+| Function | Description |
+| --- | --- |
+| `void serval_init(void)` | Call once at the start of `main()`. Sets cartridge wait states (`WAITCNT` 3/1 + prefetch), enables the VBlank interrupt, hides all sprites, sets display mode 0 with sprites on (1D tile mapping), unloads sprite groups, resets the ECS, seeds `random` with its fixed default, resets `frame_count()` and the input history behind `random_entropy()`, turns sound on and silences the PSG channels, and starts the cycle counter (timers 2-3). |
+| `void serval_splash(void)` | Shows the "made with / Serval Engine" splash (about 3 s: 500 ms fade-in, 500 ms hold, jingle, 1.5 s hold, 500 ms fade-out) and returns. Any button after the fade-in skips the rest. Call after `serval_init()`, before loading graphics. Runs its own `frame_begin()`/`frame_end()` loop. Fades in on a black backdrop. Afterwards it puts back the backdrop color (the screen then shows the game's backdrop, black by default), BG0's control register and on/off state, the blend control register and the game's brightness (`screen_set_brightness`), the two palette entries it uses (BG banks 14 and 15), whether the text layer was set up and the text shadow setting (its text is drawn without a shadow), and silences PSG square 1. Not restored: the text layer's map (anything printed with `text_print` is cleared) and, if the text layer wasn't set up before, charblock 0 tiles 0-95 (overwritten by the font) and BG0's scroll (reset to 0). |
+| `void frame_begin(void)` | Starts a frame: starts the CPU cycle measurement, polls the buttons (recording changes for `random_entropy()`), and empties the sprite draw list and the rotation matrices. |
+| `void frame_end(void)` | Ends a frame: hides unused hardware sprites, updates the map layers' screenblock copies for the camera (once a map layer has been loaded or tiles queued; [map.h](#maph)), records the frame's CPU cycles, waits for VBlank, copies the shadow OAM (with rotation matrices) to hardware, copies queued tileset tiles (`tileset_set_tiles`) and the changed map rows and columns to VRAM and sets the map backgrounds' registers, and advances PSG sound effects by one frame. Then counts the frame (`frame_count()`). |
+| `u32 frame_count(void)` | Frames since `serval_init()`: the number of `frame_end()` calls, so 0 during the first frame. The same on every platform for the same game and input (unlike CPU cycles). |
+| `u32 frame_cpu_cycles(void)` | CPU cycles the previous frame spent between `frame_begin()` and `frame_end()` (work only, not the VBlank wait). |
+| `u32 frame_cpu_permille(void)` | The same in thousandths of the frame budget (500 = half; over 1000 for a frame that overran, correct even for very long frames). Print as a percentage with `text_format("%u.%u%%", p / 10, p % 10)`. |
+| `u32 frame_budget_cycles(void)` | Cycles per frame: 280,896 (228 scanlines × 1,232). A frame that needs more misses the next refresh. |
+| `bool button_down(u16 buttons)` | True while the button, or *any* of several OR'd buttons, is held. |
+| `bool button_pressed(u16 buttons)` | True only on the frame a button went down (any of several OR'd buttons). |
+
+Buttons: `BUTTON_A`, `BUTTON_B`, `BUTTON_SELECT`, `BUTTON_START`, `BUTTON_RIGHT`, `BUTTON_LEFT`, `BUTTON_UP`, `BUTTON_DOWN`, `BUTTON_R`, `BUTTON_L`, and `BUTTON_ANY` (all ten). Button state changes only in `frame_begin()`.
+
+## screen.h
+
+| Name | Description |
+| --- | --- |
+| `Color` | `u16`, the target's native color format (BGR555 on the GBA). |
+| `COLOR_RGB(r, g, b)` | Builds a `Color` from 0-255 components (the low 3 bits are dropped). Usable in static initializers, e.g. palettes. |
+| `SCREEN_W`, `SCREEN_H` | 240 and 160, as constants. |
+| `int screen_width(void)`, `int screen_height(void)` | The same values as functions. |
+| `void screen_set_backdrop(Color color)` | The color shown wherever no sprite or background pixel is drawn (BG palette entry 0). Takes effect immediately. |
+| `void screen_set_brightness(int level)` | Brightness of everything on screen (backgrounds, sprites, backdrop): `SCREEN_BRIGHTNESS_MIN` (−16, black) … 0 (normal, the default) … `SCREEN_BRIGHTNESS_MAX` (16, white), in 16 even steps each way. Out-of-range levels are clamped (*warns*). Stays until changed; fade by stepping it once per frame. Takes effect immediately (it writes `BLDCNT`/`BLDY`), so set it right after `frame_begin()`, while the previous frame's VBlank lasts, to change whole frames. Uses the hardware's color special effect, which does one effect at a time: no other blending while the level isn't 0 (the engine has no alpha blending yet). `serval_splash()` borrows the effect and restores the level. |
+
+## sprites.h
+
+Sprite assets in ROM, loaded into VRAM in groups and drawn by ID. Data format and design: [sprites.md](sprites.md).
+
+**Types**
+
+`SpriteAsset`, one sprite (only `.size` and `.tiles` are required):
+
+| Field | Meaning |
+| --- | --- |
+| `const u32 *tiles` | Pixel data: 8x8 tiles, 4 bits per pixel, 8 words per tile (low nibble = leftmost pixel). Frame after frame; within a frame, tiles row by row (1D mapping). |
+| `u8 size` | `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64`, `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32`, `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (width x height). Required: 0 is invalid. |
+| `u8 frame_count` | Animation frames; 0 means 1. |
+| `u8 tiles_per_frame` | 0 (the usual case): width × height / 64. If set, at least that (more leaves padding between frames); `sprite_group_load` rejects a smaller value. |
+| `u8 palette_slot` | Which of the group's palettes the sprite uses (0-based). |
+| `s8 origin_x, origin_y` | Drawn position = (x, y) − origin. |
+| `u8 flags` | `SPRITE_ASSET_ANIM_ONCE`: `sys_animate` stops on the last frame instead of looping. `SPRITE_ASSET_STREAMED`, `SPRITE_ASSET_METASPRITE`: not supported yet; `sprite_group_load` rejects them. |
+| `const u8 *frame_times` | Animation timing for `sys_animate` ([ecs.h](#ecsh)): `frame_count` entries, how many frames (1/60 s, 1-255) each animation frame shows; 0 holds that frame (the animation stops there). `NULL`: each frame shows for one frame. |
+
+`SpriteGroup`, sprites loaded together with the palettes they share:
+
+| Field | Meaning |
+| --- | --- |
+| `const u16 *sprite_ids` | IDs of its sprites; `NULL` means IDs 0 to `sprite_count` − 1. |
+| `const u16 *palettes` | `palette_count` banks of 16 colors each; color 0 of each bank is transparent. |
+| `u8 sprite_count`, `u8 palette_count` | Up to 255 sprites; up to 16 palettes (all OBJ palette banks). |
+| `u8 flags` | `SPRITE_GROUP_RESIDENT` (0, default). `SPRITE_GROUP_STREAMED` is not supported yet. |
+
+**Functions**
+
+| Function | Description |
+| --- | --- |
+| `void sprite_table_set(const SpriteAsset *const *table, u16 count)` | Registers the game's sprite table: `table[id]` is sprite `id`. Unloads all groups. At most `SPRITE_MAX` (512) entries are used; *warns* if `count` is larger. |
+| `bool sprite_group_load(const SpriteGroup *group)` | Copies the group's tiles and palettes to VRAM (immediately), so its sprites can be drawn. Tiles and palette banks are allocated in load order. Returns false and loads nothing if OBJ VRAM (1,024 tiles) or palette banks (16) would run out, the group's data is incomplete (`group` is NULL; `palettes` missing while `palette_count` is non-zero; a `sprite_ids` pointer that isn't valid; a sprite ID outside the table or whose table entry is NULL; a sprite with no `tiles`, no valid size or a `tiles_per_frame` smaller than its size needs; a `palette_slot` the group lacks), or it uses an unsupported feature; *warns* with the reason. |
+| `void sprite_groups_reset(void)` | Unloads every group, freeing all sprite VRAM and palette banks. |
+| `void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags)` | Draws frame `frame` of a sprite this frame at (x, y) − origin. Fully off-screen sprites are skipped and use no hardware sprite. Does nothing if the sprite is not loaded or the frame doesn't exist (*warns*, once per sprite ID; IDs of 512 and above share one separate warning), or if 128 sprites were already drawn this frame (*warns*). |
+| `void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags)` | Like `sprite_draw`, rotated around the sprite's center by `angle`; art drawn facing right then faces (`fx_cos(angle)`, `fx_sin(angle)`). Uses the hardware's double-size affine mode, so the sprite occupies twice its width and height for clipping. The 32 rotation matrices per frame are shared by sprites with the same angle and flips; past 32, sprites are drawn unrotated (*warns*). Sprites that are off screen or don't fit in OAM take no matrix, and angle 0 draws exactly like `sprite_draw` (no matrix). |
+
+Draw flags (combine with `|`): `SPRITE_FLIP_H`, `SPRITE_FLIP_V`, `SPRITE_HIDDEN` (not drawn at all and uses no hardware sprite: toggle it in `spr_flags` to make an entity blink), and at most one layer flag. Front to back, the layers are HUD (BG0, text), foreground (BG1), sprites, playfield (BG2), background (BG3); by default sprites sit between foreground and playfield. `SPRITE_ABOVE_FOREGROUND` (below the HUD only), `SPRITE_ABOVE_HUD` (above everything), `SPRITE_BEHIND_PLAYFIELD` (above BG3 only). Among sprites on the same layer, the one drawn first is in front.
+
+## ecs.h
+
+Fixed-pool bitmask ECS of `MAX_ENT` (128) entities. Design: [ecs.md](ecs.md).
+
+**Components** are bits in a `u32` mask; their data lives in global arrays indexed by slot (`entity_index(e)`, or `i` in `ECS_FOR_EACH`). All are zeroed by `entity_create()`.
+
+| Bit | Arrays | Meaning |
+| --- | --- | --- |
+| `C_POS` | `FIXED pos_x[], pos_y[]` | Top-left position in pixels (24.8). |
+| `C_VEL` | `FIXED vel_x[], vel_y[]` | Velocity in pixels per frame (24.8). |
+| `C_SPR` | `u16 spr_id[]`, `u8 spr_frame[]`, `u16 spr_flags[]`, `s16 spr_depth[]`, `u16 spr_angle[]` | Sprite ID and frame, `sprite_draw` flags, draw depth for `sys_render_by_depth`, rotation angle (0 = unrotated). |
+| `C_BODY` | `body_w`, `body_h`, `body_bounce`, `body_friction`, `body_max_fall` | See [physics.h](#physicsh). |
+| `C_MAPBODY` | `u8 body_contact[]` | Bit 4, defined in `map.h`: with `C_POS \| C_VEL \| C_BODY`, a body that collides with the map. See [map.h](#maph). |
+| `C_ANIM` | `u8 spr_anim_time[]` | Bit 5: with `C_SPR`, `sys_animate` plays the sprite's animation. `spr_anim_time` counts the frames `spr_frame` has shown so far. |
+| `C_GAME(n)` | (game-defined) | Bits for game components, `n` = 0-14 (there is no `C_GAME(15)`; a constant `n` outside 0-14 is a compile error, "size of array is negative"). Games keep their own arrays of `MAX_ENT`. |
+| `C_ALIVE` | | Bit 31, set on every live slot by the engine. Don't pass it to `entity_create()` (*warns*). |
+
+`u32 ent_mask[MAX_ENT]` holds each slot's mask, including `C_ALIVE` (0 for free slots). Games may add and remove their components there (`ent_mask[i] |= C_SPR`) but must keep `C_ALIVE`: a slot without it matches no system and no `ent_has()`. Create and destroy entities only with `entity_create()` and `entity_destroy()`.
+
+**Handles:** `Entity` is a `u16`: low 8 bits slot index, high 8 bits generation (1-255). Destroying an entity, or `ecs_reset()`, makes its handles stale. Freed slots are reused oldest-first, so a stale handle could match a new entity again only after its slot has been reused 255 times. `ENTITY_NONE` (0) never refers to an entity. `entity_index(e)` and `entity_generation(e)` take a handle apart.
+
+| Function / macro | Description |
+| --- | --- |
+| `Entity entity_create(u32 components)` | Creates an entity with the given component bits (`C_ALIVE` is added) and zeroed component data. Returns `ENTITY_NONE` if all 128 slots are used (*warns*, once until `ecs_reset()`). O(1). |
+| `void entity_destroy(Entity e)` | Destroys the entity; does nothing for a stale handle or `ENTITY_NONE`. Also frees an entity whose `C_ALIVE` bit was cleared by hand (*warns*). Safe inside `ECS_FOR_EACH`. |
+| `bool entity_alive(Entity e)` | True if the handle refers to a live entity. |
+| `Entity entity_at(u32 index)` | The handle of the live entity in slot `index`, or `ENTITY_NONE` if the slot is free or out of range. E.g. `ECS_FOR_EACH(i, C_ROCK) entity_destroy(entity_at(i));`. |
+| `void ecs_reset(void)` | Destroys every entity (e.g. on room change); outstanding handles go stale, including those of entities whose `C_ALIVE` bit was cleared by hand. Slots are then handed out in ascending order. |
+| `ECS_FOR_EACH(i, mask) { ... }` | Loops `u32 i` over every live slot that has *all* components in `mask`, in slot order. A mask of 0 visits every live entity. An entity created inside the loop may or may not be visited in the same loop. |
+| `bool ent_has(u32 i, u32 mask)` | True if slot `i` is alive (has `C_ALIVE`) and has every component in `mask` (mask 0 tests only that it is alive). Prefer it to `ent_mask[i] & (A \| B)`, which is true for either. `i` must be below `MAX_ENT` (not checked). |
+
+**Systems** (call once per frame, between `frame_begin()` and `frame_end()`):
+
+| Function | Description |
+| --- | --- |
+| `void sys_movement(void)` | `pos += vel` for entities with `C_POS \| C_VEL`, except map bodies (`C_MAPBODY`, moved by `sys_map_movement()`). |
+| `void sys_physics(void)` | See [physics.h](#physicsh). |
+| `void sys_render(void)` | `sprite_draw` (or the rotated draw, if `spr_angle` is non-zero) at `fx_to_int(pos)` minus the camera (`camera_set()`, [map.h](#maph); (0, 0) unless the game scrolls) for every entity with `C_POS \| C_SPR`, with its `spr_flags`. Same layer: lower slot index in front. |
+| `void sys_render_by_depth(void)` | Like `sys_render`, but higher `spr_depth` is drawn in front (equal depths: lower index in front). For a top-down look, set `spr_depth` to y each frame. Costs about 10,000 extra cycles for 128 sprites. |
+| `void sys_animate(void)` | Plays animations of entities with `C_SPR \| C_ANIM`: each call adds a frame to `spr_anim_time`; once `spr_frame` has shown for its `frame_times` entry (one frame if `frame_times` is NULL; 0 holds the frame), moves to the next frame and zeroes `spr_anim_time`. After the last frame it loops to 0, or with `SPRITE_ASSET_ANIM_ONCE` stays on the last frame (`spr_frame == frame_count − 1` then means it is over). Run once per frame before rendering. To start an animation, or switch to another sprite's, set `spr_id`, `spr_frame = 0` and `spr_anim_time = 0`. A `spr_frame` the sprite doesn't have restarts the animation at 0 (*warns*); a `spr_id` outside the sprite table or with a NULL entry is skipped (*warns*). Reads the sprite table, so it works whether or not the sprite is loaded. |
+
+All but `sys_animate` run as ARM code from IWRAM (`sys_animate` runs from ROM; it is cheap: a few loads per animated entity).
+
+## physics.h
+
+Bouncing bodies inside a world rectangle: balls, particles, debris. Not a platformer controller: bodies don't collide with each other or with tilemaps (for that, see map bodies in [map.h](#maph), which `sys_physics()` skips).
+
+An entity with `C_POS | C_VEL | C_BODY` is a body. Body pools, zeroed by `entity_create()`:
+
+| Array | Meaning |
+| --- | --- |
+| `u8 body_w[], body_h[]` | Size in pixels, kept inside the bounds. |
+| `u8 body_bounce[]` | Speed kept by a floor bounce, in 256ths (224 = 7/8). At most 255/256: a floor bounce always loses a little speed. |
+| `u8 body_friction[]` | Speed lost per frame while touching a floor, in 256ths (0 = none). The loss is rounded up, so any non-zero friction eventually stops a body. |
+| `u8 body_max_fall[]` | Maximum fall speed in pixels per frame (0 = no limit): after gravity is added, the velocity in the direction gravity pulls is limited to it, on each axis gravity acts on. A faster speed the game sets (a jump against gravity) is kept until gravity is next applied. |
+
+Map bodies use `body_bounce`, `body_friction` and `body_max_fall` too ([map.h](#maph)).
+
+| Function | Description |
+| --- | --- |
+| `void physics_set_gravity(FIXED x, FIXED y)` | Acceleration added to every body's velocity each frame, in pixels per frame per frame (`FX_ONE / 4` = a quarter pixel). Default 0 (off). |
+| `void physics_set_bounds(int left, int top, int right, int bottom)` | The rectangle bodies stay inside, in world pixels (the coordinates of `pos_x`/`pos_y`); left/top inclusive, right/bottom exclusive. Default: `(0, 0, SCREEN_W, SCREEN_H)`, the screen only while the camera is at 0, 0; in a scrolling world set them to the area bodies may use, e.g. the level's map: `physics_set_bounds(0, 0, level.width * 16, level.height * 16)`. Nothing else changes them (not `map_load()`, not `camera_set()`). Ignored if `right < left` or `bottom < top` (*warns*). A body bigger than the bounds is pinned to their left or top edge (*warns*, from `sys_physics`). |
+| `void physics_set_open_edges(u32 edges)` | Edges bodies pass through instead of bouncing: `PHYSICS_EDGE_LEFT`, `_RIGHT`, `_TOP`, `_BOTTOM`, OR'd. Default 0. The game decides what happens to a body that has left. |
+| `void physics_set_wrap(bool x, bool y)` | Wrap around horizontally and/or vertically instead of bouncing: a body completely past one edge reappears just outside the opposite edge (a body exactly touching the low edge from outside doesn't count as past it). A wrapping axis has no floor. Default off. |
+| `void sys_physics(void)` | Run once per frame after `sys_movement()`. Skips map bodies (`C_MAPBODY`). Per axis: bounces bodies off the bounds, then applies gravity and `body_max_fall`. A wall gravity pulls toward is a floor: floor bounces keep `body_bounce`/256 of the speed, and touching it loses `body_friction`/256 of the speed along it per frame, rounded up (sliding stops below 1/16 pixel per frame); other walls bounce perfectly. A floor bounce slower than twice one frame's gravity becomes a rest: the body sits on the floor with zero velocity until gravity changes or the game moves it. |
+| `bool body_overlap(u32 a, u32 b)` | True if two entities' rectangles (position + `body_w` × `body_h`) overlap; touching edges don't count. Takes slot indices. Works for any entities with `C_POS`, so a body without `C_VEL` is a static collider (e.g. a paddle the game moves). |
+| `u32 body_hit_side(u32 a, u32 b)` | Which side of body `a` met body `b`: 0 if they don't overlap (as `body_overlap`, touching edges don't count), otherwise exactly one of `BODY_SIDE_BOTTOM` (`a` came down onto `b`: a stomp), `BODY_SIDE_TOP`, `BODY_SIDE_LEFT`, `BODY_SIDE_RIGHT` (the same bits as `MAP_CONTACT_*`). Judged from their positions before this frame's movement (position minus velocity; no `C_VEL` counts as still) and their motion relative to each other, so it is right for fast bodies and for two moving bodies: the side is the one `a` crossed last to overlap `b`, and an exact corner counts as top/bottom. Bodies that already overlapped before the frame get the side of least overlap (top/bottom on a tie). Call it after the movement systems and before changing velocities: a velocity reversed by a bounce this frame, or a position the game set directly, makes the earlier position a guess. 0 if `a == b`. |
+
+## map.h
+
+Tiled backgrounds of 16×16 metatiles on BG1-BG3, a camera that scrolls them, and bodies that collide with the playfield (BG2). Maps can be far bigger than the screen: the engine streams the part around the camera into VRAM. World coordinates are pixels from the top-left of the playfield's map. Design, VRAM layout and costs: [tilemaps.md](tilemaps.md).
+
+**Types**
+
+`Tileset`, one room's background graphics:
+
+| Field | Meaning |
+| --- | --- |
+| `const u32 *tiles` | 4bpp 8x8 tiles, 8 words each (low nibble = leftmost pixel). Tile 0 should be blank: layers that don't wrap show it outside their map. |
+| `u16 tile_count` | 1 to `MAP_MAX_TILES` (1024). |
+| `const u16 *palettes` | `palette_count` banks of 16 colors; color 0 of each is transparent and not loaded. |
+| `u8 palette_count` | 0 to `MAP_MAX_PALETTES` (15), loaded into BG palette banks 0, 1, ... (bank 15 is the text layer's). |
+
+`Metatile`, a 16×16 block: `u16 se[4]` (screen entries: top-left, top-right, bottom-left, bottom-right) and `u8 collision`. Build entries with `MAP_SE(tile, palette, flips)`, flips `MAP_SE_FLIP_H` and/or `MAP_SE_FLIP_V` (e.g. `MAP_SE(12, 0, MAP_SE_FLIP_H)`). The collision byte is a type, `MAP_EMPTY`, `MAP_SOLID` or `MAP_ONEWAY` (solid only to bodies falling onto it from above), in the low 4 bits (`MAP_TYPE(c)` extracts it), plus up to four game-defined tag bits `MAP_TAG(0)` to `MAP_TAG(3)` (bonus block, hazard...), which the engine ignores.
+
+`MapLayer`, one background:
+
+| Field | Meaning |
+| --- | --- |
+| `u16 width, height` | Size in metatiles (not 0). |
+| `const u16 *cells` | `width × height` metatile indices, row by row. A cell naming a metatile the layer doesn't have shows and collides as empty (*warns* at load). |
+| `const Metatile *metatiles`, `u16 metatile_count` | The definitions `cells` index (at least one). |
+| `u8 bg` | Background 1-3; its priority is its number (BG1 in front of sprites, BG2 the playfield, BG3 behind). |
+| `u8 flags` | `MAP_LAYER_WRAP`: repeats in both directions (small parallax backgrounds). Other layers show tile 0 outside their map. |
+| `FIXED scroll_factor` | The layer scrolls by camera × factor (`FX_ONE / 2`: half speed, a distant layer); 0 means `FX_ONE`. The playfield normally uses `FX_ONE`. |
+
+| Function | Description |
+| --- | --- |
+| `bool tileset_load(const Tileset *tileset)` | Copies the tiles to background VRAM (charblocks 1-2) and the palettes to BG banks 0, 1, ... (colors 1-15; color 0 of bank 0 is the backdrop) immediately. Call while loading a room, before its layers show (on a shown layer the change may tear for a frame). Returns false and loads nothing if the tileset is NULL, has no tiles, more than 1,024 tiles or 15 palettes, or `palette_count` without `palettes` (*warns*). |
+| `bool map_load(const MapLayer *layer)` | Shows the layer on its background, replacing any layer there: the window around the camera is drawn into VRAM and the background turned on immediately (like `tileset_load`, a VRAM write at load time: load layers while loading a room, e.g. during a fade to black), so the next frame shows it. Set the camera first; later camera moves are drawn at `frame_end()`. Loading the playfield (BG2) clears `map_set_cell()` changes and clamps the camera to it. Returns false and changes nothing for a NULL layer, a background outside 1-3, a size of 0, or missing cells or metatiles (*warns*). The data must stay valid while shown (normally `const` data in ROM). |
+| `void tileset_set_tiles(u16 first, const u32 *tiles, u16 count)` | Replaces `count` tiles of the loaded tileset from tile `first` with `tiles` (8 words per tile), for animated tiles (water, shimmering bonus blocks): every cell showing them changes. Queued and copied in VBlank at the next `frame_end()`, so `tiles` must stay valid until then. Up to `MAP_MAX_TILE_UPDATES` (8) calls per frame; another call for the same `first` in a frame replaces the earlier one. Ignored (*warns*) without a tileset, past its `tile_count`, for a NULL `tiles`, or when the frame's queue is full. Keep it to a few dozen tiles per frame (VBlank is short: each tile is 32 bytes to copy). `tileset_load` drops queued updates. |
+| `void map_unload(u32 bg)` | Hides the layer on background `bg` (turned off at the next `frame_end()`) and forgets it. Nothing if none is shown; *warns* for `bg` outside 1-3. |
+| `void camera_set(int x, int y)` | Sets the world position shown at the screen's top-left, in pixels. With a playfield loaded, clamped so the view stays inside its map (0 on an axis where the map is smaller than the screen); without one, kept as given. Backgrounds scroll at the next `frame_end()`; `sys_render` and `sys_render_by_depth` subtract it from entity positions (`sprite_draw` doesn't: it takes screen coordinates), so set it before them. Starts at (0, 0). |
+| `int camera_x(void)`, `int camera_y(void)` | The camera position (after clamping). |
+| `u16 map_cell(int mx, int my)` | The playfield's metatile index at metatile coordinates (mx, my), including runtime changes; 0 outside the map or without a playfield. |
+| `void map_set_cell(int mx, int my, u16 metatile)` | Changes a playfield cell at runtime (broken block, open door). Up to `MAP_MAX_CHANGES` (64) changed cells per room; setting a cell back to its original metatile frees its place. Redrawn at the next `frame_end()` if on screen, and affects `map_cell`, `map_collision_at` and map bodies at once. Ignored (*warns*) when the table is full, outside the playfield, without one, or for a metatile it doesn't have. |
+| `u8 map_collision_at(int x, int y)` | The playfield's collision byte at world pixel (x, y). Outside the map: `MAP_SOLID` left and right of it (at any height), `MAP_EMPTY` above and below. `MAP_EMPTY` everywhere without a playfield. |
+| `void sys_map_movement(void)` | Moves map bodies (below). Run once per frame, where `sys_movement()` runs. |
+
+**Map bodies:** entities with `C_POS | C_VEL | C_BODY | C_MAPBODY`. `sys_movement()` and `sys_physics()` skip them; `sys_map_movement()` adds gravity (`physics_set_gravity()`) to their velocity and limits it to `body_max_fall`, then moves them along x, then y, in steps of at most 7 pixels (so they never pass through a metatile), stopping flush against `MAP_SOLID` metatiles, and `MAP_ONEWAY` ones when moving down into them from above. A body covers `body_w × body_h` pixels from its position (any size up to 255×255; a size of 0 moves as 1×1 and *warns*), and can move out of a solid metatile it overlaps. An entity with `C_MAPBODY` but not all of `C_POS | C_VEL | C_BODY` doesn't move (*warns*); without a playfield, bodies move without colliding (*warns*).
+
+`u8 body_contact[MAX_ENT]`: which sides of each map body touched the map in the last `sys_map_movement()`, `MAP_CONTACT_FLOOR`, `MAP_CONTACT_CEILING`, `MAP_CONTACT_LEFT`, `MAP_CONTACT_RIGHT` OR'd, e.g. to allow jumping only from the floor. The velocity toward a touched side becomes `-velocity * body_bounce / 256`: 0 (the default) stops the body; gems, power-ups or knocked-out enemies can bounce. Unlike `sys_physics()`'s bounds, walls and ceilings use `body_bounce` too. On a floor (the side gravity pulls toward), a rebound slower than twice one frame's gravity is a rest (zero velocity), and `body_friction` slows a body sliding along it as in `sys_physics()`. A body standing on a floor touches it every frame while gravity pulls it; one stopped by a wall touches it again only when pushed into it again.
+
+## audio.h
+
+Sound effects and music on the GBA's tone generators (PSG): square 1, square 2 and noise. They cost almost no CPU while playing. Tracker music and sampled sounds are planned ([audio.md](audio.md)).
+
+`PsgSound` (a minimal sound needs `.frequency` and `.frames`; fields left out take the defaults shown):
+
+| Field | Meaning |
+| --- | --- |
+| `u8 channel` | `PSG_SQUARE1` (0, default), `PSG_SQUARE2` or `PSG_NOISE`. Each channel plays one sound at a time; a new one replaces it unless it has a lower `priority`. |
+| `u8 duty` | Square tone color: `PSG_DUTY_12` (1), `PSG_DUTY_25` (2), `PSG_DUTY_50` (3), `PSG_DUTY_75` (4). 0 means `PSG_DUTY_50`. Other values *warn*. Ignored on the noise channel. |
+| `u8 volume` | Starting volume 1-15; 0 means 15, except for a sound that fades in, which then starts from silence. Above 15 is clamped (*warns*). |
+| `s8 fade` | Envelope: −1 (fast) to −7 (slow) fades out, 1 (fast) to 7 (slow) fades in, 0 holds. Outside −7 to 7 is clamped (*warns*). |
+| `s8 slide` | `PSG_SQUARE1` only: pitch slide, −1 (fast) to −7 (slow) down, 1 to 7 up, 0 none. Outside −7 to 7 is clamped (*warns*); ignored on other channels (*warns*). |
+| `u8 slide_size` | `PSG_SQUARE1`: step size of the slide, 1 (big) to 7 (small); 0 means 1. Above 7 is clamped (*warns*). An upward slide that passes the highest pitch silences the channel; if that happens before the sound ends, `psg_play` *warns* (debug builds), naming the frame. |
+| `u16 frequency` | Pitch in Hz: squares 64-65,535 (lower is raised to 64); noise 4-65,535 (the closest of the channel's coarse rates; higher is hissier). |
+| `u16 frames` | How long it plays (each note, for a melody). 0: until the envelope fades it out (it holds its channel until then) or it is replaced. Required for a melody: one with `frames` 0 doesn't play (*warns*). |
+| `const u16 *notes`, `u8 note_count` | Optional melody: `note_count` frequencies in Hz (0 = rest), played in turn instead of `.frequency`. |
+| `u8 priority` | 0 (default) to 255. While the sound plays, `psg_play` of a sound with lower priority on its channel does nothing; equal or higher priority replaces it. On a channel the music uses, the sound plays only if its priority is at least the song's `priority`. |
+
+| Function | Description |
+| --- | --- |
+| `void psg_table_set(const PsgSound *const *table, u16 count)` | Registers the game's sound table: `table[id]` is sound `id`. Stops the sound effects playing (not the music). An invalid `table` pointer registers no sounds (*warns*). |
+| `void psg_play(u16 sound_id)` | Plays a sound, replacing whatever its channel was playing, unless that is a sound of higher priority still playing, or music of higher priority. Does nothing (*warns*) if the ID is outside the table, its table entry is NULL, its channel is invalid, it has a `note_count` but no `notes`, or it is a melody with `frames` 0. Each kind of problem is reported once per `psg_table_set()`. Notes and lengths advance in `frame_end()`. |
+| `void psg_stop_all(void)` | Silences every PSG channel: sound effects and music. |
+
+**Music.** `PsgSong`: up to one track per channel, played together; each track loops on its own. Notes are `PSG_C0`…`PSG_B10` (`PSG_C4` = 60 is middle C, `PSG_A4` 440 Hz, sharps `PSG_CS4`…, an octave is 12) and `PSG_REST` (0). Square channels play `PSG_C2` and up; on the noise channel a note picks the noise rate closest to its pitch (drums).
+
+| Type / field | Meaning |
+| --- | --- |
+| `PsgNote {u8 note; u8 length;}` | A note or `PSG_REST`, held for `length` ticks (0: the track's `length`). Notes above `PSG_B10` play as it, notes below `PSG_C2` on a square as 64 Hz (*warn*). |
+| `PsgTrack.channel` | `PSG_SQUARE1` (default), `PSG_SQUARE2` or `PSG_NOISE`. A track on an invalid channel, or on a channel an earlier track uses, is left out (*warns*). |
+| `PsgTrack.duty`, `.volume`, `.fade` | As in `PsgSound`, for each note. |
+| `PsgTrack.length` | Ticks of notes whose `length` is 0; 0 means one beat (`ticks_per_beat`). |
+| `PsgTrack.notes`, `.note_count` | The notes, played in turn. A track without notes is left out (*warns*). |
+| `PsgTrack.loop` | Index of the note the track loops back to (0: the start); `PSG_NO_LOOP` plays it once. An index past the end loops from the start (*warns*). |
+| `PsgSong.tempo` | Beats per minute; 0 means 120. |
+| `PsgSong.ticks_per_beat` | 0 means 4 (a tick is a 16th note). Ticks fall on the closest frame; at most one per frame (3583 a minute; faster is clamped, *warns*). |
+| `PsgSong.priority` | Sound effects below it don't play on the music's channels (0: every one does). |
+| `PsgSong.tracks`, `.track_count` | The tracks. |
+
+| Function | Description |
+| --- | --- |
+| `void psg_music_play(const PsgSong *song)` | Starts a song from the beginning, replacing the one playing. A NULL song plays nothing (*warns*). Sound effects playing keep their channels. A sound effect that takes over one of the music's channels (see `priority`) plays over it while the music keeps time; when it ends, a held note (track `fade` ≥ 0) comes back at once, a fading track with its next note. Advanced in `frame_end()`. |
+| `void psg_music_stop(void)` | Stops the music; sound effects play on. |
+| `bool psg_music_playing(void)` | True while a song plays: until stopped, or until every track of a song that doesn't loop has ended. |
+| `void psg_music_set_volume(u8 volume)` | 0 (silent) to 15 (default; above is clamped, *warns*). Scales each note's starting volume from each channel's next note; sound effects are unaffected. Tracks that fade in still rise to full volume, unless the volume is 0. |
+
+## text.h
+
+A fixed 8x8 font (libtonc's `sys8`, printable ASCII) on a `TEXT_COLS` × `TEXT_ROWS` (30 × 20) grid on BG0, white by default, optionally with a drop shadow. The first text call sets up the font and turns BG0 on. Uses charblock 0 (tiles 0-95), screenblock 31 and BG palette bank 15 (color 1 text, color 2 shadow).
+
+| Function | Description |
+| --- | --- |
+| `void text_print(int col, int row, const char *s)` | Writes `s` from a character cell. Clipped at the edges (cells with negative `col` are skipped; a row outside 0-19 prints nothing). Characters outside printable ASCII show as `?`. |
+| `void text_print_line(int col, int row, const char *s)` | Like `text_print`, then blanks the rest of the row, so shorter text leaves nothing behind. Use it for HUD lines redrawn with changing content. |
+| `void text_print_centered(int row, const char *s)` | Blanks the row and writes `s` centered on it, from column (`TEXT_COLS` − length) / 2 (one column left of center for an odd leftover). A string longer than 30 characters loses characters at both ends. |
+| `void text_clear(void)` | Clears every cell (and sets the layer up if needed). |
+| `void text_set_color(Color text, Color shadow)` | Text and shadow colors for all text on the layer, including what is already shown (BG bank 15 colors 1 and 2). Default: white text, black shadow. Before the layer is set up, applied when it is. |
+| `void text_set_shadow(bool on)` | Turns the drop shadow on or off for all text on the layer: each glyph gets a copy of itself one pixel right and one down, in the shadow color, behind it and clipped to its 8×8 cell, so light text stays readable over light art. Rewrites the 96 font tiles (3 KB of VRAM) when the setting changes. Default: off. |
+| `const char *text_format(const char *fmt, ...)` | printf-style formatting without a C library. Conversions `%d %i %u %x %s %c %%`; flags `-` (left-align) and `0` (zero-pad, numbers only); a field width (`%5d`, `%03u`, `%-10s`; capped at `TEXT_FORMAT_MAX`). Length modifiers `h`, `hh`, `l` and `ll` are accepted (`%ld` reads a `long`; `%lld` prints only the low 32 bits, *warns*). No precision. `%d %i %u %x` take any 32-bit integer (`int`, `unsigned`, `s32`, `u32`); `%x` is lowercase. Other conversions (such as `%f`) are printed as written, still consuming their argument so later ones print correctly (*warns*, once). Returns one of four rotating static buffers of `TEXT_FORMAT_MAX` (128) bytes, so up to four results can be used together; longer output is truncated. Not type-checked by the compiler: a NULL `%s` prints `(null)`; on the GBA, debug builds print `(?)` and *warn* for a `%s` argument that isn't a pointer. |
+
+Text writes (and color and shadow changes) go to VRAM immediately; they are not tied to `frame_end()`.
+
+## fixed.h
+
+| Name | Description |
+| --- | --- |
+| `FX_SHIFT`, `FX_ONE` | 8 and 256: the 24.8 format. |
+| `FX(n)` | Whole number to `FIXED`; usable in constant expressions. For fractions, divide: `FX(7) / 8`, `FX_ONE / 4`. |
+| `int fx_to_int(FIXED f)` | To a whole number, rounding toward negative infinity. |
+
+## math.h
+
+Prefixed (`int_`, `fx_`) to avoid libtonc's `min`/`max`/`clamp`.
+
+| Function / macro | Description |
+| --- | --- |
+| `int int_min(int a, int b)`, `int int_max(int a, int b)`, `int int_abs(int v)` | As named. |
+| `int int_clamp(int v, int lo, int hi)` | `v` limited to `[lo, hi]`, both inclusive. |
+| `FIXED fx_mul(FIXED a, FIXED b)` | `a × b` in 24.8 (64-bit intermediate). E.g. `fx_mul(speed, FX(7) / 8)`. |
+| `FIXED fx_div(FIXED a, FIXED b)` | `a / b` in 24.8. `b` must not be 0 (not checked). Slow: no hardware divider; multiply by a constant reciprocal where you can. |
+| `ANGLE_DEG(d)` | Degrees to a `u16` angle: `ANGLE_DEG(90)` = `0x4000`. Clockwise on screen (y points down). |
+| `FIXED fx_sin(u16 angle)`, `FIXED fx_cos(u16 angle)` | Sine and cosine in 24.8 (−256 to 256), from a table with 1,024 steps per turn. A heading `a`, clockwise from "right", is the direction (`fx_cos(a)`, `fx_sin(a)`). |
+
+## random.h
+
+Deterministic xorshift32: the same seed always gives the same sequence. Not for security.
+
+| Function | Description |
+| --- | --- |
+| `void random_seed(u32 seed)` | Restarts the sequence. 0 is replaced by a fixed non-zero value, which `serval_init()` also uses, so a game that never seeds plays the same on every boot. |
+| `u32 random_entropy(void)` | A value that varies with the player, for seeding: a hash of `frame_count()` and the button history since `serval_init()` (which buttons, and on exactly which frame each was pressed or released). Not CPU timing: the same input gives the same value on the GBA and the web and in every build, so recorded input replays the same game. Call it after waiting for the player (e.g. when START is pressed): `random_seed(random_entropy())`. Before any input it returns the same value every time. Changes only from frame to frame. |
+| `u32 random_u32(void)` | The next 32 random bits. |
+| `int random_range(int lo, int hi)` | A random integer in `[lo, hi]`, both inclusive (scaled by multiplication: no division, no modulo bias). Any `int` range works, even the full one. Returns `lo` if `hi <= lo` (*warns* if `hi < lo`). |
+
+## debug.h
+
+| Function | Description |
+| --- | --- |
+| `void debug_log(const char *message)` | Writes a line to mGBA's debug log (*Tools > View Logs*, or `mgba-rom-test`'s console), truncated to 255 characters. Does nothing on hardware and other emulators. Combine with `text_format()` for numbers. |
+| `u32 debug_warning_count(void)` | Number of `serval:` warnings reported so far; always 0 in release builds. Useful in tests. |
+| `void debug_exit(int code)` | Does not return. Under `mgba-rom-test -S 3 -R r0`, ends the run with exit code `code`; elsewhere, stops the program. |
+
+`SERVAL_DEBUG` is defined for Debug and RelWithDebInfo builds of the engine and of games linking it, so games can key their own debug code off it.
+
+## platform.h
+
+Included by every header. Integer types (`u8` … `s32`, `FIXED`) and memory placement macros for GBA builds (they expand to nothing in host builds):
+
+| Macro | Places |
+| --- | --- |
+| `SERVAL_IWRAM_CODE` | A function in IWRAM as ARM code: fastest, but IWRAM is 32 KB shared with the engine, globals and the stack ([development.md](development.md#memory-use)). |
+| `SERVAL_IWRAM_DATA` | Data in IWRAM (where ordinary globals already live). |
+| `SERVAL_EWRAM_DATA` | Initialized data in EWRAM (256 KB, slower). |
+| `SERVAL_EWRAM_BSS` | Zero-initialized data in EWRAM: large buffers that would crowd IWRAM. |
+
+## gba.h
+
+GBA-only escape hatches, not portable to other targets; not included by `serval.h`.
+
+| Function | Description |
+| --- | --- |
+| `bool gba_oam_submit(u16 attr0, u16 attr1, u16 attr2)` | Appends a raw OAM entry to this frame's shadow OAM, after any sprites already drawn. Returns false if all 128 entries are used. Flushed by `frame_end()`. The rotation matrices in OAM are owned by the engine's rotated draws. |

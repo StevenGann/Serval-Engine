@@ -5,6 +5,7 @@
 #include <tonc.h>
 
 #include "internal.h"
+#include "screen_internal.h"
 
 // The "Made with Serval Engine" splash. Timings in frames at ~59.73 fps.
 #define FADE_FRAMES 30        // 500 ms in, and again out
@@ -37,15 +38,20 @@ static bool splash_frame(void) {
 }
 
 void serval_splash(void) {
-    // Borrow the backdrop, two palette entries and the blend registers; put
-    // them back at the end.
+    // Borrow the backdrop, two palette entries, the blend registers (the
+    // game's brightness), the text shadow and background 0 (control register
+    // and display bit); put them back at the end.
     bool text_was_active = serval_text_active();
+    u16 old_bg0cnt = REG_BG0CNT;
+    u16 old_bg0_shown = REG_DISPCNT & DCNT_BG0;
     u16 old_backdrop = pal_bg_mem[0];
     u16 old_grey = pal_bg_bank[GREY_BANK][1];
     u16 old_white = pal_bg_bank[WHITE_BANK][1];
-    u16 old_bldcnt = REG_BLDCNT; // (BLDY, the fade level, is write-only)
+    u16 old_bldcnt = REG_BLDCNT; // (BLDY is write-only: screen.c keeps the game's level)
+    bool old_shadow = serval_text_shadow();
 
     pal_bg_mem[0] = RGB15(0, 0, 0);
+    text_set_shadow(false);
     text_clear(); // also sets the text layer up if the game hadn't
     pal_bg_bank[GREY_BANK][1] = RGB15(16, 16, 16);
     pal_bg_bank[WHITE_BANK][1] = RGB15(31, 31, 31);
@@ -77,14 +83,18 @@ void serval_splash(void) {
         skipped = splash_frame();
     }
 
-    // Leave a black screen and put everything back.
+    // Clear the text and put everything back.
     serval_psg_silence(PSG_SQUARE1);
     text_clear();
     if (!text_was_active)
         serval_text_deactivate();
+    REG_BG0CNT = old_bg0cnt;
+    REG_DISPCNT = (u16)((REG_DISPCNT & ~DCNT_BG0) | old_bg0_shown);
     pal_bg_bank[GREY_BANK][1] = old_grey;
     pal_bg_bank[WHITE_BANK][1] = old_white;
+    text_set_shadow(old_shadow);
     REG_BLDCNT = old_bldcnt;
-    REG_BLDY = 0;
+    int level = serval_screen_brightness();
+    REG_BLDY = (u16)(level < 0 ? -level : level);
     pal_bg_mem[0] = old_backdrop;
 }

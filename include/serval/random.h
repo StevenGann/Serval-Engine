@@ -12,20 +12,26 @@
 // plays out the same way on every boot.
 void random_seed(u32 seed);
 
-// A value that differs from run to run, for seeding: it comes from the CPU
-// cycle counter, so it depends on real-world timing. Call it after waiting for
+// A value that differs from game to game, for seeding: a hash of the frame
+// count and of the button history since serval_init() (which buttons were
+// held, and on exactly which frame each press or release happened). A player
+// never repeats their timing to the frame, so it varies with them; identical
+// input gives the identical value, on the GBA and the web alike and in every
+// build, so recorded input replays the same game. Call it after waiting for
 // the player, e.g. once START is pressed on a title screen:
 //
 //     random_seed(random_entropy());
 //
-// Called at a fixed point with no input before it (such as right at boot), it
-// returns the same value every time on emulators.
+// Called before any input (such as right at boot), it returns the same value
+// every time. It changes only from frame to frame (frame_begin() records the
+// input), not between calls within a frame.
 u32 random_entropy(void);
 
 // Next 32 random bits.
 u32 random_u32(void);
 
-// Random integer in [lo, hi], both inclusive. Returns lo if hi < lo.
+// Random integer in [lo, hi], both inclusive; any int range works. Returns lo
+// if hi < lo (warning in debug builds).
 int random_range(int lo, int hi);
 
 #endif // SERVAL_RANDOM_H

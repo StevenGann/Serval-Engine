@@ -6,6 +6,8 @@
 
 #include <tonc.h>
 
+#include "../core/map_internal.h"
+#include "../core/sprite_internal.h"
 #include "../core/warn.h"
 #include "internal.h"
 
@@ -20,8 +22,8 @@
 // OBJ VRAM as one array of tiles (it spans two of libtonc's 512-tile charblocks).
 static TILE* const obj_tiles = (TILE*)MEM_VRAM_OBJ;
 
-static const SpriteAsset* const* sprite_table;
-static u16 sprite_count;
+// The sprite table is serval_sprite_table and serval_sprite_count
+// (src/core/sprite_table.c), shared with sys_animate.
 
 static u16 next_tile;
 static u8 next_palette_bank;
@@ -42,14 +44,16 @@ typedef struct {
 static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
 
 #ifdef SERVAL_DEBUG
-// Each problem is reported once per sprite ID, not every frame.
-static EWRAM_BSS u32 warned_ids[SPRITE_MAX / 32];
+// Each problem is reported once per sprite ID, not every frame. IDs past
+// SPRITE_MAX share one extra slot, so they don't hide a warning for ID 511.
+#define OUT_OF_RANGE_SLOT SPRITE_MAX
+static EWRAM_BSS u32 warned_ids[SPRITE_MAX / 32 + 1];
 static bool warned_oam_full;
 static bool warned_matrices;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
-        id = SPRITE_MAX - 1; // out-of-range IDs share one slot
+        id = OUT_OF_RANGE_SLOT;
     u32 bit = 1u << (id % 32);
     if (warned_ids[id / 32] & bit)
         return false;
@@ -61,9 +65,9 @@ static bool first_warning(u32 id) {
 static __attribute__((noinline, cold)) void warn_draw(u32 id, u32 frame) {
     if (!first_warning(id))
         return;
-    if (id >= sprite_count)
+    if (id >= serval_sprite_count)
         SERVAL_WARN("sprite_draw: sprite ID %u is not in the sprite table (%u sprites)", id,
-                    sprite_count);
+                    serval_sprite_count);
     else if (sprite_draws[id].frame_count == 0)
         SERVAL_WARN("sprite_draw: sprite %u is not loaded; load a sprite group containing it", id);
     else
@@ -126,27 +130,46 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count) {
     if (count > SPRITE_MAX)
         SERVAL_WARN("sprite_table_set: %u sprites, but only the first %u can be used", count,
                     SPRITE_MAX);
-    sprite_table = table;
-    sprite_count = count < SPRITE_MAX ? count : SPRITE_MAX;
+    serval_sprite_table = table;
+    serval_sprite_count = count < SPRITE_MAX ? count : SPRITE_MAX;
     sprite_groups_reset();
 }
 
 // Checks that every sprite in the group can be loaded and returns the tiles it
 // needs, or -1 after reporting the first problem (in debug builds).
 static int group_tiles(const SpriteGroup* group) {
+    if (!serval_plausible_pointer(group)) {
+        SERVAL_WARN("sprite_group_load: the group pointer is NULL or not valid");
+        return -1;
+    }
     if (group->flags & SPRITE_GROUP_STREAMED) {
         SERVAL_WARN("sprite_group_load: streamed groups are not supported yet");
+        return -1;
+    }
+    if (group->palette_count && !serval_plausible_pointer(group->palettes)) {
+        SERVAL_WARN("sprite_group_load: the group has palette_count %u but no .palettes (NULL or "
+                    "not a valid pointer)",
+                    group->palette_count);
+        return -1;
+    }
+    if (group->sprite_count && group->sprite_ids && !serval_plausible_pointer(group->sprite_ids)) {
+        SERVAL_WARN("sprite_group_load: the group's .sprite_ids is not a valid pointer");
         return -1;
     }
     u32 tiles = 0;
     for (u32 i = 0; i < group->sprite_count; i++) {
         u32 id = group_sprite_id(group, i);
-        if (id >= sprite_count) {
+        if (id >= serval_sprite_count) {
             SERVAL_WARN("sprite_group_load: sprite ID %u is not in the sprite table (%u sprites)",
-                        id, sprite_count);
+                        id, serval_sprite_count);
             return -1;
         }
-        const SpriteAsset* sprite = sprite_table[id];
+        const SpriteAsset* sprite = serval_sprite_table[id];
+        if (!serval_plausible_pointer(sprite)) {
+            SERVAL_WARN("sprite_group_load: sprite table entry %u is NULL or not a valid pointer",
+                        id);
+            return -1;
+        }
         if (sprite->flags & (SPRITE_ASSET_STREAMED | SPRITE_ASSET_METASPRITE)) {
             SERVAL_WARN("sprite_group_load: sprite %u is streamed or a metasprite, which are not "
                         "supported yet",
@@ -157,6 +180,20 @@ static int group_tiles(const SpriteGroup* group) {
             SERVAL_WARN("sprite_group_load: sprite %u has no valid size; set .size, e.g. "
                         "SPRITE_16x16",
                         id);
+            return -1;
+        }
+        if (!serval_plausible_pointer(sprite->tiles)) {
+            SERVAL_WARN("sprite_group_load: sprite %u has no .tiles (NULL or not a valid pointer)",
+                        id);
+            return -1;
+        }
+        const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
+        u32 hardware_tiles = (u32)hw->width * hw->height / 64;
+        if (sprite->tiles_per_frame && sprite->tiles_per_frame < hardware_tiles) {
+            SERVAL_WARN(
+                "sprite_group_load: sprite %u has tiles_per_frame %u, but its size needs %u "
+                "tiles per frame; leave it 0 to compute it",
+                id, sprite->tiles_per_frame, hardware_tiles);
             return -1;
         }
         if (sprite->palette_slot >= group->palette_count) {
@@ -188,7 +225,7 @@ bool sprite_group_load(const SpriteGroup* group) {
     u32 tile = next_tile;
     for (u32 i = 0; i < group->sprite_count; i++) {
         u32 id = group_sprite_id(group, i);
-        const SpriteAsset* sprite = sprite_table[id];
+        const SpriteAsset* sprite = serval_sprite_table[id];
         const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
         u32 frames = frames_of(sprite);
         u32 per_frame = tiles_per_frame_of(sprite);
@@ -232,7 +269,7 @@ static u8 matrix_flips[32];
 
 // Returns the index of a rotation matrix for `angle` and the flip flags,
 // reusing one already set up this frame, or -1 if all 32 are taken.
-static inline __attribute__((always_inline, target("arm"))) int matrix_for(u32 angle, u32 flips) {
+static inline SERVAL_ARM __attribute__((always_inline)) int matrix_for(u32 angle, u32 flips) {
     for (u32 k = 0; k < serval_matrices_used; k++) {
         if (matrix_angle[k] == angle && matrix_flips[k] == flips)
             return (int)k;
@@ -265,7 +302,7 @@ static inline __attribute__((always_inline, target("arm"))) int matrix_for(u32 a
 // Appends a sprite to the shadow OAM. Shared by sprite_draw, sys_render and
 // sys_render_by_depth, which all run as ARM code from IWRAM, the fastest place
 // to run code on the GBA.
-static inline __attribute__((always_inline, target("arm"))) void
+static inline SERVAL_ARM __attribute__((always_inline)) void
 draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
     if (frame >= d->frame_count) { // also rejects sprites that are not loaded
         DRAW_REJECTED(id, frame);
@@ -296,27 +333,33 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
 // (so the rotated corners aren't cut off), shifted so the sprite stays
 // centered where the unrotated one would be. Flips go into the matrix, whose
 // index takes attr1 bits 9-13. Falls back to an unrotated draw when all 32
-// matrices are taken. Kept out of line (but in IWRAM) so the render loops stay
-// as fast as before for the usual unrotated sprites.
-static __attribute__((noinline, section(".iwram.text"), target("arm"))) void
+// matrices are taken; sprites that are off screen or don't fit in OAM never
+// take a matrix. Kept out of line (but in IWRAM) so the render loops stay as
+// fast as before for the usual unrotated sprites. Also where draw_entity
+// sends hidden sprites (SPRITE_HIDDEN), which it drops.
+static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
 draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
+    if (flags & SPRITE_HIDDEN)
+        return;
     if (frame >= d->frame_count) {
         DRAW_REJECTED(id, frame);
+        return;
+    }
+    // The double-size box's top-left corner.
+    int center_x = d->origin_x + d->width / 2, center_y = d->origin_y + d->height / 2;
+    x -= center_x;
+    y -= center_y;
+    u32 w = 2u * d->width, h = 2u * d->height;
+    if ((u32)(x + (int)w - 1) >= 240 + w - 1 || (u32)(y + (int)h - 1) >= 160 + h - 1)
+        return; // off screen
+    if (serval_oam_used >= 128) {
+        OAM_FULL();
         return;
     }
     int matrix = matrix_for(angle, flags & 3);
     if (matrix < 0) {
         MATRICES_FULL();
-        draw(id, d, frame, x, y, flags);
-        return;
-    }
-    x -= d->origin_x + d->width / 2;
-    y -= d->origin_y + d->height / 2;
-    u32 w = 2u * d->width, h = 2u * d->height;
-    if ((u32)(x + (int)w - 1) >= 240 + w - 1 || (u32)(y + (int)h - 1) >= 160 + h - 1)
-        return;
-    if (serval_oam_used >= 128) {
-        OAM_FULL();
+        draw(id, d, frame, x + center_x, y + center_y, flags);
         return;
     }
     OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
@@ -325,22 +368,32 @@ draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u3
     obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
 }
 
-// Draws entity i (known to have C_POS and C_SPR), rotated if it has an angle.
-static inline __attribute__((always_inline, target("arm"))) void draw_entity(u32 i) {
+// Draws entity i (known to have C_POS and C_SPR) at its position minus the
+// camera's, rotated if it has an angle.
+static inline SERVAL_ARM __attribute__((always_inline)) void draw_entity(u32 i, int camera_x,
+                                                                         int camera_y) {
+    u32 flags = spr_flags[i];
     u32 id = spr_id[i];
-    if (id >= sprite_count) {
+    // Against the constant SPRITE_MAX rather than the table's size, which the
+    // loop would reload for every sprite: entries past the table are never
+    // loaded (zero frames), so draw() rejects those IDs.
+    if (id >= SPRITE_MAX) {
         DRAW_REJECTED(id, spr_frame[i]);
         return;
     }
-    int x = fx_to_int(pos_x[i]), y = fx_to_int(pos_y[i]);
-    if (spr_angle[i])
-        draw_rotated(id, &sprite_draws[id], spr_frame[i], x, y, spr_flags[i], spr_angle[i]);
+    int x = fx_to_int(pos_x[i]) - camera_x, y = fx_to_int(pos_y[i]) - camera_y;
+    // Hidden sprites take the rare rotated path too, which drops them: one
+    // test for both keeps the usual case as fast as before.
+    if (spr_angle[i] | (flags & SPRITE_HIDDEN))
+        draw_rotated(id, &sprite_draws[id], spr_frame[i], x, y, flags, spr_angle[i]);
     else
-        draw(id, &sprite_draws[id], spr_frame[i], x, y, spr_flags[i]);
+        draw(id, &sprite_draws[id], spr_frame[i], x, y, flags);
 }
 
 SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
-    if (sprite_id < sprite_count)
+    if (flags & SPRITE_HIDDEN)
+        return;
+    if (sprite_id < serval_sprite_count)
         draw(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags);
     else
         DRAW_REJECTED(sprite_id, frame);
@@ -348,16 +401,21 @@ SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 fl
 
 SERVAL_IWRAM_CODE void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle,
                                            u16 flags) {
-    if (sprite_id < sprite_count)
+    if (flags & SPRITE_HIDDEN)
+        return;
+    if (angle == 0) // no rotation: no matrix needed
+        sprite_draw(sprite_id, frame, x, y, flags);
+    else if (sprite_id < serval_sprite_count)
         draw_rotated(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, angle);
     else
         DRAW_REJECTED(sprite_id, frame);
 }
 
 SERVAL_IWRAM_CODE void sys_render(void) {
+    const int camera_x = serval_camera_x, camera_y = serval_camera_y;
     for (u32 i = 0; i < MAX_ENT; i++) {
         if ((ent_mask[i] & (C_POS | C_SPR)) == (C_POS | C_SPR))
-            draw_entity(i);
+            draw_entity(i, camera_x, camera_y);
     }
 }
 
@@ -369,23 +427,27 @@ SERVAL_IWRAM_CODE void sys_render(void) {
 // reorder too much.)
 static u8 depth_order[MAX_ENT], depth_scratch[MAX_ENT];
 static u16 depth_key[MAX_ENT]; // ascending key = descending depth
-static u16 bucket_start[256];
+// Bucket offsets, cleared a word at a time: the union makes the u32 view
+// aligned and the type punning well defined.
+static union {
+    u32 words[128];
+    u16 start[256];
+} buckets;
 
-static inline __attribute__((always_inline, target("arm"))) void radix_pass(const u8* from, u8* to,
-                                                                            u32 n, u32 shift) {
-    u32* clear = (u32*)bucket_start;
+static inline SERVAL_ARM __attribute__((always_inline)) void radix_pass(const u8* from, u8* to,
+                                                                        u32 n, u32 shift) {
     for (u32 w = 0; w < 128; w++)
-        clear[w] = 0;
+        buckets.words[w] = 0;
     for (u32 k = 0; k < n; k++)
-        bucket_start[(depth_key[from[k]] >> shift) & 0xFF]++;
+        buckets.start[(depth_key[from[k]] >> shift) & 0xFF]++;
     u32 sum = 0;
     for (u32 b = 0; b < 256; b++) {
-        u32 c = bucket_start[b];
-        bucket_start[b] = (u16)sum;
+        u32 c = buckets.start[b];
+        buckets.start[b] = (u16)sum;
         sum += c;
     }
     for (u32 k = 0; k < n; k++)
-        to[bucket_start[(depth_key[from[k]] >> shift) & 0xFF]++] = from[k];
+        to[buckets.start[(depth_key[from[k]] >> shift) & 0xFF]++] = from[k];
 }
 
 SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
@@ -409,7 +471,8 @@ SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
         }
     }
 
+    const int camera_x = serval_camera_x, camera_y = serval_camera_y;
     for (u32 k = 0; k < n; k++) {
-        draw_entity(order[k]);
+        draw_entity(order[k], camera_x, camera_y);
     }
 }

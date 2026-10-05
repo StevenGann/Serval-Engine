@@ -10,6 +10,8 @@
 
 #include <tonc.h>
 
+#include "../../src/gba/internal.h"
+
 enum { SPR_SMALL, SPR_ANIM, SPR_WIDE, SPR_UNLOADED, SPRITE_COUNT };
 
 static const u32 small_tiles[8] = {0x11111111, 0x22222222, 0x33333333, 0x44444444,
@@ -283,6 +285,89 @@ static void past_32_angles_sprites_are_drawn_unrotated(void) {
 #endif
 }
 
+static void offscreen_rotated_sprites_take_no_matrix(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    for (u32 k = 0; k < 40; k++) // 40 distinct angles, all off screen
+        sprite_draw_rotated(SPR_SMALL, 0, -100, 10, (u16)(1000 + k * 100), 0);
+    sprite_draw_rotated(SPR_SMALL, 0, 50, 50, ANGLE_DEG(90), 0);
+    frame_end();
+    CHECK(serval_matrices_used == 1);
+    CHECK((oam_mem[0].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL); // still rotated
+    CHECK(oam_mem[1].attr0 & ATTR0_HIDE);
+}
+
+static void rotated_sprites_past_full_oam_take_no_matrix(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    for (u32 k = 0; k < 128; k++)
+        sprite_draw(SPR_SMALL, 0, 10, 10, 0);
+    sprite_draw_rotated(SPR_SMALL, 0, 50, 50, ANGLE_DEG(90), 0);
+    CHECK(serval_matrices_used == 0);
+    frame_end();
+}
+
+static void angle_zero_draws_like_sprite_draw(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw(SPR_ANIM, 1, 100, 50, SPRITE_FLIP_H | SPRITE_ABOVE_HUD);
+    sprite_draw_rotated(SPR_ANIM, 1, 100, 50, 0, SPRITE_FLIP_H | SPRITE_ABOVE_HUD);
+    CHECK(serval_matrices_used == 0);
+    frame_end();
+    CHECK(oam_mem[1].attr0 == oam_mem[0].attr0);
+    CHECK(oam_mem[1].attr1 == oam_mem[0].attr1);
+    CHECK(oam_mem[1].attr2 == oam_mem[0].attr2);
+    CHECK(!(oam_mem[1].attr0 & ATTR0_AFF) && (oam_mem[1].attr1 & ATTR1_HFLIP));
+}
+
+static void ids_past_the_maximum_are_reported_apart_from_511(void) {
+    static const SpriteAsset* const full_table[SPRITE_MAX] = {[SPRITE_MAX - 1] = &small};
+    sprite_table_set(full_table, SPRITE_MAX);
+    u32 before = debug_warning_count();
+    frame_begin();
+    sprite_draw(SPRITE_MAX - 1, 0, 10, 10, 0);  // not loaded
+    sprite_draw(SPRITE_MAX + 50, 0, 10, 10, 0); // not in the table: a different problem
+    sprite_draw(SPRITE_MAX + 60, 0, 10, 10, 0); // shares the out-of-range report
+    frame_end();
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 2);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+    sprite_table_set(table, SPRITE_COUNT);
+}
+
+static void load_rejects_incomplete_data(void) {
+    static const SpriteAsset no_tiles = {.size = SPRITE_8x8};
+    static const SpriteAsset too_few_tiles = {
+        .size = SPRITE_16x8, .tiles = wide_tiles, .tiles_per_frame = 1}; // 16x8 needs 2
+    static const SpriteAsset padded = {
+        .size = SPRITE_16x8, .tiles = wide_tiles, .tiles_per_frame = 3, .frame_count = 1};
+    static const SpriteAsset* const bad_table[] = {&no_tiles, &too_few_tiles, NULL, &padded};
+    static const u16 ids[4][1] = {{0}, {1}, {2}, {3}};
+    sprite_table_set(bad_table, 4);
+    u32 before = debug_warning_count();
+    for (u32 k = 0; k < 3; k++) {
+        SpriteGroup g = {
+            .sprite_ids = ids[k], .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+        CHECK(!sprite_group_load(&g));
+    }
+    SpriteGroup no_palettes = {.sprite_ids = ids[3], .sprite_count = 1, .palette_count = 1};
+    CHECK(!sprite_group_load(&no_palettes));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 4);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+    SpriteGroup ok = {
+        .sprite_ids = ids[3], .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+    CHECK(sprite_group_load(&ok)); // more tiles than needed is fine
+    sprite_table_set(table, SPRITE_COUNT);
+}
+
 static void sys_render_rotates_entities_with_an_angle(void) {
     sprite_table_set(table, SPRITE_COUNT);
     sprite_group_load(&first);
@@ -318,4 +403,10 @@ TEST_SUITE(
     {"rotation_uses_a_double_size_affine_sprite", rotation_uses_a_double_size_affine_sprite},
     {"sprites_share_matrices_by_angle_and_flips", sprites_share_matrices_by_angle_and_flips},
     {"past_32_angles_sprites_are_drawn_unrotated", past_32_angles_sprites_are_drawn_unrotated},
+    {"offscreen_rotated_sprites_take_no_matrix", offscreen_rotated_sprites_take_no_matrix},
+    {"rotated_sprites_past_full_oam_take_no_matrix", rotated_sprites_past_full_oam_take_no_matrix},
+    {"angle_zero_draws_like_sprite_draw", angle_zero_draws_like_sprite_draw},
+    {"ids_past_the_maximum_are_reported_apart_from_511",
+     ids_past_the_maximum_are_reported_apart_from_511},
+    {"load_rejects_incomplete_data", load_rejects_incomplete_data},
     {"sys_render_rotates_entities_with_an_angle", sys_render_rotates_entities_with_an_angle});

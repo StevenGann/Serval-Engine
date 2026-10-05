@@ -27,7 +27,14 @@ if ! { cmake --preset "$preset" && cmake --build --preset "$preset" --target bun
     exit 1
 fi
 
-output="$(timeout 300 "$runner" -S 3 -R r0 -l 15 "build/$preset/examples/bunnymark_bench.gba" 2>&1)" || {
+# GNU timeout is not on stock macOS (Homebrew coreutils calls it gtimeout).
+limit=()
+if command -v timeout > /dev/null; then
+    limit=(timeout 300)
+elif command -v gtimeout > /dev/null; then
+    limit=(gtimeout 300)
+fi
+output="$(${limit[@]+"${limit[@]}"} "$runner" -S 3 -R r0 -l 15 "build/$preset/examples/bunnymark_bench.gba" 2>&1)" || {
     echo "$output" >&2
     echo "error: the benchmark ROM failed or timed out." >&2
     exit 1
@@ -40,5 +47,6 @@ result="$(grep -o 'bunnymark:.*' <<< "$output")" || {
 
 echo "$result ($preset)"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-    printf '### Benchmark\n\n`%s` (%s, commit %s)\n' "$result" "$preset" "${GITHUB_SHA:0:7}" >> "$GITHUB_STEP_SUMMARY"
+    sha="${GITHUB_SHA:-unknown}"
+    printf '### Benchmark\n\n`%s` (%s, commit %s)\n' "$result" "$preset" "${sha:0:7}" >> "$GITHUB_STEP_SUMMARY"
 fi

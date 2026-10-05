@@ -32,8 +32,31 @@
       "inherits": "gba",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SERVAL_WARNINGS_AS_ERRORS": "ON",
+        "SERVAL_REQUIRE_ROM_TESTS": "ON"
+      }
+    },
+    {
+      "name": "web-base",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/web-toolchain.cmake"
+    },
+    {
+      "name": "web",
+      "displayName": "Web (debug checks on, no DWARF, warnings as errors): one HTML page per game",
+      "inherits": "web-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O2 -DNDEBUG",
         "SERVAL_WARNINGS_AS_ERRORS": "ON"
       }
+    },
+    {
+      "name": "web-release",
+      "displayName": "Web Release",
+      "inherits": "web-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
       "name": "host",
@@ -42,7 +65,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SERVAL_WARNINGS_AS_ERRORS": "ON",
-        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
       }
     }
   ],
@@ -50,6 +73,8 @@
     { "name": "gba-debug", "configurePreset": "gba-debug" },
     { "name": "gba-release", "configurePreset": "gba-release" },
     { "name": "gba-ci", "configurePreset": "gba-ci" },
+    { "name": "web", "configurePreset": "web" },
+    { "name": "web-release", "configurePreset": "web-release" },
     { "name": "host", "configurePreset": "host" }
   ],
   "testPresets": [

@@ -26,9 +26,16 @@ static void destroy_makes_handle_stale(void) {
     CHECK(ent_mask[entity_index(e)] == 0);
 }
 
+// Fills the pool, so the next destroyed slot is the one reused.
+static void fill_pool(void) {
+    while (entity_create(0) != ENTITY_NONE) {
+    }
+}
+
 static void reused_slot_gets_new_generation(void) {
     ecs_reset();
     Entity old = entity_create(C_POS);
+    fill_pool();
     entity_destroy(old);
     Entity reused = entity_create(C_VEL);
     CHECK(entity_index(reused) == entity_index(old));
@@ -72,7 +79,7 @@ static void reset_invalidates_all_handles(void) {
 
 static void generation_wraps_without_reaching_none(void) {
     ecs_reset();
-    for (unsigned i = 0; i < 600; i++) {
+    for (unsigned i = 0; i < 300 * MAX_ENT; i++) { // every slot wraps at least once
         Entity e = entity_create(0);
         CHECK(e != ENTITY_NONE);
         CHECK(entity_generation(e) != 0);
@@ -98,6 +105,7 @@ static void create_zeroes_components(void) {
     spr_depth[i] = 7;
     body_w[i] = 16;
     body_bounce[i] = 200;
+    fill_pool();
     entity_destroy(e);
     Entity again = entity_create(C_POS);
     CHECK(entity_index(again) == i);
@@ -168,6 +176,109 @@ static void entity_at_returns_the_live_handle(void) {
     CHECK(entity_at(MAX_ENT) == ENTITY_NONE);
 }
 
+static void destroy_all_then_recreate_all(void) {
+    ecs_reset();
+    Entity handles[MAX_ENT];
+    for (u32 i = 0; i < MAX_ENT; i++)
+        handles[i] = entity_create(C_POS);
+    for (u32 i = 0; i < MAX_ENT; i++)
+        entity_destroy(handles[i]);
+    u32 seen[MAX_ENT / 32] = {0};
+    for (u32 i = 0; i < MAX_ENT; i++) {
+        Entity e = entity_create(C_POS);
+        CHECK(e != ENTITY_NONE && !entity_alive(handles[i]));
+        u32 index = entity_index(e);
+        CHECK(!(seen[index / 32] & (1u << (index % 32)))); // every slot exactly once
+        seen[index / 32] |= 1u << (index % 32);
+    }
+    CHECK(entity_create(C_POS) == ENTITY_NONE);
+}
+
+// A game that sets C_ALIVE on a free slot by hand must not get that slot
+// freed twice (two entities would then share it).
+static void forged_alive_bit_does_not_free_twice(void) {
+    ecs_reset();
+    Entity e = entity_create(C_POS);
+    u32 i = entity_index(e);
+    entity_destroy(e);
+    ent_mask[i] = C_POS | C_ALIVE;
+    entity_destroy(entity_at(i));
+    entity_destroy(entity_at(i));
+    ent_mask[i] = 0;
+    u32 seen[MAX_ENT / 32] = {0};
+    for (u32 n = 0; n < MAX_ENT; n++) {
+        Entity created = entity_create(0);
+        CHECK(created != ENTITY_NONE);
+        u32 index = entity_index(created);
+        CHECK(!(seen[index / 32] & (1u << (index % 32))));
+        seen[index / 32] |= 1u << (index % 32);
+    }
+    CHECK(entity_create(0) == ENTITY_NONE);
+}
+
+// A game that overwrites ent_mask without C_ALIVE: the entity matches nothing,
+// can still be destroyed, and ecs_reset makes its handle stale.
+static void cleared_alive_bit(void) {
+    ecs_reset();
+    Entity e = entity_create(C_POS);
+    u32 i = entity_index(e);
+    ent_mask[i] = C_POS; // C_ALIVE lost
+    CHECK(!ent_has(i, C_POS) && !ent_has(i, 0));
+    u32 count = 0;
+    ECS_FOR_EACH(j, C_POS) {
+        (void)j;
+        count++;
+    }
+    CHECK(count == 0);
+    ecs_reset();
+    Entity again = entity_create(C_POS);
+    CHECK(entity_index(again) == i);
+    CHECK(again != e && !entity_alive(e));
+
+    ent_mask[i] = C_POS;
+    u32 warnings = debug_warning_count();
+    entity_destroy(again); // frees the slot instead of leaking it
+    entity_destroy(again);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    for (u32 n = 0; n < MAX_ENT; n++)
+        CHECK(entity_create(0) != ENTITY_NONE);
+}
+
+// Freed slots are reused oldest-first, so a stale handle stays stale for
+// long churn instead of matching again after its slot's 255 generations.
+static void freed_slots_are_reused_oldest_first(void) {
+    ecs_reset();
+    Entity a = entity_create(0);
+    entity_destroy(a);
+    CHECK(entity_index(entity_create(0)) != entity_index(a));
+    ecs_reset();
+    Entity stale = entity_create(0);
+    entity_destroy(stale);
+    bool aliased = false;
+    for (u32 n = 0; n < 1000; n++) {
+        entity_destroy(entity_create(0));
+        aliased |= entity_alive(stale);
+    }
+    CHECK(!aliased);
+}
+
+static void alive_bit_in_create_mask_warns(void) {
+    ecs_reset();
+    u32 warnings = debug_warning_count();
+    entity_create(C_ALIVE);
+    entity_create(C_ALIVE);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    CHECK(C_GAME(14) == (1u << 30));
+}
+
 TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"slots_are_handed_out_in_order", slots_are_handed_out_in_order},
            {"destroy_makes_handle_stale", destroy_makes_handle_stale},
@@ -180,4 +291,9 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"movement_adds_velocity_to_position", movement_adds_velocity_to_position},
            {"ent_has_requires_every_component", ent_has_requires_every_component},
            {"for_each_visits_matching_entities", for_each_visits_matching_entities},
-           {"entity_at_returns_the_live_handle", entity_at_returns_the_live_handle});
+           {"entity_at_returns_the_live_handle", entity_at_returns_the_live_handle},
+           {"destroy_all_then_recreate_all", destroy_all_then_recreate_all},
+           {"forged_alive_bit_does_not_free_twice", forged_alive_bit_does_not_free_twice},
+           {"cleared_alive_bit", cleared_alive_bit},
+           {"freed_slots_are_reused_oldest_first", freed_slots_are_reused_oldest_first},
+           {"alive_bit_in_create_mask_warns", alive_bit_in_create_mask_warns});

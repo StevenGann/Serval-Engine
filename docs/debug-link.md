@@ -1,5 +1,7 @@
 # Debug link (runtime side)
 
+**Status:** planned; nothing here is implemented. Today the engine writes warnings and `debug_log()` lines to mGBA's debug log ([api-reference.md](api-reference.md#debugh)).
+
 The debug link connects the editor to a running game inside the emulator. The protocol is a shared contract between the engine, the emulator fork (mGBA, MPL 2.0) and the editor, so it is specified in this open repository.
 
 ## Transport

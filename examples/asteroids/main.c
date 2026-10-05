@@ -4,36 +4,41 @@
 //   - The engine's splash screen (serval_splash)
 //   - Rotating sprites (sprite_draw_rotated / spr_angle): the ship turns, and
 //     rocks spin while sharing a few rotation matrices
-//   - Wrap-around physics (physics_set_wrap): everything leaving one edge
-//     comes back on the other
+//   - Wrap-around physics (physics_set_wrap): the ship, rocks and shots
+//     leaving one edge come back on the other (sparks have no body and just
+//     fly off)
 //   - Thrust and drag with sine and cosine (fx_sin, fx_cos, fx_mul)
 //   - Many short-lived entities (bullets, rocks splitting in two, explosion
 //     sparks) created and destroyed every frame, with game components
 //   - Collisions with body_overlap, using hitboxes smaller than the sprites
 //     (sprite origins center the art on its hitbox)
+//   - Blinking by toggling SPRITE_HIDDEN in spr_flags
 //   - Sound effects: shots, thrust rumble, explosions, a heartbeat that speeds
-//     up as rocks are cleared, and jingles
+//     up as rocks are cleared, and jingles; sound priorities keep gunfire from
+//     cutting a jingle short and the rumble from cutting an explosion short
 //   - An attract mode: rocks drift behind the title screen
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
 //     on black, a coin-like jingle plays, and they fade out (about 3 seconds;
 //     any button skips it once the text is in).
-//   - Brown, cratered rocks of three sizes drift and spin across a dark blue
+//   - Four large brown, cratered rocks drift and spin across a dark blue
 //     screen behind "A S T E R O I D S", "PRESS START" and the controls.
 //   - After START (a rising chime): a silver arrowhead ship in the center,
 //     blinking while it can't be hit, and a wave of large rocks. The top line
 //     shows "SCORE", "WAVE" and "SHIPS" (lives).
 //   - Left and Right turn the ship; Up thrusts (an orange flame and a low
-//     rumble) and the ship drifts on, slowing gently; A fires yellow shots
-//     ("pew"), up to 4 at a time, in the direction the ship faces.
+//     rumble) and the ship drifts on, slowing gently to a stop; A fires yellow
+//     shots ("pew"), up to 4 at a time, in the direction the ship faces.
 //   - Shot rocks burst into sparks with a crunch and split: large into two
 //     medium, medium into two small; small ones vanish. 20, 50 and 100 points.
-//   - A low two-note heartbeat plays throughout, faster as fewer rocks remain.
-//   - Hitting a rock destroys the ship in a bigger burst; a new one appears in
-//     the center after a moment, blinking for two seconds. A rising jingle
-//     marks an extra ship every 10,000 points.
-//   - Clearing all rocks starts the next wave with one more large rock.
+//   - A low two-note heartbeat plays throughout, faster as the wave is cleared.
+//   - Hitting a rock destroys the ship in a bigger burst (the rock breaks and
+//     scores as if shot); a new one appears in the center after a moment,
+//     blinking for two seconds. A rising jingle marks an extra ship every
+//     10,000 points.
+//   - Clearing all rocks starts the next wave with one more large rock (up to
+//     14), placed away from the ship.
 //   - With no ships left: "GAME OVER" with a falling tune; START plays again.
 //   - START pauses and resumes.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X,
@@ -171,7 +176,12 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
 };
 
 static const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
-    &sprites[0], &sprites[1], &sprites[2], &sprites[3], &sprites[4], &sprites[5],
+    [SPR_SHIP] = &sprites[SPR_SHIP],
+    [SPR_ROCK_LARGE] = &sprites[SPR_ROCK_LARGE],
+    [SPR_ROCK_MEDIUM] = &sprites[SPR_ROCK_MEDIUM],
+    [SPR_ROCK_SMALL] = &sprites[SPR_ROCK_SMALL],
+    [SPR_BULLET] = &sprites[SPR_BULLET],
+    [SPR_SPARK] = &sprites[SPR_SPARK],
 };
 
 static const SpriteGroup asteroids_group = {
@@ -180,7 +190,7 @@ static const SpriteGroup asteroids_group = {
     .palette_count = PALETTE_COUNT,
 };
 
-// --- Sounds --------------------------------------------------------------------
+// --- Sounds ------------------------------------------------------------------
 
 enum {
     SND_START,
@@ -202,14 +212,18 @@ static const u16 start_notes[] = {392, 523, 659, 784};
 static const u16 extra_ship_notes[] = {784, 988, 1175, 1568};
 static const u16 game_over_notes[] = {392, 330, 262, 196};
 
-// Shots and jingles on square 1, the heartbeat on square 2, rumble and
-// explosions on the noise channel.
+// Shots, jingles and the pause tick on square 1, the heartbeat on square 2,
+// rumble and explosions on the noise channel. A sound can't replace one of
+// higher priority on its channel: shots don't cut a jingle short, and the
+// thrust rumble (renewed every few frames) doesn't cut an explosion short.
+#define JINGLE_PRIORITY 1    // jingles and the pause tick, over shots
+#define EXPLOSION_PRIORITY 1 // explosions, over the rumble
 static const PsgSound sounds[SOUND_COUNT] = {
-    [SND_START] = {.channel = PSG_SQUARE1,
-                   .duty = PSG_DUTY_25,
+    [SND_START] = {.duty = PSG_DUTY_25,
                    .frames = 5,
                    .notes = start_notes,
-                   .note_count = 4},
+                   .note_count = 4,
+                   .priority = JINGLE_PRIORITY},
     [SND_FIRE] = {.channel = PSG_SQUARE1,
                   .duty = PSG_DUTY_25,
                   .frequency = 1600,
@@ -219,31 +233,53 @@ static const PsgSound sounds[SOUND_COUNT] = {
                   .fade = -1,
                   .volume = 10},
     [SND_THRUST] = {.channel = PSG_NOISE, .frequency = 2000, .frames = 9, .volume = 6},
-    [SND_EXPLODE_LARGE] = {.channel = PSG_NOISE, .frequency = 1500, .fade = -3},
-    [SND_EXPLODE_MEDIUM] = {.channel = PSG_NOISE, .frequency = 4000, .fade = -2},
-    [SND_EXPLODE_SMALL] = {.channel = PSG_NOISE, .frequency = 9000, .fade = -1},
-    [SND_SHIP_EXPLODE] = {.channel = PSG_NOISE, .frequency = 800, .fade = -5},
+    [SND_EXPLODE_LARGE] = {.channel = PSG_NOISE,
+                           .frequency = 1500,
+                           .fade = -3,
+                           .priority = EXPLOSION_PRIORITY},
+    [SND_EXPLODE_MEDIUM] = {.channel = PSG_NOISE,
+                            .frequency = 4000,
+                            .fade = -2,
+                            .priority = EXPLOSION_PRIORITY},
+    [SND_EXPLODE_SMALL] = {.channel = PSG_NOISE,
+                           .frequency = 9000,
+                           .fade = -1,
+                           .priority = EXPLOSION_PRIORITY},
+    [SND_SHIP_EXPLODE] = {.channel = PSG_NOISE,
+                          .frequency = 800,
+                          .fade = -5,
+                          .priority = EXPLOSION_PRIORITY},
     [SND_BEAT_LOW] = {.channel = PSG_SQUARE2, .frequency = 98, .frames = 6, .fade = -1},
     [SND_BEAT_HIGH] = {.channel = PSG_SQUARE2, .frequency = 110, .frames = 6, .fade = -1},
-    [SND_EXTRA_SHIP] = {.channel = PSG_SQUARE1,
-                        .duty = PSG_DUTY_12,
+    [SND_EXTRA_SHIP] = {.duty = PSG_DUTY_12,
                         .frames = 5,
                         .notes = extra_ship_notes,
-                        .note_count = 4},
-    [SND_GAME_OVER] = {.channel = PSG_SQUARE1,
-                       .duty = PSG_DUTY_25,
+                        .note_count = 4,
+                        .priority = JINGLE_PRIORITY},
+    [SND_GAME_OVER] = {.duty = PSG_DUTY_25,
                        .frames = 12,
                        .notes = game_over_notes,
-                       .note_count = 4},
-    [SND_PAUSE] = {.channel = PSG_SQUARE1, .duty = PSG_DUTY_12, .frequency = 784, .frames = 3},
+                       .note_count = 4,
+                       .priority = JINGLE_PRIORITY},
+    [SND_PAUSE] = {.duty = PSG_DUTY_12, .frequency = 784, .frames = 3, .priority = JINGLE_PRIORITY},
 };
 
 static const PsgSound* const sound_table[SOUND_COUNT] = {
-    &sounds[0], &sounds[1], &sounds[2], &sounds[3], &sounds[4],  &sounds[5],
-    &sounds[6], &sounds[7], &sounds[8], &sounds[9], &sounds[10], &sounds[11],
+    [SND_START] = &sounds[SND_START],
+    [SND_FIRE] = &sounds[SND_FIRE],
+    [SND_THRUST] = &sounds[SND_THRUST],
+    [SND_EXPLODE_LARGE] = &sounds[SND_EXPLODE_LARGE],
+    [SND_EXPLODE_MEDIUM] = &sounds[SND_EXPLODE_MEDIUM],
+    [SND_EXPLODE_SMALL] = &sounds[SND_EXPLODE_SMALL],
+    [SND_SHIP_EXPLODE] = &sounds[SND_SHIP_EXPLODE],
+    [SND_BEAT_LOW] = &sounds[SND_BEAT_LOW],
+    [SND_BEAT_HIGH] = &sounds[SND_BEAT_HIGH],
+    [SND_EXTRA_SHIP] = &sounds[SND_EXTRA_SHIP],
+    [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
+    [SND_PAUSE] = &sounds[SND_PAUSE],
 };
 
-// --- Game state ----------------------------------------------------------------
+// --- Game state --------------------------------------------------------------
 
 // Game components: what kind of object an entity is.
 #define C_ROCK C_GAME(0)
@@ -256,14 +292,23 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
 #define BULLET_SPEED FX(4)
 #define BULLET_LIFE 40 // frames
 #define MAX_BULLETS 4
-#define FIRE_COOLDOWN 8 // frames between shots
-#define SPARK_LIFE 20
-#define SPARK_LIMIT_LOW 10      // sparks last 10 to 20 frames
+#define FIRE_COOLDOWN 8   // frames between shots
+#define SPARK_LIFE_MIN 10 // frames
+#define SPARK_LIFE_MAX 20
 #define RESPAWN_DELAY 90        // frames without a ship after a crash
 #define INVULNERABLE_FRAMES 120 // blinking after (re)spawning
 #define START_SHIPS 3
 #define EXTRA_SHIP_EVERY 10000
 #define FIRST_WAVE_ROCKS 4
+#define SPAWN_CLEARANCE 48 // pixels: new rocks appear at least this far from the ship
+
+// Each wave has one more large rock, up to MAX_WAVE_ROCKS, so that everything
+// fits in the engine's 128 entities. Worst case: 14 large rocks split into
+// 56 small ones; 1 ship and 4 bullets; sparks: 16 from the ship plus 6 per
+// broken rock, and while sparks last (20 frames) at most 8 rocks break (the 4
+// shots in flight, 3 more fired every 8 frames, 1 hit by the ship), so 64.
+// 56 + 1 + 4 + 64 = 125.
+#define MAX_WAVE_ROCKS 14
 
 typedef enum { TITLE, PLAYING, PAUSED, GAME_OVER } State;
 
@@ -282,11 +327,12 @@ static Entity ship = ENTITY_NONE;
 static u16 ship_angle;
 static int ship_timer; // PLAYING: while > 0, waiting to respawn (no ship) or blinking
 static int score, ships, wave, next_extra_ship;
-static int fire_cooldown, rumble_timer, explosion_timer;
+static int fire_cooldown, rumble_timer;
 static int beat_timer, beat_phase;
-static u16 spin; // shared rock rotation: every rock uses spin or -spin
+static int wave_shots; // shots it took to clear the wave when it started
+static u16 spin;       // shared rock rotation: every rock uses spin or -spin
 
-// --- Helpers -------------------------------------------------------------------
+// --- Helpers -----------------------------------------------------------------
 
 // Creates an entity with a sprite and a square hitbox centered at (x, y).
 static u32 spawn(u32 components, u16 sprite, int hitbox, FIXED x, FIXED y, FIXED vx, FIXED vy) {
@@ -321,18 +367,20 @@ static void destroy_all(u32 components) {
 static void spawn_sparks(FIXED x, FIXED y, int count) {
     for (int k = 0; k < count; k++) {
         u16 dir = (u16)random_u32();
-        FIXED speed = FX(1) / 2 + random_range(0, FX(2));
+        FIXED speed = FX_ONE / 2 + random_range(0, FX(2));
         u32 i = spawn(C_SPARK, SPR_SPARK, 2, x, y, fx_mul(fx_cos(dir), speed),
                       fx_mul(fx_sin(dir), speed));
         if (i < MAX_ENT)
-            life[i] = (u8)random_range(SPARK_LIMIT_LOW, SPARK_LIFE);
+            life[i] = (u8)random_range(SPARK_LIFE_MIN, SPARK_LIFE_MAX);
     }
 }
 
-// --- Ship ----------------------------------------------------------------------
+// --- Ship --------------------------------------------------------------------
 
 static void spawn_ship(void) {
     u32 i = spawn(C_BODY, SPR_SHIP, SHIP_HITBOX, FX(SCREEN_W / 2), FX(SCREEN_H / 2), 0, 0);
+    if (i == MAX_ENT)
+        return; // no free entity (see MAX_WAVE_ROCKS): tried again next frame
     ship = entity_at(i);
     ship_angle = ANGLE_DEG(-90); // facing up
     ship_timer = INVULNERABLE_FRAMES;
@@ -344,7 +392,6 @@ static void destroy_ship(void) {
     entity_destroy(ship);
     ship = ENTITY_NONE;
     psg_play(SND_SHIP_EXPLODE);
-    explosion_timer = 60;
     ships--;
     ship_timer = RESPAWN_DELAY;
 }
@@ -367,6 +414,15 @@ static void fire(u32 i) {
     }
 }
 
+// Drag: the ship loses 1/64 of its speed each frame (at least 1/256 pixel per
+// frame), the same in every direction, so it coasts to a stop.
+static FIXED drag(FIXED v) {
+    FIXED loss = int_max(int_abs(v) / 64, 1);
+    if (int_abs(v) <= loss)
+        return 0;
+    return v > 0 ? v - loss : v + loss;
+}
+
 static void control_ship(void) {
     if (!entity_alive(ship))
         return;
@@ -382,14 +438,13 @@ static void control_ship(void) {
     if (thrusting) {
         vel_x[i] += fx_mul(fx_cos(ship_angle), THRUST);
         vel_y[i] += fx_mul(fx_sin(ship_angle), THRUST);
-        if (--rumble_timer <= 0 && explosion_timer == 0) {
+        if (--rumble_timer <= 0) {
             psg_play(SND_THRUST); // a low rumble, renewed while the button is held
             rumble_timer = 8;
         }
     }
-    // Drag: lose 1/64 of the speed each frame, so the ship coasts to a stop.
-    vel_x[i] -= vel_x[i] >> 6;
-    vel_y[i] -= vel_y[i] >> 6;
+    vel_x[i] = drag(vel_x[i]);
+    vel_y[i] = drag(vel_y[i]);
     vel_x[i] = int_clamp(vel_x[i], -MAX_SPEED, MAX_SPEED);
     vel_y[i] = int_clamp(vel_y[i], -MAX_SPEED, MAX_SPEED);
 
@@ -400,23 +455,20 @@ static void control_ship(void) {
         fire_cooldown = FIRE_COOLDOWN;
     }
 
-    // Blink while invulnerable: no sprite on alternate 4-frame stretches.
+    // Blink while invulnerable: hidden on alternate 4-frame stretches.
     if (ship_timer > 0)
         ship_timer--;
-    bool visible = ship_timer == 0 || (ship_timer / 4) % 2 == 0;
-    if (visible)
-        ent_mask[i] |= C_SPR;
-    else
-        ent_mask[i] &= ~C_SPR;
+    bool hidden = ship_timer > 0 && (ship_timer / 4) % 2 == 1;
+    spr_flags[i] = hidden ? SPRITE_HIDDEN : 0;
 }
 
-// --- Rocks ---------------------------------------------------------------------
+// --- Rocks -------------------------------------------------------------------
 
 // A rock of the given size (0 large to 2 small) at (x, y), drifting in a
 // random direction, faster the smaller it is.
 static void spawn_rock(int size, FIXED x, FIXED y) {
     u16 dir = (u16)random_u32();
-    FIXED speed = FX(1) / 2 + random_range(0, FX(1) / 2) + size * (FX(1) / 2);
+    FIXED speed = FX_ONE / 2 + random_range(0, FX_ONE / 2) + size * (FX_ONE / 2);
     u32 i = spawn(C_BODY | C_ROCK, rock_sprites[size], rock_hitbox[size], x, y,
                   fx_mul(fx_cos(dir), speed), fx_mul(fx_sin(dir), speed));
     if (i < MAX_ENT) {
@@ -425,16 +477,34 @@ static void spawn_rock(int size, FIXED x, FIXED y) {
     }
 }
 
-// A new wave: large rocks along the screen edges, away from the center
-// where the ship (re)appears.
+// True if (x, y) is too close to the ship for a new rock.
+static bool near_ship(FIXED x, FIXED y) {
+    if (!entity_alive(ship))
+        return false;
+    u32 i = entity_index(ship);
+    return int_abs(x - center_x(i)) < FX(SPAWN_CLEARANCE) &&
+           int_abs(y - center_y(i)) < FX(SPAWN_CLEARANCE);
+}
+
+// Shots it takes to clear a rock: a large one splits into two medium, each
+// into two small: 1 + 2 + 4.
+static const u8 rock_shots[3] = {7, 3, 1};
+
+// A new wave of up to MAX_WAVE_ROCKS large rocks along the screen edges, away
+// from the center where the ship (re)appears and from the ship itself.
 static void spawn_wave(int count) {
-    for (int k = 0; k < count; k++) {
+    count = int_min(count, MAX_WAVE_ROCKS);
+    for (int k = 0; k < count;) {
         bool side = random_range(0, 1);
         FIXED x = side ? FX(random_range(0, 1) * (SCREEN_W - 16)) : FX(random_range(0, SCREEN_W));
         FIXED y =
             side ? FX(random_range(16, SCREEN_H)) : FX(16 + random_range(0, 1) * (SCREEN_H - 32));
+        if (near_ship(x, y))
+            continue; // try another spot
         spawn_rock(0, x, y);
+        k++;
     }
+    wave_shots = count * rock_shots[0];
 }
 
 static int rock_count(void) {
@@ -442,6 +512,15 @@ static int rock_count(void) {
     ECS_FOR_EACH(i, C_ROCK) {
         (void)i;
         n++;
+    }
+    return n;
+}
+
+// Shots it would take to clear every rock left.
+static int shots_left(void) {
+    int n = 0;
+    ECS_FOR_EACH(i, C_ROCK) {
+        n += rock_shots[rock_size[i]];
     }
     return n;
 }
@@ -462,16 +541,14 @@ static void break_rock(u32 r) {
     entity_destroy(entity_at(r));
     spawn_sparks(x, y, 6 - 2 * size);
     psg_play(rock_sounds[size]);
-    explosion_timer = 20;
-    if (state == PLAYING)
-        add_score(rock_points[size]);
+    add_score(rock_points[size]);
     if (size < 2) {
         spawn_rock(size + 1, x, y);
         spawn_rock(size + 1, x, y);
     }
 }
 
-// --- Systems -------------------------------------------------------------------
+// --- Systems -----------------------------------------------------------------
 
 // Spins rocks (sharing two rotation angles) and ages bullets and sparks.
 static void update_objects(void) {
@@ -511,24 +588,20 @@ static void check_collisions(void) {
     }
 }
 
-// The heartbeat: two alternating low notes, closer together as rocks thin out.
+// The heartbeat: two alternating low notes, BEAT_SLOW frames apart when a
+// wave starts, closing in on BEAT_FAST as the shots needed to clear it run out.
+#define BEAT_SLOW 48
+#define BEAT_FAST 14
+
 static void update_heartbeat(void) {
     if (--beat_timer > 0)
         return;
     psg_play(beat_phase ? SND_BEAT_HIGH : SND_BEAT_LOW);
     beat_phase = !beat_phase;
-    beat_timer = int_clamp(12 + rock_count() * 2, 14, 48);
+    beat_timer = BEAT_FAST + (BEAT_SLOW - BEAT_FAST) * shots_left() / wave_shots;
 }
 
-// --- Screens -------------------------------------------------------------------
-
-static void print_centered(int row, const char* s) {
-    int length = 0;
-    while (s[length])
-        length++;
-    text_print_line(0, row, "");
-    text_print((TEXT_COLS - length) / 2, row, s);
-}
+// --- Screens -----------------------------------------------------------------
 
 static void draw_hud(void) {
     text_print_line(0, 0, text_format(" SCORE %-6d WAVE %-3d SHIPS %d", score, wave, ships));
@@ -537,10 +610,10 @@ static void draw_hud(void) {
 static void show_title(void) {
     state = TITLE;
     text_clear();
-    print_centered(6, "A S T E R O I D S");
-    print_centered(10, "PRESS START");
-    print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
-    print_centered(15, "A:FIRE  START:PAUSE");
+    text_print_centered(6, "A S T E R O I D S");
+    text_print_centered(10, "PRESS START");
+    text_print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
+    text_print_centered(15, "A:FIRE  START:PAUSE");
 }
 
 static void start_game(void) {
@@ -566,8 +639,6 @@ static void update_playing(void) {
     update_objects();
     check_collisions();
     update_heartbeat();
-    if (explosion_timer > 0)
-        explosion_timer--;
 
     if (!entity_alive(ship) && --ship_timer <= 0) {
         if (ships > 0) {
@@ -575,8 +646,8 @@ static void update_playing(void) {
         } else {
             state = GAME_OVER;
             psg_play(SND_GAME_OVER);
-            print_centered(9, "GAME OVER");
-            print_centered(11, "PRESS START");
+            text_print_centered(9, "GAME OVER");
+            text_print_centered(11, "PRESS START");
         }
     }
     if (rock_count() == 0) {
@@ -586,7 +657,7 @@ static void update_playing(void) {
     draw_hud();
 }
 
-// --- Main ----------------------------------------------------------------------
+// --- Main --------------------------------------------------------------------
 
 int main(void) {
     serval_init();
@@ -619,7 +690,7 @@ int main(void) {
             if (start) {
                 state = PAUSED;
                 psg_play(SND_PAUSE);
-                print_centered(9, "PAUSED");
+                text_print_centered(9, "PAUSED");
             } else {
                 update_playing();
             }

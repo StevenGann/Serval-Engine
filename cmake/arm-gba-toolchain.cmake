@@ -15,6 +15,7 @@ find_program(CMAKE_C_COMPILER arm-none-eabi-gcc HINTS ${_serval_toolchain_hints}
 set(CMAKE_ASM_COMPILER "${CMAKE_C_COMPILER}")
 cmake_path(GET CMAKE_C_COMPILER PARENT_PATH _serval_toolchain_bin)
 find_program(SERVAL_OBJCOPY arm-none-eabi-objcopy HINTS "${_serval_toolchain_bin}" REQUIRED)
+find_program(SERVAL_OBJDUMP arm-none-eabi-objdump HINTS "${_serval_toolchain_bin}" REQUIRED)
 
 # There is no startup code until the engine's crt0 is linked, so compiler
 # checks must not try to link an executable.
@@ -24,6 +25,11 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 # (SERVAL_IWRAM_CODE). These flags select the armv4t Thumb multilib of libgcc.
 set(CMAKE_C_FLAGS_INIT "-mcpu=arm7tdmi -mtune=arm7tdmi -mthumb -mfloat-abi=soft")
 set(CMAKE_ASM_FLAGS_INIT "-mcpu=arm7tdmi -mfloat-abi=soft")
+
+# ROMs link with -nostdlib (no newlib), which also drops libgcc (integer
+# division and other helpers). It must come last on the link line, after every
+# library that may need it, which is where CMake puts the standard libraries.
+set(CMAKE_C_STANDARD_LIBRARIES_INIT "-lgcc")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

@@ -1,14 +1,16 @@
 # Frame loop
 
+**Status:** the frame loop below is implemented; the planned order and the rest of the VBlank flush depend on features not built yet (scripts, streamed sprites, Maxmod).
+
 ## What frame_begin and frame_end do today
 
 - `frame_begin()`: starts measuring CPU cycles, polls the buttons, and empties the sprite draw list and the rotation matrices.
-- Between them, the game updates and draws. The examples use this order: input, `sys_movement()`, `sys_physics()`, game systems and collision checks, `sys_render()` (or `sys_render_by_depth()`), HUD text.
-- `frame_end()`: hides unused sprite slots, records the frame's CPU cycles (`frame_cpu_cycles()`), waits for VBlank, copies the shadow OAM (with the rotation matrices) to hardware, and advances PSG sound effects.
+- Between them, the game updates and draws. The examples use this order: input, `sys_movement()` (and `sys_map_movement()` for map bodies), `sys_physics()`, game systems and collision checks, `camera_set()`, `sys_render()` (or `sys_render_by_depth()`), HUD text.
+- `frame_end()`: hides unused sprite slots, brings the map layers' screenblock copies up to date with the camera (once a map layer has been loaded; [tilemaps.md](tilemaps.md#streaming)), records the frame's CPU cycles (`frame_cpu_cycles()`, which includes that map work), waits for VBlank, copies the shadow OAM (with the rotation matrices) to hardware, copies the changed map rows and columns to VRAM and sets the background registers, and advances PSG sound effects.
 
 ## Planned order
 
-Proposed per-frame order once scripts and events exist. This is **not yet confirmed** and should be settled early, since it shapes how games feel.
+**Status:** planned. Proposed per-frame order once scripts and events exist. This is **not yet confirmed** and should be settled early, since it shapes how games feel.
 
 ```mermaid
 flowchart LR
@@ -17,12 +19,10 @@ flowchart LR
 
 ## VBlank flush
 
-Performed in `frame_end()` ([core-api.md](core-api.md)) and the VBlank interrupt:
+**Implemented:** `frame_end()` waits for VBlank (`VBlankIntrWait`, with the VBlank interrupt enabled but no handler of the engine's), then copies the shadow OAM, including the rotation matrices, to hardware, copies tileset tiles queued by `tileset_set_tiles()` and the map rows and columns that changed (prepared before the wait) to VRAM and sets the map backgrounds' scroll and control registers, and steps the PSG sound effects. A full redraw of three map layers takes about 14,500 of VBlank's 83,776 cycles; a new row and column on each, about 3,650. Not deferred to VBlank: `sprite_group_load()`, `tileset_load()`, `map_load()`, `screen_set_backdrop()` and the text calls write VRAM and palette RAM immediately, and `screen_set_brightness()` the blend registers.
 
-- Copy shadow OAM and shadow palettes to hardware.
-- Write queued tilemap columns and rows ([tilemaps.md](tilemaps.md#streaming)).
+**Planned** additions, in `frame_end()` or the VBlank interrupt:
+
+- Copy shadow palettes to hardware ([sprites.md](sprites.md#palettes)).
 - Stream sprite frames into their VRAM slots ([sprites.md](sprites.md)).
-- Swap animated tile graphics.
-- Run `mmVBlank()` from the VBlank interrupt.
-
-`mmFrame()` runs once per game frame ([audio.md](audio.md)).
+- Run Maxmod's `mmVBlank()` from the VBlank interrupt, and `mmFrame()` once per game frame ([audio.md](audio.md)).

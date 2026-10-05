@@ -15,11 +15,16 @@ static void splash_runs_and_restores_state(void) {
     pal_bg_mem[0] = RGB15(3, 6, 9); // a game's backdrop
     REG_BLDCNT = 0;
     REG_BLDY = 0;
+    // A game using background 0 itself, without the text layer.
+    serval_text_deactivate();
+    const u16 game_bg0cnt = BG_CBB(2) | BG_SBB(20) | BG_PRIO(3);
+    REG_BG0CNT = game_bg0cnt;
+    REG_DISPCNT |= DCNT_BG0;
     bool text_before = serval_text_active();
 
-    u32 start = random_entropy(); // the CPU cycle counter
+    u32 start = frame_count();
     serval_splash();
-    u32 frames = (random_entropy() - start) / 280896;
+    u32 frames = frame_count() - start;
 
     // 30 fade in + 30 hold + 90 hold + 30 fade out = 180 frames (~3 s).
     CHECK(frames >= 178 && frames <= 182);
@@ -29,6 +34,9 @@ static void splash_runs_and_restores_state(void) {
     CHECK(REG_BLDCNT == 0); // (BLDY is write-only: can't be checked)
     CHECK(serval_text_active() == text_before);
     CHECK(se_mem[31][8 * 32 + 10] == 0); // the splash text is gone
+    CHECK(REG_BG0CNT == game_bg0cnt);
+    CHECK(REG_DISPCNT & DCNT_BG0);
+    REG_DISPCNT &= ~DCNT_BG0;
 }
 
 TEST_SUITE(splash_tests, "splash",

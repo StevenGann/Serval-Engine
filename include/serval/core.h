@@ -23,11 +23,15 @@
 void serval_init(void);
 
 // Shows the "Made with Serval Engine" splash screen, then returns: about three
-// seconds of fading in, a jingle, and fading out on a black screen. Pressing
+// seconds of fading in on a black backdrop, a jingle, and fading out. Pressing
 // any button once it has faded in skips the rest. Call it after serval_init(),
-// before loading your game's graphics. Leaves the screen black, and puts back
-// what it borrowed (backdrop color, text layer, palette entries, sound
-// channel).
+// before loading your game's graphics. Puts back the backdrop color (so the
+// screen then shows the game's backdrop, black by default), background 0's
+// control register and on/off state, the blend control register, the two
+// palette entries it uses and whether the text layer was set up; silences
+// square channel 1. Not restored: the text layer's map (text_print output is
+// cleared), and if the text layer wasn't set up, charblock 0's first 96 tiles
+// (overwritten by the font) and background 0's scroll (reset to 0).
 void serval_splash(void);
 
 // Starts a frame: polls input and clears the sprite draw list.
@@ -36,6 +40,10 @@ void frame_begin(void);
 // Ends a frame: waits for VBlank, then flushes the shadow OAM to hardware and
 // advances sound effects (notes and lengths).
 void frame_end(void);
+
+// Frames since serval_init(): the number of frame_end() calls, so 0 during
+// the first frame. Wraps after about 2.2 years at 60 frames per second.
+u32 frame_count(void);
 
 // CPU cycles the previous frame spent between frame_begin() and frame_end()
 // (the game's work, before waiting for VBlank). Measured with hardware timers

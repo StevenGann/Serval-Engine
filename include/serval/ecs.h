@@ -12,23 +12,33 @@
 #define MAX_ENT 128
 
 // Component bits. Bits 0-15 belong to the engine, bits 16-30 to games
-// (C_GAME(0) to C_GAME(14)). Bit 31 marks a slot as alive, so free slots never
-// match any system.
+// (C_GAME(0) to C_GAME(14)). Bit 31 (C_ALIVE) marks a slot as alive, so free
+// slots never match any system; there is no C_GAME(15). A constant n outside
+// 0-14 is a compile error ("size of array is negative"); entity_create() warns
+// in debug builds if a mask includes C_ALIVE.
 #define C_POS (1u << 0)  // pos_x, pos_y
 #define C_VEL (1u << 1)  // vel_x, vel_y
-#define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth
+#define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth, spr_angle
 #define C_BODY (1u << 3) // body_w, body_h, body_bounce, body_friction (physics.h)
-#define C_GAME(n) (1u << (16 + (n)))
+// C_MAPBODY (1u << 4), bodies that collide with the map, is in map.h.
+#define C_ANIM (1u << 5) // spr_anim_time; with C_SPR, sys_animate plays the sprite's animation
+#define C_GAME(n) ((1u << (16 + (n))) + 0u * (u32)sizeof(char[(unsigned)(n) < 15u ? 1 : -1]))
 #define C_ALIVE (1u << 31)
 
 // Generational handle: low 8 bits are the slot index, high 8 bits the slot's
-// generation. A handle goes stale when its entity is destroyed.
+// generation (1-255). A handle goes stale when its entity is destroyed or the
+// ECS is reset. Freed slots are reused oldest-first, so a slot comes back
+// only after every other free slot has been used; a stale handle could match
+// a new entity again only after its slot has been reused 255 times.
 typedef u16 Entity;
 
 // Never refers to an entity (generations start at 1).
 #define ENTITY_NONE ((Entity)0)
 
 // Component mask per slot, including C_ALIVE. Systems read this directly.
+// Games may add and remove their components here (ent_mask[i] |= C_SPR), but
+// must keep C_ALIVE: a slot without it matches no system and no ent_has().
+// Create and destroy entities only with entity_create() and entity_destroy().
 extern u32 ent_mask[MAX_ENT];
 
 // Engine component pools, indexed by entity_index(). Zeroed by entity_create().
@@ -37,18 +47,16 @@ extern FIXED vel_x[MAX_ENT], vel_y[MAX_ENT]; // C_VEL: pixels per frame
 extern u16 spr_id[MAX_ENT];                  // C_SPR: sprite ID (sprites.h)
 extern u8 spr_frame[MAX_ENT];                // C_SPR: animation frame
 extern u16 spr_flags[MAX_ENT];               // C_SPR: sprite_draw flags (flip, layer)
-extern s16 spr_depth[MAX_ENT]; // C_SPR: sys_render_by_depth draws higher depths in front
-extern u16 spr_angle[MAX_ENT]; // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
+extern s16 spr_depth[MAX_ENT];    // C_SPR: sys_render_by_depth draws higher depths in front
+extern u16 spr_angle[MAX_ENT];    // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
+extern u8 spr_anim_time[MAX_ENT]; // C_ANIM: frames spr_frame has shown so far (sys_animate)
 
-// True if entity slot i has every component in `mask` (and is alive, when
-// `mask` is not 0). Prefer this to testing ent_mask by hand: `ent_mask[i] &
-// (A | B)` is true when *either* component is present.
+// True if entity slot i is alive and has every component in `mask` (0 tests
+// only that it is alive). Prefer this to testing ent_mask by hand: `ent_mask[i]
+// & (A | B)` is true when *either* component is present.
 static inline bool ent_has(u32 i, u32 mask) {
-    // Free slots have a mask of 0, so they can only match an empty mask; with a
-    // constant mask this compiles down to a single test.
-    if (mask == 0)
-        return (ent_mask[i] & C_ALIVE) != 0;
-    return (ent_mask[i] & mask) == mask;
+    // With a constant mask this compiles down to one mask-and-compare.
+    return (ent_mask[i] & (mask | C_ALIVE)) == (mask | C_ALIVE);
 }
 
 // Loops over the slot index `i` of every live entity that has all components
@@ -62,14 +70,17 @@ static inline bool ent_has(u32 i, u32 mask) {
         if (!ent_has(i, (mask))) {                                                                 \
         } else
 
-// Destroys every entity, e.g. on room change. Outstanding handles go stale.
+// Destroys every entity, e.g. on room change. Outstanding handles go stale,
+// including those of entities whose C_ALIVE bit was cleared by hand.
 void ecs_reset(void);
 
-// Creates an entity with the given component bits. Returns ENTITY_NONE if the
-// pool is full.
+// Creates an entity with the given component bits (C_ALIVE is added). Its
+// components are zeroed. Returns ENTITY_NONE if the pool is full.
 Entity entity_create(u32 components);
 
 // Destroys the entity. Does nothing if the handle is stale or ENTITY_NONE.
+// Also frees an entity whose C_ALIVE bit was cleared by hand (warning in
+// debug builds).
 void entity_destroy(Entity e);
 
 // True if the handle refers to a live entity.
@@ -81,11 +92,13 @@ bool entity_alive(Entity e);
 Entity entity_at(u32 index);
 
 // Systems, run once per frame by the game.
-// sys_movement: position += velocity for entities with C_POS and C_VEL.
+// sys_movement: position += velocity for entities with C_POS and C_VEL, except
+// map bodies (C_MAPBODY, map.h), which sys_map_movement() moves.
 void sys_movement(void);
 // sys_render: draws entities with C_POS and C_SPR using sprite_draw(), with
-// their spr_flags. Among sprites on the same layer, lower entity indices are in
-// front.
+// their spr_flags, at their position minus the camera's (camera_set(), map.h;
+// (0, 0) unless a game scrolls). Among sprites on the same layer, lower entity
+// indices are in front.
 void sys_render(void);
 // sys_render_by_depth: like sys_render, but sprites with a higher spr_depth
 // are drawn in front of lower ones (equal depths: lower index in front). For
@@ -93,6 +106,16 @@ void sys_render(void);
 // on screen overlap those above. Costs more than sys_render (about 10,000
 // cycles for 128 sprites); use it only when draw order matters.
 void sys_render_by_depth(void);
+// sys_animate: plays the animation of entities with C_SPR and C_ANIM: each
+// call counts one frame in spr_anim_time, and once spr_frame has shown for
+// its time in the sprite's frame_times (sprites.h; one frame each if NULL),
+// moves to the next frame, looping back to 0 after the last, or staying on
+// the last for sprites with SPRITE_ASSET_ANIM_ONCE (then spr_frame ==
+// frame_count - 1 means the animation is over). Run it once per frame, before
+// rendering. To start an animation (or switch to another sprite's), set
+// spr_id, spr_frame = 0 and spr_anim_time = 0; a frame the sprite doesn't have
+// restarts it (warning in debug builds).
+void sys_animate(void);
 
 static inline u8 entity_index(Entity e) {
     return (u8)(e & 0xFF);

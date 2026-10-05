@@ -14,7 +14,9 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, palette sharing, shadow palette, global/room watermark ([sprites.md](sprites.md#api)).
 - [x] Optimize the per-frame path measured by bunnymark: sprite drawing, render, movement and physics systems in IWRAM as ARM code, cartridge wait states, division-free text formatting ([development.md](development.md#benchmark)).
 - [ ] Further optimization: `text_format` stays in ROM (2.5 KB; IWRAM is shared with games), depth sorting costs ~10,000 cycles for 128 sprites.
-- [ ] Background and tilemap API (BG1-BG3, metatiles, streaming) ([tilemaps.md](tilemaps.md)).
+- [x] Background and tilemap API (BG1-BG3, metatiles, streaming, camera, map collision) ([tilemaps.md](tilemaps.md)).
+- [x] Animated tiles (`tileset_set_tiles`), sprite animation (`sys_animate`), screen brightness fades, text color and shadow ([tilemaps.md](tilemaps.md), [sprites.md](sprites.md#animation)).
+- [ ] Remaining tilemap features: tileset groups, LZ77 tilesets, slopes and ladders, 8bpp layers ([tilemaps.md](tilemaps.md)).
 - [ ] Maxmod music and sampled sound effects ([audio.md](audio.md)); the PSG wave channel is unused.
 - [ ] A logo for `serval_splash()` ([core-api.md](core-api.md#splash-screen)).
 - [ ] Add the mGBA capture tool to the repository and use it for screenshot tests in CI ([development.md](development.md#checking-what-a-game-shows-and-plays)).

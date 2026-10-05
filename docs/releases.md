@@ -1,5 +1,7 @@
 # Versioning and releases
 
+**Status:** the release workflow is in place; no release has been published yet.
+
 Serval Engine is versioned independently of Studio Advance. Each game project selects the engine version it builds with, and the editor downloads that version on demand. **GitHub Releases on this repository are the source of truth** for which engine versions exist.
 
 ## Versioning
@@ -26,16 +28,18 @@ The repository root contains `serval.json`, which describes the engine to the to
 }
 ```
 
-- `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease.
-- `toolchain.gcc` is the minimum GCC version the engine needs (currently 15.3, the version CI builds and tests with). The editor bundles a single toolchain and warns when it is older than this.
+- `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease. CMake reads it as `SERVAL_VERSION_STRING` (the full string) and `SERVAL_VERSION` (`X.Y.Z` only, for `project()`); anything other than `X.Y.Z[-pre][+build]` fails configuration.
+- `toolchain.gcc` is the minimum GCC version the engine needs (currently 15.3, the version CI builds and tests with). The editor bundles a single toolchain and warns when it is older than this; configuring the engine with an older `arm-none-eabi-gcc` also prints a CMake warning.
 
 No release has been published yet; `serval.json` says `0.1.0`.
 
 ## Release contents
 
-Each GitHub release attaches a packaged archive, `serval-engine-X.Y.Z.zip`. It contains only what building a game needs: headers, sources, linker scripts, `serval.json`, `LICENSE` and `third_party/licenses/`.
+Each GitHub release attaches a packaged archive, `serval-engine-X.Y.Z.zip`. It contains only what building a game needs (`tools/package-release.sh`, which packages only files tracked by git): `include/`, `src/` (with the startup code and linker script), `cmake/`, `third_party/` (vendored libtonc and the license texts), `CMakeLists.txt`, `CMakePresets.json`, `tools/gbafix.py`, `serval.json` and `LICENSE`. No docs, tests or examples.
 
-`serval.json` is also attached as a separate asset, so tools can read a release's manifest without downloading the archive.
+`serval-engine-X.Y.Z.zip.sha256` holds the archive's SHA-256 (`sha256sum -c` format). `serval.json` is also attached as a separate asset, so tools can read a release's manifest without downloading the archive.
+
+A game uses the extracted archive with `add_subdirectory()` and `serval_add_rom()` from its own CMake project ([getting-started.md](getting-started.md#2-create-your-game)); CI checks this for every archive with `tools/check-consumer.sh`.
 
 Tooling uses the attached archive rather than GitHub's auto-generated source archives, which include development-only files and are not guaranteed to be byte-stable.
 

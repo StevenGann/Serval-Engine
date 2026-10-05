@@ -1,0 +1,45 @@
+#ifndef SERVAL_ECS_PHYSICS_INTERNAL_H
+#define SERVAL_ECS_PHYSICS_INTERNAL_H
+
+// Engine-internal: physics settings and helpers shared with sys_map_movement
+// (src/ecs/map_movement.c). Not part of the public API.
+
+#include "serval/fixed.h"
+
+// physics_set_gravity()'s acceleration, in pixels per frame per frame.
+extern FIXED serval_gravity_x, serval_gravity_y;
+
+// Sliding stops below this speed (a sixteenth of a pixel per frame).
+#define SERVAL_STOP_SPEED (FX_ONE / 16)
+
+static inline FIXED serval_fx_abs(FIXED v) {
+    return v < 0 ? -v : v;
+}
+
+// Takes friction/256 of the speed away, rounding the loss up on the
+// magnitude: any friction slows a body in either direction until it stops
+// (rounding toward zero would let slow bodies creep forever).
+static inline FIXED serval_slide(FIXED speed, u32 friction) {
+    FIXED loss = (FIXED)(((u32)serval_fx_abs(speed) * friction + 255) >> 8);
+    speed = speed < 0 ? speed + loss : speed - loss;
+    return serval_fx_abs(speed) < SERVAL_STOP_SPEED ? 0 : speed;
+}
+
+// body_max_fall: limits the velocity on an axis to max_fall pixels per frame
+// in the direction gravity pulls along it. Nothing changes on an axis without
+// gravity or for max_fall 0 (no limit). Checks gravity first: it is the same
+// for every body, so bodies on an axis without gravity skip the lookup.
+static inline FIXED serval_limit_fall(FIXED vel, FIXED gravity, const u8* max_fall) {
+    if (gravity > 0) {
+        FIXED max = FX((int)*max_fall);
+        if (max && vel > max)
+            return max;
+    } else if (gravity < 0) {
+        FIXED max = FX((int)*max_fall);
+        if (max && vel < -max)
+            return -max;
+    }
+    return vel;
+}
+
+#endif // SERVAL_ECS_PHYSICS_INTERNAL_H

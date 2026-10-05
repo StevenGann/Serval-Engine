@@ -2,6 +2,8 @@
 
 Game logic uses GameMaker's mental model, compiled to a compact custom bytecode VM in the style of GB Studio's GBVM.
 
+**Status:** planned; nothing here is implemented. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today.
+
 **Why not Lua:** its RAM footprint, interpretive overhead and garbage collection pauses are too costly at 16.78 MHz.
 
 ## Mapping GameMaker concepts

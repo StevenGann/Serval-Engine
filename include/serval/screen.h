@@ -28,4 +28,20 @@ static inline int screen_height(void) {
 // Sets the color shown wherever nothing else is drawn.
 void screen_set_backdrop(Color color);
 
+// Brightness of the whole screen (backgrounds, sprites and backdrop): from
+// SCREEN_BRIGHTNESS_MIN (-16, black) through 0 (normal, the default) to
+// SCREEN_BRIGHTNESS_MAX (16, white); values outside are clamped (warning in
+// debug builds). Stays until changed. To fade, step it once per frame, e.g.
+// from 0 to -16 over 16 frames. Takes effect at once, like
+// screen_set_backdrop(): set it before the frame's game logic (right after
+// frame_begin()) so the change lines up with the next frame.
+//
+// It uses the hardware's color special effect (GBA: BLDCNT and BLDY), which
+// does one effect at a time: while the brightness is not 0, the engine has
+// no other blending (there is no alpha blending yet). The splash screen
+// (serval_splash) borrows the effect and puts the game's brightness back.
+#define SCREEN_BRIGHTNESS_MIN (-16)
+#define SCREEN_BRIGHTNESS_MAX 16
+void screen_set_brightness(int level);
+
 #endif // SERVAL_SCREEN_H

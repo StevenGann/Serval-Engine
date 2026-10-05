@@ -65,7 +65,40 @@ static void entropy_changes_over_time(void) {
     u32 a = random_entropy();
     frame_begin();
     frame_end();
+    frame_begin();
     CHECK(random_entropy() != a);
+    frame_end();
+}
+
+// random_entropy() and frame_count() depend on the input history and the
+// number of frames, not on CPU timing: the same frames give the same value
+// however long each took, and within a frame it doesn't change.
+static u32 play_frames(u32 count, u32 work) {
+    serval_init();
+    for (u32 f = 0; f < count; f++) {
+        frame_begin();
+        u32 before = random_entropy();
+        for (volatile u32 i = 0; i < work * (f + 1); i++) {
+        }
+        CHECK(random_entropy() == before);
+        frame_end();
+    }
+    CHECK(frame_count() == count);
+    frame_begin();
+    u32 value = random_entropy();
+    frame_end();
+    return value;
+}
+
+static void entropy_is_deterministic(void) {
+    serval_init();
+    CHECK(frame_count() == 0);
+    u32 a = play_frames(5, 100);
+    u32 b = play_frames(5, 3000);
+    CHECK(a == b);
+    CHECK(play_frames(6, 100) != a);
+    CHECK(frame_count() == 7);
+    serval_init(); // as the other tests expect
 }
 
 static void screen_constants_match_functions(void) {
@@ -81,6 +114,30 @@ static void cpu_permille_matches_cycles(void) {
     frame_end();
     CHECK(frame_cpu_permille() == frame_cpu_cycles() * 1000 / frame_budget_cycles());
     CHECK(frame_cpu_permille() > 0);
+}
+
+// The engine's CPU cycle counter (timers 2 and 3, cascaded), re-read if the
+// low half wrapped in between.
+static u32 cycles_now(void) {
+    u32 hi, lo;
+    do {
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+}
+
+static void cpu_permille_survives_long_frames(void) {
+    // Over 4.3 million cycles (~15 frames), cycles * 1000 no longer fits in 32 bits.
+    frame_begin();
+    u32 start = cycles_now();
+    while (cycles_now() - start < 5000000u) {
+    }
+    frame_end();
+    u32 cycles = frame_cpu_cycles();
+    CHECK(cycles >= 5000000u);
+    u32 expected = cycles / 280896 * 1000 + cycles % 280896 * 1000 / 280896;
+    CHECK(frame_cpu_permille() == expected); // ~17800, not a wrapped value
 }
 
 static void frame_cpu_cycles_measures_work(void) {
@@ -188,9 +245,11 @@ TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns
            {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0},
            {"frame_cpu_cycles_measures_work", frame_cpu_cycles_measures_work},
            {"cpu_permille_matches_cycles", cpu_permille_matches_cycles},
+           {"cpu_permille_survives_long_frames", cpu_permille_survives_long_frames},
            {"render_by_depth_puts_higher_depths_in_front",
             render_by_depth_puts_higher_depths_in_front},
            {"render_by_depth_handles_wide_depth_ranges", render_by_depth_handles_wide_depth_ranges},
            {"entropy_changes_over_time", entropy_changes_over_time},
+           {"entropy_is_deterministic", entropy_is_deterministic},
            {"screen_constants_match_functions", screen_constants_match_functions},
            {"sys_render_draws_positioned_sprites", sys_render_draws_positioned_sprites});

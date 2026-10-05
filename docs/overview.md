@@ -23,11 +23,11 @@ flowchart TD
     L3 --> L2 --> L1 --> L0
 ```
 
-| Layer | Borrowed from | Role | Doc |
-| --- | --- | --- | --- |
-| Core API | raylib | Flat C calls over libtonc: input, drawing, sound | [core-api.md](core-api.md) |
-| World | ECS | Fixed-pool entity storage and per-frame bulk processing | [ecs.md](ecs.md) |
-| Game logic | GameMaker | Objects with events, executed by the bytecode VM | [vm.md](vm.md) |
+| Layer | Borrowed from | Role | Status | Doc |
+| --- | --- | --- | --- | --- |
+| Core API | raylib | Flat C calls over libtonc: input, drawing, sound | Implemented (sprites, PSG sound, text); backgrounds and music planned | [core-api.md](core-api.md) |
+| World | ECS | Fixed-pool entity storage and per-frame bulk processing | Implemented | [ecs.md](ecs.md) |
+| Game logic | GameMaker | Objects with events, executed by the bytecode VM | Planned; games are written in C today | [vm.md](vm.md) |
 
 ## Guiding principle: precompute everything
 
@@ -35,7 +35,7 @@ The tooling does the heavy lifting (sprite packing, tile deduplication, palette 
 
 ## 1.0 scope
 
-In scope: regular tiled backgrounds, sprites (resident and streamed), the ECS, the bytecode VM, Maxmod audio plus PSG SFX, save data, text, special effects, camera, and the debug link hooks.
+In scope (see each doc's status line for what exists today): regular tiled backgrounds, sprites (resident and streamed), the ECS, the bytecode VM, Maxmod audio plus PSG SFX, save data, text, special effects, camera, and the debug link hooks.
 
 **Not in 1.0:** Mode 7 / affine backgrounds, GB/GBC and DS targets, streamed PCM audio, link cable multiplayer. Raster effects are a 1.0 candidate if time allows.
 

@@ -13,10 +13,10 @@ runs:
   using: composite
   steps:
     - name: Install CMake and Ninja
-      uses: lukka/get-cmake@v4.4.2
+      uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb  # v4.4.2
 
     - name: Install ARM GNU Toolchain ${{ inputs.gcc-release }}
-      uses: carlosperate/arm-none-eabi-gcc-action@v1
+      uses: carlosperate/arm-none-eabi-gcc-action@98c40e51546516419841748d3210c290df0d2c6c  # v1.13.0
       with:
         release: ${{ inputs.gcc-release }}
 

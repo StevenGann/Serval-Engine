@@ -7,6 +7,7 @@
 
 #include <tonc.h>
 
+#include "../core/random_internal.h"
 #include "internal.h"
 
 // The portable button bits are the GBA's KEYINPUT bits, so no translation is needed.
@@ -25,8 +26,12 @@ u32 serval_matrices_used;
 // CPU cycles per frame: 228 scanlines of 1232 cycles.
 #define FRAME_BUDGET_CYCLES 280896u
 
+void (*serval_map_prepare_hook)(void);
+void (*serval_map_commit_hook)(void);
+
 static u32 frame_start_cycles;
 static u32 last_frame_cycles;
+static u32 frames; // frame_end() calls since serval_init()
 
 // Timers 2 and 3 cascade into a free-running 32-bit CPU cycle counter.
 static void cycle_counter_start(void) {
@@ -39,6 +44,9 @@ static void cycle_counter_start(void) {
 }
 
 static u32 cycles_now(void) {
+#ifdef SERVAL_WEB
+    return serval_web_cycles();
+#else
     // Re-read if the low half wrapped between reading the two halves.
     u32 hi, lo;
     do {
@@ -46,6 +54,7 @@ static u32 cycles_now(void) {
         lo = REG_TM2D;
     } while (hi != REG_TM3D);
     return hi << 16 | lo;
+#endif
 }
 
 void serval_init(void) {
@@ -69,6 +78,8 @@ void serval_init(void) {
     sprite_groups_reset();
     ecs_reset();
     random_seed(0);
+    serval_entropy_reset();
+    frames = 0;
     serval_psg_init();
 
     cycle_counter_start();
@@ -79,6 +90,7 @@ void serval_init(void) {
 void frame_begin(void) {
     frame_start_cycles = cycles_now();
     key_poll();
+    serval_entropy_frame(frames, key_curr_state());
     serval_oam_used = 0;
     serval_matrices_used = 0;
 }
@@ -86,15 +98,20 @@ void frame_begin(void) {
 void frame_end(void) {
     for (u32 i = serval_oam_used; i < 128; i++)
         serval_shadow_oam[i].attr0 = ATTR0_HIDE;
+    if (serval_map_prepare_hook)
+        serval_map_prepare_hook();
 
     last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
     oam_copy(oam_mem, serval_shadow_oam, 128);
+    if (serval_map_commit_hook)
+        serval_map_commit_hook();
     serval_psg_update();
+    frames++;
 }
 
-u32 random_entropy(void) {
-    return cycles_now();
+u32 frame_count(void) {
+    return frames;
 }
 
 u32 frame_cpu_cycles(void) {
@@ -102,7 +119,12 @@ u32 frame_cpu_cycles(void) {
 }
 
 u32 frame_cpu_permille(void) {
-    return last_frame_cycles * 1000 / FRAME_BUDGET_CYCLES;
+    u32 cycles = last_frame_cycles;
+    if (cycles <= 0xFFFFFFFFu / 1000) // one (software) division for normal frames
+        return cycles * 1000 / FRAME_BUDGET_CYCLES;
+    // Over ~15 budgets, cycles * 1000 would overflow 32 bits: split it.
+    return cycles / FRAME_BUDGET_CYCLES * 1000 +
+           cycles % FRAME_BUDGET_CYCLES * 1000 / FRAME_BUDGET_CYCLES;
 }
 
 u32 frame_budget_cycles(void) {

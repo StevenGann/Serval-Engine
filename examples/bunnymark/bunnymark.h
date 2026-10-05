@@ -17,7 +17,8 @@ void bunny_add(void);
 void bunny_remove(void);
 int bunny_count(void);
 
-// Direction of gravity on each axis: -1, 0 or 1. (0, 0) turns gravity off.
+// Direction of gravity on each axis: -1, 0 or 1. (0, 0) turns gravity off and
+// sends bunnies resting on the floor off in random directions.
 void gravity_set(int x, int y);
 
 // Everything bunnymark does in a frame: movement, bunny physics, drawing and
