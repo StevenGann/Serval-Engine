@@ -109,7 +109,7 @@ Testing on cartridges is still to do; the code follows the hardware documentatio
 
 Variable-width font renderer drawing glyphs into BG tiles; text boxes with typewriter effect and choices; localization support. Japanese glyph sets need early planning.
 
-**Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, one color (white), `text_print_line()` for lines redrawn with changing content, and `text_format()` for numbers without a C library. The full system above will build on or replace it.
+**Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, four color styles (white by default, a yellow highlight), `text_print_line()` for lines redrawn with changing content, and `text_format()` for numbers without a C library. The full system above will build on or replace it.
 
 ## Special effects
 
@@ -125,13 +125,34 @@ Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and m
 
 Standardize on fixed-point types and lookup tables for trig early. There is no FPU or hardware divider.
 
-**Implemented so far:** sine and cosine from a 1024-step table, with u16 angles (`include/serval/math.h`); 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
+**Implemented so far:** sine and cosine from a 1024-step table, with u16 angles (`include/serval/math.h`); their inverse `angle_of(dx, dy)` (atan2, within 0.1°) and `fx_length(dx, dy)` (within 0.1%, saturating), both without division: the larger component is scaled into [2^16, 2^17) by shifts, the ratio of the smaller to it comes from a 257-entry reciprocal table and one multiply, and atan or sqrt(1 + r²) of the ratio from 33-entry tables with linear interpolation (all tables generated at build time, formulas in `src/core/trig.c`); 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
+
+## Paths
+
+**Status:** implemented (`include/serval/path.h`).
+
+Movement patterns as data, for shmup formations and other genres' patrols, bosses and projectiles. A path is a `static const` table of steps; each step says for how many frames the entity moves along its heading at what speed, while the heading turns and the speed changes by fixed amounts per frame ("turtle" steering). That covers most of the patterns with a few numbers: a straight line is one step; a swoop is in, a 180° turning step, out; a circle is one turning step that never ends (`frames` 0); a weave is turns left and right, looping; stop-and-go is a decelerating step, one at speed 0 and one leaving. One table serves formations from either side through mirroring (`PATH_MIRROR_X`/`_Y` at `path_start()`), and setting `path_heading` after the start rotates the whole path (aim it with `angle_of`).
+
+Paths are an ECS component (`C_PATH`, bit 6) with per-slot state (the path, step, frames into it, heading, speed). `sys_path()` advances every pathed entity a frame and writes `vel_x`/`vel_y`, so `sys_movement()` moves them and collisions and rendering need nothing new. Choices:
+
+- **Velocity, not position.** Paths steer; they don't place. Entities keep moving through the same systems as everything else, and when a path without a loop ends, `C_PATH` goes and the entity flies on with its last velocity (a shmup enemy leaves the screen; the game culls it).
+- **Zero defaults.** In a designated initializer, a step needs only what it uses: `{.frames = 30, .speed = FX(2)}` is straight; `turn` and `accel` default to 0. `frames` 0 means forever, so a never-ending step can't be a zero-length one, and no table can make `sys_path` loop without advancing. `loop` defaults to off.
+- **Cheap per frame, no division.** The velocity is recomputed (`fx_sin`, `fx_cos`, two 32-bit multiplies) only when the heading or speed changed. Measured on the GBA (release, from ROM): about 160 cycles per entity on straight, constant-speed stretches, about 450 while turning, plus the loop over the 128 slots (about 10,000 cycles in all). The state lives in EWRAM (about 2.5 KiB, dropped from games that don't use paths).
+- **Safe misuse.** Bad paths (NULL, empty, a loop step past the end) and dead entities are refused with a warning; `C_PATH` added by hand is removed (debug builds; it would otherwise resume a previous entity's path); speeds are capped at `FX(4096)` so an accelerating endless step can't overflow.
+
+Planned: paths for the script VM ([vm.md](vm.md)); per-step events (for now, games read `path_step`/`path_time`); and absolute headings per step.
 
 ## Physics
 
 **Status:** bouncing bodies and map bodies implemented; slopes and a fuller platformer controller (coyote time, moving platforms) planned.
 
-**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle (any edge can be left open) with per-entity bounciness and friction, and resting; or wrapping around the edges instead (`physics_set_wrap`). They don't collide with each other or with tilemaps. Map bodies (`C_MAPBODY`, `include/serval/map.h`) are the platformer side: `sys_map_movement()` applies the same gravity and stops them flush against solid and one-way metatiles of the playfield, reporting which sides touched (`body_contact`); see [tilemaps.md](tilemaps.md#collision).
+**Implemented so far:** bouncing bodies (`include/serval/physics.h`): gravity in any direction, bounces inside a world rectangle (any edge can be left open) with per-entity bounciness and friction, and resting; or wrapping around the edges instead (`physics_set_wrap`). They don't collide with each other or with tilemaps.
+
+- **Per-body gravity:** `body_gravity[i] = BODY_GRAVITY(sixteenths)` scales gravity for one body (16 normal, 8 half, 0 none, −16 reversed), e.g. Breakout's capsules fall while the ball flies straight. The pool stores the scale minus 16, so the zero `entity_create()` leaves is normal gravity. Floors follow each body's own gravity (a body without gravity bounces perfectly off every wall). `sys_map_movement()` applies it too. Cost: `sys_physics()` checks for scales (sixteen per word read, ~110 cycles a frame, only while there is gravity); with none it runs its fast loop unchanged, otherwise its general loop, handing the scaled bodies to an out-of-line update in ROM (32 bodies, 4 scaled: ~4,000 cycles more per frame). Scaling inside the loops, which are out of registers, cost every body ~27 cycles.
+- **Contacts:** with `physics_set_contacts(true)`, `sys_physics()` reports in `body_contact` (the pool map bodies use; `BODY_SIDE_*` = `MAP_CONTACT_*` bits) the walls each body touched: on the frame it bounces, and every frame it rests against one. `BODY_CONTACT_EXIT` with a side marks the frame a body ended up entirely outside through that open edge (Pong's goal, Breakout's lost ball), judged from its position before `sys_movement()`. Wrapping axes have no walls and report nothing. Off by default, because it costs: contacts run the general loop (~80 cycles more per body); recording them in the fast loop cost bunnymark ~1,000-2,000 cycles a frame even though only a few dozen bodies touch a wall per frame (the loop is out of registers). The contacts of physics bodies are cleared four bytes at a time (~60 cycles); map bodies' contacts, set by `sys_map_movement()`, are left alone (then clearing goes slot by slot, in ROM: ~3,400 cycles).
+- **Loops:** `sys_physics()` has a fast loop (no wrapping, no contacts, no scaled gravity: bunnymark's case) and a general one (both in IWRAM), so the common case never tests settings per body. The general loop bounces bodies through an out-of-line call, which kept it at 2.7 KB of IWRAM instead of 4.6 KB; it costs wrapping games about 30-70 cycles more per body than the dedicated wrap loop it replaced.
+
+Map bodies (`C_MAPBODY`, `include/serval/map.h`) are the platformer side: `sys_map_movement()` applies the same gravity and stops them flush against solid and one-way metatiles of the playfield, reporting which sides touched (`body_contact`); see [tilemaps.md](tilemaps.md#collision).
 
 ## Entity collision
 
@@ -150,6 +171,6 @@ Follows a target entity, clamps to room bounds, and drives BG streaming ([tilema
 **Implemented so far:**
 
 - `camera_set(x, y)` sets the world position shown at the screen's top-left, in pixels; `camera_x()` and `camera_y()` read it. While a playfield (BG2) map is loaded, it is clamped so the view stays inside it (0 on an axis where the map is smaller than the screen); loading the playfield clamps the current position too. Without one, any position is kept.
-- `sys_render()` and `sys_render_by_depth()` draw entities at their world position minus the camera, so entity positions are world coordinates; `sprite_draw()` takes screen coordinates (HUD sprites). The camera starts at (0, 0), where world and screen coordinates are the same, so games that don't scroll never notice it.
-- At the next `frame_end()`, every map layer scrolls to `camera * scroll_factor` and newly visible rows and columns are streamed in ([tilemaps.md](tilemaps.md#streaming)). Set the camera before the render systems run, so sprites and backgrounds move together.
+- `sys_render()` and `sys_render_by_depth()` draw entities at their world position minus the camera, so entity positions are world coordinates, except for entities with `SPRITE_SCREEN` in `spr_flags`, whose positions are screen coordinates (a shooter's ship and bullets over a scrolling stage); `sprite_draw()` takes screen coordinates (HUD sprites). The camera starts at (0, 0), where world and screen coordinates are the same, so games that don't scroll never notice it.
+- At the next `frame_end()`, every map layer scrolls to `camera * scroll_factor` plus its `map_set_scroll()` offset (fixed layers, `MAP_LAYER_FIXED`, to their offset alone) and newly visible rows and columns are streamed in ([tilemaps.md](tilemaps.md#streaming)). Set the camera before the render systems run, so sprites and backgrounds move together.
 - Following a target is a few lines of game code, e.g. `camera_set(fx_to_int(pos_x[player]) - SCREEN_W / 2, fx_to_int(pos_y[player]) - SCREEN_H / 2)` (the clamp keeps it inside the room). Planned: dead zones and smoothing.

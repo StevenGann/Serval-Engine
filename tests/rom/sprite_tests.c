@@ -5,6 +5,7 @@
 #include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/map.h"
 #include "serval/math.h"
 #include "serval/sprites.h"
 
@@ -385,6 +386,135 @@ static void sys_render_rotates_entities_with_an_angle(void) {
     ecs_reset();
 }
 
+// --- Screen-space sprites and palette selection --------------------------------
+
+// Draws the entities with sys_render or sys_render_by_depth.
+static void render(bool by_depth) {
+    frame_begin();
+    if (by_depth)
+        sys_render_by_depth();
+    else
+        sys_render();
+    frame_end();
+}
+
+#define OAM_X(k) (oam_mem[k].attr1 & ATTR1_X_MASK)
+#define OAM_Y(k) (oam_mem[k].attr0 & ATTR0_Y_MASK)
+#define OAM_BANK(k) ((oam_mem[k].attr2 & ATTR2_PALBANK_MASK) >> ATTR2_PALBANK_SHIFT)
+
+static void screen_space_entities_ignore_the_camera(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    ecs_reset();
+    u32 world = entity_index(entity_create(C_POS | C_SPR));
+    u32 screen = entity_index(entity_create(C_POS | C_SPR));
+    u32 turned = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[world] = pos_x[screen] = pos_x[turned] = FX(300);
+    pos_y[world] = pos_y[screen] = pos_y[turned] = FX(90);
+    spr_flags[screen] = SPRITE_SCREEN | SPRITE_FLIP_H;
+    spr_flags[turned] = SPRITE_SCREEN;
+    spr_angle[turned] = ANGLE_DEG(90);
+    camera_set(250, 40); // no playfield loaded: not clamped
+    for (int by_depth = 0; by_depth < 2; by_depth++) {
+        pos_x[screen] = pos_x[turned] = FX(100);
+        render(by_depth);
+        // In slot order (equal depths): world, screen, turned.
+        CHECK(OAM_X(0) == 50 && OAM_Y(0) == 50);
+        CHECK(OAM_X(1) == 100 && OAM_Y(1) == 90);
+        CHECK(oam_mem[1].attr1 & ATTR1_HFLIP);
+        CHECK((oam_mem[2].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL);
+        CHECK(OAM_X(2) == 100 - 4 && OAM_Y(2) == 90 - 4); // 8x8: 16x16 box
+        // Off the screen at x 300, wherever the camera is.
+        pos_x[screen] = pos_x[turned] = FX(300);
+        render(by_depth);
+        CHECK(OAM_X(0) == 50 && (oam_mem[1].attr0 & ATTR0_HIDE));
+    }
+    camera_set(0, 0);
+    ecs_reset();
+}
+
+static void sprite_palette_selects_a_palette_of_the_group(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));  // banks 0-1: SPR_SMALL (slot 0), SPR_ANIM (slot 1)
+    CHECK(sprite_group_load(&second)); // bank 2: SPR_WIDE
+    u32 before = debug_warning_count();
+    frame_begin();
+    sprite_draw(SPR_SMALL, 0, 10, 10, SPRITE_PALETTE(1));
+    sprite_draw(SPR_ANIM, 1, 10, 10, SPRITE_PALETTE(0) | SPRITE_ABOVE_HUD | SPRITE_FLIP_V);
+    sprite_draw(SPR_ANIM, 1, 10, 10, 0);
+    sprite_draw(SPR_WIDE, 0, 10, 10, SPRITE_PALETTE(0));
+    sprite_draw(SPR_WIDE, 0, 10, 10, SPRITE_PALETTE(1)); // the group has one palette
+    sprite_draw(SPR_WIDE, 0, 10, 10, SPRITE_PALETTE(14));
+    sprite_draw_rotated(SPR_SMALL, 0, 50, 50, ANGLE_DEG(90), SPRITE_PALETTE(1));
+    sprite_draw_rotated(SPR_ANIM, 0, 50, 50, 0, SPRITE_PALETTE(0));
+    frame_end();
+    CHECK(OAM_BANK(0) == 1);
+    CHECK(OAM_BANK(1) == 0);
+    // The tile (and frame) stay the sprite's own.
+    CHECK((oam_mem[1].attr2 & ATTR2_ID_MASK) == (oam_mem[2].attr2 & ATTR2_ID_MASK));
+    CHECK((oam_mem[1].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(0));
+    CHECK((oam_mem[1].attr2 & ATTR2_ID_MASK) == 2 && (oam_mem[1].attr1 & ATTR1_VFLIP));
+    CHECK(OAM_BANK(2) == 1);
+    CHECK(OAM_BANK(3) == 2);
+    CHECK(OAM_BANK(4) == 2 && OAM_BANK(5) == 2); // beyond the group: its own
+    CHECK((oam_mem[6].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL && OAM_BANK(6) == 1);
+    CHECK(!(oam_mem[7].attr0 & ATTR0_AFF) && OAM_BANK(7) == 0);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 1); // reported once
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+}
+
+static void entities_draw_with_their_sprite_palette(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    sprite_group_load(&second);
+    ecs_reset();
+    static const struct {
+        u16 id, flags, angle;
+        u32 bank; // expected; 99: not drawn
+    } cases[] = {
+        {SPR_SMALL, 0, 0, 0},
+        {SPR_SMALL, SPRITE_PALETTE(1), 0, 1},
+        {SPR_ANIM, SPRITE_PALETTE(0) | SPRITE_SCREEN, 0, 0},
+        {SPR_ANIM, SPRITE_PALETTE(1) | SPRITE_HIDDEN, 0, 99},
+        {SPR_SMALL, SPRITE_PALETTE(1), ANGLE_DEG(45), 1},
+        {SPR_WIDE, SPRITE_PALETTE(0) | SPRITE_ABOVE_FOREGROUND, 0, 2},
+        {SPR_WIDE, SPRITE_PALETTE(3), 0, 2},
+        {SPR_ANIM, 0, 0, 1},
+    };
+    const u32 n = sizeof(cases) / sizeof(cases[0]);
+    for (u32 k = 0; k < n; k++) {
+        u32 i = entity_index(entity_create(C_POS | C_SPR));
+        pos_x[i] = FX(20 + 10 * (int)k);
+        pos_y[i] = FX(30);
+        spr_id[i] = cases[k].id;
+        spr_frame[i] = cases[k].id == SPR_ANIM;
+        spr_flags[i] = cases[k].flags;
+        spr_angle[i] = cases[k].angle;
+        spr_depth[i] = (s16)(100 - k); // by depth: the same order
+    }
+    for (int by_depth = 0; by_depth < 2; by_depth++) {
+        render(by_depth);
+        u32 slot = 0;
+        bool ok = true;
+        for (u32 k = 0; k < n; k++) {
+            if (cases[k].bank == 99)
+                continue;
+            ok &= OAM_BANK(slot) == cases[k].bank;
+            ok &= OAM_X(slot) ==
+                  (u32)(20 + 10 * k - (cases[k].id == SPR_ANIM ? 4 : 0) - (cases[k].angle ? 4 : 0));
+            slot++;
+        }
+        CHECK(ok);
+        CHECK(oam_mem[slot].attr0 & ATTR0_HIDE); // nothing more drawn
+        CHECK((oam_mem[4].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(1));
+        CHECK((oam_mem[1].attr2 & ATTR2_ID_MASK) == 0 && (oam_mem[2].attr2 & ATTR2_ID_MASK) == 2);
+    }
+    ecs_reset();
+}
+
 TEST_SUITE(
     sprite_tests, "sprites", {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
     {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
@@ -409,4 +539,8 @@ TEST_SUITE(
     {"ids_past_the_maximum_are_reported_apart_from_511",
      ids_past_the_maximum_are_reported_apart_from_511},
     {"load_rejects_incomplete_data", load_rejects_incomplete_data},
-    {"sys_render_rotates_entities_with_an_angle", sys_render_rotates_entities_with_an_angle});
+    {"sys_render_rotates_entities_with_an_angle", sys_render_rotates_entities_with_an_angle},
+    {"screen_space_entities_ignore_the_camera", screen_space_entities_ignore_the_camera},
+    {"sprite_palette_selects_a_palette_of_the_group",
+     sprite_palette_selects_a_palette_of_the_group},
+    {"entities_draw_with_their_sprite_palette", entities_draw_with_their_sprite_palette});

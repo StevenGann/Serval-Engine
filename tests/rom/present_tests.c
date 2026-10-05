@@ -247,6 +247,36 @@ static void map_load_draws_at_once(void) {
     CHECK(!(REG_DISPCNT & DCNT_BG1));
 }
 
+// A fixed layer whose offset is set before map_load() is drawn there at load,
+// and stays there while the camera moves.
+static void fixed_layer_with_offset_draws_at_once(void) {
+    const MapLayer layer = {.width = 4,
+                            .height = 3,
+                            .cells = cells,
+                            .metatiles = metatiles,
+                            .metatile_count = 2,
+                            .bg = 1,
+                            .flags = MAP_LAYER_FIXED};
+    camera_set(300, 200);      // no playfield: not clamped
+    map_set_scroll(1, -16, 8); // the layer's top-left at screen pixel (16, -8)
+    CHECK(map_load(&layer));
+    const u16* sb = se_mem[28];
+    CHECK(serval_map_scroll(1) == (8u << 16 | ((u32)-16 & 0x1FF)));
+    // Layer tile row 0 is above the screen; row 1 is metatile row 0's bottom.
+    CHECK(sb[1 * 32 + 0] == MAP_SE(3, 0, 0) && sb[1 * 32 + 1] == MAP_SE(4, 1, MAP_SE_FLIP_H));
+    CHECK(sb[2 * 32 + 2] == MAP_SE(1, 0, 0));
+    CHECK(sb[1 * 32 + 31] == 0 && sb[1 * 32 + 30] == 0); // left of the layer
+    camera_set(0, 0);
+    show_frame();
+    CHECK(serval_map_scroll(1) == (8u << 16 | ((u32)-16 & 0x1FF)));
+    CHECK(sb[1 * 32 + 0] == MAP_SE(3, 0, 0) && sb[2 * 32 + 2] == MAP_SE(1, 0, 0));
+    map_unload(1); // forgets the offset too
+    show_frame();
+    CHECK(map_load(&layer) && serval_map_scroll(1) == 0 && sb[0] == MAP_SE(1, 0, 0));
+    map_unload(1);
+    show_frame();
+}
+
 TEST_SUITE(gba_present_tests, "gba present",
            {"brightness_sets_the_blend_registers", brightness_sets_the_blend_registers},
            {"text_shadow_and_colors", text_shadow_and_colors},
@@ -255,4 +285,5 @@ TEST_SUITE(gba_present_tests, "gba present",
            {"hidden_sprites_are_not_drawn", hidden_sprites_are_not_drawn},
            {"set_tiles_copies_in_vblank", set_tiles_copies_in_vblank},
            {"set_tiles_rejects_bad_calls", set_tiles_rejects_bad_calls},
-           {"map_load_draws_at_once", map_load_draws_at_once});
+           {"map_load_draws_at_once", map_load_draws_at_once},
+           {"fixed_layer_with_offset_draws_at_once", fixed_layer_with_offset_draws_at_once});

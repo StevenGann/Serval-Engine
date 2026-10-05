@@ -8,8 +8,9 @@
 //
 // Streaming: each layer has a 32x32-entry screenblock used as a ring buffer:
 // tile (tx, ty) of the layer goes to entry (tx & 31, ty & 31), and the
-// background's scroll registers hold the layer's scroll position (the
-// hardware wraps at 256 pixels too). The entries for the 31x21 tiles that the
+// background's scroll registers hold the layer's scroll position (camera *
+// scroll_factor + map_set_scroll's offset; the hardware wraps at 256 pixels
+// too). The entries for the 31x21 tiles that the
 // screen can show at that scroll position (the "window") are valid. When the
 // camera moves, only the tiles that enter the window are written; a jump of a
 // whole window or more, or a new layer, rewrites the window.
@@ -37,6 +38,10 @@
 #define WINDOW_W 31          // tiles a 240-pixel line can touch
 #define WINDOW_H 21          // tiles a 160-pixel column can touch
 #define ALL_ROWS 0xFFFFFFFFu
+// The fill loops' wrap point on a layer that doesn't wrap: a metatile
+// coordinate counting up never reaches it (it would from -1 if this were
+// 0xFFFFFFFF, and layers scrolled left of or above their map start there).
+#define NO_WRAP 0x80000000u
 
 typedef struct {
     const MapLayer* layer; // what the window shows, or NULL
@@ -143,14 +148,6 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count) {
     attach_hooks();
 }
 
-// x * factor, for a FIXED factor, rounded down, without overflowing for any
-// camera position on a map of up to 65,535 metatiles and factors up to 128.
-static int scale(int x, FIXED factor) {
-    if (factor == 0 || factor == FX_ONE)
-        return x;
-    return (x >> FX_SHIFT) * factor + (((x & (FX_ONE - 1)) * factor) >> FX_SHIFT);
-}
-
 // v modulo m (m > 0), from 0 to m - 1 also for negative v.
 static int floor_mod(int v, u32 m) {
     int r = v % (int)m;
@@ -213,7 +210,7 @@ fill_entries(const MapLayer* layer, u16* sb, int tx, int ty, int cols, int rows,
     const Metatile* metatiles = layer->metatiles;
     const u32 width = layer->width, height = layer->height, count = layer->metatile_count;
     const bool wrap = layer->flags & MAP_LAYER_WRAP;
-    const u32 wrap_x = wrap ? width : 0xFFFFFFFFu, wrap_y = wrap ? height : 0xFFFFFFFFu;
+    const u32 wrap_x = wrap ? width : NO_WRAP, wrap_y = wrap ? height : NO_WRAP;
     const int end = ty + rows;
     u32 row = (u32)ty & 31;
     for (int y = ty; y < end;) {
@@ -264,7 +261,7 @@ static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
 fill_column(const MapLayer* layer, u16* sb, int tx, int ty, int rows, int mx, int my) {
     const Metatile* metatiles = layer->metatiles;
     const u32 width = layer->width, height = layer->height, count = layer->metatile_count;
-    const u32 wrap_y = (layer->flags & MAP_LAYER_WRAP) ? height : 0xFFFFFFFFu;
+    const u32 wrap_y = (layer->flags & MAP_LAYER_WRAP) ? height : NO_WRAP;
     const u32 right = (u32)tx & 1;
     const bool inside = (u32)mx < width;
     u16* out = sb + ((u32)tx & 31);
@@ -319,8 +316,7 @@ static void prepare_background(u32 bg, bool reload) {
         return;
     }
     u16* sb = mirror[bg - 1];
-    int sx = scale(serval_camera_x, layer->scroll_factor);
-    int sy = scale(serval_camera_y, layer->scroll_factor);
+    int sx = serval_map_layer_x(layer), sy = serval_map_layer_y(layer);
     int tx = sx >> 3, ty = sy >> 3; // arithmetic shifts: rounded down
     int dx = tx - b->tx, dy = ty - b->ty;
     if (reload || b->layer != layer || dx >= WINDOW_W || dx <= -WINDOW_W || dy >= WINDOW_H ||

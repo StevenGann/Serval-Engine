@@ -5,61 +5,75 @@
 
 // --- Movement patterns (path.h) --------------------------------------------------
 
+// Each step flies `frames` frames at `speed` pixels per frame, turning by
+// `turn` every frame; a step without frames lasts forever (the enemy flies on
+// until it leaves the field). sys_path() (game.c) turns them into velocity,
+// mirrored left-right for waves from the other side.
 #define DEG ANGLE_DEG(1)
 
-static const PathStep down_steps[] = {{255, 0, FX(3) / 2}};
-static const PathStep down_fast_steps[] = {{255, 0, FX(5) / 2}};
-static const PathStep slow_steps[] = {{255, 0, FX(3) / 4}};
+static const PathStep down_steps[] = {{.speed = FX(3) / 2}};
+static const PathStep down_fast_steps[] = {{.speed = FX(5) / 2}};
+static const PathStep slow_steps[] = {{.speed = FX(3) / 4}};
 // In, a half circle to the right and back up.
-static const PathStep swoop_steps[] = {{45, 0, FX(2)}, {60, -3 * DEG, FX(2)}, {255, 0, FX(2)}};
+static const PathStep swoop_steps[] = {{.frames = 45, .speed = FX(2)},
+                                       {.frames = 60, .turn = -3 * DEG, .speed = FX(2)},
+                                       {.speed = FX(2)}};
 // Down while weaving left and right: close to a sine wave.
-static const PathStep weave_steps[] = {
-    {20, 2 * DEG, FX(1)}, {40, -2 * DEG, FX(1)}, {20, 2 * DEG, FX(1)}};
+static const PathStep weave_steps[] = {{.frames = 20, .turn = 2 * DEG, .speed = FX(1)},
+                                       {.frames = 40, .turn = -2 * DEG, .speed = FX(1)},
+                                       {.frames = 20, .turn = 2 * DEG, .speed = FX(1)}};
 // From the left edge to the right, then curving down.
-static const PathStep side_steps[] = {{40, 0, FX(2)}, {45, 2 * DEG, FX(2)}, {255, 0, FX(2)}};
+static const PathStep side_steps[] = {{.frames = 40, .speed = FX(2)},
+                                      {.frames = 45, .turn = 2 * DEG, .speed = FX(2)},
+                                      {.speed = FX(2)}};
 // Down, a pause, then a fast dive.
-static const PathStep dive_steps[] = {{40, 0, FX(3) / 2}, {30, 0, FX(1) / 4}, {255, 0, FX(3)}};
+static const PathStep dive_steps[] = {
+    {.frames = 40, .speed = FX(3) / 2}, {.frames = 30, .speed = FX(1) / 4}, {.speed = FX(3)}};
 // Down, hover a while, back up.
-static const PathStep hover_steps[] = {{60, 0, FX(1)}, {300, 0, 0}, {255, 0, -FX(1) / 2}};
+static const PathStep hover_steps[] = {
+    {.frames = 60, .speed = FX(1)}, {.frames = 300}, {.speed = -FX(1) / 2}};
 // A long arc across the field from the top left.
-static const PathStep arc_steps[] = {{240, -DEG / 2, FX(3) / 2}, {255, 0, FX(3) / 2}};
+static const PathStep arc_steps[] = {{.frames = 240, .turn = -DEG / 2, .speed = FX(3) / 2},
+                                     {.speed = FX(3) / 2}};
 // Diagonal zigzags: straight runs with sharp 90-degree turns.
-static const PathStep zigzag_steps[] = {
-    {36, 0, FX(3) / 2}, {1, -90 * DEG, FX(3) / 2}, {36, 0, FX(3) / 2}, {1, 90 * DEG, FX(3) / 2}};
+static const PathStep zigzag_steps[] = {{.frames = 36, .speed = FX(3) / 2},
+                                        {.frames = 1, .turn = -90 * DEG, .speed = FX(3) / 2},
+                                        {.frames = 36, .speed = FX(3) / 2},
+                                        {.frames = 1, .turn = 90 * DEG, .speed = FX(3) / 2}};
 
 enum { P_DOWN, P_DOWN_FAST, P_SLOW, P_SWOOP, P_WEAVE, P_SIDE, P_DIVE, P_HOVER, P_ARC, P_ZIGZAG };
 
-#define PATH(heading, steps, loop) {ANGLE_DEG(heading), sizeof steps / sizeof steps[0], loop, steps}
 static const Path paths[] = {
-    [P_DOWN] = PATH(90, down_steps, PATH_NO_LOOP),
-    [P_DOWN_FAST] = PATH(90, down_fast_steps, PATH_NO_LOOP),
-    [P_SLOW] = PATH(90, slow_steps, PATH_NO_LOOP),
-    [P_SWOOP] = PATH(90, swoop_steps, PATH_NO_LOOP),
-    [P_WEAVE] = PATH(90, weave_steps, 0),
-    [P_SIDE] = PATH(0, side_steps, PATH_NO_LOOP),
-    [P_DIVE] = PATH(90, dive_steps, PATH_NO_LOOP),
-    [P_HOVER] = PATH(90, hover_steps, PATH_NO_LOOP),
-    [P_ARC] = PATH(60, arc_steps, PATH_NO_LOOP),
-    [P_ZIGZAG] = PATH(45, zigzag_steps, 0),
+    [P_DOWN] = {PATH_STEPS(down_steps), .heading = ANGLE_DEG(90)},
+    [P_DOWN_FAST] = {PATH_STEPS(down_fast_steps), .heading = ANGLE_DEG(90)},
+    [P_SLOW] = {PATH_STEPS(slow_steps), .heading = ANGLE_DEG(90)},
+    [P_SWOOP] = {PATH_STEPS(swoop_steps), .heading = ANGLE_DEG(90)},
+    [P_WEAVE] = {PATH_STEPS(weave_steps), .loop = true, .heading = ANGLE_DEG(90)},
+    [P_SIDE] = {PATH_STEPS(side_steps), .heading = ANGLE_DEG(0)},
+    [P_DIVE] = {PATH_STEPS(dive_steps), .heading = ANGLE_DEG(90)},
+    [P_HOVER] = {PATH_STEPS(hover_steps), .heading = ANGLE_DEG(90)},
+    [P_ARC] = {PATH_STEPS(arc_steps), .heading = ANGLE_DEG(60)},
+    [P_ZIGZAG] = {PATH_STEPS(zigzag_steps), .loop = true, .heading = ANGLE_DEG(45)},
 };
 
 // --- Enemy kinds ------------------------------------------------------------------
 
 typedef struct {
-    u16 sprite, flash_sprite;
-    u8 w, h; // hitbox
+    u16 sprite;
+    u16 palette; // 0: the sprite's own; SPRITE_PALETTE(n): another of the group's
+    u8 w, h;     // hitbox
     s16 hp;
     u16 points;
 } KindInfo;
 
 static const KindInfo kinds[] = {
-    [ENEMY_DART] = {SPR_DART, SPR_DART_FLASH, 12, 10, 1, 100},
-    [ENEMY_CARRIER] = {SPR_CARRIER, SPR_DART_FLASH, 12, 10, 8, 500},
-    [ENEMY_SPINNER] = {SPR_SPINNER, SPR_SPINNER_FLASH, 12, 12, 4, 200},
-    [ENEMY_GUNSHIP] = {SPR_GUNSHIP, SPR_GUNSHIP_FLASH, 26, 24, 40, 2000},
-    [ENEMY_TURRET] = {SPR_TURRET, SPR_TURRET_FLASH, 12, 12, 8, 300},
-    [ENEMY_BOSS] = {SPR_BOSS, SPR_BOSS_FLASH, 48, 36, 0, 0}, // boss.c
-    [ENEMY_POD] = {SPR_POD, SPR_POD_FLASH, 20, 20, 0, 0},    // boss.c
+    [ENEMY_DART] = {SPR_DART, 0, 12, 10, 1, 100},
+    [ENEMY_CARRIER] = {SPR_DART, SPRITE_PALETTE(PAL_CARRIER), 12, 10, 8, 500},
+    [ENEMY_SPINNER] = {SPR_SPINNER, 0, 12, 12, 4, 200},
+    [ENEMY_GUNSHIP] = {SPR_GUNSHIP, 0, 26, 24, 40, 2000},
+    [ENEMY_TURRET] = {SPR_TURRET, 0, 12, 12, 8, 300},
+    [ENEMY_BOSS] = {SPR_BOSS, 0, 48, 36, 0, 0}, // boss.c
+    [ENEMY_POD] = {SPR_POD, 0, 20, 20, 0, 0},   // boss.c
 };
 
 static u8 fire_at[MAX_ENT]; // C_ENEMY: the age (timer) at which a dart fires, 0 if never
@@ -151,15 +165,16 @@ static u32 spawn_enemy(EnemyKind k, FIXED x, FIXED y, u32 components) {
     drops[i] = ITEM_NONE;
     fire_at[i] = 0;
     spr_depth[i] = DEPTH_ENEMY;
+    spr_flags[i] |= info->palette;
     return i;
 }
 
 static void spawn_from(const Wave* w, int n) {
-    FIXED x = FX(w->x + n * w->dx), y = FX(cam_y + w->y);
+    FIXED x = FX(w->x + n * w->dx), y = FX(w->y);
     u32 i = spawn_enemy((EnemyKind)w->kind, x, y, C_VEL | (w->kind == ENEMY_SPINNER ? 0 : C_ANIM));
     if (i == MAX_ENT)
         return; // over the cap: this enemy is skipped
-    path_start(i, &paths[w->path], w->flags & WAVE_MIRROR);
+    path_start(entity_at(i), &paths[w->path], w->flags & WAVE_MIRROR ? PATH_MIRROR_X : 0);
     if (w->flags & WAVE_FIRE)
         fire_at[i] = (u8)random_range(30, 70);
     if (n == w->count - 1)
@@ -203,33 +218,10 @@ void spawn_turret(int x, int y) {
 
 // --- Bullets ---------------------------------------------------------------------
 
-// atan(i / 32) for i = 0 to 32, as u16 angles: for aiming without division
-// beyond one ratio (the engine has no atan2).
-static const u16 atan_table[33] = {0,    326,  651,  975,  1297, 1617, 1933, 2246, 2555,
-                                   2860, 3159, 3453, 3742, 4025, 4302, 4572, 4836, 5094,
-                                   5344, 5589, 5826, 6058, 6282, 6500, 6712, 6917, 7117,
-                                   7310, 7498, 7679, 7856, 8026, 8192};
-
-// The heading from (0, 0) toward (dx, dy), clockwise from right. Accurate to
-// about a degree: the ratio of the shorter to the longer side, in 32nds, picks
-// an entry of the table, and the signs pick the octant.
-static u16 angle_toward(FIXED dx, FIXED dy) {
-    s32 ax = int_abs(dx), ay = int_abs(dy);
-    if (ax == 0 && ay == 0)
-        return ANGLE_DEG(90);
-    u16 a = ax >= ay ? atan_table[(ay * 32 + ax / 2) / ax]
-                     : (u16)(ANGLE_DEG(90) - atan_table[(ax * 32 + ay / 2) / ay]);
-    if (dx < 0)
-        a = (u16)(ANGLE_DEG(180) - a);
-    if (dy < 0)
-        a = (u16)-a;
-    return a;
-}
-
 u16 aim_at_player(FIXED x, FIXED y) {
     if (!player_alive)
         return ANGLE_DEG(90); // straight down
-    return angle_toward(player_x() - x, player_y() - y);
+    return angle_of(player_x() - x, player_y() - y);
 }
 
 bool fire_bullet(FIXED x, FIXED y, u16 angle, FIXED speed, u8 frame) {
@@ -332,7 +324,7 @@ static void enemy_killed(u32 i) {
         psg_play(SND_POP);
     }
     if (k == ENEMY_TURRET)
-        stage_destroy_pad(fx_to_int(x), fx_to_int(y));
+        stage_destroy_pad(fx_to_int(x), fx_to_int(y) + cam_y); // on the map: world pixels
     if (drops[i] != ITEM_NONE)
         spawn_item(x, y, (ItemKind)drops[i]);
     entity_destroy(entity_at(i));
@@ -399,11 +391,12 @@ void enemies_update(void) {
         EnemyKind ek = (EnemyKind)kind[i];
         if (ek == ENEMY_BOSS || ek == ENEMY_POD)
             continue; // boss.c
-        // The white "hit" twin for one frame after a hit (enemy_damage sets
+        // White (PAL_FLASH) for one frame after a hit (enemy_damage sets
         // flash to 2), so a target under steady fire flickers, not glows.
         if (flash[i] > 0)
             flash[i]--;
-        spr_id[i] = flash[i] == 1 ? kinds[ek].flash_sprite : kinds[ek].sprite;
+        u16 palette = flash[i] == 1 ? SPRITE_PALETTE(PAL_FLASH) : kinds[ek].palette;
+        spr_flags[i] = (u16)((spr_flags[i] & ~SPRITE_PALETTE_MASK) | palette);
         if (ek == ENEMY_SPINNER)
             spr_angle[i] = spin;
         if (player_alive)
@@ -422,13 +415,24 @@ void enemies_update(void) {
     }
 }
 
+// Whether shot s touches enemy e. body_overlap compares positions as they
+// are, and a shot's is on the screen while a turret's is on the map, so a
+// turret's hitbox is first moved by the camera.
+static bool shot_hits(u32 s, u32 e) {
+    if (!ent_has(e, C_GROUND))
+        return body_overlap(s, e);
+    FIXED top = pos_y[e] - FX(cam_y);
+    return pos_x[s] < pos_x[e] + FX(body_w[e]) && pos_x[e] < pos_x[s] + FX(body_w[s]) &&
+           pos_y[s] < top + FX(body_h[e]) && top < pos_y[s] + FX(body_h[s]);
+}
+
 // The player's shots against everything they can hit.
 static void collide_shots(void) {
     for (int a = 0; a < shots.count; a++) {
         u32 s = shots.slot[a];
         for (int b = 0; b < enemies.count; b++) {
             u32 e = enemies.slot[b];
-            if (ent_has(e, C_ENEMY) && hp[e] > 0 && body_overlap(s, e)) {
+            if (ent_has(e, C_ENEMY) && hp[e] > 0 && shot_hits(s, e)) {
                 enemy_damage(e, kind[s]);
                 entity_destroy(entity_at(s));
                 break; // this shot is gone

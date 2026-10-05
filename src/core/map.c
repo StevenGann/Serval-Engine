@@ -12,6 +12,8 @@ int serval_camera_x, serval_camera_y;
 
 const MapLayer* serval_map_layers[4];
 u8 serval_map_reload;
+// Read once per frame: EWRAM is fast enough.
+SERVAL_EWRAM_BSS int serval_map_offset_x[4], serval_map_offset_y[4];
 
 // The changes are in IWRAM: every collision query looks through them. The
 // redraw list is read once per frame, so it can be in the slower EWRAM.
@@ -30,6 +32,7 @@ enum {
     W_LAYER_DATA,
     W_LAYER_CELL,
     W_UNLOAD_BG,
+    W_SCROLL_BG,
     W_SET_NO_MAP,
     W_SET_OUTSIDE,
     W_SET_METATILE,
@@ -77,6 +80,33 @@ int camera_x(void) {
 
 int camera_y(void) {
     return serval_camera_y;
+}
+
+// x * factor, for a FIXED factor, rounded down, without overflowing for any
+// camera position on a map of up to 65,535 metatiles and factors up to 128.
+static int scale(int x, FIXED factor) {
+    if (factor == 0 || factor == FX_ONE)
+        return x;
+    return (x >> FX_SHIFT) * factor + (((x & (FX_ONE - 1)) * factor) >> FX_SHIFT);
+}
+
+int serval_map_layer_x(const MapLayer* layer) {
+    int camera = layer->flags & MAP_LAYER_FIXED ? 0 : scale(serval_camera_x, layer->scroll_factor);
+    return camera + serval_map_offset_x[layer->bg];
+}
+
+int serval_map_layer_y(const MapLayer* layer) {
+    int camera = layer->flags & MAP_LAYER_FIXED ? 0 : scale(serval_camera_y, layer->scroll_factor);
+    return camera + serval_map_offset_y[layer->bg];
+}
+
+void map_set_scroll(u32 bg, int x, int y) {
+    if (bg < 1 || bg > 3) {
+        WARN_ONCE(W_SCROLL_BG, "map_set_scroll(%u, ...): map layers are on backgrounds 1-3", bg);
+        return;
+    }
+    serval_map_offset_x[bg] = x;
+    serval_map_offset_y[bg] = y;
 }
 
 static void forget_changes(void) {
@@ -148,6 +178,7 @@ void map_unload(u32 bg) {
         WARN_ONCE(W_UNLOAD_BG, "map_unload(%u): map layers are on backgrounds 1-3", bg);
         return;
     }
+    serval_map_offset_x[bg] = serval_map_offset_y[bg] = 0;
     if (!serval_map_layers[bg])
         return;
     serval_map_layers[bg] = NULL;

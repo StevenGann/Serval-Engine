@@ -32,7 +32,7 @@ void player_reset(void) {
 }
 
 void player_spawn(void) {
-    u32 i = spawn(C_PLAYER, SPR_SHIP, HITBOX, HITBOX, FX(FIELD_W / 2), FX(cam_y + FIELD_H - 24));
+    u32 i = spawn(C_PLAYER, SPR_SHIP, HITBOX, HITBOX, FX(FIELD_W / 2), FX(FIELD_H - 24));
     if (i == MAX_ENT)
         return; // can't happen with the budget in game.h; tried again next frame
     player = i;
@@ -121,7 +121,7 @@ static void bomb(void) {
     boss_bomb();
     for (int k = 0; k < 6; k++) {
         int x = random_range(16, FIELD_W - 16); // one call per statement (see explode())
-        int y = cam_y + random_range(16, FIELD_H - 16);
+        int y = random_range(16, FIELD_H - 16);
         explode(FX(x), FX(y), 1, 0);
     }
     psg_play(SND_BOMB);
@@ -145,12 +145,12 @@ void player_update(void) {
     // sides (its wings) and 8 from the top and bottom.
     FIXED x = pos_x[i] + dx * speed, y = pos_y[i] + dy * speed;
     pos_x[i] = int_clamp(x, FX(6 - HITBOX / 2), FX(FIELD_W - 6 - HITBOX / 2));
-    pos_y[i] = int_clamp(y, FX(cam_y + 8), FX(cam_y + FIELD_H - 8 - HITBOX));
+    pos_y[i] = int_clamp(y, FX(8), FX(FIELD_H - 8 - HITBOX));
 
     // Banking: the banked frame, mirrored for the left. The flame flickers.
     u8 flame = (u8)(frame_count() / 3 % 2);
     spr_frame[i] = (u8)((dx ? SHIP_FRAME_BANK : SHIP_FRAME_LEVEL) + flame);
-    u16 flags = dx < 0 ? SPRITE_FLIP_H : 0;
+    u16 flags = SPRITE_SCREEN | (dx < 0 ? SPRITE_FLIP_H : 0);
     // Blinking while invulnerable: hidden on alternate 4-frame stretches.
     if (invulnerable > 0) {
         invulnerable--;
@@ -173,7 +173,7 @@ void player_update(void) {
 // sys_render_by_depth, so it is in front of the ship.
 void player_draw(void) {
     if (player_alive && button_down(BUTTON_R))
-        sprite_draw(SPR_HITBOX, 0, fx_to_int(pos_x[player]), fx_to_int(pos_y[player]) - cam_y, 0);
+        sprite_draw(SPR_HITBOX, 0, fx_to_int(pos_x[player]), fx_to_int(pos_y[player]), 0);
 }
 
 void player_hit(void) {

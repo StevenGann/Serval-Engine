@@ -20,10 +20,9 @@ void scores_reset(void);
 // make it.
 int scores_rank(int score);
 
-// Draws the table on the whole screen. The entry at place highlight (-1 for
-// none) gets "> <" markers while marker_on, so it can blink. Draws a warning
-// if the last save failed.
-void scores_draw(int highlight, bool marker_on);
+// Draws the table on the whole screen, the entry at place highlight (-1 for
+// none) in yellow. Draws a warning if the last save failed.
+void scores_draw(int highlight);
 
 // The initials entry screen, for a score that made the table.
 typedef enum {

@@ -7,24 +7,28 @@
 //     map on background 2 (11 x 458 metatiles, built at boot from segments
 //     written as text, stage.c) that the camera climbs a pixel per frame, over
 //     a starfield on background 3 that repeats (MAP_LAYER_WRAP) at half speed
-//     (scroll_factor): parallax. During the boss the camera loops back over
-//     the empty top of the map, so the stars scroll on.
+//     (scroll_factor): parallax. During the boss the camera rests at the top
+//     of the map and the stars scroll on by themselves (map_set_scroll).
+//   - Screen and world positions side by side: the ship, enemies, bullets
+//     and effects live on the screen (SPRITE_SCREEN: drawn ignoring the
+//     camera), turrets on the map, scrolling with it
 //   - A narrow playfield with a HUD panel: the left 176 pixels are the field,
-//     the right 64 a panel on background 1 (in front of sprites) with the
-//     score, high score, ships, bombs and power in text and sprite icons
+//     the right 64 a panel on background 1 (in front of sprites, held still
+//     by MAP_LAYER_FIXED) with the score, high score, ships, bombs and power
+//     in text and sprite icons
 //   - Many short-lived entities on a budget (game.h): shots, enemy bullets,
 //     explosions and sparks, each capped so the total stays within the
 //     engine's 128 entities and 128 sprites; past a cap the extra bullet or
 //     spark is skipped (patterns thin out) rather than anything failing
-//   - Enemy waves from a wave table, flying movement patterns from a small
-//     path helper written for the example (path.c: lines, swoops, weaves,
-//     dives, hover-and-leave, zigzags, mirrored for either side)
-//   - Aimed shots, spreads, rings and spirals (fx_sin, fx_cos, an atan
-//     table), and turrets fixed to the map that scroll with it, leaving a
-//     crater (map_set_cell) when destroyed; lamps on the hulls blink
+//   - Enemy waves from a wave table, flying movement patterns as paths
+//     (path.h, sys_path: lines, swoops, weaves, dives, hover-and-leave,
+//     zigzags, mirrored with PATH_MIRROR_X for either side)
+//   - Aimed shots (angle_of), spreads, rings and spirals (fx_sin, fx_cos),
+//     and turrets fixed to the map that scroll with it, leaving a crater
+//     (map_set_cell) when destroyed; lamps on the hulls blink
 //     (tileset_set_tiles)
 //   - A boss of three entities with three attack phases set by its hit
-//     points, and a red palette for its last one
+//     points, and a red palette for its last one (SPRITE_PALETTE)
 //   - Hitboxes much smaller than the sprites (4 x 4 pixels for the 16 x 16
 //     ship, shown as a dot while focusing), sprite origins centering the art
 //     on them, collisions with body_overlap
@@ -32,10 +36,14 @@
 //     everything, the player's shots behind; sprite animation (sys_animate,
 //     SPRITE_ASSET_ANIM_ONCE) for darts, items, explosions and sparks; a
 //     rotating sprite sharing one angle (spinners); blinking with
-//     SPRITE_HIDDEN; white "hit" flashes and the boss's red phase as twins of
-//     a sprite with another palette
+//     SPRITE_HIDDEN; white "hit" flashes, the orange carrier and the boss's
+//     red phase as the same sprites drawn with another palette of their
+//     group (SPRITE_PALETTE)
+//   - Per-frame lists of each kind of entity (ecs_gather), so collisions and
+//     updates loop over a few slots instead of the whole pool
 //   - Screen fades and white flashes (screen_set_brightness), text with a
-//     drop shadow, text centered on the field
+//     drop shadow, text centered on the field (text_print_centered_in), a
+//     highlighted entry in the high-score table (text styles)
 //   - Music (PsgSong): an original stage tune and boss tune on all three tone
 //     generators, paused with the game (psg_music_pause), the boss tune sped
 //     up in its last phase (psg_music_set_tempo), a fanfare played once; sound
@@ -99,8 +107,9 @@
 //   - With no ships left: "GAME OVER" with a falling tune.
 //   - After either, the screen fades; a score that makes the table brings
 //     "NEW HIGH SCORE" and three letters: UP and DOWN change the letter
-//     (a blip), A moves on, B back, START (or A on the last) saves it with a
-//     chime and shows the table with "> <" around the new entry.
+//     (a blip; held, they run through the letters), A moves on, B back, START
+//     (or A on the last) saves it with a chime and shows the table with the
+//     new entry in yellow.
 //   - START pauses ("PAUSED", a tick; the music stops) and resumes (it
 //     carries on where it stopped).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -108,9 +117,9 @@
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
 // into game.c (states, scrolling, HUD, the stage's flow), player.c, enemies.c
-// (the wave table, enemies, bullets, effects, items), boss.c, path.c (the
-// path helper), stage.c (the stage map), art.c (graphics as ASCII art),
-// sound.c and scores.c.
+// (the wave table and its paths, enemies, bullets, effects, items), boss.c,
+// stage.c (the stage map), art.c (graphics as ASCII art), sound.c and
+// scores.c.
 
 #include "game.h"
 

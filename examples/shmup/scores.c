@@ -54,12 +54,13 @@ void scores_draw(int highlight) {
     text_print_centered(4, "HIGH SCORES");
     for (int i = 0; i < SCORES_COUNT; i++) {
         const ScoreEntry* e = &table.entries[i];
-        char name[4] = {e->initials[0], e->initials[1], e->initials[2], 0};
-        bool mark = i == highlight;
-        text_print_centered(7 + 2 * i,
-                            text_format("%c%d  %s  %7u %c%c", mark ? '>' : ' ', i + 1, name,
-                                        e->score, e->cleared ? '*' : ' ', mark ? '<' : ' '));
+        // The newest entry stands out in yellow; %.3s prints the initials,
+        // which have no terminating zero.
+        text_set_style(i == highlight ? TEXT_HIGHLIGHT : TEXT_NORMAL);
+        text_print_centered(7 + 2 * i, text_format("%d  %.3s  %7u %c", i + 1, e->initials, e->score,
+                                                   e->cleared ? '*' : ' '));
     }
+    text_set_style(TEXT_NORMAL);
     text_print_centered(18, "* BEAT THE HIVE LANTERN");
     if (save_failed)
         text_print_centered(17, "(COULD NOT SAVE)");
@@ -103,7 +104,8 @@ void entry_begin(int score, bool cleared) {
 
 EntryEvent entry_update(void) {
     EntryEvent event = ENTRY_NONE;
-    int step = button_pressed(BUTTON_UP) ? 1 : button_pressed(BUTTON_DOWN) ? -1 : 0;
+    // Held, UP and DOWN run through the letters (button_repeat).
+    int step = button_repeat(BUTTON_UP) ? 1 : button_repeat(BUTTON_DOWN) ? -1 : 0;
     if (step) {
         choice[cursor] = (choice[cursor] + step + LETTER_COUNT) % LETTER_COUNT;
         event = ENTRY_LETTER;

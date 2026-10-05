@@ -9,9 +9,12 @@
 //
 // Public engine headers never include third-party headers. The typedefs below
 // are identical to libtonc's, so games may still include <tonc.h> alongside
-// (tests/rom/compat_*.c check this).
+// (tests/rom/compat_*.c check this). The C headers here are the compiler's
+// own freestanding ones (no C library): bool, the fixed-width integers, and
+// NULL, size_t and offsetof.
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef uint8_t u8;

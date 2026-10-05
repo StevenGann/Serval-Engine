@@ -47,6 +47,8 @@ extern const TestSuite map_tests;
 extern const TestSuite anim_tests;
 extern const TestSuite psg_sequencer_tests;
 extern const TestSuite save_tests;
+extern const TestSuite input_tests;
+extern const TestSuite path_tests;
 
 // Host-only suites for the web backend's renderer and sound (src/web/).
 extern const TestSuite web_ppu_tests;

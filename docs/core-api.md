@@ -18,6 +18,7 @@ u32  frame_budget_cycles(void);       // 280,896 per frame at 60 Hz
 
 bool button_down(u16 buttons);        // BUTTON_A, BUTTON_LEFT, ... (OR-able: any of them)
 bool button_pressed(u16 buttons);
+bool button_repeat(u16 buttons);      // menus: on the press, then after 20 frames every 4 while held
 
 int  screen_width(void);              // also SCREEN_W / SCREEN_H constants
 int  screen_height(void);
@@ -39,7 +40,7 @@ Modules, all in `include/serval/` (details in [api-reference.md](api-reference.m
 | `ecs.h` | Entities, engine components, `ECS_FOR_EACH`, `sys_movement`, `sys_render`, `sys_render_by_depth` ([ecs.md](ecs.md)) |
 | `physics.h` | Bouncing bodies (`C_BODY`): gravity, maximum fall speed, bounds, open edges, wrap-around, `sys_physics()`, `body_overlap()`, `body_hit_side()`. For balls, particles and debris, not platformer characters |
 | `audio.h` | PSG sound effects on the tone generators: `psg_table_set()`, `psg_play()`, `psg_stop_all()` ([audio.md](audio.md)) |
-| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells) and `text_format()` (printf-style without a C library) |
+| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells, up to four color styles such as a highlight, centering within columns) and `text_format()` (printf-style without a C library) |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
 | `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`); u16 angles (`ANGLE_DEG(d)`, clockwise on screen) with `fx_sin`/`fx_cos` |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`, and `random_entropy()`, a seed from the player's input timing (the same input gives the same value on every platform) |
@@ -61,7 +62,7 @@ Each problem is reported once rather than every frame. Release builds compile th
 
 **Hardware the engine configures:** `serval_init()` sets `WAITCNT` to the standard 3/1 ROM wait states with prefetch (power-on default is 4/2 without prefetch), which speeds up all code and data in ROM, including the game's; sets display mode 0 with sprites on and 1D sprite tile mapping; enables the VBlank interrupt (libtonc's interrupt dispatcher, no handlers); and turns sound on (tone generators at full volume on both speakers).
 
-**Hardware the engine reserves:** OAM and the 32 sprite rotation matrices (rebuilt every frame from draw calls), OBJ VRAM and OBJ palettes (sprite groups), the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`; `random_entropy()` doesn't use it, so games stay deterministic), BG palette entry 0 (the backdrop), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15 (plus bank 14 and the blend registers during `serval_splash()`). Once a map layer is loaded: BG1-BG3 (control and scroll registers, DISPCNT enable bits), charblocks 1-2 (tileset) and screenblocks 28-30, and BG palette banks 0-14 (colors 1-15) when a tileset is loaded ([tilemaps.md](tilemaps.md#vram-layout)).
+**Hardware the engine reserves:** OAM and the 32 sprite rotation matrices (rebuilt every frame from draw calls), OBJ VRAM and OBJ palettes (sprite groups), the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`; `random_entropy()` doesn't use it, so games stay deterministic), BG palette entry 0 (the backdrop), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15 (colors 1-8: a text and a shadow color for each of the four text styles; plus bank 14 and the blend registers during `serval_splash()`). Once a map layer is loaded: BG1-BG3 (control and scroll registers, DISPCNT enable bits), charblocks 1-2 (tileset) and screenblocks 28-30, and BG palette banks 0-14 (colors 1-15) when a tileset is loaded ([tilemaps.md](tilemaps.md#vram-layout)).
 
 ## Splash screen
 

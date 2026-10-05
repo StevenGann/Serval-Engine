@@ -89,17 +89,18 @@ static void insert(int rank, int score, const char initials[3]) {
 
 #define TABLE_ROW 5 // the best score's text row
 
-void scores_draw(int highlight, bool marker_on) {
+void scores_draw(int highlight) {
     text_print_centered(2, "HIGH SCORES");
     for (int i = 0; i < SCORES_COUNT; i++) {
         const ScoreEntry* e = &table.entries[i];
-        char name[4] = {e->initials[0], e->initials[1], e->initials[2], 0};
-        // text_set_color() would recolor all text, so the new entry is marked
-        // with "> <" instead (blinking, as main.c calls this).
-        bool mark = i == highlight && marker_on;
-        text_print_centered(TABLE_ROW + i, text_format("%c%2d  %s  %6u %c", mark ? '>' : ' ', i + 1,
-                                                       name, e->score, mark ? '<' : ' '));
+        // The new entry stands out in the highlight style (yellow text); the
+        // rest stays in the normal one. %.3s prints the three initials, which
+        // have no terminating zero, and reads no further.
+        text_set_style(i == highlight ? TEXT_HIGHLIGHT : TEXT_NORMAL);
+        text_print_centered(TABLE_ROW + i,
+                            text_format("%2d  %.3s  %6u", i + 1, e->initials, e->score));
     }
+    text_set_style(TEXT_NORMAL);
     if (save_failed)
         text_print_centered(TABLE_ROW + SCORES_COUNT + 1, "(COULD NOT SAVE)");
 }
@@ -110,14 +111,10 @@ void scores_draw(int highlight, bool marker_on) {
 static const char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ. ";
 #define LETTER_COUNT ((int)sizeof letters - 1)
 
-// Holding UP or DOWN repeats: after REPEAT_DELAY frames, every REPEAT_RATE.
-#define REPEAT_DELAY 18
-#define REPEAT_RATE 5
-
 static int entry_score, entry_rank;
-static int cursor;      // the letter being changed: 0 to 2
-static int choice[3];   // each letter's index in letters[]
-static int held_frames; // UP or DOWN held since its press; -1 if not pressed here
+static int cursor;    // the letter being changed: 0 to 2
+static int choice[3]; // each letter's index in letters[]
+static bool pressed;  // UP or DOWN was pressed on this screen
 
 static void draw_entry(void) {
     // "A  B  C" and a caret under the current letter; both lines have the
@@ -137,7 +134,7 @@ int entry_begin(int score) {
     entry_rank = scores_rank(score);
     cursor = 0;
     choice[0] = choice[1] = choice[2] = 0; // "AAA"
-    held_frames = -1;                      // UP may still be held from thrusting: wait for a press
+    pressed = false;                       // UP may still be held from thrusting: wait for a press
     text_clear();
     text_print_centered(3, "NEW HIGH SCORE");
     text_print_centered(5, text_format("SCORE %d   PLACE %d", score, entry_rank + 1));
@@ -149,21 +146,15 @@ int entry_begin(int score) {
     return entry_rank;
 }
 
-// +1 (UP), -1 (DOWN) or 0: one step per press, then repeating while held.
+// +1 (UP), -1 (DOWN) or 0: one step per press, then repeating while held
+// (button_repeat). A button still held from the game repeats too, so nothing
+// happens until UP or DOWN is pressed on this screen.
 static int letter_step(void) {
-    int dir = button_down(BUTTON_UP) ? 1 : button_down(BUTTON_DOWN) ? -1 : 0;
-    if (button_pressed(BUTTON_UP | BUTTON_DOWN)) {
-        held_frames = 0;
-        return dir;
-    }
-    if (dir == 0 || held_frames < 0) {
-        held_frames = -1;
+    if (button_pressed(BUTTON_UP | BUTTON_DOWN))
+        pressed = true;
+    if (!pressed)
         return 0;
-    }
-    if (++held_frames < REPEAT_DELAY)
-        return 0;
-    held_frames = REPEAT_DELAY - REPEAT_RATE;
-    return dir;
+    return button_repeat(BUTTON_UP) ? 1 : button_repeat(BUTTON_DOWN) ? -1 : 0;
 }
 
 EntryEvent entry_update(void) {

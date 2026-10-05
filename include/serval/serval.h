@@ -11,6 +11,7 @@
 #include "serval/fixed.h"
 #include "serval/map.h"
 #include "serval/math.h"
+#include "serval/path.h"
 #include "serval/physics.h"
 #include "serval/platform.h"
 #include "serval/random.h"

@@ -1,4 +1,5 @@
 #include "serval/debug.h"
+#include "serval/map.h"
 #include "serval/physics.h"
 #include "serval/screen.h"
 #include "test.h"
@@ -30,6 +31,7 @@ static void reset(void) {
     physics_set_gravity(0, 0);
     physics_set_open_edges(0);
     physics_set_wrap(false, false);
+    physics_set_contacts(false);
 }
 
 static void gravity_accelerates_bodies(void) {
@@ -510,6 +512,190 @@ static void hit_side_paddle_moved_onto_ball(void) {
     reset();
 }
 
+// body_gravity scales gravity per body; the zero entity_create() leaves is
+// normal gravity.
+static void gravity_scale_per_body(void) {
+    reset();
+    physics_set_bounds(-100000, -100000, 100000, 100000); // far walls
+    physics_set_gravity(FX_ONE / 8, FX_ONE / 4);
+    u32 normal = make_body(0, 0, 0, 0);
+    u32 half = make_body(0, 0, 0, 0);
+    u32 none = make_body(0, 0, 0, 0);
+    u32 reversed = make_body(0, 0, 0, 0);
+    u32 twice = make_body(0, 0, 0, 0);
+    CHECK(body_gravity[normal] == BODY_GRAVITY(16));
+    body_gravity[half] = BODY_GRAVITY(8);
+    body_gravity[none] = BODY_GRAVITY(0);
+    body_gravity[reversed] = BODY_GRAVITY(-16);
+    body_gravity[twice] = BODY_GRAVITY(32);
+    step(4);
+    CHECK(vel_x[normal] == FX_ONE / 2 && vel_y[normal] == FX(1));
+    CHECK(vel_x[half] == FX_ONE / 4 && vel_y[half] == FX_ONE / 2);
+    CHECK(vel_x[none] == 0 && vel_y[none] == 0 && pos_y[none] == 0);
+    CHECK(vel_x[reversed] == -FX_ONE / 2 && vel_y[reversed] == -FX(1));
+    CHECK(vel_x[twice] == FX(1) && vel_y[twice] == FX(2));
+    // The same in a wrapping world, which takes the other loop.
+    physics_set_wrap(true, true);
+    step(4);
+    CHECK(vel_y[normal] == FX(2) && vel_y[half] == FX(1) && vel_y[none] == 0);
+    CHECK(vel_y[reversed] == -FX(2) && vel_y[twice] == FX(4));
+    // A scale only matters while there is gravity.
+    physics_set_gravity(0, 0);
+    step(4);
+    CHECK(vel_y[normal] == FX(2) && vel_y[twice] == FX(4));
+    reset();
+}
+
+// Scaled gravity rounds its magnitude down, so reversing a scale only flips
+// the sign.
+static void gravity_scale_rounds_symmetrically(void) {
+    reset();
+    physics_set_bounds(-100000, -100000, 100000, 100000);
+    physics_set_gravity(0, 5); // 5/256 pixel: half of it is 2.5
+    u32 down = make_body(0, 0, 0, 0), up = make_body(0, 0, 0, 0);
+    body_gravity[down] = BODY_GRAVITY(8);
+    body_gravity[up] = BODY_GRAVITY(-8);
+    step(1);
+    CHECK(vel_y[down] == 2 && vel_y[up] == -2);
+    physics_set_gravity(0, -5);
+    step(1);
+    CHECK(vel_y[down] == 0 && vel_y[up] == 0);
+    reset();
+}
+
+// Floors follow each body's own gravity.
+static void floors_follow_the_body_gravity(void) {
+    reset();
+    physics_set_gravity(0, FX_ONE / 4);
+    // Without gravity, the bottom wall isn't a floor: a bounce keeps all its
+    // speed, though body_bounce is 0, and there is no friction.
+    u32 ball = make_body(FX(40), FX(80), FX(1), FX(3));
+    body_bounce[ball] = 0;
+    body_gravity[ball] = BODY_GRAVITY(0);
+    step(4);
+    CHECK(vel_y[ball] == -FX(3) && vel_x[ball] == FX(1));
+    // With reversed gravity, a body comes to rest on the ceiling.
+    u32 balloon = make_body(FX(20), FX(50), 0, 0);
+    body_gravity[balloon] = BODY_GRAVITY(-16);
+    step(1200);
+    CHECK(pos_y[balloon] == 0 && vel_y[balloon] == 0);
+    // Normal gravity next to them: on the floor.
+    u32 rock = make_body(FX(60), FX(50), 0, 0);
+    step(1200);
+    CHECK(pos_y[rock] == FX(90) && vel_y[rock] == 0);
+    CHECK(pos_y[balloon] == 0);
+    reset();
+}
+
+// body_max_fall limits a body's fall under its own gravity.
+static void max_fall_with_gravity_scale(void) {
+    reset();
+    physics_set_bounds(-100000, -100000, 100000, 100000);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 up = make_body(0, 0, 0, 0);
+    body_gravity[up] = BODY_GRAVITY(-16);
+    body_max_fall[up] = 2;
+    step(30);
+    CHECK(vel_y[up] == -FX(2));
+    reset();
+}
+
+// Contacts: one wall on each side of the body.
+static void contacts_report_each_wall(void) {
+    reset();
+    physics_set_contacts(true);
+    // Bounds 0-100, bodies 10x10: the far walls are at 90.
+    u32 left = make_body(FX(1), FX(50), -FX(2), 0);
+    u32 right = make_body(FX(89), FX(30), FX(2), 0);
+    u32 top = make_body(FX(30), FX(1), 0, -FX(2));
+    u32 bottom = make_body(FX(50), FX(89), 0, FX(2));
+    u32 corner = make_body(FX(89), FX(89), FX(2), FX(2));
+    u32 middle = make_body(FX(40), FX(40), FX(1), FX(1));
+    step(1);
+    CHECK(body_contact[left] == BODY_SIDE_LEFT);
+    CHECK(body_contact[right] == BODY_SIDE_RIGHT);
+    CHECK(body_contact[top] == BODY_SIDE_TOP);
+    CHECK(body_contact[bottom] == BODY_SIDE_BOTTOM);
+    CHECK(body_contact[corner] == (BODY_SIDE_RIGHT | BODY_SIDE_BOTTOM));
+    CHECK(body_contact[middle] == 0);
+    // They bounced: next frame they are moving away, and touch nothing.
+    step(1);
+    CHECK(body_contact[left] == 0 && body_contact[corner] == 0);
+    CHECK(vel_x[left] == FX(2));
+    // The same bits as map bodies'.
+    CHECK(BODY_SIDE_BOTTOM == MAP_CONTACT_FLOOR && BODY_SIDE_TOP == MAP_CONTACT_CEILING &&
+          BODY_SIDE_LEFT == MAP_CONTACT_LEFT && BODY_SIDE_RIGHT == MAP_CONTACT_RIGHT);
+    reset();
+}
+
+static void contacts_while_resting_and_off(void) {
+    reset();
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 i = make_body(FX(20), FX(90), 0, 0); // on the floor
+    step(2);
+    CHECK(body_contact[i] == 0); // off by default
+    physics_set_contacts(true);
+    for (int f = 0; f < 5; f++) {
+        step(1);
+        CHECK(body_contact[i] == BODY_SIDE_BOTTOM); // every frame it rests there
+    }
+    physics_set_contacts(false); // clears them
+    CHECK(body_contact[i] == 0);
+    step(1);
+    CHECK(body_contact[i] == 0);
+    reset();
+}
+
+// A body that leaves through an open edge gets BODY_CONTACT_EXIT and that
+// edge's side, on the frame it is entirely outside, and only then.
+static void contacts_report_exits_through_open_edges(void) {
+    reset();
+    physics_set_contacts(true);
+    physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_BOTTOM);
+    u32 out_left = make_body(FX(3), FX(50), -FX(4), 0); // 10 wide: out at x <= -10
+    u32 out_bottom = make_body(FX(50), FX(95), 0, FX(3));
+    u32 bouncer = make_body(FX(89), FX(30), FX(2), 0); // the right edge is closed
+    step(1);
+    CHECK(body_contact[out_left] == 0 && body_contact[bouncer] == BODY_SIDE_RIGHT);
+    CHECK(body_contact[out_bottom] == 0); // y 98: still partly inside
+    step(1);
+    CHECK(body_contact[out_left] == 0);                                        // x -5
+    CHECK(body_contact[out_bottom] == (BODY_CONTACT_EXIT | BODY_SIDE_BOTTOM)); // y 101
+    step(1);
+    CHECK(body_contact[out_left] == 0);   // x -9: its right column is still inside
+    CHECK(body_contact[out_bottom] == 0); // already out
+    step(1);
+    CHECK(body_contact[out_left] == (BODY_CONTACT_EXIT | BODY_SIDE_LEFT)); // x -13
+    step(5);
+    CHECK(body_contact[out_left] == 0 && pos_x[out_left] < -FX(20));
+    // Exactly reaching the edge counts as out.
+    u32 exact = make_body(FX(2), FX(20), -FX(12), 0);
+    step(1);
+    CHECK(pos_x[exact] == -FX(10));
+    CHECK(body_contact[exact] == (BODY_CONTACT_EXIT | BODY_SIDE_LEFT));
+    reset();
+}
+
+// A wrapping axis has no walls: no contacts on it, while the other axis
+// still reports its walls.
+static void wrapping_axes_report_no_contacts(void) {
+    reset();
+    physics_set_contacts(true);
+    physics_set_wrap(true, false);
+    physics_set_open_edges(PHYSICS_EDGE_LEFT); // ignored on a wrapping axis
+    u32 i = make_body(FX(2), FX(89), -FX(5), FX(2));
+    bool seen_left = false;
+    for (int f = 0; f < 40; f++) {
+        step(1);
+        seen_left = seen_left || (body_contact[i] & (BODY_SIDE_LEFT | BODY_SIDE_RIGHT));
+        if (f == 0)
+            CHECK(body_contact[i] == BODY_SIDE_BOTTOM);
+    }
+    CHECK(!seen_left);
+    CHECK(pos_x[i] > 0); // it wrapped around
+    reset();
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
@@ -535,4 +721,12 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"hit_side_at_corners", hit_side_at_corners},
            {"hit_side_with_static_colliders", hit_side_with_static_colliders},
            {"hit_side_inside_when_overlapping_before", hit_side_inside_when_overlapping_before},
-           {"hit_side_paddle_moved_onto_ball", hit_side_paddle_moved_onto_ball});
+           {"hit_side_paddle_moved_onto_ball", hit_side_paddle_moved_onto_ball},
+           {"gravity_scale_per_body", gravity_scale_per_body},
+           {"gravity_scale_rounds_symmetrically", gravity_scale_rounds_symmetrically},
+           {"floors_follow_the_body_gravity", floors_follow_the_body_gravity},
+           {"max_fall_with_gravity_scale", max_fall_with_gravity_scale},
+           {"contacts_report_each_wall", contacts_report_each_wall},
+           {"contacts_while_resting_and_off", contacts_while_resting_and_off},
+           {"contacts_report_exits_through_open_edges", contacts_report_exits_through_open_edges},
+           {"wrapping_axes_report_no_contacts", wrapping_axes_report_no_contacts});

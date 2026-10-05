@@ -65,4 +65,18 @@ bool button_down(u16 buttons);
 // True only on the frame the button went down.
 bool button_pressed(u16 buttons);
 
+// For menus and cursors: true on the frame a button went down, then, while it
+// stays held, again after a delay and from then on at an interval (default:
+// 20 frames, then every 4, about 1/3 second and 15 times a second). Each
+// button counts on its own; with several OR'd buttons, true if any of them is
+// due. Counted from input alone, so it is deterministic. A button already held
+// when a menu opens keeps repeating: check button_pressed() first if the menu
+// should wait for a fresh press.
+bool button_repeat(u16 buttons);
+
+// The frames from a press to its first repeat, and between repeats after that
+// (each 1 to 65535). A wait already under way for a held button finishes
+// first. serval_init() sets the defaults.
+void button_repeat_set(int delay, int interval);
+
 #endif // SERVAL_CORE_H

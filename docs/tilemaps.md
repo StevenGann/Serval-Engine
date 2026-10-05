@@ -2,7 +2,7 @@
 
 Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffered screenblocks as the camera scrolls. 1.0 uses regular tiled backgrounds only; affine (Mode 7) is post-1.0.
 
-**Status:** partly implemented (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)). Implemented: one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax and wrapping layers, the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles`), and map collision for map bodies (solid and one-way metatiles, plus four tag bits for the game). Planned: tileset groups with a bump allocator, LZ77-compressed tilesets, slopes, ladders and other collision types, 8bpp layers, raster effects.
+**Status:** partly implemented (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)). Implemented: one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles`), and map collision for map bodies (solid and one-way metatiles, plus four tag bits for the game). Planned: tileset groups with a bump allocator, LZ77-compressed tilesets, slopes, ladders and other collision types, 8bpp layers, raster effects.
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
 
@@ -64,10 +64,12 @@ typedef struct {
     const Metatile *metatiles;  // the definitions cells index
     u16 metatile_count;
     u8  bg;                     // 1-3; priority = bg
-    u8  flags;                  // MAP_LAYER_WRAP
+    u8  flags;                  // MAP_LAYER_WRAP, MAP_LAYER_FIXED
     FIXED scroll_factor;        // parallax: layer scroll = camera * factor (0 means FX_ONE)
 } MapLayer;
 ```
+
+Format addition (before the first release): `MAP_LAYER_FIXED` (bit 1 of `flags`); existing layers are unaffected.
 
 - Tileset tile 0 should be blank: a layer that doesn't wrap shows screen entry 0 outside its map.
 - A cell naming a metatile the layer doesn't have shows and collides as empty (debug builds warn when the layer loads).
@@ -80,7 +82,7 @@ typedef struct {
 
 - Each layer's screenblock is a 32×32 ring buffer: layer tile `(tx, ty)` goes to entry `(tx & 31, ty & 31)`, and the background's scroll registers hold the layer's scroll position (the hardware wraps at 256 pixels too).
 - The valid part is the *window*: the 31×21 tiles that a 240×160 screen can touch at the current scroll position. When the camera moves, only tiles entering the window are written: whole columns (21 entries) and rows (31 entries). A move of a whole window or more, a newly loaded layer or `map_load()` redraws the window.
-- A layer scrolls by `camera * scroll_factor` (rounded down). `MAP_LAYER_WRAP` layers repeat their cells in both directions (small parallax backgrounds); other layers show entry 0 outside their map.
+- A layer scrolls to `camera * scroll_factor` (rounded down) plus its offset from `map_set_scroll()` (below). `MAP_LAYER_WRAP` layers repeat their cells in both directions (small parallax backgrounds); other layers show entry 0 outside their map.
 - Playfield cells changed with `map_set_cell()` are redrawn where they are in the window; changes outside it appear when they scroll in (streaming reads the changes too).
 - `map_load()` draws the new layer's window straight to VRAM and turns the background on (a load-time VRAM write, like `tileset_load()`), so the frame after loading a room already shows it rather than only the backdrop; loading during a fade to black hides the write. Set the camera before loading the playfield.
 - After that, everything happens in `frame_end()`, in two steps. Before it waits for VBlank (as CPU work of the frame), entries are written to a copy of each screenblock in EWRAM (6 KB). In VBlank, the changed rows (and columns, written 64 bytes apart) are copied to VRAM, and the scroll and control registers are set. So VRAM writes stay in VBlank, and the VBlank part stays short even for a full redraw. Nothing runs (or links) in games that never call `map_load()`.
@@ -90,10 +92,22 @@ Costs, measured by the test ROM (`tests/rom/map_tests.c`, Release build; VBlank 
 
 | Work | Before VBlank | In VBlank |
 | --- | --- | --- |
-| Full redraw of three layers (map load, camera jump) | 41,300 cycles (15% of a frame, for one frame) | 14,500 cycles |
-| One new row and one new column on each of three layers | 10,100 cycles | 3,650 cycles |
+| Full redraw of three layers (map load, camera jump) | 46,000 cycles (16% of a frame, for one frame) | 22,600 cycles |
+| One new row and one new column on each of three layers | 10,800 cycles | 3,960 cycles |
+| Autoscroll with `map_set_scroll()`, two layers (one vertical, one sideways), 1 pixel per frame | 1,790 on average, 4,170 at most | 990 on average, 2,370 at most |
+| The same at 16 pixels per frame (two rows and two columns a frame) | 5,340 | 2,790 on average, 3,200 at most |
 
 A camera moving less than 8 pixels per frame writes at most one row and one column per layer, usually less.
+
+## Fixed and self-scrolling layers
+
+**Implemented** (`map_set_scroll()`, `MAP_LAYER_FIXED`):
+
+- `map_set_scroll(bg, x, y)` gives each background an offset in pixels, added to where the camera puts the layer: the screen's top-left shows layer pixel `camera * scroll_factor + offset`. The offset goes through the same streaming as camera moves, so it can change every frame at no more cost than scrolling.
+- **Layers that scroll by themselves:** a starfield, clouds or a conveyor belt add their speed to the offset every frame. A vertical shooter keeps its camera on the stage (or stops it at the top for the boss) while the starfield drifts on, and never jumps the camera back: with the offset counting on, every frame writes only the rows (or columns) entering the window, at any speed up to a metatile per frame and beyond (a whole window, 31 columns or 21 rows, is the limit before a full redraw). Let the offset count on rather than wrapping it back by the layer's size: a wrapping layer repeats anyway, and the jump back would redraw the window. A 32-bit offset at a pixel per frame lasts over a year.
+- **Fixed layers:** `MAP_LAYER_FIXED` ignores the camera: the layer shows its top-left, moved only by its offset. A HUD panel beside the playfield, a frame, a title card. A fixed layer whose offset doesn't change costs nothing per frame (no row or column is written). For a 64-pixel panel on the right of the screen, either draw it at x 176 in a 15-metatile-wide layer, or make the layer 4 metatiles wide and `map_set_scroll(bg, -176, 0)`.
+- The offset belongs to the background: `map_load()` keeps it (set it before loading a layer, like the camera, and the load draws the layer there), `map_unload()` resets it to 0. On the playfield (BG2) an offset moves the graphics away from collision and entities, which stay in world coordinates (a map-only shake, say); it doesn't change the camera or its clamp.
+- Sprites have the matching flag: entities with `SPRITE_SCREEN` ignore the camera ([sprites.md](sprites.md#api)).
 
 ## Tilesets
 

@@ -57,7 +57,9 @@ include(cmake/Serval.cmake)
 # Platform-neutral engine code: builds for the GBA and for the host, so its
 # logic can be unit tested natively. See docs/platforms.md.
 set(SERVAL_PORTABLE_SOURCES
+    src/core/input.c
     src/core/map.c
+    src/core/path.c
     src/core/psg_sequencer.c
     src/core/random.c
     src/core/save.c

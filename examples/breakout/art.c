@@ -341,24 +341,9 @@ static const u32 bg_tiles[88] = {
 
 // --- Sprites -----------------------------------------------------------------
 
-// Sprite palettes. Every palette uses the same color numbers: 1 base, 2
-// highlight, 3 shadow, 4 outline, 5 white, 6 spots (the paddle's), 7 glint (the
-// capsules'). The brick colors double as the capsules' colors.
-enum {
-    PAL_RED,
-    PAL_ORANGE,
-    PAL_YELLOW,
-    PAL_GREEN,
-    PAL_BLUE,
-    PAL_PURPLE,
-    PAL_SILVER,
-    PAL_GOLD,
-    PAL_FLASH,
-    PAL_BALL,
-    PAL_PADDLE,
-    PAL_CATCH,
-    PALETTE_COUNT
-};
+// Sprite palettes (PAL_*, game.h). Every palette uses the same color numbers:
+// 1 base, 2 highlight, 3 shadow, 4 outline, 5 white, 6 spots (the paddle's),
+// 7 glint (the capsules'). The brick colors double as the capsules' colors.
 
 #define BRICK_PALETTE(base, light, dark, outline)                                                  \
     {0, base, light, dark, outline, COLOR_RGB(255, 255, 255), outline, COLOR_RGB(255, 250, 220)}
@@ -391,11 +376,6 @@ static const u16 palettes[PALETTE_COUNT][16] = {
                    COLOR_RGB(20, 150, 150), COLOR_RGB(255, 255, 255), COLOR_RGB(70, 35, 10)},
 };
 
-// Each brick color is the brick tiles with its own palette: a sprite's
-// palette is part of its asset, so recoloring takes another sprite ID.
-#define BRICK_SPRITE(palette)                                                                      \
-    {.size = SPRITE_16x8, .tiles = brick_tiles, .frame_count = 4, .palette_slot = (palette)}
-
 // The capsules' glint: frame 0 (none) holds for a while, then the glint
 // crosses in four quick steps.
 static const u8 capsule_times[5] = {40, 3, 3, 3, 3};
@@ -409,15 +389,12 @@ static const u8 capsule_times[5] = {40, 3, 3, 3, 3};
 static const u8 burst_times[4] = {5, 5, 5, 1};
 
 static const SpriteAsset sprites[SPRITE_COUNT] = {
-    [SPR_BRICK_RED] = BRICK_SPRITE(PAL_RED),
-    [SPR_BRICK_ORANGE] = BRICK_SPRITE(PAL_ORANGE),
-    [SPR_BRICK_YELLOW] = BRICK_SPRITE(PAL_YELLOW),
-    [SPR_BRICK_GREEN] = BRICK_SPRITE(PAL_GREEN),
-    [SPR_BRICK_BLUE] = BRICK_SPRITE(PAL_BLUE),
-    [SPR_BRICK_PURPLE] = BRICK_SPRITE(PAL_PURPLE),
-    [SPR_BRICK_SILVER] = BRICK_SPRITE(PAL_SILVER),
-    [SPR_BRICK_GOLD] = BRICK_SPRITE(PAL_GOLD),
-    [SPR_BRICK_FLASH] = BRICK_SPRITE(PAL_FLASH),
+    // One brick for every color: drawn with SPRITE_PALETTE(PAL_ORANGE) and
+    // so on (red is its own palette), and PAL_FLASH for a hit.
+    [SPR_BRICK] = {.size = SPRITE_16x8,
+                   .tiles = brick_tiles,
+                   .frame_count = 4,
+                   .palette_slot = PAL_RED},
     [SPR_BALL] = {.size = SPRITE_8x8, .tiles = ball_tiles, .palette_slot = PAL_BALL},
     [SPR_PADDLE_LEFT] = {.size = SPRITE_16x8,
                          .tiles = paddle_left_tiles,
@@ -428,13 +405,6 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
     [SPR_PADDLE_RIGHT] = {.size = SPRITE_16x8,
                           .tiles = paddle_right_tiles,
                           .palette_slot = PAL_PADDLE},
-    [SPR_CATCH_LEFT] = {.size = SPRITE_16x8, .tiles = paddle_left_tiles, .palette_slot = PAL_CATCH},
-    [SPR_CATCH_MIDDLE] = {.size = SPRITE_16x8,
-                          .tiles = paddle_middle_tiles,
-                          .palette_slot = PAL_CATCH},
-    [SPR_CATCH_RIGHT] = {.size = SPRITE_16x8,
-                         .tiles = paddle_right_tiles,
-                         .palette_slot = PAL_CATCH},
     [SPR_CAPSULE_WIDE] = CAPSULE_SPRITE(capsule_wide_tiles, PAL_BLUE),
     [SPR_CAPSULE_MULTI] = CAPSULE_SPRITE(capsule_multi_tiles, PAL_PURPLE),
     [SPR_CAPSULE_SLOW] = CAPSULE_SPRITE(capsule_slow_tiles, PAL_ORANGE),
@@ -450,22 +420,11 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
-    [SPR_BRICK_RED] = &sprites[SPR_BRICK_RED],
-    [SPR_BRICK_ORANGE] = &sprites[SPR_BRICK_ORANGE],
-    [SPR_BRICK_YELLOW] = &sprites[SPR_BRICK_YELLOW],
-    [SPR_BRICK_GREEN] = &sprites[SPR_BRICK_GREEN],
-    [SPR_BRICK_BLUE] = &sprites[SPR_BRICK_BLUE],
-    [SPR_BRICK_PURPLE] = &sprites[SPR_BRICK_PURPLE],
-    [SPR_BRICK_SILVER] = &sprites[SPR_BRICK_SILVER],
-    [SPR_BRICK_GOLD] = &sprites[SPR_BRICK_GOLD],
-    [SPR_BRICK_FLASH] = &sprites[SPR_BRICK_FLASH],
+    [SPR_BRICK] = &sprites[SPR_BRICK],
     [SPR_BALL] = &sprites[SPR_BALL],
     [SPR_PADDLE_LEFT] = &sprites[SPR_PADDLE_LEFT],
     [SPR_PADDLE_MIDDLE] = &sprites[SPR_PADDLE_MIDDLE],
     [SPR_PADDLE_RIGHT] = &sprites[SPR_PADDLE_RIGHT],
-    [SPR_CATCH_LEFT] = &sprites[SPR_CATCH_LEFT],
-    [SPR_CATCH_MIDDLE] = &sprites[SPR_CATCH_MIDDLE],
-    [SPR_CATCH_RIGHT] = &sprites[SPR_CATCH_RIGHT],
     [SPR_CAPSULE_WIDE] = &sprites[SPR_CAPSULE_WIDE],
     [SPR_CAPSULE_MULTI] = &sprites[SPR_CAPSULE_MULTI],
     [SPR_CAPSULE_SLOW] = &sprites[SPR_CAPSULE_SLOW],

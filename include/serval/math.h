@@ -40,6 +40,20 @@ static inline FIXED fx_mul(FIXED a, FIXED b) {
 FIXED fx_sin(u16 angle);
 FIXED fx_cos(u16 angle);
 
+// The heading of the vector (dx, dy): the inverse of fx_cos/fx_sin, so
+// (fx_cos(angle_of(dx, dy)), fx_sin(angle_of(dx, dy))) points along it. 0 is
+// right, ANGLE_DEG(90) down (y points down), ANGLE_DEG(180) left,
+// ANGLE_DEG(270) up. Aim at a target with angle_of(tx - x, ty - y). Accurate
+// to 0.1 degree for any vector, tiny or huge (any FIXED values); (0, 0) gives
+// 0. No division: shifts, one multiply and small tables.
+u16 angle_of(FIXED dx, FIXED dy);
+
+// The length of the vector (dx, dy), e.g. the distance between two points,
+// within 0.1% plus 1/256 pixel.
+// Saturates at the largest FIXED instead of overflowing, unlike squaring.
+// Costs about as much as angle_of.
+FIXED fx_length(FIXED dx, FIXED dy);
+
 // a / b in fixed point. b must not be 0. Division is slow on the GBA (no
 // hardware divider); multiply by a constant reciprocal where you can.
 static inline FIXED fx_div(FIXED a, FIXED b) {

@@ -13,7 +13,8 @@
 // World coordinates are pixels from the top-left of the map on background 2,
 // the playfield, which is also what map collision uses. The camera is the
 // world position shown at the screen's top-left. sys_render and
-// sys_render_by_depth draw entities at their world position minus the camera;
+// sys_render_by_depth draw entities at their world position minus the camera
+// (or, with SPRITE_SCREEN in spr_flags, at their position on the screen);
 // sprite_draw() itself takes screen coordinates.
 
 #include "serval/ecs.h"
@@ -57,6 +58,9 @@ typedef struct {
 
 // MapLayer.flags
 #define MAP_LAYER_WRAP (1 << 0) // repeats in both directions (small parallax backgrounds)
+// Ignores the camera: shows the layer's top-left (moved by map_set_scroll()
+// only), e.g. a HUD panel or a frame around the playfield.
+#define MAP_LAYER_FIXED (1 << 1)
 
 typedef struct {
     u16 width, height;         // in metatiles
@@ -67,6 +71,7 @@ typedef struct {
     u8 flags;            // MAP_LAYER_*
     FIXED scroll_factor; // how far it moves per pixel of camera movement,
                          // e.g. FX_ONE / 2 for a distant parallax layer; 0 means FX_ONE
+                         // (MAP_LAYER_FIXED: not used)
 } MapLayer;
 
 // Loads a tileset's tiles into background VRAM (charblocks 1-2) and its
@@ -103,8 +108,23 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count);
 // data in ROM).
 bool map_load(const MapLayer* layer);
 
-// Hides the map layer on background bg (1-3) and forgets it.
+// Hides the map layer on background bg (1-3) and forgets it, and its
+// map_set_scroll() offset.
 void map_unload(u32 bg);
+
+// Moves background bg's layer (1-3) by (x, y) pixels from where the camera
+// puts it: the screen's top-left shows layer pixel camera * scroll_factor +
+// (x, y), or (x, y) on a MAP_LAYER_FIXED layer. Applied at the next
+// frame_end(), streamed like camera moves (a few pixels per frame cost one
+// row or column). For a layer that scrolls by itself, e.g. a starfield
+// drifting past while the camera stays put, add the speed every frame and let
+// the offset count on rather than wrapping it back: a jump of a screen or
+// more redraws the whole window. On the playfield (background 2) it moves the
+// graphics away from collision and entities. Kept per background until
+// changed or map_unload(), also when map_load() replaces the layer (set it
+// before, like the camera, to have the load draw it). Ignored (warning in
+// debug builds) for a background outside 1-3.
+void map_set_scroll(u32 bg, int x, int y);
 
 // Camera: the world position shown at the screen's top-left, in pixels.
 // Clamped so the view stays inside the playfield's map when one is loaded on
@@ -148,7 +168,8 @@ u8 map_collision_at(int x, int y);
 // touches what it moves into: one standing on a floor touches it every frame
 // while gravity pulls it down, but one stopped by a wall touches it again only
 // when pushed into it again (its velocity toward the wall is zeroed, or
-// reversed if it bounces).
+// reversed if it bounces). sys_physics() reports bouncing bodies' contacts in
+// the same pool (physics.h).
 extern u8 body_contact[MAX_ENT];
 #define MAP_CONTACT_FLOOR (1 << 0)
 #define MAP_CONTACT_CEILING (1 << 1)
@@ -170,6 +191,8 @@ extern u8 body_contact[MAX_ENT];
 // metatiles a body's edge moves into stop it, so a body overlapping a solid
 // metatile (placed there, or a cell changed under it) can move out of it. Run
 // once per frame, where sys_movement() runs.
+// Each body's gravity is scaled by its body_gravity (physics.h), and floors
+// are the sides its own gravity pulls toward.
 void sys_map_movement(void);
 
 #endif // SERVAL_MAP_H

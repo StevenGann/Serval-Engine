@@ -24,6 +24,7 @@
 #define C_ANIM                                                                                     \
     (1u << 5) // spr_anim_time, spr_anim_step; with C_SPR, sys_animate plays the
               // sprite's animation
+// C_PATH (1u << 6), entities following a path (sys_path), is in path.h.
 #define C_GAME(n) ((1u << (16 + (n))) + 0u * (u32)sizeof(char[(unsigned)(n) < 15u ? 1 : -1]))
 #define C_ALIVE (1u << 31)
 
@@ -95,8 +96,39 @@ bool entity_alive(Entity e);
 Entity entity_at(u32 index);
 
 // The number of live entities that have every component in `mask` (0 counts
-// all live entities), e.g. the rocks left in a wave: ecs_count(C_ROCK).
+// all live entities), e.g. the rocks left in a wave: ecs_count(C_ROCK). Scans
+// every slot, but as ARM code in IWRAM: about 870 cycles, against about 4,300
+// for an ECS_FOR_EACH in game code.
 u32 ecs_count(u32 mask);
+
+// Lists the slot indices of the live entities that have every component in
+// `mask` (0 lists all live entities) in `out`, in ascending order, and returns
+// how many there are. `out` must hold MAX_ENT entries. Like ecs_count(), it
+// costs about a quarter of an ECS_FOR_EACH in game code (about 1,000 cycles;
+// ECS_FOR_EACH visits all 128 slots however few match), so a game that loops
+// over the same kind several times a frame, or over pairs of kinds, gathers
+// each kind once per frame and loops over the lists:
+//
+//     static u8 shots[MAX_ENT], enemies[MAX_ENT];
+//     u32 shot_count = ecs_gather(C_SHOT, shots);
+//     u32 enemy_count = ecs_gather(C_ENEMY, enemies);
+//     for (u32 s = 0; s < shot_count; s++)
+//         for (u32 e = 0; e < enemy_count; e++)
+//             if (body_overlap(shots[s], enemies[e])) ...
+//
+// The lists are a snapshot: entities created afterwards aren't in them, and
+// destroying a listed entity leaves its index in the list (check
+// ent_has(i, 0) before using an entry if an earlier step may have destroyed
+// it).
+u32 ecs_gather(u32 mask, u8* out);
+
+// The number of entities entity_create() can still create (0: the pool is
+// full and it would return ENTITY_NONE, with a warning in debug builds).
+// Optional entities, such as particles and other effects, can be created
+// only while there is room, keeping a reserve for those that matter:
+// `if (ecs_free_count() > 8) spawn_spark(x, y);`. Entities whose C_ALIVE bit
+// the game cleared still hold their slot.
+u32 ecs_free_count(void);
 
 // Systems, run once per frame by the game.
 // sys_movement: position += velocity for entities with C_POS and C_VEL, except

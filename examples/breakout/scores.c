@@ -69,17 +69,16 @@ int scores_best(void) {
     return (int)table.entries[0].score;
 }
 
-void scores_draw(int first_row, int highlight, bool marker_on) {
+void scores_draw(int first_row, int highlight) {
     text_print_centered(first_row, "BEST SCORES");
     for (int i = 0; i < SCORES_COUNT; i++) {
         const ScoreEntry* e = &table.entries[i];
-        // text_set_color() would recolor all text, so the new score is marked
-        // with arrows instead (blinking, as game.c calls this).
-        bool mark = i == highlight && marker_on;
+        // The new score stands out in the highlight style (yellow).
+        text_set_style(i == highlight ? TEXT_HIGHLIGHT : TEXT_NORMAL);
         text_print_centered(first_row + 2 + i,
-                            text_format("%s%d.  %06u  LEVEL %-2d%s", mark ? "> " : "  ", i + 1,
-                                        e->score, e->level, mark ? " <" : "  "));
+                            text_format("%d.  %06u  LEVEL %-2d", i + 1, e->score, e->level));
     }
+    text_set_style(TEXT_NORMAL);
     if (save_failed)
         text_print_centered(first_row + 3 + SCORES_COUNT, "(COULD NOT SAVE)");
 }

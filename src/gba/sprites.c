@@ -39,6 +39,8 @@ typedef struct {
     s8 origin_x, origin_y;
     u8 frame_count;
     u8 tiles_per_frame;
+    u8 first_palette; // the group's first palette bank, for SPRITE_PALETTE
+    u8 palette_count; // the group's palettes
 } SpriteDraw;
 
 static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
@@ -50,6 +52,7 @@ static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
 static EWRAM_BSS u32 warned_ids[SPRITE_MAX / 32 + 1];
 static bool warned_oam_full;
 static bool warned_matrices;
+static bool warned_palette;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
@@ -81,11 +84,22 @@ static __attribute__((noinline, cold)) void warn_oam_full(void) {
     warned_oam_full = true;
     SERVAL_WARN("more than 128 sprites drawn in one frame; the extra ones are not shown");
 }
+
+static __attribute__((noinline, cold)) void warn_palette(u32 id, u32 palette) {
+    if (warned_palette)
+        return;
+    warned_palette = true;
+    SERVAL_WARN("SPRITE_PALETTE(%u) on sprite %u, but its group has %u palettes; drawn with its "
+                "own palette",
+                palette, id, sprite_draws[id < SPRITE_MAX ? id : 0].palette_count);
+}
 #define DRAW_REJECTED(id, frame) warn_draw(id, frame)
 #define OAM_FULL() warn_oam_full()
+#define BAD_PALETTE(id, palette) warn_palette(id, palette)
 #else
 #define DRAW_REJECTED(id, frame) ((void)(id), (void)(frame))
 #define OAM_FULL() ((void)0)
+#define BAD_PALETTE(id, palette) ((void)(id), (void)(palette))
 #endif
 
 // SpriteAsset.size values, 1-12, in hardware terms: shape (square, wide,
@@ -123,6 +137,7 @@ void sprite_groups_reset(void) {
     memset32(warned_ids, 0, sizeof(warned_ids) / 4);
     warned_oam_full = false;
     warned_matrices = false;
+    warned_palette = false;
 #endif
 }
 
@@ -241,6 +256,8 @@ bool sprite_group_load(const SpriteGroup* group) {
         d->origin_y = sprite->origin_y;
         d->frame_count = (u8)frames;
         d->tiles_per_frame = (u8)per_frame;
+        d->first_palette = next_palette_bank;
+        d->palette_count = group->palette_count;
         tile += frames * per_frame;
     }
 
@@ -299,11 +316,27 @@ static inline SERVAL_ARM __attribute__((always_inline)) int matrix_for(u32 angle
     return (int)k;
 }
 
+// attr2 of a sprite drawn with SPRITE_PALETTE(n): `attr2` with the palette
+// bank of its group's palette n instead of its own. `selected` is the flags'
+// palette bits (n + 1, shifted).
+static inline SERVAL_ARM __attribute__((always_inline)) u32 palette_attr2(u32 id,
+                                                                          const SpriteDraw* d,
+                                                                          u32 attr2, u32 selected) {
+    u32 n = (selected >> 8) - 1;
+    if (n >= d->palette_count) {
+        BAD_PALETTE(id, n);
+        return attr2;
+    }
+    return (attr2 & ~ATTR2_PALBANK_MASK) | ((d->first_palette + n) << 12);
+}
+
 // Appends a sprite to the shadow OAM. Shared by sprite_draw, sys_render and
 // sys_render_by_depth, which all run as ARM code from IWRAM, the fastest place
-// to run code on the GBA.
+// to run code on the GBA. `palettes`: whether flags may hold SPRITE_PALETTE
+// (the render loops send those sprites to draw_rotated, keeping the test out
+// of the usual case).
 static inline SERVAL_ARM __attribute__((always_inline)) void
-draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
+draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palettes) {
     if (frame >= d->frame_count) { // also rejects sprites that are not loaded
         DRAW_REJECTED(id, frame);
         return;
@@ -326,7 +359,10 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
     OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
     obj->attr0 = (u16)(d->attr0 | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)x & ATTR1_X_MASK) | ((flags & 3) << 12));
-    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
+    u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
+    if (palettes && (flags & SPRITE_PALETTE_MASK))
+        attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
+    obj->attr2 = (u16)attr2;
 }
 
 // Like draw, rotated by a non-zero angle: uses the hardware's double-size mode
@@ -334,16 +370,17 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
 // centered where the unrotated one would be. Flips go into the matrix, whose
 // index takes attr1 bits 9-13. Falls back to an unrotated draw when all 32
 // matrices are taken; sprites that are off screen or don't fit in OAM never
-// take a matrix. Kept out of line (but in IWRAM) so the render loops stay as
-// fast as before for the usual unrotated sprites. Also where draw_entity
-// sends hidden sprites (SPRITE_HIDDEN), which it drops.
-static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
-draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
-    if (flags & SPRITE_HIDDEN)
-        return;
+// take a matrix. draw_affine returns false for that fallback.
+//
+// draw_rotated is kept out of line (but in IWRAM) so the render loops stay as
+// fast as before for the usual unrotated sprites. It is also where
+// draw_entity sends hidden sprites (SPRITE_HIDDEN), which it drops, and
+// sprites with SPRITE_PALETTE, drawn unrotated when the angle is 0.
+static inline SERVAL_ARM __attribute__((always_inline)) bool
+draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
     if (frame >= d->frame_count) {
         DRAW_REJECTED(id, frame);
-        return;
+        return true;
     }
     // The double-size box's top-left corner.
     int center_x = d->origin_x + d->width / 2, center_y = d->origin_y + d->height / 2;
@@ -351,25 +388,38 @@ draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u3
     y -= center_y;
     u32 w = 2u * d->width, h = 2u * d->height;
     if ((u32)(x + (int)w - 1) >= 240 + w - 1 || (u32)(y + (int)h - 1) >= 160 + h - 1)
-        return; // off screen
+        return true; // off screen
     if (serval_oam_used >= 128) {
         OAM_FULL();
-        return;
+        return true;
     }
     int matrix = matrix_for(angle, flags & 3);
     if (matrix < 0) {
         MATRICES_FULL();
-        draw(id, d, frame, x + center_x, y + center_y, flags);
-        return;
+        return false;
     }
     OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
     obj->attr0 = (u16)(d->attr0 | ATTR0_AFF_DBL | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)matrix << 9) | ((u32)x & ATTR1_X_MASK));
-    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10));
+    u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
+    if (flags & SPRITE_PALETTE_MASK)
+        attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
+    obj->attr2 = (u16)attr2;
+    return true;
+}
+
+static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
+draw_rotated(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32 angle) {
+    if (flags & SPRITE_HIDDEN)
+        return;
+    // Angle 0 (a sprite with SPRITE_PALETTE), or no matrix left: unrotated.
+    if (angle == 0 || !draw_affine(id, d, frame, x, y, flags, angle))
+        draw(id, d, frame, x, y, flags, true);
 }
 
 // Draws entity i (known to have C_POS and C_SPR) at its position minus the
-// camera's, rotated if it has an angle.
+// camera's (or at its position with SPRITE_SCREEN), rotated if it has an
+// angle.
 static inline SERVAL_ARM __attribute__((always_inline)) void draw_entity(u32 i, int camera_x,
                                                                          int camera_y) {
     u32 flags = spr_flags[i];
@@ -381,20 +431,25 @@ static inline SERVAL_ARM __attribute__((always_inline)) void draw_entity(u32 i, 
         DRAW_REJECTED(id, spr_frame[i]);
         return;
     }
+    // Screen-space sprites ignore the camera. In ARM code, a test and
+    // conditional moves; the camera is loaded only for the others.
+    if (flags & SPRITE_SCREEN)
+        camera_x = camera_y = 0;
     int x = fx_to_int(pos_x[i]) - camera_x, y = fx_to_int(pos_y[i]) - camera_y;
-    // Hidden sprites take the rare rotated path too, which drops them: one
-    // test for both keeps the usual case as fast as before.
-    if (spr_angle[i] | (flags & SPRITE_HIDDEN))
+    // Hidden sprites and sprites with another palette take the rare rotated
+    // path too, which drops the former and draws the latter: one test (the
+    // mask is one ARM immediate) keeps the usual case as fast as before.
+    if (spr_angle[i] | (flags & (SPRITE_HIDDEN | SPRITE_PALETTE_MASK)))
         draw_rotated(id, &sprite_draws[id], spr_frame[i], x, y, flags, spr_angle[i]);
     else
-        draw(id, &sprite_draws[id], spr_frame[i], x, y, flags);
+        draw(id, &sprite_draws[id], spr_frame[i], x, y, flags, false);
 }
 
 SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
     if (flags & SPRITE_HIDDEN)
         return;
     if (sprite_id < serval_sprite_count)
-        draw(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags);
+        draw(sprite_id, &sprite_draws[sprite_id], frame, x, y, flags, true);
     else
         DRAW_REJECTED(sprite_id, frame);
 }

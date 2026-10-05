@@ -10,6 +10,8 @@
 
 #include <stddef.h>
 
+#include "../src/core/map_internal.h"
+
 #ifdef SERVAL_DEBUG
 #define WARNINGS_ON 1
 #else
@@ -189,6 +191,49 @@ static void camera_is_clamped_to_the_playfield(void) {
     LOAD(small);
     camera_set(10, 10);
     CHECK(camera_x() == 0 && camera_y() == 0);
+    reset();
+}
+
+static void layers_scroll_by_camera_factor_and_offset(void) {
+    reset();
+    LOAD(room); // 320x160
+    static const u16 one[1] = {0};
+    MapLayer far = {.width = 1,
+                    .height = 1,
+                    .cells = one,
+                    .metatiles = metatiles,
+                    .metatile_count = 1,
+                    .bg = 3,
+                    .flags = MAP_LAYER_WRAP,
+                    .scroll_factor = FX_ONE / 2};
+    MapLayer panel = far;
+    panel.bg = 1;
+    panel.flags = MAP_LAYER_FIXED;
+    panel.scroll_factor = FX_ONE * 2; // not used
+    CHECK(map_load(&far) && map_load(&panel));
+    camera_set(75, 0);
+    CHECK(serval_map_layer_x(&playfield) == 75 && serval_map_layer_y(&playfield) == 0);
+    CHECK(serval_map_layer_x(&far) == 37); // rounded down
+    CHECK(serval_map_layer_x(&panel) == 0 && serval_map_layer_y(&panel) == 0);
+    map_set_scroll(3, -1000, 7);
+    map_set_scroll(1, -176, -3);
+    CHECK(serval_map_layer_x(&far) == 37 - 1000 && serval_map_layer_y(&far) == 7);
+    CHECK(serval_map_layer_x(&panel) == -176 && serval_map_layer_y(&panel) == -3);
+    CHECK(serval_map_layer_x(&playfield) == 75); // other backgrounds keep theirs
+    // The camera stays clamped to the playfield whatever the offsets.
+    camera_set(1000, 0);
+    CHECK(camera_x() == 80 && serval_map_layer_x(&far) == 40 - 1000);
+    // map_load() keeps a background's offset, map_unload() forgets it.
+    CHECK(map_load(&far));
+    CHECK(serval_map_layer_y(&far) == 7);
+    map_unload(3);
+    CHECK(map_load(&far));
+    CHECK(serval_map_layer_x(&far) == 40 && serval_map_layer_y(&far) == 0);
+    u32 before = debug_warning_count();
+    map_set_scroll(0, 5, 5); // the text layer: not a map layer
+    map_set_scroll(4, 5, 5);
+    CHECK(debug_warning_count() == before + WARNINGS_ON);
+    map_unload(1);
     reset();
 }
 
@@ -660,11 +705,65 @@ static void map_bodies_fall_no_faster_than_max_fall(void) {
     reset();
 }
 
+// body_gravity scales gravity for map bodies too (physics.h).
+static void map_bodies_use_their_gravity_scale(void) {
+    reset();
+    LOAD(room);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 none = make_body(60, 20, 8, 8);
+    u32 half = make_body(80, 20, 8, 8);
+    u32 up = make_body(114, 100, 8, 8); // under the ceiling block at (7, 4): y 64-79
+    body_gravity[none] = BODY_GRAVITY(0);
+    body_gravity[half] = BODY_GRAVITY(8);
+    body_gravity[up] = BODY_GRAVITY(-16);
+    step(4);
+    CHECK(vel_y[none] == 0 && pos_y[none] == FX(20));
+    CHECK(vel_y[half] == FX_ONE / 2);
+    CHECK(vel_y[up] == -FX(1));
+    step(30);
+    // Reversed gravity: it rests against the ceiling, touching it every frame.
+    CHECK(pos_y[up] == FX(80) && vel_y[up] == 0);
+    CHECK(body_contact[up] == MAP_CONTACT_CEILING);
+    step(1);
+    CHECK(body_contact[up] == MAP_CONTACT_CEILING && pos_y[up] == FX(80));
+    reset();
+}
+
+// sys_physics() reports contacts for bouncing bodies in the same pool, but
+// leaves map bodies' contacts alone; an entity that stops being a map body
+// doesn't keep its last map contacts.
+static void physics_contacts_leave_map_bodies_alone(void) {
+    reset();
+    LOAD(room);
+    physics_set_gravity(0, FX_ONE / 4);
+    physics_set_contacts(true);
+    u32 walker = make_body(60, 112, 16, 16); // on the floor
+    u32 ball = entity_index(entity_create(C_POS | C_VEL | C_BODY));
+    pos_x[ball] = FX(0);
+    pos_y[ball] = FX(50);
+    vel_x[ball] = -FX(2);
+    body_w[ball] = body_h[ball] = 8;
+    sys_map_movement();
+    sys_movement();
+    sys_physics();
+    CHECK(body_contact[walker] == MAP_CONTACT_FLOOR);
+    CHECK(body_contact[ball] == BODY_SIDE_LEFT);
+    ent_mask[walker] &= ~C_MAPBODY; // now a bouncing body, inside the bounds
+    sys_map_movement();
+    sys_movement();
+    sys_physics();
+    CHECK(body_contact[walker] == 0);
+    physics_set_contacts(false);
+    reset();
+}
+
 TEST_SUITE(map_tests, "map",
            {"collision reads metatiles and the edges", collision_reads_metatiles_and_the_edges},
            {"tags come with the collision byte", tags_come_with_the_collision_byte},
            {"map_load rejects bad layers", map_load_rejects_bad_layers},
            {"camera is clamped to the playfield", camera_is_clamped_to_the_playfield},
+           {"layers scroll by camera, factor and offset",
+            layers_scroll_by_camera_factor_and_offset},
            {"changed cells override the map", changed_cells_override_the_map},
            {"the change table is bounded", the_change_table_is_bounded},
            {"bodies land flush on the floor", bodies_land_flush_on_the_floor},
@@ -683,4 +782,6 @@ TEST_SUITE(map_tests, "map",
            {"map bodies bounce and come to rest", map_bodies_bounce_and_come_to_rest},
            {"map bodies bounce off walls and ceilings", map_bodies_bounce_off_walls_and_ceilings},
            {"map bodies slide with friction", map_bodies_slide_with_friction},
-           {"map bodies fall no faster than max fall", map_bodies_fall_no_faster_than_max_fall}, );
+           {"map bodies fall no faster than max fall", map_bodies_fall_no_faster_than_max_fall},
+           {"map bodies use their gravity scale", map_bodies_use_their_gravity_scale},
+           {"physics contacts leave map bodies alone", physics_contacts_leave_map_bodies_alone}, );

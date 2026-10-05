@@ -1,8 +1,8 @@
 // Shared declarations of the shoot-'em-up's files: game.c (states, HUD,
 // scrolling, the stage's flow), player.c (the ship, its shots, bombs and
 // power-ups), enemies.c (waves, enemies, their bullets, explosions), boss.c,
-// path.c (movement patterns), stage.c (the scrolling map), art.c (graphics,
-// converted from ASCII art at boot), sound.c and scores.c.
+// stage.c (the scrolling map), art.c (graphics, converted from ASCII art at
+// boot), sound.c and scores.c.
 
 #ifndef SHMUP_GAME_H
 #define SHMUP_GAME_H
@@ -32,8 +32,7 @@
 #define C_EBULLET C_GAME(3) // enemy bullets
 #define C_FX C_GAME(4)      // explosions and sparks
 #define C_ITEM C_GAME(5)    // power-ups
-#define C_GROUND C_GAME(6)  // fixed to the map (turrets); everything else moves with the screen
-#define C_PATH C_GAME(7)    // moved by path_update() (path.c)
+#define C_GROUND C_GAME(6)  // fixed to the map (turrets); everything else lives on the screen
 
 // Entity budget. The engine has 128 entities and 128 hardware sprites, and
 // every entity here has a sprite, so the caps below add up to at most 120
@@ -70,28 +69,37 @@ enum {
     DEPTH_EBULLET
 };
 
+// Two kinds of position. Everything that flies (the ship, enemies, bullets,
+// effects, items) lives on the screen: spawn() gives it SPRITE_SCREEN, so
+// sys_render_by_depth draws it where it is and the camera climbing the map
+// doesn't carry it along. Turrets (C_GROUND) sit on the map, in world
+// coordinates, and scroll down with it. center_x/center_y and screen_y give
+// screen coordinates for both; only collisions with turrets need the camera
+// (enemies.c).
+
 // Per-entity game data, beside the engine's component pools (game.c).
 extern u8 kind[MAX_ENT];   // C_ENEMY: EnemyKind; C_ITEM: ItemKind; C_SHOT: damage
 extern s16 hp[MAX_ENT];    // C_ENEMY: hit points
 extern u16 timer[MAX_ENT]; // frames alive (enemies), or frames left (effects, items)
-extern u8 flash[MAX_ENT];  // C_ENEMY: frames left showing the white "hit" sprite
+extern u8 flash[MAX_ENT];  // C_ENEMY: frames left showing the white "hit" palette
 extern u8 drops[MAX_ENT];  // C_ENEMY: the item it leaves (ITEM_NONE, ...)
 
 // Creates an entity with a sprite and a w x h hitbox centered on (cx, cy)
-// (world pixels, 24.8). Returns its slot, or MAX_ENT if none is free.
+// (24.8 pixels: on the screen, or in the world with C_GROUND). Returns its
+// slot, or MAX_ENT if none is free.
 u32 spawn(u32 components, u16 sprite, int w, int h, FIXED cx, FIXED cy);
-FIXED center_x(u32 i);
+FIXED center_x(u32 i); // the hitbox's center on screen
 FIXED center_y(u32 i);
 int screen_y(u32 i); // the hitbox's top on screen
 void destroy_all(u32 components);
 
-// The slots of each kind of entity, gathered once per frame by one pass over
-// the pool (game.c). Looping over these is much cheaper than ECS_FOR_EACH,
-// which visits all 128 slots every time (about 4,000 cycles from ROM, however
-// few match): testing each of 20 shots against the enemies with an
-// ECS_FOR_EACH per shot took a quarter of the frame. Entities created during
-// the frame join the lists next frame; destroyed ones are skipped by testing
-// ent_has() before use.
+// The slots of each kind of entity, gathered once per frame with ecs_gather
+// (game.c). Looping over these is much cheaper than ECS_FOR_EACH, which
+// visits all 128 slots every time (about 4,000 cycles from ROM, however few
+// match): testing each of 20 shots against the enemies with an ECS_FOR_EACH
+// per shot took a quarter of the frame. Entities created during the frame
+// join the lists next frame; destroyed ones are skipped by testing ent_has()
+// before use.
 typedef struct {
     u8 slot[MAX_ENT];
     int count;
@@ -104,8 +112,9 @@ extern int shot_count, enemy_count, ebullet_count, fx_count, item_count;
 
 // --- Scrolling (game.c) -------------------------------------------------------
 
-// The camera's world y: the top of the screen. It moves up one pixel a frame;
-// world-fixed things (the map, turrets) scroll down the screen.
+// The camera's world y: the top of the screen. It moves up one pixel a frame
+// until it reaches the top of the stage map, where the boss waits; the map
+// and turrets scroll down the screen, flying things stay where they are.
 extern int cam_y;
 
 // --- Game state (game.c) -----------------------------------------------------
@@ -180,9 +189,7 @@ void boss_bomb(void);            // a bomb hits it
 
 // --- Stage (stage.c) ---------------------------------------------------------
 
-#define STAGE_LOOP 512           // the camera loops over the open space at the top during the boss
-extern int stage_start_y;        // the camera's y when the stage starts
-#define BOSS_CAMERA_Y STAGE_LOOP // the camera's y where the boss comes in
+extern int stage_start_y; // the camera's y when the stage starts; it ends at 0 (the boss)
 
 void stage_build(void);               // the stage map from its segments (once, at boot)
 void stage_show(void);                // loads the layers (the map's turret pads restored)
@@ -190,9 +197,6 @@ void stage_hide(void);                // unloads them (the title has only the st
 void stage_spawn_ground(void);        // creates turrets as their pads scroll into view
 void stage_destroy_pad(int x, int y); // a turret's pad becomes a crater
 void stage_animate(void);             // the hull's blinking lights (tileset_set_tiles)
-
-// --- Paths (path.c) ----------------------------------------------------------
-#include "path.h"
 
 // --- Art (art.c) -------------------------------------------------------------
 
@@ -202,26 +206,34 @@ enum {
     SPR_HITBOX,
     SPR_ICON_SHIP,
     SPR_ICON_BOMB,
-    SPR_DART, // 2 frames (animated)
-    SPR_DART_FLASH,
-    SPR_CARRIER,
+    SPR_DART, // 2 frames (animated); the carrier is a dart with PAL_CARRIER
     SPR_SPINNER,
-    SPR_SPINNER_FLASH,
     SPR_GUNSHIP,
-    SPR_GUNSHIP_FLASH,
-    SPR_TURRET, // eye open, eye shut
-    SPR_TURRET_FLASH,
+    SPR_TURRET,     // eye open, eye shut
     SPR_BULLET,     // BULLET_PINK, BULLET_BLUE
     SPR_SPARK,      // 3 frames, played once (animated)
     SPR_BOOM,       // 5 frames, played once (animated)
     SPR_ITEM_POWER, // glowing on and off (animated)
     SPR_ITEM_BOMB,
     SPR_BOSS,
-    SPR_BOSS_FLASH,
-    SPR_BOSS_RAGE, // the same art in red: the boss's last phase
     SPR_POD,
-    SPR_POD_FLASH,
     SPRITE_COUNT
+};
+
+// The sprite group's palettes. Each sprite has its own (art.c); the others
+// recolor it when drawn with SPRITE_PALETTE: the carrier's orange, the white
+// "hit" flash and the boss's red last phase.
+enum {
+    PAL_PLAYER,
+    PAL_ENEMY,
+    PAL_CARRIER, // the enemy palette in orange and gold
+    PAL_HEAVY,
+    PAL_BOSS,
+    PAL_RAGE, // the boss's palette in red, for its last phase
+    PAL_FIRE,
+    PAL_ITEM,
+    PAL_FLASH, // every color white: a sprite drawn with it flashes when hit
+    PALETTE_COUNT
 };
 enum { SHIP_FRAME_LEVEL, SHIP_FRAME_LEVEL2, SHIP_FRAME_BANK, SHIP_FRAME_BANK2 };
 enum { SHOT_FRAME_BOLT, SHOT_FRAME_HEAVY, SHOT_FRAME_NEEDLE };

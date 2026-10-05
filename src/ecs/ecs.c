@@ -3,6 +3,7 @@
 #include "serval/physics.h"
 
 #include "../core/warn.h"
+#include "physics_internal.h"
 
 u32 ent_mask[MAX_ENT];
 FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
@@ -49,6 +50,7 @@ void ecs_reset(void) {
 #endif
     free_head = 0;
     free_count = 0;
+    serval_map_bodies_moved = false; // no map bodies left
     // Slots are handed out in ascending order after a reset.
     for (u32 i = 0; i < MAX_ENT; i++) {
         if (ent_used[i] || (ent_mask[i] & C_ALIVE))
@@ -104,6 +106,8 @@ Entity entity_create(u32 components) {
     spr_anim_step[index] = 0;
     body_w[index] = body_h[index] = 0;
     body_bounce[index] = body_friction[index] = body_max_fall[index] = 0;
+    body_gravity[index] = 0;
+    body_contact[index] = 0;
     return make_handle(index);
 }
 
@@ -113,12 +117,66 @@ Entity entity_at(u32 index) {
     return make_handle(index);
 }
 
-u32 ecs_count(u32 mask) {
+// ecs_count and ecs_gather run as ARM code from IWRAM on the GBA: games call
+// them every frame, and as Thumb code in ROM the same scan of all 128 masks
+// cost about 3.3 times as much (ecs_count: ~2,900 cycles, now ~870). Four
+// masks are read per iteration, and a match is one BICS (no bit of `want`
+// missing) and a conditional ADD or STRB. Each has an IWRAM section of its
+// own, so a game's IWRAM holds only the ones it calls: SERVAL_IWRAM_CODE puts
+// all of a file's functions in one section, which the linker keeps or drops
+// whole (and every game keeps sys_movement).
+#ifdef SERVAL_GBA
+#define IWRAM_CODE_OWN_SECTION(name)                                                               \
+    __attribute__((section(".iwram.text." #name), long_call, target("arm"), noinline))
+#else
+#define IWRAM_CODE_OWN_SECTION(name)
+#endif
+
+_Static_assert(MAX_ENT % 4 == 0, "ecs_count and ecs_gather read four masks at a time");
+
+IWRAM_CODE_OWN_SECTION(ecs_count) u32 ecs_count(u32 mask) {
+    const u32 want = mask | C_ALIVE;
+    const u32* m = ent_mask;
+    const u32* end = ent_mask + MAX_ENT;
     u32 count = 0;
-    ECS_FOR_EACH(i, mask) {
-        count++;
-    }
+    do {
+        u32 a = m[0], b = m[1], c = m[2], d = m[3];
+        m += 4;
+        if (!(want & ~a))
+            count++;
+        if (!(want & ~b))
+            count++;
+        if (!(want & ~c))
+            count++;
+        if (!(want & ~d))
+            count++;
+    } while (m != end);
     return count;
+}
+
+IWRAM_CODE_OWN_SECTION(ecs_gather) u32 ecs_gather(u32 mask, u8* out) {
+    const u32 want = mask | C_ALIVE;
+    const u32* m = ent_mask;
+    u8* next = out;
+    u32 i = 0;
+    do {
+        u32 a = m[0], b = m[1], c = m[2], d = m[3];
+        m += 4;
+        if (!(want & ~a))
+            *next++ = (u8)i;
+        if (!(want & ~b))
+            *next++ = (u8)(i + 1);
+        if (!(want & ~c))
+            *next++ = (u8)(i + 2);
+        if (!(want & ~d))
+            *next++ = (u8)(i + 3);
+        i += 4;
+    } while (i < MAX_ENT);
+    return (u32)(next - out);
+}
+
+u32 ecs_free_count(void) {
+    return free_count;
 }
 
 bool entity_alive(Entity e) {

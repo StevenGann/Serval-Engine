@@ -24,8 +24,6 @@
 #include "../core/warn.h"
 #include "physics_internal.h"
 
-u8 body_contact[MAX_ENT];
-
 #define MAX_STEP FX(7)
 
 static const MapLayer* playfield;
@@ -88,7 +86,7 @@ static FIXED rebound(FIXED vel, u32 bounce, FIXED gravity) {
     return vel > 0 ? -speed : speed;
 }
 
-static u32 move_x(u32 i, u32 w, u32 h) {
+static u32 move_x(u32 i, u32 w, u32 h, FIXED gravity) {
     int top = first_pixel(pos_y[i]), bottom = last_pixel(pos_y[i], h);
     for (FIXED left = vel_x[i]; left != 0;) {
         FIXED step = clamp_step(left);
@@ -98,14 +96,14 @@ static u32 move_x(u32 i, u32 w, u32 h) {
             int from = last_pixel(pos_x[i], w) >> 4, to = last_pixel(x, w) >> 4;
             if (to != from && column_blocked(to, top, bottom)) {
                 pos_x[i] = FX(to * 16 - (int)w);
-                vel_x[i] = rebound(vel_x[i], body_bounce[i], serval_gravity_x);
+                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity);
                 return MAP_CONTACT_RIGHT;
             }
         } else {
             int from = first_pixel(pos_x[i]) >> 4, to = first_pixel(x) >> 4;
             if (to != from && column_blocked(to, top, bottom)) {
                 pos_x[i] = FX(to * 16 + 16);
-                vel_x[i] = rebound(vel_x[i], body_bounce[i], serval_gravity_x);
+                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity);
                 return MAP_CONTACT_LEFT;
             }
         }
@@ -114,7 +112,7 @@ static u32 move_x(u32 i, u32 w, u32 h) {
     return 0;
 }
 
-static u32 move_y(u32 i, u32 w, u32 h) {
+static u32 move_y(u32 i, u32 w, u32 h, FIXED gravity) {
     int left_px = first_pixel(pos_x[i]), right_px = last_pixel(pos_x[i], w);
     for (FIXED left = vel_y[i]; left != 0;) {
         FIXED step = clamp_step(left);
@@ -124,14 +122,14 @@ static u32 move_y(u32 i, u32 w, u32 h) {
             int from = last_pixel(pos_y[i], h) >> 4, to = last_pixel(y, h) >> 4;
             if (to != from && row_blocked(to, left_px, right_px, true)) {
                 pos_y[i] = FX(to * 16 - (int)h);
-                vel_y[i] = rebound(vel_y[i], body_bounce[i], serval_gravity_y);
+                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity);
                 return MAP_CONTACT_FLOOR;
             }
         } else {
             int from = first_pixel(pos_y[i]) >> 4, to = first_pixel(y) >> 4;
             if (to != from && row_blocked(to, left_px, right_px, false)) {
                 pos_y[i] = FX(to * 16 + 16);
-                vel_y[i] = rebound(vel_y[i], body_bounce[i], serval_gravity_y);
+                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity);
                 return MAP_CONTACT_CEILING;
             }
         }
@@ -166,7 +164,9 @@ static __attribute__((noinline)) void warn_body(u32 i, u32 problem) {
 void sys_map_movement(void) {
     playfield = serval_map_layers[2];
     const FIXED gravity_x = serval_gravity_x, gravity_y = serval_gravity_y;
+    serval_map_bodies_moved = false;
     ECS_FOR_EACH(i, C_MAPBODY) {
+        serval_map_bodies_moved = true;
         body_contact[i] = 0;
         if (!ent_has(i, C_POS | C_VEL | C_BODY)) {
             WARN_BODY(i, 0);
@@ -178,27 +178,30 @@ void sys_map_movement(void) {
             w = w ? w : 1;
             h = h ? h : 1;
         }
-        vel_x[i] = serval_limit_fall(vel_x[i] + gravity_x, gravity_x, &body_max_fall[i]);
-        vel_y[i] = serval_limit_fall(vel_y[i] + gravity_y, gravity_y, &body_max_fall[i]);
+        // The body's own gravity (body_gravity).
+        const FIXED gx = serval_body_gravity(gravity_x, body_gravity[i]);
+        const FIXED gy = serval_body_gravity(gravity_y, body_gravity[i]);
+        vel_x[i] = serval_limit_fall(vel_x[i] + gx, gx, &body_max_fall[i]);
+        vel_y[i] = serval_limit_fall(vel_y[i] + gy, gy, &body_max_fall[i]);
         if (!playfield) {
             WARN_BODY(i, 2);
             pos_x[i] += vel_x[i];
             pos_y[i] += vel_y[i];
             continue;
         }
-        u32 contact = move_x(i, w, h);
-        contact |= move_y(i, w, h);
+        u32 contact = move_x(i, w, h, gx);
+        contact |= move_y(i, w, h, gy);
         body_contact[i] = (u8)contact;
         // Friction along a floor: the side gravity pulls toward. Skipped
         // without friction, so slow bodies keep their speed (serval_slide
         // stops any speed under a sixteenth of a pixel).
         u32 friction = body_friction[i];
         if (friction) {
-            if ((gravity_y > 0 && (contact & MAP_CONTACT_FLOOR)) ||
-                (gravity_y < 0 && (contact & MAP_CONTACT_CEILING)))
+            if ((gy > 0 && (contact & MAP_CONTACT_FLOOR)) ||
+                (gy < 0 && (contact & MAP_CONTACT_CEILING)))
                 vel_x[i] = serval_slide(vel_x[i], friction);
-            if ((gravity_x > 0 && (contact & MAP_CONTACT_RIGHT)) ||
-                (gravity_x < 0 && (contact & MAP_CONTACT_LEFT)))
+            if ((gx > 0 && (contact & MAP_CONTACT_RIGHT)) ||
+                (gx < 0 && (contact & MAP_CONTACT_LEFT)))
                 vel_y[i] = serval_slide(vel_y[i], friction);
         }
     }

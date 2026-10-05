@@ -24,6 +24,9 @@
 //     (scores.c; how a game picks and raises the version is explained there)
 //   - A game split into files: main.c runs the game, scores.c the table and
 //     the initials entry screen
+//   - Text styles (text_set_style): the new entry in the table in yellow;
+//     held-button repeat for the letters (button_repeat); counting and
+//     listing entities of a kind (ecs_count, ecs_gather)
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
@@ -55,7 +58,7 @@
 //     space (shown as '_'), with a short blip, repeating while held; A or
 //     RIGHT moves to the next letter, B or LEFT back (a lower blip). A on the
 //     last letter, or START at any time, confirms with a two-note chime: the
-//     table is saved and shown with "> <" blinking around the new entry.
+//     table is saved and shown with the new entry in yellow.
 //   - The attract mode alternates every 5 seconds between the title and the
 //     "HIGH SCORES" table: places 1 to 10, initials and scores. On a first
 //     boot it holds made-up players (SRV 5000 down to MAX 400). The table
@@ -373,7 +376,6 @@ typedef enum { PAGE_TITLE, PAGE_SCORES } Page;
 
 #define PAGE_FRAMES 300      // the attract pages alternate every 5 seconds
 #define NEW_ENTRY_FRAMES 600 // the table with a new entry stays 10 seconds
-#define BLINK_FRAMES 16      // the new entry's markers blink at this pace
 #define GAME_OVER_FRAMES 120 // "GAME OVER" before the initials entry screen
 #define GAME_OVER_IDLE 600   // without a high score, then the attract mode
 
@@ -466,12 +468,7 @@ static void destroy_ship(void) {
 }
 
 static void fire(u32 i) {
-    int bullets = 0;
-    ECS_FOR_EACH(b, C_BULLET) {
-        (void)b;
-        bullets++;
-    }
-    if (bullets >= MAX_BULLETS)
+    if (ecs_count(C_BULLET) >= MAX_BULLETS)
         return;
     FIXED dx = fx_cos(ship_angle), dy = fx_sin(ship_angle);
     // From the nose, at bullet speed plus the ship's own velocity.
@@ -576,15 +573,6 @@ static void spawn_wave(int count) {
     wave_shots = count * rock_shots[0];
 }
 
-static int rock_count(void) {
-    int n = 0;
-    ECS_FOR_EACH(i, C_ROCK) {
-        (void)i;
-        n++;
-    }
-    return n;
-}
-
 // Shots it would take to clear every rock left.
 static int shots_left(void) {
     int n = 0;
@@ -635,10 +623,18 @@ static void update_objects(void) {
     }
 }
 
+// Bullets and the ship against the rocks. The rocks are listed once
+// (ecs_gather) instead of an ECS_FOR_EACH per bullet, which would scan the
+// whole pool each time. The list is a snapshot: a rock broken here leaves
+// its slot in it (empty, or taken by one of its pieces), so each entry is
+// checked with ent_has() first.
 static void check_collisions(void) {
+    static u8 rocks[MAX_ENT];
+    u32 rock_total = ecs_gather(C_ROCK, rocks);
     ECS_FOR_EACH(b, C_BULLET) {
-        ECS_FOR_EACH(r, C_ROCK) {
-            if (body_overlap(b, r)) {
+        for (u32 k = 0; k < rock_total; k++) {
+            u32 r = rocks[k];
+            if (ent_has(r, C_ROCK) && body_overlap(b, r)) {
                 entity_destroy(entity_at(b));
                 break_rock(r);
                 break; // this bullet is gone
@@ -647,8 +643,9 @@ static void check_collisions(void) {
     }
     if (entity_alive(ship) && ship_timer == 0) {
         u32 s = entity_index(ship);
-        ECS_FOR_EACH(r, C_ROCK) {
-            if (body_overlap(s, r)) {
+        for (u32 k = 0; k < rock_total; k++) {
+            u32 r = rocks[k];
+            if (ent_has(r, C_ROCK) && body_overlap(s, r)) {
                 break_rock(r);
                 destroy_ship();
                 break;
@@ -714,7 +711,7 @@ static void update_playing(void) {
                 text_print_centered(11, "PRESS START");
         }
     }
-    if (rock_count() == 0) {
+    if (ecs_count(C_ROCK) == 0) {
         wave++;
         spawn_wave(FIRST_WAVE_ROCKS - 1 + wave);
     }
@@ -735,7 +732,7 @@ static void show_page(Page p, int frames) {
         text_print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
         text_print_centered(15, "A:FIRE  START:PAUSE");
     } else {
-        scores_draw(highlight, true);
+        scores_draw(highlight);
         text_print_centered(18, "PRESS START");
     }
 }
@@ -754,8 +751,6 @@ static void update_title(bool start) {
         psg_play(SND_RESET);
         return;
     }
-    if (page == PAGE_SCORES && highlight >= 0 && page_timer % BLINK_FRAMES == 0)
-        scores_draw(highlight, page_timer / BLINK_FRAMES % 2 == 0);
     if (--page_timer == 0) {
         highlight = -1; // the newest entry is marked only the first time
         show_page(page == PAGE_TITLE ? PAGE_SCORES : PAGE_TITLE, PAGE_FRAMES);

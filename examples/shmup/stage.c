@@ -6,9 +6,8 @@
 // camera starts at its bottom and moves up a pixel per frame, so the stage
 // reads from the bottom of the list below to the top: about 7,000 pixels, a
 // little under two minutes, before the open space where the boss waits. The
-// top STAGE_LOOP + SCREEN_H pixels are empty; during the boss fight the camera
-// jumps back down by STAGE_LOOP whenever it reaches the top (game.c), and
-// nothing on screen changes, so the stars scroll on for as long as it lasts.
+// top SCREEN_H pixels are empty: the camera stops there for the boss fight,
+// and the stars scroll on by themselves (game.c).
 
 #include "game.h"
 
@@ -63,7 +62,7 @@ static const Segment stage_segments[] = {
     segment_open,
 };
 #define SEGMENT_COUNT ((int)(sizeof stage_segments / sizeof stage_segments[0]))
-#define TOP_ROWS ((STAGE_LOOP + SCREEN_H) / 16) // the boss's open space
+#define TOP_ROWS (SCREEN_H / 16) // the boss's open space
 #define STAGE_ROWS (TOP_ROWS + SEGMENT_COUNT * SEGMENT_H)
 
 int stage_start_y = STAGE_ROWS * 16 - SCREEN_H;

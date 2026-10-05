@@ -71,10 +71,15 @@ static void make_layers(void) {
                             .bg = 1};
 }
 
+// map_set_scroll()'s offsets, as the tests set them (index: background).
+static int offset_x[4], offset_y[4];
+
 static void unload_all(void) {
     map_unload(1);
     map_unload(2);
     map_unload(3);
+    for (u32 bg = 0; bg < 4; bg++)
+        offset_x[bg] = offset_y[bg] = 0;
     camera_set(0, 0);
     frame_begin();
     frame_end();
@@ -85,9 +90,17 @@ static int floor_mod(int v, int m) {
     return r < 0 ? r + m : r;
 }
 
-static int layer_scroll(const MapLayer* layer, int camera) {
+static void set_scroll(u32 bg, int x, int y) {
+    map_set_scroll(bg, x, y);
+    offset_x[bg] = x;
+    offset_y[bg] = y;
+}
+
+static int layer_scroll(const MapLayer* layer, int camera, int offset) {
+    if (layer->flags & MAP_LAYER_FIXED)
+        return offset;
     FIXED f = layer->scroll_factor ? layer->scroll_factor : FX_ONE;
-    return (camera * f) >> FX_SHIFT; // small values in these tests: no overflow
+    return ((camera * f) >> FX_SHIFT) + offset; // small values in these tests: no overflow
 }
 
 // What tile (tx, ty) of a layer should show.
@@ -106,7 +119,8 @@ static u16 expected_entry(const MapLayer* layer, int tx, int ty) {
 // True if the layer's screenblock holds the right entries for every tile the
 // screen shows, and its scroll registers the right values.
 static bool window_ok(const MapLayer* layer) {
-    int sx = layer_scroll(layer, camera_x()), sy = layer_scroll(layer, camera_y());
+    int sx = layer_scroll(layer, camera_x(), offset_x[layer->bg]);
+    int sy = layer_scroll(layer, camera_y(), offset_y[layer->bg]);
     if (serval_map_scroll(layer->bg) != ((u32)(sy & 0x1FF) << 16 | (u32)(sx & 0x1FF)))
         return false;
     const u16* sb = se_mem[27 + layer->bg];
@@ -379,6 +393,148 @@ static void a_full_redraw_fits_in_vblank(void) {
     unload_all();
 }
 
+// A HUD panel: a fixed layer that ignores the camera.
+static void fixed_layers_ignore_the_camera(void) {
+    make_layers();
+    MapLayer panel = foreground;
+    panel.flags = MAP_LAYER_FIXED;
+    map_load(&playfield);
+    map_load(&panel);
+    camera_set(100, 60);
+    show_frame();
+    CHECK(serval_map_scroll(1) == 0);
+    CHECK(serval_map_scroll(2) == (60u << 16 | 100u));
+    CHECK(window_ok(&panel) && window_ok(&playfield));
+    static SERVAL_EWRAM_BSS u16 before[32 * 32];
+    for (u32 k = 0; k < 32 * 32; k++)
+        before[k] = se_mem[28][k];
+    bool ok = true, same = true;
+    for (int f = 0; f < 120; f++) {
+        camera_set(100 + 3 * f, 60 + (f % 40) - 20 + f);
+        show_frame();
+        ok &= serval_map_scroll(1) == 0 && window_ok(&panel) && window_ok(&playfield);
+    }
+    for (u32 k = 0; k < 32 * 32; k++)
+        same &= se_mem[28][k] == before[k];
+    CHECK(ok);
+    CHECK(same); // nothing redrawn
+    // An offset moves it: a 64-pixel panel on the right of the screen.
+    set_scroll(1, -176, 8);
+    show_frame();
+    CHECK(serval_map_scroll(1) == (8u << 16 | ((u32)-176 & 0x1FF)));
+    CHECK(window_ok(&panel));
+    camera_set(0, 0);
+    show_frame();
+    CHECK(serval_map_scroll(1) == (8u << 16 | ((u32)-176 & 0x1FF)) && window_ok(&panel));
+    unload_all();
+}
+
+// Layers moved by map_set_scroll() while the camera stays put or moves too:
+// every speed up to a metatile per frame, both ways, across the screenblock's
+// 256-pixel wrap, the wrapping layer's period and negative positions.
+static void scroll_offsets_stream_like_the_camera(void) {
+    make_layers();
+    map_load(&playfield);
+    map_load(&foreground);
+    map_load(&backdrop); // 3x2 metatiles, wrapping, half speed
+    camera_set(200, 100);
+    show_frame();
+    bool ok = true;
+    int ox = 0, oy = 0, fx = 0, fy = 0;
+    for (int speed = 1; speed <= 16 && ok; speed++) {
+        for (int f = 0; f < 70 && ok; f++) {
+            int dir = (f / 35) ? -1 : 1;
+            oy -= dir * speed;
+            ox += dir * (speed / 3);
+            fx += dir * speed;
+            fy -= dir * (speed / 2);
+            set_scroll(3, ox, oy);
+            set_scroll(1, fx, fy);
+            if (speed % 4 == 0) // the camera moves too
+                camera_set(200 + (f % 20), 100 + (f % 7));
+            show_frame();
+            ok &= window_ok(&backdrop) && window_ok(&foreground) && window_ok(&playfield);
+        }
+    }
+    CHECK(ok);
+    // Far negative: the starfield drifting down for a long time.
+    for (int f = 0; f < 2000 && ok; f++) {
+        oy -= 1;
+        set_scroll(3, ox, oy);
+        show_frame();
+        ok &= window_ok(&backdrop);
+    }
+    CHECK(ok);
+    CHECK(oy == -2000);
+    // map_unload() forgets the offset; map_load() keeps it.
+    set_scroll(1, 40, 24);
+    map_load(&foreground);
+    CHECK(window_ok(&foreground));
+    map_unload(1);
+    offset_x[1] = offset_y[1] = 0;
+    map_load(&foreground);
+    CHECK(window_ok(&foreground) && serval_map_scroll(1) == serval_map_scroll(2));
+    unload_all();
+}
+
+// One frame_end()'s map work, before VBlank and in it, in cycles.
+static void time_map_update(u32* prepare, u32* commit) {
+    u32 t0 = cycles();
+    serval_map_prepare();
+    u32 t1 = cycles();
+    VBlankIntrWait();
+    u32 t2 = cycles();
+    serval_map_commit();
+    u32 t3 = cycles();
+    *prepare = t1 - t0;
+    *commit = t3 - t2;
+}
+
+// What steady autoscrolling costs per frame, before VBlank and in it: never a
+// full redraw, only the rows (and columns) entering the window.
+static void autoscroll_costs_a_row_per_frame(void) {
+    make_layers();
+    map_load(&playfield);
+    map_load(&foreground);
+    map_load(&backdrop);
+    camera_set(64, 64);
+    show_frame();
+    // For comparison: a full redraw of the two layers that will scroll.
+    u32 full_prepare, full_commit;
+    set_scroll(3, 0, 4000);
+    set_scroll(1, 4000, 0);
+    time_map_update(&full_prepare, &full_commit);
+    debug_log(text_format("map: full redraw of 2 layers: %u cycles before VBlank, %u in VBlank",
+                          full_prepare, full_commit));
+    CHECK(window_ok(&backdrop) && window_ok(&foreground));
+    static const int speeds[] = {1, 4, 16};
+    int y = 4000;
+    for (u32 s = 0; s < sizeof(speeds) / sizeof(speeds[0]); s++) {
+        u32 max_prepare = 0, max_commit = 0, total_prepare = 0, total_commit = 0;
+        bool ok = true;
+        for (int f = 0; f < 64; f++) {
+            y -= speeds[s];
+            set_scroll(3, 0, y); // the starfield
+            set_scroll(1, y, 0); // and a foreground sideways
+            u32 prepare, commit;
+            time_map_update(&prepare, &commit);
+            ok &= window_ok(&backdrop) && window_ok(&foreground) && window_ok(&playfield);
+            max_prepare = prepare > max_prepare ? prepare : max_prepare;
+            max_commit = commit > max_commit ? commit : max_commit;
+            total_prepare += prepare;
+            total_commit += commit;
+        }
+        debug_log(text_format("map: autoscroll %u px/frame on 2 layers: before VBlank avg %u max "
+                              "%u, in VBlank avg %u max %u cycles",
+                              speeds[s], total_prepare / 64, max_prepare, total_commit / 64,
+                              max_commit));
+        CHECK(ok);
+        // Far from a full redraw (of even one of the two layers) on any frame.
+        CHECK_TIMING(max_prepare < full_prepare / 3 && max_commit < full_commit / 3);
+    }
+    unload_all();
+}
+
 static const u32 sprite_tiles[8];
 static const SpriteAsset sprite = {.size = SPRITE_8x8, .tiles = sprite_tiles};
 static const SpriteAsset* const sprite_table[1] = {&sprite};
@@ -439,4 +595,7 @@ TEST_SUITE(gba_map_tests, "gba map",
            {"changed cells are redrawn", changed_cells_are_redrawn},
            {"map_unload hides the background", map_unload_hides_the_background},
            {"a full redraw fits in VBlank", a_full_redraw_fits_in_vblank},
-           {"render systems subtract the camera", render_systems_subtract_the_camera}, );
+           {"render systems subtract the camera", render_systems_subtract_the_camera},
+           {"fixed layers ignore the camera", fixed_layers_ignore_the_camera},
+           {"scroll offsets stream like the camera", scroll_offsets_stream_like_the_camera},
+           {"autoscroll costs a row per frame", autoscroll_costs_a_row_per_frame}, );

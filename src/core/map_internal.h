@@ -12,6 +12,15 @@ extern int serval_camera_x, serval_camera_y;
 
 // The layer shown on each background (index 1-3; 0 unused), or NULL.
 extern const MapLayer* serval_map_layers[4];
+// map_set_scroll()'s offsets of backgrounds 1-3 (index 0 unused).
+extern int serval_map_offset_x[4], serval_map_offset_y[4];
+
+// The layer pixel shown at the screen's top-left for the layer on background
+// bg: the camera times its scroll factor (none for MAP_LAYER_FIXED), rounded
+// down, plus map_set_scroll()'s offset.
+int serval_map_layer_x(const MapLayer* layer);
+int serval_map_layer_y(const MapLayer* layer);
+
 // Backgrounds whose layer was loaded or unloaded since the platform last drew
 // them (bit n = background n): they are redrawn from scratch.
 extern u8 serval_map_reload;

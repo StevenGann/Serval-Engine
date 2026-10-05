@@ -5,9 +5,24 @@
 // (src/ecs/map_movement.c). Not part of the public API.
 
 #include "serval/fixed.h"
+#include "serval/platform.h"
 
 // physics_set_gravity()'s acceleration, in pixels per frame per frame.
 extern FIXED serval_gravity_x, serval_gravity_y;
+
+// A body's own gravity on one axis: `gravity` scaled by its body_gravity
+// (the scale in 16ths, minus 16; 0 is the common case and costs one test).
+// Rounds the magnitude down, so reversing a scale only flips the sign.
+static inline FIXED serval_body_gravity(FIXED gravity, s8 scale) {
+    if (!scale)
+        return gravity;
+    FIXED scaled = gravity * (16 + scale);
+    return scaled < 0 ? -(-scaled >> 4) : scaled >> 4;
+}
+
+// Whether the last sys_map_movement() moved any map bodies (since the last
+// ecs_reset()): sys_physics() must then leave their body_contact alone.
+extern bool serval_map_bodies_moved;
 
 // Sliding stops below this speed (a sixteenth of a pixel per frame).
 #define SERVAL_STOP_SPEED (FX_ONE / 16)

@@ -21,7 +21,6 @@ typedef enum { PAGE_TITLE, PAGE_SCORES } Page;
 #define FADE_STEP 2 // brightness per frame: 8 frames between black and normal
 #define PAGE_FRAMES 300
 #define NEW_SCORE_FRAMES 600 // the score table after a game that made it
-#define BLINK_FRAMES 20
 #define LOST_FRAMES 75
 #define CLEAR_FRAMES 150
 #define GAME_OVER_FRAMES 180
@@ -109,7 +108,7 @@ static void show_page(Page p, int frames) {
         text_print_centered(14, "LEFT/RIGHT:MOVE  A:LAUNCH");
         text_print_centered(15, "START:PAUSE");
     } else {
-        scores_draw(4, new_rank, true);
+        scores_draw(4, new_rank);
     }
 }
 
@@ -126,18 +125,19 @@ static void show_title(void) {
 // paddle and a ball.
 static void draw_title_art(void) {
     static const u8 arch[2][10] = {
-        {SPR_BRICK_PURPLE, SPR_BRICK_BLUE, SPR_BRICK_GREEN, SPR_BRICK_YELLOW, SPR_BRICK_ORANGE,
-         SPR_BRICK_RED, SPR_BRICK_ORANGE, SPR_BRICK_YELLOW, SPR_BRICK_GREEN, SPR_BRICK_BLUE},
-        {SPR_BRICK_SILVER, SPR_BRICK_RED, SPR_BRICK_RED, SPR_BRICK_GOLD, SPR_BRICK_GOLD,
-         SPR_BRICK_GOLD, SPR_BRICK_GOLD, SPR_BRICK_RED, SPR_BRICK_RED, SPR_BRICK_SILVER},
+        {PAL_PURPLE, PAL_BLUE, PAL_GREEN, PAL_YELLOW, PAL_ORANGE, PAL_RED, PAL_ORANGE, PAL_YELLOW,
+         PAL_GREEN, PAL_BLUE},
+        {PAL_SILVER, PAL_RED, PAL_RED, PAL_GOLD, PAL_GOLD, PAL_GOLD, PAL_GOLD, PAL_RED, PAL_RED,
+         PAL_SILVER},
     };
     for (int r = 0; r < 2 && page == PAGE_TITLE; r++) {
         for (int c = 0; c < 10; c++) {
-            u16 id = arch[r][c];
-            u8 frame = id == SPR_BRICK_SILVER ? BRICK_FRAME_SILVER
-                       : id == SPR_BRICK_GOLD ? BRICK_FRAME_GOLD
-                                              : BRICK_FRAME_PLAIN;
-            sprite_draw(id, frame, 40 + c * BRICK_W, 72 + r * BRICK_H, 0);
+            u8 color = arch[r][c];
+            u8 frame = color == PAL_SILVER ? BRICK_FRAME_SILVER
+                       : color == PAL_GOLD ? BRICK_FRAME_GOLD
+                                           : BRICK_FRAME_PLAIN;
+            sprite_draw(SPR_BRICK, frame, 40 + c * BRICK_W, 72 + r * BRICK_H,
+                        SPRITE_PALETTE(color));
         }
     }
     // The ball bobs above the paddle.
@@ -208,8 +208,6 @@ static void update_title(void) {
             text_print_centered(12, "PRESS START");
         else
             text_print_line(0, 12, "");
-    } else if (new_rank >= 0 && page_timer % BLINK_FRAMES == 0) {
-        scores_draw(4, new_rank, page_timer / BLINK_FRAMES % 2 == 0);
     }
 }
 
@@ -303,9 +301,13 @@ void game_init(void) {
     sprite_group_load(&sprite_group);
     tileset_load(&tileset);
     // The balls bounce off the frame's inside; the bottom is open, so a
-    // missed ball falls out. No gravity: the balls fly straight.
+    // missed ball falls out. Gravity pulls the capsules down; the balls have
+    // none of it (body_gravity) and fly straight. body_contact tells which
+    // wall a ball touched, and when anything left through the bottom.
     physics_set_bounds(FIELD_LEFT, FIELD_TOP, FIELD_RIGHT, SCREEN_H);
     physics_set_open_edges(PHYSICS_EDGE_BOTTOM);
+    physics_set_gravity(0, FX_ONE / 16);
+    physics_set_contacts(true);
     text_set_shadow(true); // white text stays readable over the pattern
     scores_load();
     show_title();

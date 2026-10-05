@@ -7,6 +7,7 @@
 
 #include <tonc.h>
 
+#include "../core/input_internal.h"
 #include "../core/random_internal.h"
 #include "internal.h"
 
@@ -79,6 +80,7 @@ void serval_init(void) {
     ecs_reset();
     random_seed(0);
     serval_entropy_reset();
+    serval_repeat_reset();
     frames = 0;
     serval_psg_init();
 
@@ -91,6 +93,7 @@ void frame_begin(void) {
     frame_start_cycles = cycles_now();
     key_poll();
     serval_entropy_frame(frames, key_curr_state());
+    serval_repeat_frame(key_curr_state());
     serval_oam_used = 0;
     serval_matrices_used = 0;
 }

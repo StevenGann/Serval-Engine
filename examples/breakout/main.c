@@ -8,24 +8,29 @@
 //     bricks around the ball and tells shared faces from exposed ones
 //     (play.c explains why bricks aren't map cells here, and what that would
 //     have changed)
-//   - Engine physics for the balls (sys_physics: bounds inside the frame,
-//     the bottom edge open so a missed ball falls out) and a paddle whose
-//     velocity sys_movement applies, so body_hit_side() sees it move
+//   - Engine physics for the balls and capsules (sys_physics: bounds inside
+//     the frame, the bottom edge open so a missed ball falls out; gravity for
+//     the capsules, none for the balls with body_gravity; body_contact for
+//     the walls a ball bounced off and what left through the bottom) and a
+//     paddle whose velocity sys_movement applies, so body_hit_side() sees it
+//     move
 //   - A constant ball speed: directions are angles (fx_sin, fx_cos), every
 //     bounce mirrors the angle, and no bounce leaves the ball flatter than 25
 //     degrees: no horizontal loops. The speed limit keeps the ball from
 //     jumping over a brick.
-//   - Game components (C_GAME) with their own arrays, and ecs_count(): bricks
-//     left to break, balls in play, capsules falling, room for effects
+//   - Game components (C_GAME) with their own arrays, ecs_count() (bricks
+//     left to break, balls in play, capsules falling) and ecs_free_count()
+//     (effects only while there is room)
 //   - Animated sprites (sys_animate with frame_times): capsules glint, broken
 //     bricks leave dust that plays once (SPRITE_ASSET_ANIM_ONCE)
-//   - Several sprites sharing tiles with different palettes (eight brick
-//     colors and a white hit flash); a paddle drawn in pieces with
-//     sprite_draw, wider after a power-up
+//   - One sprite drawn with different palettes (SPRITE_PALETTE: eight brick
+//     colors and a white hit flash, the paddle's glow); a paddle drawn in
+//     pieces with sprite_draw, wider after a power-up
 //   - Map layers as backgrounds (map.h): a pipe frame on background 2 and a
 //     wrapping pattern of serval spots on background 3, in each level's colors
 //   - Screen fades between title, levels and the score table
-//     (screen_set_brightness); text with a drop shadow, text_print_centered
+//     (screen_set_brightness); text with a drop shadow, text_print_centered,
+//     a text style to highlight the new score in the table
 //   - Music (PsgSong): an original looping tune on all three tone generators,
 //     paused with the game; a fanfare played once per cleared level; sound
 //     effects over it with priorities (a jingle isn't cut short by bricks)
@@ -66,7 +71,7 @@
 //   - Missing the last ball: a falling tone, a paw print goes, and a new ball
 //     waits on a normal paddle. With no lives left: "GAME OVER" and a sad tune;
 //     a score that makes the table is saved and marked "NEW BEST SCORE: #n",
-//     then after a fade the table shows it between blinking arrows.
+//     then after a fade the table shows it in yellow.
 //   - Breaking the last breakable brick: "LEVEL CLEAR!", a fanfare, 1000
 //     bonus points, and a fade to the next level: 2 "THE SERVAL" (a serval's
 //     head with silver ears and gold eyes, teal background), 3 "FORTRESS"

@@ -26,6 +26,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`breakout`](../examples/breakout/main.c) | A game split into files: bricks as entities and which side the ball hit (`body_hit_side`), game components and `ecs_count`, directions as angles, power-ups, map layers as a static background, music, save data |
 | [`platformer`](../examples/platformer/main.c) | A bigger game split into files: tilesets, metatiles and map layers, a scrolling camera, map bodies and collision, changing the map at runtime, a platformer controller |
 | [`shmup`](../examples/shmup/main.c) | A vertical shooter: a stage scrolled by the camera with a wrapping parallax layer, a HUD panel layer, an entity budget with caps, movement patterns from a wave table, aimed bullets, a multi-phase boss, cheap per-frame loops over the entities of each kind |
+| [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 
@@ -175,6 +176,9 @@ Your own components are bits from `C_GAME(0)` to `C_GAME(14)` with arrays you de
 
 ```c
 text_print_line(0, 0, text_format("SCORE %5d", score));   // column 0, row 0 of 30x20
+text_set_style(TEXT_HIGHLIGHT);                            // yellow until set back
+text_print_centered(5, text_format("%.3s %6d", initials, best)); // %.3s: a char[3]
+text_set_style(TEXT_NORMAL);
 debug_log(text_format("spawned %u", count));              // mGBA's log window
 ```
 

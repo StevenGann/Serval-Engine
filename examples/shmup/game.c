@@ -65,6 +65,8 @@ u32 spawn(u32 components, u16 sprite, int w, int h, FIXED cx, FIXED cy) {
     body_w[i] = (u8)w;
     body_h[i] = (u8)h;
     spr_id[i] = sprite;
+    // Flying things stay on the screen while the camera climbs the map.
+    spr_flags[i] = components & C_GROUND ? 0 : SPRITE_SCREEN;
     return i;
 }
 
@@ -73,11 +75,12 @@ FIXED center_x(u32 i) {
 }
 
 FIXED center_y(u32 i) {
-    return pos_y[i] + FX(body_h[i]) / 2;
+    FIXED top = ent_has(i, C_GROUND) ? pos_y[i] - FX(cam_y) : pos_y[i];
+    return top + FX(body_h[i]) / 2;
 }
 
 int screen_y(u32 i) {
-    return fx_to_int(pos_y[i]) - cam_y;
+    return fx_to_int(pos_y[i]) - (ent_has(i, C_GROUND) ? cam_y : 0);
 }
 
 void destroy_all(u32 components) {
@@ -99,69 +102,39 @@ void add_score(int points) {
 
 SlotList shots, enemies, ebullets, items, effects;
 
-static void add_to(SlotList* list, u32 i) {
-    list->slot[list->count++] = (u8)i;
+// Each kind's slots, listed at the start of the frame. ecs_gather scans the
+// pool in IWRAM, about a quarter of what an ECS_FOR_EACH costs from ROM.
+static void gather(void) {
+    shot_count = shots.count = (int)ecs_gather(C_SHOT, shots.slot);
+    enemy_count = enemies.count = (int)ecs_gather(C_ENEMY, enemies.slot);
+    ebullet_count = ebullets.count = (int)ecs_gather(C_EBULLET, ebullets.slot);
+    item_count = items.count = (int)ecs_gather(C_ITEM, items.slot);
+    fx_count = effects.count = (int)ecs_gather(C_FX, effects.slot);
 }
 
-// One pass over the pool at the start of the frame: moves everything that
-// flies with the camera by `dy` (see scroll()) and lists each kind's slots.
-static void gather(int dy) {
-    shots.count = enemies.count = ebullets.count = items.count = effects.count = 0;
-    for (u32 i = 0; i < MAX_ENT; i++) {
-        u32 m = ent_mask[i];
-        if (!(m & C_ALIVE))
-            continue;
-        if (!(m & C_GROUND))
-            pos_y[i] += FX(dy);
-        if (m & C_SHOT)
-            add_to(&shots, i);
-        else if (m & C_ENEMY)
-            add_to(&enemies, i);
-        else if (m & C_EBULLET)
-            add_to(&ebullets, i);
-        else if (m & C_ITEM)
-            add_to(&items, i);
-        else if (m & C_FX)
-            add_to(&effects, i);
-    }
-    shot_count = shots.count;
-    enemy_count = enemies.count;
-    ebullet_count = ebullets.count;
-    item_count = items.count;
-    fx_count = effects.count;
-}
+static int drift; // pixels the stars have scrolled on by themselves (the boss fight)
 
-// The camera climbs a pixel per frame. sys_render draws every entity relative
-// to the camera, and there is no way to keep some on the screen instead, so
-// everything that flies (the ship, enemies, bullets, effects: all but the
-// turrets fixed to the map) moves up with it, a pixel per frame (gather()).
-// During the boss the camera loops down by STAGE_LOOP at the top of the map,
-// and everything moves with it, so nothing on screen jumps.
+// The camera climbs the stage a pixel per frame, scrolling the map and the
+// turrets on it down the screen; flying things have SPRITE_SCREEN, so they
+// stay put. At the top of the map, where the boss waits, the camera stops
+// and the starfield scrolls on by itself for as long as the fight lasts:
+// map_set_scroll moves it half a pixel per frame (its scroll_factor's speed),
+// counting on rather than wrapping, so the stars never jump.
 static void scroll(void) {
-    int dy = -1;
-    if (cam_y + dy < 0 && stage_phase == STAGE_BOSS)
-        dy += STAGE_LOOP;
-    cam_y += dy;
-    camera_set(0, cam_y);
-    gather(dy);
+    if (cam_y > 0) {
+        camera_set(0, --cam_y);
+    } else {
+        drift++;
+        map_set_scroll(3, 0, -((drift + 1) / 2)); // rounded down, as for the camera
+    }
+    gather();
 }
 
 // --- Text in the field and on the panel --------------------------------------------
 
-// Text centered on the field (the 22 columns left of the panel).
-// text_print_centered() centers on the whole screen, and text_print_line()
-// would blank the panel's half of the row too, so the field has its own.
-static void field_print(int row, const char* s) {
-    int n = 0;
-    while (s[n])
-        n++;
-    text_print(0, row, "                      "); // 22 spaces
-    text_print((PANEL_COL - n) / 2, row, s);
-}
-
-static void field_clear(int row) {
-    text_print(0, row, "                      ");
-}
+// Text in the field: centered in, or cleared from, its 22 columns, leaving
+// the panel's half of the row alone.
+#define FIELD_COLS PANEL_COL
 
 static int shown_score = -1, shown_best = -1, shown_lives = -1, shown_bombs = -1, shown_power = -1;
 
@@ -200,8 +173,7 @@ static void draw_panel(void) {
     cpu_peak = p > cpu_peak ? p : cpu_peak;
     if (button_pressed(BUTTON_SELECT)) {
         show_cpu = !show_cpu;
-        for (int row = 16; row <= 18; row++)
-            text_print(PANEL_COL, row, "        ");
+        text_clear_area(PANEL_COL, 16, 8, 3);
     }
     if (show_cpu) {
         text_print(PANEL_COL, 16, text_format("C %3u.%u", p / 10, p % 10));
@@ -258,6 +230,7 @@ static void enter_title(bool table, int frames) {
     state_timer = frames;
     ecs_reset();
     stage_hide();
+    map_set_scroll(3, 0, 0); // the stars follow the camera again
     map_load(&stars_layer);
     psg_music_stop();
     show_title_page();
@@ -278,13 +251,15 @@ static void begin_stage(void) {
     ecs_reset();
     enemies_reset();
     boss_reset();
-    stage_show();
     cam_y = stage_start_y;
-    camera_set(0, cam_y);
+    camera_set(0, cam_y); // before loading the layers, so they are drawn there
+    drift = 0;
+    map_set_scroll(3, 0, 0);
+    stage_show();
     text_clear();
     panel_labels();
-    field_print(7, "STAGE 1");
-    field_print(9, "THE STAR VELDT");
+    text_print_centered_in(0, FIELD_COLS, 7, "STAGE 1");
+    text_print_centered_in(0, FIELD_COLS, 9, "THE STAR VELDT");
     player_spawn();
     psg_music_play(&stage_song);
 #ifdef SERVAL_DEBUG
@@ -308,6 +283,7 @@ static void show_entry(void) {
     state = ENTRY;
     ecs_reset();
     stage_hide();
+    map_set_scroll(3, 0, 0);
     map_load(&stars_layer);
     psg_music_stop();
     entry_begin(score, cleared);
@@ -329,7 +305,7 @@ static void game_over(void) {
     state_timer = 0;
     psg_music_stop();
     psg_play(SND_GAME_OVER);
-    field_print(8, "GAME OVER");
+    text_print_centered_in(0, FIELD_COLS, 8, "GAME OVER");
 }
 
 static void start_clear(void) {
@@ -340,7 +316,7 @@ static void start_clear(void) {
     invulnerable = 10000;
     bonus = lives * 10000 + bombs * 2000;
     psg_music_play(&clear_song);
-    field_print(6, "STAGE CLEAR!");
+    text_print_centered_in(0, FIELD_COLS, 6, "STAGE CLEAR!");
 }
 
 // --- Each frame ------------------------------------------------------------------
@@ -355,7 +331,7 @@ static void update_world(void) {
     player_update();
     enemies_update();
     boss_update();
-    path_update_all();
+    sys_path();
     sys_movement();
     sys_animate();
     enemies_collide();
@@ -366,12 +342,12 @@ static void update_world(void) {
 // The stage's flow: the intro text, the warning, the boss.
 static void update_stage(void) {
     if (stage_frame == INTRO_FRAMES) {
-        field_clear(7);
-        field_clear(9);
+        text_clear_area(0, 7, FIELD_COLS, 1);
+        text_clear_area(0, 9, FIELD_COLS, 1);
     }
     switch (stage_phase) {
     case STAGE_WAVES:
-        if (cam_y <= BOSS_CAMERA_Y + WARNING_LEAD) {
+        if (cam_y <= WARNING_LEAD) {
             stage_phase = STAGE_WARNING;
             state_timer = 0;
             psg_music_stop();
@@ -381,17 +357,17 @@ static void update_stage(void) {
     case STAGE_WARNING:
         state_timer++;
         if (state_timer % 32 == 0)
-            field_print(8, "WARNING");
+            text_print_centered_in(0, FIELD_COLS, 8, "WARNING");
         else if (state_timer % 32 == 20)
-            field_clear(8);
+            text_clear_area(0, 8, FIELD_COLS, 1);
         if (state_timer == 40)
-            field_print(10, "THE HIVE LANTERN");
+            text_print_centered_in(0, FIELD_COLS, 10, "THE HIVE LANTERN");
         if (state_timer == 150)
             psg_play(SND_WARNING);
-        if (cam_y <= BOSS_CAMERA_Y) {
+        if (cam_y == 0) { // the top of the map
             stage_phase = STAGE_BOSS;
-            field_clear(8);
-            field_clear(10);
+            text_clear_area(0, 8, FIELD_COLS, 1);
+            text_clear_area(0, 10, FIELD_COLS, 1);
             boss_start();
 #ifdef SERVAL_DEBUG
             cpu_peak = 0;
@@ -410,7 +386,7 @@ static void update_playing(bool start) {
         state = PAUSED;
         psg_music_pause(); // silent, and holding its place
         psg_play(SND_PAUSE);
-        field_print(12, "PAUSED");
+        text_print_centered_in(0, FIELD_COLS, 12, "PAUSED");
         return;
     }
     update_world();
@@ -427,7 +403,7 @@ static void update_clear(bool start) {
     update_world();
     state_timer++;
     if (state_timer == 60)
-        field_print(8, "BONUS");
+        text_print_centered_in(0, FIELD_COLS, 8, "BONUS");
     if (state_timer >= 60 && bonus > 0) {
         int n = int_min(bonus, 500);
         bonus -= n;
@@ -436,7 +412,7 @@ static void update_clear(bool start) {
             psg_play(SND_TALLY);
     }
     if (state_timer >= 60)
-        field_print(9, text_format("%d", bonus));
+        text_print_centered_in(0, FIELD_COLS, 9, text_format("%d", bonus));
     if (state_timer >= 480 || (bonus == 0 && start))
         fade_to(after_game);
 }
@@ -512,7 +488,7 @@ void game_frame(void) {
                 state = PLAYING;
                 psg_play(SND_PAUSE);
                 psg_music_resume(); // where it stopped
-                field_clear(12);
+                text_clear_area(0, 12, FIELD_COLS, 1);
             }
             break;
         case GAME_OVER:

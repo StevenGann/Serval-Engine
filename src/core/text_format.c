@@ -81,6 +81,60 @@ static inline u32 integer_arg(va_list* args, u32 longs) {
     return (u32)va_arg(*args, unsigned long long);
 }
 
+// Prints a %s argument, at most `max` characters of it (reading no further).
+static __attribute__((noinline)) void put_string(Buffer* b, va_list* args, u32 max, Field f) {
+    const char* s = va_arg(*args, const char*);
+    if (!s)
+        s = "(null)";
+#ifdef SERVAL_DEBUG
+    // Usually a number passed for %s; reading it as a string would print
+    // garbage or scan memory until a zero byte.
+    if (!serval_plausible_pointer(s)) {
+        static bool warned_string;
+        if (!warned_string) {
+            warned_string = true;
+            SERVAL_WARN("text_format: the %%s argument (0x%x) is not a string", (u32)(uintptr_t)s);
+        }
+        s = "(?)";
+    }
+#endif
+    u32 n = 0;
+    while (n < max && s[n])
+        n++;
+    put_padded(b, s, n, f);
+}
+
+// A precision: its digits or '*' (an int argument; a negative one means none,
+// as in printf); `p` points just past the '.'. Prints a %s with it and
+// returns its 's'; on other conversions the precision is ignored (with a
+// warning), and the conversion character is returned for convert() to go on.
+static __attribute__((noinline)) const char* precision_conversion(Buffer* b, const char* p,
+                                                                  va_list* args, Field f) {
+    u32 precision = 0;
+    if (*p == '*') {
+        int n = va_arg(*args, int);
+        precision = n < 0 ? 0xFFFFFFFFu : (u32)n;
+        p++;
+    } else {
+        for (; *p >= '0' && *p <= '9'; p++) {
+            if (precision < TEXT_FORMAT_MAX) // more could never be printed anyway
+                precision = precision * 10 + (u32)(*p - '0');
+        }
+    }
+    if (*p == 's') {
+        put_string(b, args, precision, f);
+        return p;
+    }
+#ifdef SERVAL_DEBUG
+    static bool warned_precision;
+    if (!warned_precision && *p != '\0') {
+        warned_precision = true;
+        SERVAL_WARN("text_format: a precision (\".N\") only applies to %%s; ignored for %%%c", *p);
+    }
+#endif
+    return p;
+}
+
 // Formats one conversion; `p` points just past its '%'. Returns the last
 // character of the conversion. Out of line, so the loop copying plain
 // characters keeps its few variables in registers.
@@ -106,6 +160,14 @@ static __attribute__((noinline)) const char* convert(Buffer* b, const char* p, v
     if (f.width > TEXT_FORMAT_MAX)
         f.width = TEXT_FORMAT_MAX;
     Field text_field = {f.width, ' ', f.left}; // %s and %c never zero-pad
+
+    // A precision ("%.3s", "%.*s") is handled out of line, keeping this
+    // path's variables in registers.
+    if (*p == '.') {
+        p = precision_conversion(b, p + 1, args, text_field);
+        if (*p == 's')
+            return p;
+    }
 
     // Length modifiers: h and hh arguments arrive as int anyway; l and ll go
     // to integer_arg.
@@ -142,29 +204,9 @@ static __attribute__((noinline)) const char* convert(Buffer* b, const char* p, v
     case 'x':
         put_padded(b, num, hex_digits(integer_arg(args, longs), num), f);
         break;
-    case 's': {
-        const char* s = va_arg(*args, const char*);
-        if (!s)
-            s = "(null)";
-#ifdef SERVAL_DEBUG
-        // Usually a number passed for %s; reading it as a string would
-        // print garbage or scan memory until a zero byte.
-        if (!serval_plausible_pointer(s)) {
-            static bool warned_string;
-            if (!warned_string) {
-                warned_string = true;
-                SERVAL_WARN("text_format: the %%s argument (0x%x) is not a string",
-                            (u32)(uintptr_t)s);
-            }
-            s = "(?)";
-        }
-#endif
-        u32 n = 0;
-        while (s[n])
-            n++;
-        put_padded(b, s, n, text_field);
+    case 's':
+        put_string(b, args, 0xFFFFFFFFu, text_field);
         break;
-    }
     case 'c': {
         char c = (char)va_arg(*args, int);
         put_padded(b, &c, 1, text_field);
@@ -191,7 +233,9 @@ static __attribute__((noinline)) const char* convert(Buffer* b, const char* p, v
         static bool warned_unknown;
         if (!warned_unknown) {
             warned_unknown = true;
-            SERVAL_WARN("text_format: %%%c is not supported (use %%d %%i %%u %%x %%s %%c %%%%)", c);
+            SERVAL_WARN("text_format: %%%c is not supported (use %%d %%i %%u %%x %%s %%c %%%%; "
+                        "flags - and 0, a width, and a precision for %%s only: %%.3s)",
+                        c);
         }
 #endif
         put(b, '%');

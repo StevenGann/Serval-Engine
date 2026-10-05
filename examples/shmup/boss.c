@@ -42,7 +42,7 @@ bool boss_defeated(void) {
 
 static Entity spawn_part(EnemyKind k, u16 sprite, int w, int h, int hit_points) {
     // Not C_ENEMY yet: shots pass through while it comes in.
-    u32 i = spawn(0, sprite, w, h, FX(FIELD_W / 2), FX(cam_y - 48));
+    u32 i = spawn(0, sprite, w, h, FX(FIELD_W / 2), FX(-48));
     if (i == MAX_ENT)
         return ENTITY_NONE;
     enemy_count++;
@@ -73,45 +73,52 @@ static int phase(void) {
     return h > PHASE2_HP ? 1 : h > PHASE3_HP ? 2 : 3;
 }
 
-// Puts the parts where they belong around the core's center (screen
-// coordinates): pods to the sides, a little lower, swinging out of step.
+// Puts the parts where they belong around the core's center (on the screen,
+// like everything that flies): pods to the sides, a little lower, swinging out of step.
 static void place_parts(void) {
     u32 c = entity_index(core);
     pos_x[c] = FX(core_x - body_w[c] / 2);
-    pos_y[c] = FX(cam_y + core_y - body_h[c] / 2);
+    pos_y[c] = FX(core_y - body_h[c] / 2);
     for (int k = 0; k < 2; k++) {
         if (!entity_alive(pods[k]))
             continue;
         u32 p = entity_index(pods[k]);
         int bob = fx_to_int(fx_sin((u16)(swing * 2 + k * ANGLE_DEG(180))) * 3);
         pos_x[p] = FX(core_x + (k ? 36 : -36) - body_w[p] / 2);
-        pos_y[p] = FX(cam_y + core_y + 8 + bob - body_h[p] / 2);
+        pos_y[p] = FX(core_y + 8 + bob - body_h[p] / 2);
     }
 }
 
-// The flash after a hit, and the core's red look in phase 3. Under steady
-// fire a big target would be white all the time, so the boss's parts flash
-// white only one frame in four while they are being hit.
+// Draws part i with palette n of the sprite group (-1: the sprite's own).
+static void set_palette(u32 i, int n) {
+    u16 palette = n < 0 ? 0 : SPRITE_PALETTE(n);
+    spr_flags[i] = (u16)((spr_flags[i] & ~SPRITE_PALETTE_MASK) | palette);
+}
+
+// The flash after a hit (PAL_FLASH), and the core's red look in phase 3
+// (PAL_RAGE): the same sprites, drawn with another palette. Under steady fire
+// a big target would be white all the time, so the boss's parts flash white
+// only one frame in four while they are being hit.
 static void update_sprites(void) {
     bool blink = frame_count() % 4 == 0;
     u32 c = entity_index(core);
     if (flash[c] > 0)
         flash[c]--;
     bool rage = state == BOSS_FIGHTING && phase() == 3;
-    spr_id[c] = flash[c] && blink ? SPR_BOSS_FLASH : rage ? SPR_BOSS_RAGE : SPR_BOSS;
+    set_palette(c, flash[c] && blink ? PAL_FLASH : rage ? PAL_RAGE : -1);
     for (int k = 0; k < 2; k++) {
         if (!entity_alive(pods[k]))
             continue;
         u32 p = entity_index(pods[k]);
         if (flash[p] > 0)
             flash[p]--;
-        spr_id[p] = flash[p] && blink ? SPR_POD_FLASH : SPR_POD;
+        set_palette(p, flash[p] && blink ? PAL_FLASH : -1);
     }
 }
 
 static void attack(void) {
     int ph = phase();
-    FIXED cx = FX(core_x), cy = FX(cam_y + core_y + 6);
+    FIXED cx = FX(core_x), cy = FX(core_y + 6);
     if (ph == 1) {
         // Pods in turn: an aimed three-way burst every 40 frames.
         if (t % 40 == 0) {
@@ -188,12 +195,12 @@ void boss_update(void) {
         // Explosions all over the core, faster toward the end.
         if (t % (t < 90 ? 8 : 4) == 0) {
             int x = core_x + random_range(-24, 24); // one call per statement (see explode())
-            int y = cam_y + core_y + random_range(-24, 24);
+            int y = core_y + random_range(-24, 24);
             explode(FX(x), FX(y), 1, 3);
             psg_play(SND_BOOM);
         }
         if (t >= DYING_FRAMES) {
-            explode(FX(core_x), FX(cam_y + core_y), 6, 16);
+            explode(FX(core_x), FX(core_y), 6, 16);
             entity_destroy(core);
             core = ENTITY_NONE;
             state = BOSS_DEFEATED;

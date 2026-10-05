@@ -77,7 +77,8 @@ typedef struct {
 // Most sprite IDs a sprite table may hold.
 #define SPRITE_MAX 512
 
-// sprite_draw() flags, combinable with |.
+// sprite_draw() flags, combinable with |: flips, a layer, SPRITE_HIDDEN and
+// SPRITE_PALETTE(n) below.
 #define SPRITE_FLIP_H (1 << 0)
 #define SPRITE_FLIP_V (1 << 1)
 
@@ -100,6 +101,22 @@ typedef struct {
 // ignores these two bits.
 #define SPRITE_ANIM_FLIP_H (1 << 5)
 #define SPRITE_ANIM_FLIP_V (1 << 6)
+
+// For entities (spr_flags): drawn at the entity's position on the screen, not
+// at its world position minus the camera, so it stays put while the camera
+// scrolls the map (a shooter's ship, enemies and bullets; a HUD icon).
+// sprite_draw() always takes screen coordinates and ignores it.
+#define SPRITE_SCREEN (1 << 15)
+
+// Draws the sprite with palette n (0-14) of its sprite group instead of its
+// own (SpriteAsset.palette_slot), e.g. a white hit flash or another color of
+// the same art: SPRITE_PALETTE(2). No SPRITE_PALETTE: the sprite's own
+// palette. In spr_flags and sprite_draw()/sprite_draw_rotated() flags. A
+// palette the group doesn't have draws with the sprite's own (warning in
+// debug builds). To change it on an entity:
+// spr_flags[i] = (spr_flags[i] & ~SPRITE_PALETTE_MASK) | SPRITE_PALETTE(n).
+#define SPRITE_PALETTE(n) ((u16)(((n) + 1) << 8))
+#define SPRITE_PALETTE_MASK (15u << 8)
 
 // Registers the game's sprite table: table[id] is the sprite with that ID.
 // Unloads all sprite groups.

@@ -37,3 +37,137 @@ FIXED fx_sin(u16 angle) {
 FIXED fx_cos(u16 angle) {
     return fx_sin((u16)(angle + ANGLE_DEG(90)));
 }
+
+// --- angle_of and fx_length -------------------------------------------------
+//
+// Both reduce (dx, dy) to the larger magnitude `big` and the ratio small / big
+// in [0, 1], without dividing: big is scaled by a power of two (shifts) into
+// [2^16, 2^17), and the ratio is small times a table reciprocal of big's top
+// bits. atan and sqrt(1 + r^2) of the ratio then come from small tables with
+// linear interpolation.
+
+// 2^31 / big for big in [2^16, 2^17), by its top 9 bits rounded:
+// round(2^23 / (256 + j)) for j = 0..256.
+static const u16 recip_table[257] = {
+    32768, 32640, 32514, 32388, 32264, 32140, 32018, 31896, 31775, 31655, 31536, 31418, 31301,
+    31184, 31069, 30954, 30840, 30728, 30615, 30504, 30394, 30284, 30175, 30067, 29959, 29853,
+    29747, 29642, 29537, 29434, 29331, 29229, 29127, 29026, 28926, 28827, 28728, 28630, 28533,
+    28436, 28340, 28244, 28150, 28056, 27962, 27869, 27777, 27685, 27594, 27504, 27414, 27324,
+    27236, 27148, 27060, 26973, 26887, 26801, 26715, 26631, 26546, 26462, 26379, 26297, 26214,
+    26133, 26052, 25971, 25891, 25811, 25732, 25653, 25575, 25497, 25420, 25343, 25267, 25191,
+    25116, 25041, 24966, 24892, 24818, 24745, 24672, 24600, 24528, 24457, 24385, 24315, 24245,
+    24175, 24105, 24036, 23967, 23899, 23831, 23764, 23697, 23630, 23564, 23498, 23432, 23367,
+    23302, 23237, 23173, 23109, 23046, 22982, 22920, 22857, 22795, 22733, 22672, 22611, 22550,
+    22490, 22429, 22370, 22310, 22251, 22192, 22134, 22075, 22017, 21960, 21902, 21845, 21789,
+    21732, 21676, 21620, 21565, 21509, 21454, 21400, 21345, 21291, 21237, 21183, 21130, 21077,
+    21024, 20972, 20919, 20867, 20815, 20764, 20713, 20662, 20611, 20560, 20510, 20460, 20410,
+    20361, 20311, 20262, 20214, 20165, 20117, 20068, 20021, 19973, 19925, 19878, 19831, 19784,
+    19738, 19692, 19645, 19600, 19554, 19508, 19463, 19418, 19373, 19329, 19284, 19240, 19196,
+    19152, 19108, 19065, 19022, 18979, 18936, 18893, 18851, 18809, 18766, 18725, 18683, 18641,
+    18600, 18559, 18518, 18477, 18437, 18396, 18356, 18316, 18276, 18236, 18197, 18157, 18118,
+    18079, 18040, 18001, 17963, 17924, 17886, 17848, 17810, 17772, 17735, 17697, 17660, 17623,
+    17586, 17549, 17513, 17476, 17440, 17404, 17368, 17332, 17296, 17261, 17225, 17190, 17155,
+    17120, 17085, 17050, 17015, 16981, 16947, 16913, 16878, 16845, 16811, 16777, 16744, 16710,
+    16677, 16644, 16611, 16578, 16546, 16513, 16481, 16448, 16416, 16384,
+};
+
+// atan(k / 32) for k = 0..32, in u16 angle units (65536 per turn):
+// round(atan(k / 32) * 65536 / (2 * pi)).
+static const u16 atan_table[33] = {
+    0,    326,  651,  975,  1297, 1617, 1933, 2246, 2555, 2860, 3159,
+    3453, 3742, 4025, 4302, 4572, 4836, 5094, 5344, 5589, 5826, 6058,
+    6282, 6500, 6712, 6917, 7117, 7310, 7498, 7679, 7856, 8026, 8192,
+};
+
+// (sqrt(1 + (k / 32)^2) - 1) for k = 0..32, in 1/32768ths:
+// round((sqrt(1 + (k / 32)^2) - 1) * 32768).
+static const u16 hypot_table[33] = {
+    0,    16,   64,   144,  255,  398,   571,   775,   1008,  1271,  1563,
+    1882, 2228, 2601, 2999, 3421, 3868,  4337,  4828,  5341,  5874,  6426,
+    6997, 7586, 8192, 8814, 9453, 10106, 10773, 11454, 12148, 12855, 13573,
+};
+
+typedef struct {
+    u32 big;    // max(|dx|, |dy|), unscaled
+    u32 scaled; // big scaled into [2^16, 2^17)
+    int shift;  // scaled = big >> shift (shift > 0) or big << -shift
+    u32 ratio;  // small / big in 1/65536ths, 0..65535
+} Ratio;
+
+// Requires big > 0 and small <= big.
+static Ratio ratio_of(u32 big, u32 small) {
+    Ratio r = {.big = big, .shift = 0};
+    // Scale by shifts in decreasing steps (no count-leading-zeros on the
+    // ARM7TDMI); each step keeps big >= 2^16.
+#define SCALE_DOWN(limit, n)                                                                       \
+    if (big >= 1u << (limit)) {                                                                    \
+        big >>= (n);                                                                               \
+        small >>= (n);                                                                             \
+        r.shift += (n);                                                                            \
+    }
+#define SCALE_UP(limit, n)                                                                         \
+    if (big < 1u << (limit)) {                                                                     \
+        big <<= (n);                                                                               \
+        small <<= (n);                                                                             \
+        r.shift -= (n);                                                                            \
+    }
+    if (big >= 1u << 17) {
+        SCALE_DOWN(25, 8)
+        SCALE_DOWN(21, 4)
+        SCALE_DOWN(19, 2)
+        SCALE_DOWN(18, 1)
+        SCALE_DOWN(17, 1)
+    } else {
+        SCALE_UP(8, 8)
+        SCALE_UP(12, 4)
+        SCALE_UP(14, 2)
+        SCALE_UP(15, 1)
+        SCALE_UP(16, 1)
+    }
+#undef SCALE_DOWN
+#undef SCALE_UP
+    r.scaled = big;
+    // small < 2^17 and the reciprocal < 2^15 + 1: the product fits 32 bits.
+    u32 ratio = (small * recip_table[(big - (1u << 16) + 128) >> 8]) >> 15;
+    r.ratio = ratio > 0xFFFF ? 0xFFFF : ratio;
+    return r;
+}
+
+// Linear interpolation in a 33-entry table over [0, 1] (ratio < 65536).
+static u32 lerp_table(const u16* table, u32 ratio) {
+    u32 k = ratio >> 11, f = ratio & 0x7FF;
+    u32 lo = table[k], hi = table[k + 1]; // both tables increase
+    return lo + (((hi - lo) * f + 0x400) >> 11);
+}
+
+static u32 magnitude(FIXED v) {
+    return v < 0 ? 0u - (u32)v : (u32)v; // exact for INT32_MIN too
+}
+
+u16 angle_of(FIXED dx, FIXED dy) {
+    u32 ax = magnitude(dx), ay = magnitude(dy);
+    if (ax == 0 && ay == 0)
+        return 0;
+    u32 a = ax >= ay ? lerp_table(atan_table, ratio_of(ax, ay).ratio)
+                     : 0x4000u - lerp_table(atan_table, ratio_of(ay, ax).ratio);
+    if (dx < 0)
+        a = 0x8000u - a;
+    if (dy < 0)
+        a = 0u - a;
+    return (u16)a;
+}
+
+FIXED fx_length(FIXED dx, FIXED dy) {
+    u32 ax = magnitude(dx), ay = magnitude(dy);
+    if (ax == 0 && ay == 0)
+        return 0;
+    Ratio r = ax >= ay ? ratio_of(ax, ay) : ratio_of(ay, ax);
+    // big * (sqrt(1 + ratio^2) - 1), on the scaled value: < 2^17 * 2^14.
+    u32 extra = r.scaled * lerp_table(hypot_table, r.ratio) >> 15;
+    if (r.shift > 0)
+        extra <<= r.shift; // at most 0.42 * 2^31: no overflow
+    else if (r.shift < 0)
+        extra = (extra + (1u << (-r.shift - 1))) >> -r.shift;
+    u32 length = r.big + extra; // < 1.42 * 2^31
+    return length > 0x7FFFFFFFu ? 0x7FFFFFFF : (FIXED)length;
+}

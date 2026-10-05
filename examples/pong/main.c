@@ -4,7 +4,8 @@
 //   - The engine's splash screen (serval_splash)
 //   - A complete small game: title screen, serve, play, pause, game over
 //   - Engine physics for the ball (sys_physics with open left and right edges,
-//     so it bounces off the top and bottom but scores by leaving the screen)
+//     so it bounces off the top and bottom but scores by leaving the screen;
+//     physics_set_contacts and body_contact report the bounces)
 //   - Collisions with body_overlap: paddles are bodies without velocity, which
 //     the game moves itself
 //   - Shaded multi-color sprites; several sprites sharing tiles with different
@@ -388,13 +389,17 @@ static void score_point(bool for_player) {
 static void update_play(void) {
     control_player();
     control_cpu();
-    FIXED vel_y_before = vel_y[ball];
     sys_movement();
     sys_physics();
-    if ((vel_y_before < 0) != (vel_y[ball] < 0) && vel_y_before != 0)
-        psg_play(SND_WALL); // physics bounced it off the top or bottom
+    // body_contact: the walls the ball touched in sys_physics (contacts are
+    // on, see main), so a bounce off the top or bottom gets its sound.
+    if (body_contact[ball] & (BODY_SIDE_TOP | BODY_SIDE_BOTTOM))
+        psg_play(SND_WALL);
     hit_paddle(player, 1);
     hit_paddle(cpu, -1);
+    // A point once the ball is a pixel past the open edge. (body_contact's
+    // BODY_CONTACT_EXIT says when it is entirely outside, which can be a
+    // frame sooner; this test is the game's rule.)
     if (pos_x[ball] < -FX(BALL_SIZE))
         score_point(false);
     else if (pos_x[ball] > FX(SCREEN_W))
@@ -451,6 +456,7 @@ int main(void) {
     screen_set_backdrop(COLOR_RGB(BACKDROP_R, BACKDROP_G, BACKDROP_B));
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);
     physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT);
+    physics_set_contacts(true); // body_contact: the walls the ball bounced off
 
     ball = create(SPR_BALL, BALL_SIZE, BALL_SIZE, C_VEL);
     spr_flags[ball] = SPRITE_ABOVE_HUD; // over the net, which is text

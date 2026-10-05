@@ -29,22 +29,11 @@
 // --- Art (art.c) -------------------------------------------------------------
 
 enum {
-    SPR_BRICK_RED, // brick sprites: the same tiles, frames BRICK_FRAME_*, one palette each
-    SPR_BRICK_ORANGE,
-    SPR_BRICK_YELLOW,
-    SPR_BRICK_GREEN,
-    SPR_BRICK_BLUE,
-    SPR_BRICK_PURPLE,
-    SPR_BRICK_SILVER,
-    SPR_BRICK_GOLD,
-    SPR_BRICK_FLASH, // a brick for a few frames after a hit that didn't break it
+    SPR_BRICK, // frames BRICK_FRAME_*; each color is a palette (SPRITE_PALETTE(PAL_*))
     SPR_BALL,
     SPR_PADDLE_LEFT, // the paddle in 16x8 pieces: left end, middle (wide paddle only), right end
     SPR_PADDLE_MIDDLE,
     SPR_PADDLE_RIGHT,
-    SPR_CATCH_LEFT, // the same pieces glowing while the paddle catches balls
-    SPR_CATCH_MIDDLE,
-    SPR_CATCH_RIGHT,
     SPR_CAPSULE_WIDE, // falling power-ups: one per PowerKind, in order
     SPR_CAPSULE_MULTI,
     SPR_CAPSULE_SLOW,
@@ -55,6 +44,26 @@ enum {
     SPRITE_COUNT
 };
 enum { BRICK_FRAME_PLAIN, BRICK_FRAME_SILVER, BRICK_FRAME_CRACKED, BRICK_FRAME_GOLD };
+
+// The sprite group's palettes. A sprite is drawn with its own unless its
+// flags pick another with SPRITE_PALETTE(n): one brick sprite takes every
+// brick color, PAL_FLASH (white) for a few frames after a hit that didn't
+// break it, and PAL_CATCH makes the paddle glow while it catches balls.
+enum {
+    PAL_RED,
+    PAL_ORANGE,
+    PAL_YELLOW,
+    PAL_GREEN,
+    PAL_BLUE,
+    PAL_PURPLE,
+    PAL_SILVER,
+    PAL_GOLD,
+    PAL_FLASH,
+    PAL_BALL,
+    PAL_PADDLE,
+    PAL_CATCH,
+    PALETTE_COUNT
+};
 #define BURST_LAST_FRAME 3 // blank: the dust is gone
 
 extern const SpriteAsset* const sprite_table[SPRITE_COUNT];
@@ -125,7 +134,7 @@ void scores_load(void);
 void scores_reset(void);
 int scores_add(int score, int level); // its place (0 = best) once saved, or -1
 int scores_best(void);
-void scores_draw(int first_row, int highlight, bool marker_on);
+void scores_draw(int first_row, int highlight); // highlight: the place to show in yellow, or -1
 
 // --- Sound (sound.c) ---------------------------------------------------------
 

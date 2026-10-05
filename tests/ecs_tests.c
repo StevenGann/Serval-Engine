@@ -105,12 +105,15 @@ static void create_zeroes_components(void) {
     spr_depth[i] = 7;
     body_w[i] = 16;
     body_bounce[i] = 200;
+    body_gravity[i] = BODY_GRAVITY(0);
+    body_contact[i] = BODY_SIDE_LEFT;
     fill_pool();
     entity_destroy(e);
     Entity again = entity_create(C_POS);
     CHECK(entity_index(again) == i);
     CHECK(pos_x[i] == 0 && vel_y[i] == 0 && spr_id[i] == 0);
     CHECK(spr_flags[i] == 0 && spr_depth[i] == 0 && body_w[i] == 0 && body_bounce[i] == 0);
+    CHECK(body_gravity[i] == 0 && body_contact[i] == 0);
 }
 
 static void movement_adds_velocity_to_position(void) {
@@ -295,6 +298,114 @@ static void count_matches_live_entities(void) {
     ecs_reset();
 }
 
+static void gather_lists_matches_in_order(void) {
+    ecs_reset();
+    Entity a = entity_create(C_POS);
+    entity_create(C_VEL);
+    Entity c = entity_create(C_POS | C_VEL);
+    Entity d = entity_create(C_POS | C_GAME(3));
+    Entity e = entity_create(C_POS);
+    u8 list[MAX_ENT];
+    CHECK(ecs_gather(C_POS, list) == 4);
+    CHECK(list[0] == entity_index(a) && list[1] == entity_index(c) && list[2] == entity_index(d) &&
+          list[3] == entity_index(e));
+    CHECK(ecs_gather(C_POS | C_VEL, list) == 1 && list[0] == entity_index(c));
+    CHECK(ecs_gather(C_GAME(3), list) == 1 && list[0] == entity_index(d));
+    CHECK(ecs_gather(0, list) == 5); // every live entity
+    // Destroyed entities and ones whose C_ALIVE bit was cleared are left out.
+    entity_destroy(c);
+    ent_mask[entity_index(e)] &= ~C_ALIVE;
+    CHECK(ecs_gather(C_POS, list) == 2);
+    CHECK(list[0] == entity_index(a) && list[1] == entity_index(d));
+    ecs_reset();
+}
+
+static void gather_with_no_matches_writes_nothing(void) {
+    ecs_reset();
+    u8 list[MAX_ENT];
+    list[0] = 77;
+    CHECK(ecs_gather(0, list) == 0);
+    entity_create(C_POS);
+    CHECK(ecs_gather(C_VEL, list) == 0);
+    CHECK(list[0] == 77);
+    ecs_reset();
+}
+
+static void gather_a_full_pool(void) {
+    ecs_reset();
+    fill_pool();
+    u8 list[MAX_ENT + 1];
+    list[MAX_ENT] = 77; // must not be written
+    CHECK(ecs_gather(0, list) == MAX_ENT);
+    bool in_order = true;
+    for (u32 i = 0; i < MAX_ENT; i++)
+        in_order = in_order && list[i] == i;
+    CHECK(in_order);
+    CHECK(list[MAX_ENT] == 77);
+    CHECK(ecs_count(0) == MAX_ENT);
+    ecs_reset();
+}
+
+// ecs_count and ecs_gather read four masks at a time: compare them with the
+// one-slot-at-a-time definition (ent_has) on random masks, written straight
+// into ent_mask as games may, with C_ALIVE set on about 3 slots in 4.
+static void count_and_gather_match_ent_has(void) {
+    u32 seed = 12345;
+    bool same = true;
+    for (int trial = 0; trial < 200; trial++) {
+        ecs_reset();
+        for (u32 i = 0; i < MAX_ENT; i++) {
+            seed = seed * 1664525u + 1013904223u;
+            ent_mask[i] = (seed & 0x3F0000Fu) | ((seed >> 30) ? C_ALIVE : 0);
+        }
+        seed = seed * 1664525u + 1013904223u;
+        u32 mask = trial < 4 ? 0 : (seed >> 8) & 0x300000Fu;
+        u32 slow = 0;
+        u8 expected[MAX_ENT], list[MAX_ENT];
+        for (u32 i = 0; i < MAX_ENT; i++) {
+            if (ent_has(i, mask))
+                expected[slow++] = (u8)i;
+        }
+        u32 count = ecs_count(mask), gathered = ecs_gather(mask, list);
+        same = same && count == slow && gathered == slow;
+        for (u32 k = 0; k < slow && k < gathered; k++)
+            same = same && list[k] == expected[k];
+    }
+    CHECK(same);
+    for (u32 i = 0; i < MAX_ENT; i++)
+        ent_mask[i] = 0;
+    ecs_reset();
+}
+
+static void free_count_follows_create_and_destroy(void) {
+    ecs_reset();
+    CHECK(ecs_free_count() == MAX_ENT);
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(0);
+    entity_create(C_VEL);
+    CHECK(ecs_free_count() == MAX_ENT - 3);
+    entity_destroy(b);
+    CHECK(ecs_free_count() == MAX_ENT - 2);
+    entity_destroy(b); // stale: nothing changes
+    CHECK(ecs_free_count() == MAX_ENT - 2);
+    // An entity whose C_ALIVE bit was cleared still holds its slot.
+    ent_mask[entity_index(a)] &= ~C_ALIVE;
+    CHECK(ecs_free_count() == MAX_ENT - 2);
+    CHECK(ecs_count(0) == 1);
+    fill_pool();
+    CHECK(ecs_free_count() == 0);
+    u32 warnings = debug_warning_count();
+    // The point of ecs_free_count: no entity_create() once the pool is full,
+    // so no warning.
+    if (ecs_free_count() > 0)
+        entity_create(0);
+    CHECK(debug_warning_count() == warnings);
+    entity_destroy(a);
+    CHECK(ecs_free_count() == 1);
+    ecs_reset();
+    CHECK(ecs_free_count() == MAX_ENT);
+}
+
 TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"count_matches_live_entities", count_matches_live_entities},
            {"slots_are_handed_out_in_order", slots_are_handed_out_in_order},
@@ -313,4 +424,9 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"forged_alive_bit_does_not_free_twice", forged_alive_bit_does_not_free_twice},
            {"cleared_alive_bit", cleared_alive_bit},
            {"freed_slots_are_reused_oldest_first", freed_slots_are_reused_oldest_first},
-           {"alive_bit_in_create_mask_warns", alive_bit_in_create_mask_warns});
+           {"alive_bit_in_create_mask_warns", alive_bit_in_create_mask_warns},
+           {"gather_lists_matches_in_order", gather_lists_matches_in_order},
+           {"gather_with_no_matches_writes_nothing", gather_with_no_matches_writes_nothing},
+           {"gather_a_full_pool", gather_a_full_pool},
+           {"count_and_gather_match_ent_has", count_and_gather_match_ent_has},
+           {"free_count_follows_create_and_destroy", free_count_follows_create_and_destroy});

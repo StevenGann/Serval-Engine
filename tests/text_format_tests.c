@@ -124,6 +124,38 @@ static void huge_width_is_capped(void) {
     CHECK(length(text_format("%-4000000000s|", "x")) == TEXT_FORMAT_MAX - 1);
 }
 
+// Initials as a game stores them: three characters, no terminating zero. On
+// the host, ASan reports any read past them.
+static const char initials[3] = {'Z', 'O', 'E'};
+
+static void string_precision(void) {
+    CHECK(equals(text_format("[%.3s]", initials), "[ZOE]"));
+    CHECK(equals(text_format("[%.2s]", "hello"), "[he]"));
+    CHECK(equals(text_format("[%.10s]", "hi"), "[hi]"));
+    CHECK(equals(text_format("[%.0s][%.s]", "x", "y"), "[][]"));
+    CHECK(equals(text_format("[%5.2s][%-5.2s]", "hello", "hello"), "[   he][he   ]"));
+    CHECK(equals(text_format("[%.3s]", (const char*)0), "[(nu]"));
+    CHECK(equals(text_format("[%.99999999999s]", "all"), "[all]"));
+}
+
+static void star_precision(void) {
+    CHECK(equals(text_format("[%.*s]|%d", 2, "abc", 5), "[ab]|5"));
+    CHECK(equals(text_format("[%.*s]", 3, initials), "[ZOE]"));
+    CHECK(equals(text_format("[%.*s]", -1, "abc"), "[abc]")); // negative: no precision
+    CHECK(equals(text_format("[%-4.*s]", 1, "abc"), "[a   ]"));
+}
+
+static void precision_ignored_on_other_conversions(void) {
+    u32 warnings = debug_warning_count();
+    CHECK(equals(text_format("%.2d %.3x %d", 5, 0xAu, 7), "5 a 7"));
+    CHECK(equals(text_format("%.*d|%d", 4, 5, 6), "5|6")); // '*' still consumes its int
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1); // reported once
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+}
+
 TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_text_and_percent},
            {"integers", integers}, {"width_and_zero_padding", width_and_zero_padding},
            {"accepts_fixed_width_types", accepts_fixed_width_types},
@@ -133,4 +165,6 @@ TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_te
            {"unknown_conversion_is_shown", unknown_conversion_is_shown},
            {"length_modifiers_and_i", length_modifiers_and_i},
            {"width_on_hex_chars_and_strings", width_on_hex_chars_and_strings},
-           {"huge_width_is_capped", huge_width_is_capped});
+           {"huge_width_is_capped", huge_width_is_capped}, {"string_precision", string_precision},
+           {"star_precision", star_precision},
+           {"precision_ignored_on_other_conversions", precision_ignored_on_other_conversions});

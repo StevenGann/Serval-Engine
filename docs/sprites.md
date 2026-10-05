@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** resident, uncompressed groups of 4bpp sprites, drawn regular or rotated, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, metasprites, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
+**Status:** resident, uncompressed groups of 4bpp sprites, drawn regular or rotated, with any palette of their group, in world or screen coordinates, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, metasprites, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes) with 16 OBJ palette banks of 16 colors.
 
@@ -32,6 +32,8 @@ OBJ VRAM tile 0 ─────────────────────�
 ## Palettes
 
 **Planned design.** Today each loaded group takes the next `palette_count` OBJ palette banks, written immediately; there is no sharing or shadow palette.
+
+**Implemented: choosing a palette per draw.** A sprite draws with its asset's `palette_slot`, or with `SPRITE_PALETTE(n)` in its draw flags (`spr_flags` for entities) with palette `n` (0-14) of its group: a white hit flash, a damaged or enraged color, the eight colors of one brick, without a copy of the sprite per color. The art and its color variants share tiles; only the group's palette list grows. See [API](#api).
 
 The tooling assigns each group logical banks. A runtime palette manager maps them to physical banks with reference counting, so identical palettes share one bank. A shadow palette is copied in VBlank, enabling fades, flashes and swaps.
 
@@ -67,7 +69,7 @@ Fields left out of a C initializer take usable defaults, so a hand-written sprit
 
 **Sprite IDs** are indices into a project-wide sprite table (`const SpriteAsset *const table[]`) emitted by the build. IDs rather than pointers keep the sprite component compact and keep addresses out of bytecode ([vm.md](vm.md)); groups list their sprites by ID for the same reason.
 
-The sprite component stores `(sprite_id, frame)` plus per-entity draw flags (`spr_flags`: flip and layer). The render systems resolve it to a VRAM tile index through the group's load offset (and, once streaming exists, the instance's streamed slot).
+The sprite component stores `(sprite_id, frame)` plus per-entity draw flags (`spr_flags`: flip, layer, palette, hidden, screen-space). The render systems resolve it to a VRAM tile index through the group's load offset (and, once streaming exists, the instance's streamed slot).
 
 ## API
 
@@ -78,7 +80,8 @@ void sprite_table_set(const SpriteAsset *const *table, u16 count);
 bool sprite_group_load(const SpriteGroup *group);   // false if VRAM/palettes run out or data is incomplete
 void sprite_groups_reset(void);                     // unload all
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
-                                                    // SPRITE_FLIP_H/V, layer flags
+                                                    // SPRITE_FLIP_H/V, layer flags,
+                                                    // SPRITE_HIDDEN, SPRITE_PALETTE(n)
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
 ```
 
@@ -88,7 +91,7 @@ Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `S
 
 **Layering:** by default sprites draw between the foreground (BG1) and the playfield (BG2), so the HUD (BG0) stays on top. `SPRITE_ABOVE_FOREGROUND`, `SPRITE_ABOVE_HUD` and `SPRITE_BEHIND_PLAYFIELD` move a sprite to another layer (see [tilemaps.md](tilemaps.md#default-layer-roles)).
 
-`sprite_draw` takes screen coordinates; `sys_render` and `sys_render_by_depth` draw entities at their world position minus the camera ([runtime-systems.md](runtime-systems.md#camera)). `sprite_draw` subtracts the sprite's origin, skips sprites that are fully off screen (so they don't use one of the 128 hardware sprites), and does nothing for sprites that are not loaded. `sprite_group_load()` checks the whole group first (NULL pointers, missing tiles or palettes, sizes, palette slots, VRAM and banks) and loads nothing if any of it is wrong.
+`sprite_draw` takes screen coordinates; `sys_render` and `sys_render_by_depth` draw entities at their world position minus the camera ([runtime-systems.md](runtime-systems.md#camera)), except those with `SPRITE_SCREEN` in `spr_flags`, drawn at their position on the screen. `sprite_draw` subtracts the sprite's origin, skips sprites that are fully off screen (so they don't use one of the 128 hardware sprites), and does nothing for sprites that are not loaded. `sprite_group_load()` checks the whole group first (NULL pointers, missing tiles or palettes, sizes, palette slots, VRAM and banks) and loads nothing if any of it is wrong.
 
 ## Animation
 
@@ -100,8 +103,12 @@ Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `S
 
 Animation is independent of VRAM residency: all frames of a resident sprite are in VRAM already, so stepping frames costs nothing but the frame index.
 
+**Screen-space entities:** `SPRITE_SCREEN` (bit 15 of `spr_flags`) makes the render systems ignore the camera for that entity: its position is a screen position. In a vertical shooter the ship, enemies and bullets stay on the screen while the camera scrolls the map (and the turrets on it, which stay world-space); a HUD icon can be an entity too. Collision between entities doesn't care, as long as the entities that collide use the same kind of position. `sprite_draw` ignores the flag (it always takes screen coordinates). It costs nothing measurable: the camera is loaded only for world-space entities, so one test replaces two loads (bunnymark: +5 cycles for 128 sprites).
+
+**Palettes:** `SPRITE_PALETTE(n)` (bits 8-11 of the flags hold `n + 1`, so 0 keeps the asset's own palette) draws with palette `n` of the sprite's group: bank = the group's first bank + `n`, replacing the asset's `palette_slot`. It works with `sprite_draw`, `sprite_draw_rotated` and both render systems, and keeps the frame, flips and layer. A palette the group doesn't have draws with the sprite's own (*warns* once). To switch it on an entity, `spr_flags[i] = (spr_flags[i] & ~SPRITE_PALETTE_MASK) | SPRITE_PALETTE(n)`. The render systems send entities with a palette down the out-of-line path that also takes rotated and hidden sprites (one test for the three, so other sprites don't pay); such a sprite costs about 60 cycles more to draw than one without (about 180 for a plain sprite in `sys_render`), e.g. 5,000 cycles for 84 bricks, while sprites without one pay nothing measurable.
+
 **Blinking:** `SPRITE_HIDDEN` in the draw flags (or `spr_flags`) draws nothing and uses no hardware sprite. The render systems test it together with `spr_angle`, sending hidden sprites down the out-of-line rotated path, so the check costs one instruction per entity (bunnymark: +128 cycles for 128 sprites).
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.
+Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.

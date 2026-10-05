@@ -13,19 +13,7 @@
 
 // --- Palettes ----------------------------------------------------------------
 
-enum {
-    PAL_PLAYER,
-    PAL_ENEMY,
-    PAL_CARRIER, // the enemy palette in orange and gold
-    PAL_HEAVY,
-    PAL_BOSS,
-    PAL_RAGE, // the boss's palette in red, for its last phase
-    PAL_FIRE,
-    PAL_ITEM,
-    PAL_FLASH, // every color white: a sprite drawn with it flashes when hit
-    PALETTE_COUNT
-};
-
+// PAL_* are in game.h: enemies.c and boss.c draw with some of them.
 static const u16 palettes[PALETTE_COUNT][16] = {
     // 1 outline, 2-4 hull, 5 white, 6-7 canopy, 8-9 ear fins, A-B flame,
     // C-D shot, E bomb, F needle
@@ -255,9 +243,7 @@ static const char* const pad_art[] = {
     "BBBBBBBBBBBBBBBB" "BBBBBBBBBBBBBBBB",
 };
 
-// The HUD panel's tiles: its left edge, plain, and grooved. Every row of a
-// tile is the same, so the panel looks still while its layer scrolls with
-// the camera (see panel_layer). BANK_PANEL.
+// The HUD panel's tiles: its left edge, plain, and grooved. BANK_PANEL.
 static const char* const panel_art[] = {
     "12233333" "33333333" "33334333",
     "12233333" "33333333" "33334333",
@@ -630,52 +616,22 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                   .palette_slot = PAL_ENEMY,
                   .origin_x = 2,
                   .origin_y = 3}, // hitbox 12 x 10
-    [SPR_DART_FLASH] = {.size = SPRITE_16x16,
-                        .tiles = sprite_tiles + T_DART * 8,
-                        .frame_count = 2,
-                        .frame_times = dart_times,
-                        .palette_slot = PAL_FLASH,
-                        .origin_x = 2,
-                        .origin_y = 3},
-    [SPR_CARRIER] = {.size = SPRITE_16x16,
-                     .tiles = sprite_tiles + T_DART * 8,
-                     .frame_count = 2,
-                     .frame_times = dart_times,
-                     .palette_slot = PAL_CARRIER,
-                     .origin_x = 2,
-                     .origin_y = 3},
     [SPR_SPINNER] = {.size = SPRITE_16x16,
                      .tiles = sprite_tiles + T_SPINNER * 8,
                      .palette_slot = PAL_ENEMY,
                      .origin_x = 2,
                      .origin_y = 2}, // hitbox 12 x 12
-    [SPR_SPINNER_FLASH] = {.size = SPRITE_16x16,
-                           .tiles = sprite_tiles + T_SPINNER * 8,
-                           .palette_slot = PAL_FLASH,
-                           .origin_x = 2,
-                           .origin_y = 2},
     [SPR_GUNSHIP] = {.size = SPRITE_32x32,
                      .tiles = sprite_tiles + T_GUNSHIP * 8,
                      .palette_slot = PAL_HEAVY,
                      .origin_x = 3,
                      .origin_y = 4}, // hitbox 26 x 24
-    [SPR_GUNSHIP_FLASH] = {.size = SPRITE_32x32,
-                           .tiles = sprite_tiles + T_GUNSHIP * 8,
-                           .palette_slot = PAL_FLASH,
-                           .origin_x = 3,
-                           .origin_y = 4},
     [SPR_TURRET] = {.size = SPRITE_16x16,
                     .tiles = sprite_tiles + T_TURRET * 8,
                     .frame_count = 2,
                     .palette_slot = PAL_HEAVY,
                     .origin_x = 2,
                     .origin_y = 2}, // hitbox 12 x 12
-    [SPR_TURRET_FLASH] = {.size = SPRITE_16x16,
-                          .tiles = sprite_tiles + T_TURRET * 8,
-                          .frame_count = 2,
-                          .palette_slot = PAL_FLASH,
-                          .origin_x = 2,
-                          .origin_y = 2},
     [SPR_BULLET] = {.size = SPRITE_8x8,
                     .tiles = sprite_tiles + T_BULLET * 8,
                     .frame_count = 2,
@@ -717,26 +673,11 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                   .palette_slot = PAL_BOSS,
                   .origin_x = 8,
                   .origin_y = 13}, // hitbox 48 x 36 around the core
-    [SPR_BOSS_FLASH] = {.size = SPRITE_64x64,
-                        .tiles = sprite_tiles + T_BOSS * 8,
-                        .palette_slot = PAL_FLASH,
-                        .origin_x = 8,
-                        .origin_y = 13},
-    [SPR_BOSS_RAGE] = {.size = SPRITE_64x64,
-                       .tiles = sprite_tiles + T_BOSS * 8,
-                       .palette_slot = PAL_RAGE,
-                       .origin_x = 8,
-                       .origin_y = 13},
     [SPR_POD] = {.size = SPRITE_32x32,
                  .tiles = sprite_tiles + T_POD * 8,
                  .palette_slot = PAL_BOSS,
                  .origin_x = 6,
                  .origin_y = 4}, // hitbox 20 x 20
-    [SPR_POD_FLASH] = {.size = SPRITE_32x32,
-                       .tiles = sprite_tiles + T_POD * 8,
-                       .palette_slot = PAL_FLASH,
-                       .origin_x = 6,
-                       .origin_y = 4},
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
@@ -746,29 +687,21 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_ICON_SHIP] = &sprites[SPR_ICON_SHIP],
     [SPR_ICON_BOMB] = &sprites[SPR_ICON_BOMB],
     [SPR_DART] = &sprites[SPR_DART],
-    [SPR_DART_FLASH] = &sprites[SPR_DART_FLASH],
-    [SPR_CARRIER] = &sprites[SPR_CARRIER],
     [SPR_SPINNER] = &sprites[SPR_SPINNER],
-    [SPR_SPINNER_FLASH] = &sprites[SPR_SPINNER_FLASH],
     [SPR_GUNSHIP] = &sprites[SPR_GUNSHIP],
-    [SPR_GUNSHIP_FLASH] = &sprites[SPR_GUNSHIP_FLASH],
     [SPR_TURRET] = &sprites[SPR_TURRET],
-    [SPR_TURRET_FLASH] = &sprites[SPR_TURRET_FLASH],
     [SPR_BULLET] = &sprites[SPR_BULLET],
     [SPR_SPARK] = &sprites[SPR_SPARK],
     [SPR_BOOM] = &sprites[SPR_BOOM],
     [SPR_ITEM_POWER] = &sprites[SPR_ITEM_POWER],
     [SPR_ITEM_BOMB] = &sprites[SPR_ITEM_BOMB],
     [SPR_BOSS] = &sprites[SPR_BOSS],
-    [SPR_BOSS_FLASH] = &sprites[SPR_BOSS_FLASH],
-    [SPR_BOSS_RAGE] = &sprites[SPR_BOSS_RAGE],
     [SPR_POD] = &sprites[SPR_POD],
-    [SPR_POD_FLASH] = &sprites[SPR_POD_FLASH],
 };
 
-// One group: 179 tiles of art, loaded as 367 because the white "hit" and red
-// "rage" twins are separate sprites with their own copy of the tiles (a
-// sprite's palette comes with its asset; there is no per-entity palette).
+// One group: 179 tiles. The white "hit" flash, the boss's red phase and the
+// orange carrier are the same sprites drawn with another of the group's
+// palettes (SPRITE_PALETTE), not copies of their tiles.
 const SpriteGroup sprite_group = {
     .palettes = &palettes[0][0],
     .sprite_count = SPRITE_COUNT,
@@ -858,9 +791,8 @@ static const char star_map[16][16 + 1] = {
 static u16 star_cells[16 * 16] SERVAL_EWRAM_BSS;
 
 // MAP_LAYER_WRAP repeats it forever, and a scroll factor of a half makes it
-// move at half the camera's speed: far away. The stage loops the camera by
-// STAGE_LOOP (512) pixels during the boss, 256 for this layer: its height, so
-// the loop doesn't show.
+// move at half the camera's speed: far away. Once the camera stops at the top
+// of the stage, the game scrolls it on by itself (map_set_scroll, game.c).
 const MapLayer stars_layer = {
     .width = 16,
     .height = 16,
@@ -882,11 +814,9 @@ static const Metatile panel_metatiles[] = {
 static const u16 panel_cells[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 2, 2};
 
 // The HUD panel on background 1, in front of sprites, so anything passing
-// the field's right edge goes under it. Every map layer scrolls with the
-// camera (a scroll_factor of 0 means 1, not "fixed"), so the panel is one
-// metatile row repeated (MAP_LAYER_WRAP) whose tiles are the same on every
-// pixel row: scrolling it vertically changes nothing on screen. The camera
-// never moves sideways.
+// the field's right edge goes under it. MAP_LAYER_FIXED keeps it still while
+// the camera climbs the stage; it is one metatile row, repeated down the
+// screen (MAP_LAYER_WRAP).
 const MapLayer panel_layer = {
     .width = 16,
     .height = 1,
@@ -894,7 +824,7 @@ const MapLayer panel_layer = {
     .metatiles = panel_metatiles,
     .metatile_count = sizeof panel_metatiles / sizeof panel_metatiles[0],
     .bg = 1,
-    .flags = MAP_LAYER_WRAP,
+    .flags = MAP_LAYER_FIXED | MAP_LAYER_WRAP,
 };
 
 void art_light_frame(u32 frame, const u32** tiles, u16* first) {

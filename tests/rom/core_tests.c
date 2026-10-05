@@ -10,6 +10,8 @@
 
 #include <tonc.h>
 
+#include "../../src/core/input_internal.h"
+
 static void frame_end_returns_in_vblank(void) {
     frame_begin();
     frame_end();
@@ -47,6 +49,17 @@ static void no_buttons_held_without_input(void) {
     frame_begin();
     CHECK(!button_down(BUTTON_ANY));
     CHECK(!button_pressed(BUTTON_A));
+    CHECK(!button_repeat(BUTTON_ANY));
+    frame_end();
+}
+
+// frame_begin() feeds button_repeat() the polled buttons: with none held
+// (mgba-rom-test presses nothing), a repeat left over from earlier input ends.
+static void frame_begin_updates_button_repeat(void) {
+    serval_repeat_frame(BUTTON_A); // as if A went down
+    CHECK(button_repeat(BUTTON_A));
+    frame_begin();
+    CHECK(!button_repeat(BUTTON_A));
     frame_end();
 }
 
@@ -241,6 +254,7 @@ TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns
            {"sprites_disappear_when_not_drawn", sprites_disappear_when_not_drawn},
            {"oam_submit_stops_at_128", oam_submit_stops_at_128},
            {"no_buttons_held_without_input", no_buttons_held_without_input},
+           {"frame_begin_updates_button_repeat", frame_begin_updates_button_repeat},
            {"init_enables_sprites", init_enables_sprites},
            {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0},
            {"frame_cpu_cycles_measures_work", frame_cpu_cycles_measures_work},

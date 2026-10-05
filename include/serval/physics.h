@@ -18,6 +18,10 @@
 // non-zero friction eventually stops it); other walls bounce perfectly. A
 // body too slow to bounce comes to rest on the floor (zero velocity) and stays
 // put until gravity changes direction or the game moves it.
+//
+// Each body can scale gravity (body_gravity), and sys_physics() can report the
+// walls bodies touch and the open edges they leave through (body_contact,
+// physics_set_contacts()).
 
 #include "serval/ecs.h"
 #include "serval/fixed.h"
@@ -36,7 +40,22 @@ extern u8 body_friction[MAX_ENT];
 // each axis gravity acts on. Speeds the game sets beyond it (a jump against
 // gravity, a dive) are kept until gravity is next applied.
 extern u8 body_max_fall[MAX_ENT];
-// Map bodies (C_MAPBODY, map.h) use the same three to bounce off, slide along
+// How strongly gravity pulls this body, as a scale in 16ths written with
+// BODY_GRAVITY(): BODY_GRAVITY(16) is normal gravity, BODY_GRAVITY(8) half,
+// BODY_GRAVITY(0) none (a ball that flies straight while power-ups fall) and
+// BODY_GRAVITY(-16) reversed. The pool stores the scale minus 16, so the zero
+// entity_create() leaves is normal gravity. Scales from -112 to 143.
+// Floors follow the body's own gravity: a body without gravity bounces
+// perfectly off every wall, one with reversed gravity rests on the ceiling.
+// sys_physics() and sys_map_movement() apply it. While every body has normal
+// gravity, sys_physics() costs the same (checking costs ~110 cycles a frame,
+// only while there is gravity); otherwise it takes its slower general loop and
+// handles the scaled bodies out of line, in ROM: 32 bodies, 4 of them scaled,
+// cost about 4,000 cycles more per frame than with none. Scale the gravity of
+// the few odd bodies, not of the many.
+extern s8 body_gravity[MAX_ENT];
+#define BODY_GRAVITY(sixteenths) ((s8)((sixteenths) - 16))
+// Map bodies (C_MAPBODY, map.h) use the same four to bounce off, slide along
 // and fall onto the map; see sys_map_movement().
 
 // Acceleration added to every body's velocity each frame, in pixels per frame
@@ -120,8 +139,31 @@ static inline bool body_overlap(u32 a, u32 b) {
 // guess. Takes slot indices; 0 if a == b.
 u32 body_hit_side(u32 a, u32 b);
 
+// Which walls of the bounds each body touched in the last sys_physics(), as
+// BODY_SIDE_* bits for the side of the body that touched: BODY_SIDE_BOTTOM
+// for the bottom bound, BODY_SIDE_LEFT for the left one, and so on. A body
+// touches a wall on the frame it bounces off it, and on every frame it rests
+// against it (on a floor, or at a wall with no speed away from it). The pool
+// map bodies use (map.h, whose MAP_CONTACT_* are the same bits); read it, don't
+// write it. Use it for wall sounds and bounces instead of comparing velocity
+// signs: `if (body_contact[ball] & (BODY_SIDE_TOP | BODY_SIDE_BOTTOM))`.
+// A wrapping axis has no walls, so it reports nothing.
+extern u8 body_contact[MAX_ENT];
+// In body_contact, with the side bit of the open edge (physics_set_open_edges)
+// the body left through: set on the frame the body ends up entirely outside
+// the bounds past that edge, e.g. BODY_CONTACT_EXIT | BODY_SIDE_LEFT for a ball
+// that left through the open left edge.
+#define BODY_CONTACT_EXIT (1 << 5)
+
+// Makes sys_physics() report contacts in body_contact (true) or not (false,
+// the default, which leaves body_contact 0 for bouncing bodies). Contacts take
+// sys_physics' slower general loop, about 80 cycles more per body per frame;
+// switching them off clears them.
+void physics_set_contacts(bool on);
+
 // Bounces bodies off the bounds and applies gravity, maximum fall speed and
-// friction. Run once per frame, after sys_movement().
+// friction, and with physics_set_contacts(true) sets body_contact. Run once
+// per frame, after sys_movement().
 void sys_physics(void);
 
 #endif // SERVAL_PHYSICS_H

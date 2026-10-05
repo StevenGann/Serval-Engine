@@ -61,13 +61,12 @@
 #define DULL_BOUNCES 12
 #define NUDGE ANGLE_DEG(8)
 
-#define SERVE_HOLD 240 // frames a served ball waits before launching itself
-#define CATCH_HOLD 150 // frames a caught ball waits
-#define FLASH_FRAMES 6 // a hit brick that didn't break shows white
-#define POWER_CHANCE 6 // one broken brick in this many drops a capsule...
-#define MAX_POWERS 2   // ...while fewer than this many are falling
-#define POWER_GRAVITY (FX_ONE / 16)
-#define POWER_MAX_FALL (FX(3) / 2)
+#define SERVE_HOLD 240   // frames a served ball waits before launching itself
+#define CATCH_HOLD 150   // frames a caught ball waits
+#define FLASH_FRAMES 6   // a hit brick that didn't break shows white
+#define POWER_CHANCE 6   // one broken brick in this many drops a capsule...
+#define MAX_POWERS 2     // ...while fewer than this many are falling
+#define POWER_MAX_FALL 2 // pixels per frame (the game's gravity is in game.c)
 #define POWER_POINTS 100
 // Effects (dust) are only created while this many entity slots are free, so
 // bricks, balls and capsules always fit.
@@ -100,7 +99,7 @@ static u8 power_kind[MAX_ENT];
 static u8 grid[BRICK_ROWS][BRICK_COLS];
 
 typedef struct {
-    u16 sprite;
+    u8 palette; // drawn with SPRITE_PALETTE(palette)
     u8 frame;
     u8 hits; // 0: unbreakable
     u16 points;
@@ -108,14 +107,14 @@ typedef struct {
 } BrickInfo;
 
 static const BrickInfo brick_info[] = {
-    [BRICK_RED] = {SPR_BRICK_RED, BRICK_FRAME_PLAIN, 1, 10, SND_BRICK_RED},
-    [BRICK_ORANGE] = {SPR_BRICK_ORANGE, BRICK_FRAME_PLAIN, 1, 20, SND_BRICK_ORANGE},
-    [BRICK_YELLOW] = {SPR_BRICK_YELLOW, BRICK_FRAME_PLAIN, 1, 30, SND_BRICK_YELLOW},
-    [BRICK_GREEN] = {SPR_BRICK_GREEN, BRICK_FRAME_PLAIN, 1, 40, SND_BRICK_GREEN},
-    [BRICK_BLUE] = {SPR_BRICK_BLUE, BRICK_FRAME_PLAIN, 1, 50, SND_BRICK_BLUE},
-    [BRICK_PURPLE] = {SPR_BRICK_PURPLE, BRICK_FRAME_PLAIN, 1, 60, SND_BRICK_PURPLE},
-    [BRICK_SILVER] = {SPR_BRICK_SILVER, BRICK_FRAME_SILVER, 2, 100, SND_BRICK_PURPLE},
-    [BRICK_GOLD] = {SPR_BRICK_GOLD, BRICK_FRAME_GOLD, 0, 0, SND_CLANK},
+    [BRICK_RED] = {PAL_RED, BRICK_FRAME_PLAIN, 1, 10, SND_BRICK_RED},
+    [BRICK_ORANGE] = {PAL_ORANGE, BRICK_FRAME_PLAIN, 1, 20, SND_BRICK_ORANGE},
+    [BRICK_YELLOW] = {PAL_YELLOW, BRICK_FRAME_PLAIN, 1, 30, SND_BRICK_YELLOW},
+    [BRICK_GREEN] = {PAL_GREEN, BRICK_FRAME_PLAIN, 1, 40, SND_BRICK_GREEN},
+    [BRICK_BLUE] = {PAL_BLUE, BRICK_FRAME_PLAIN, 1, 50, SND_BRICK_BLUE},
+    [BRICK_PURPLE] = {PAL_PURPLE, BRICK_FRAME_PLAIN, 1, 60, SND_BRICK_PURPLE},
+    [BRICK_SILVER] = {PAL_SILVER, BRICK_FRAME_SILVER, 2, 100, SND_BRICK_PURPLE},
+    [BRICK_GOLD] = {PAL_GOLD, BRICK_FRAME_GOLD, 0, 0, SND_CLANK},
 };
 
 // --- Angles ------------------------------------------------------------------
@@ -185,6 +184,7 @@ static u32 create_ball(FIXED x, FIXED y) {
     // front, and balls are created after the bricks.
     spr_flags[b] = SPRITE_ABOVE_FOREGROUND;
     body_w[b] = body_h[b] = BALL_SIZE;
+    body_gravity[b] = BODY_GRAVITY(0); // flies straight while capsules fall
     ball_dull[b] = 0;
     ball_held[b] = false;
     ball_angle[b] = ANGLE_UP;
@@ -214,7 +214,7 @@ static void remove_flying(void) {
 }
 
 static void spawn_burst(u32 brick) {
-    if (MAX_ENT - ecs_count(0) < FREE_SLOTS_FOR_EFFECTS)
+    if (ecs_free_count() < FREE_SLOTS_FOR_EFFECTS)
         return;
     Entity e = entity_create(C_POS | C_SPR | C_ANIM | C_BURST);
     u32 i = entity_index(e);
@@ -225,7 +225,7 @@ static void spawn_burst(u32 brick) {
 
 static void spawn_power(u32 brick) {
     if (random_range(1, POWER_CHANCE) != 1 || ecs_count(C_POWER) >= MAX_POWERS ||
-        MAX_ENT - ecs_count(0) < FREE_SLOTS_FOR_EFFECTS)
+        ecs_free_count() < FREE_SLOTS_FOR_EFFECTS)
         return;
     // Extra lives are rarer than the rest.
     static const u8 bag[] = {POWER_WIDE, POWER_WIDE,  POWER_MULTI, POWER_MULTI, POWER_SLOW,
@@ -233,17 +233,18 @@ static void spawn_power(u32 brick) {
     u8 kind = bag[random_range(0, (int)sizeof bag - 1)];
     if (kind == POWER_MULTI && ecs_count(C_BALL) >= MAX_BALLS)
         kind = POWER_WIDE;
-    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_ANIM | C_POWER);
+    // A body, so sys_physics pulls it down with the game's gravity (the
+    // balls have none of it) and reports when it leaves through the bottom.
+    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_ANIM | C_BODY | C_POWER);
     u32 i = entity_index(e);
     pos_x[i] = pos_x[brick];
     pos_y[i] = pos_y[brick];
     vel_y[i] = -FX(1); // a little hop out of the brick, then it falls
     spr_id[i] = (u16)(SPR_CAPSULE_WIDE + kind);
     spr_flags[i] = SPRITE_ABOVE_FOREGROUND; // in front of the bricks, like the balls
-    // Not a C_BODY: sys_physics would pull it with the game's gravity, which
-    // is 0 for the balls' sake. The size is only for body_overlap().
     body_w[i] = BRICK_W;
     body_h[i] = BRICK_H;
+    body_max_fall[i] = POWER_MAX_FALL;
     power_kind[i] = kind;
 }
 
@@ -265,8 +266,9 @@ void play_start_level(int level) {
             pos_y[i] = FX(BRICKS_TOP + r * BRICK_H);
             body_w[i] = BRICK_W;
             body_h[i] = BRICK_H;
-            spr_id[i] = brick_info[kind].sprite;
+            spr_id[i] = SPR_BRICK;
             spr_frame[i] = brick_info[kind].frame;
+            spr_flags[i] = SPRITE_PALETTE(brick_info[kind].palette);
             brick_kind[i] = (u8)kind;
             brick_hits[i] = brick_info[kind].hits;
             brick_flash[i] = 0;
@@ -382,12 +384,8 @@ static void update_powers(void) {
         if (body_overlap(i, paddle)) {
             apply_power((PowerKind)power_kind[i]);
             entity_destroy(entity_at(i));
-        } else if (pos_y[i] >= FX(SCREEN_H)) {
+        } else if (body_contact[i] & BODY_CONTACT_EXIT) { // fell out of the bottom
             entity_destroy(entity_at(i));
-        } else {
-            // Gravity for the capsules only (physics_set_gravity would pull
-            // the balls too).
-            vel_y[i] = int_min(vel_y[i] + POWER_GRAVITY, POWER_MAX_FALL);
         }
     }
 }
@@ -525,7 +523,8 @@ static void update_brick_flashes(void) {
     ECS_FOR_EACH(i, C_BRICK) {
         if (brick_flash[i] > 0)
             brick_flash[i]--;
-        spr_id[i] = brick_flash[i] ? SPR_BRICK_FLASH : brick_info[brick_kind[i]].sprite;
+        spr_flags[i] =
+            SPRITE_PALETTE(brick_flash[i] ? PAL_FLASH : brick_info[brick_kind[i]].palette);
     }
 }
 
@@ -578,21 +577,18 @@ static void collide_paddle(u32 b) {
     psg_play(SND_WALL);
 }
 
-// sys_physics bounced balls off the frame by flipping their velocity: the
-// angle follows. A ball bouncing for a long time without progress is nudged.
+// sys_physics bounced balls off the frame by flipping their velocity, and
+// body_contact says which walls they touched: the angle follows. A ball
+// bouncing for a long time without progress is nudged.
 static void after_physics(u32 b) {
-    u16 a = ball_angle[b];
-    bool bounced = false;
-    if (vel_x[b] != 0 && (vel_x[b] > 0) != going_right(a)) {
-        a = flip_x(a);
-        bounced = true;
-    }
-    if (vel_y[b] != 0 && (vel_y[b] < 0) != going_up(a)) {
-        a = flip_y(a);
-        bounced = true;
-    }
-    if (!bounced)
+    u32 touched = body_contact[b];
+    if (!(touched & (BODY_SIDE_LEFT | BODY_SIDE_RIGHT | BODY_SIDE_TOP)))
         return;
+    u16 a = ball_angle[b];
+    if (touched & (BODY_SIDE_LEFT | BODY_SIDE_RIGHT))
+        a = flip_x(a);
+    if (touched & BODY_SIDE_TOP)
+        a = flip_y(a);
     psg_play(SND_WALL);
     if (++ball_dull[b] >= DULL_BOUNCES) {
         ball_dull[b] = 0;
@@ -620,12 +616,12 @@ PlayResult play_update(void) {
             collide_paddle(b);
         }
     }
-    sys_physics(); // balls off the frame; the bottom is open
+    sys_physics(); // balls off the frame (the bottom is open), capsules fall
     ECS_FOR_EACH(b, C_BALL) {
         if (ball_held[b]) {
             pos_x[b] = pos_x[paddle] + FX(ball_hold_x[b]);
             pos_y[b] = FX(PADDLE_Y - BALL_SIZE);
-        } else if (pos_y[b] >= FX(SCREEN_H)) {
+        } else if (body_contact[b] & BODY_CONTACT_EXIT) { // lost out of the bottom
             entity_destroy(entity_at(b));
         } else {
             after_physics(b);
@@ -656,11 +652,12 @@ PlayResult play_update(void) {
 void play_draw(void) {
     sys_render(); // bricks, balls, capsules, dust
     // The paddle, in pieces drawn by hand: two ends, and a middle when wide.
-    // Drawn after sys_render, so balls are in front of it.
-    u16 base = catching ? SPR_CATCH_LEFT : SPR_PADDLE_LEFT;
+    // Drawn after sys_render, so balls are in front of it. It glows (cyan
+    // spots) while it catches balls.
+    u16 glow = catching ? SPRITE_PALETTE(PAL_CATCH) : 0;
     int x = paddle_x();
-    sprite_draw(base, 0, x, PADDLE_Y, 0);
+    sprite_draw(SPR_PADDLE_LEFT, 0, x, PADDLE_Y, glow);
     if (paddle_w == PADDLE_W_WIDE)
-        sprite_draw((u16)(base + 1), 0, x + 16, PADDLE_Y, 0);
-    sprite_draw((u16)(base + 2), 0, x + paddle_w - 16, PADDLE_Y, 0);
+        sprite_draw(SPR_PADDLE_MIDDLE, 0, x + 16, PADDLE_Y, glow);
+    sprite_draw(SPR_PADDLE_RIGHT, 0, x + paddle_w - 16, PADDLE_Y, glow);
 }
