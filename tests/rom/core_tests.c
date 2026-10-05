@@ -60,6 +60,15 @@ static void backdrop_sets_bg_color_0(void) {
     CHECK(COLOR_RGB(8, 16, 255) == RGB15(1, 2, 31));
 }
 
+static void cpu_permille_matches_cycles(void) {
+    frame_begin();
+    for (volatile u32 i = 0; i < 5000; i++) {
+    }
+    frame_end();
+    CHECK(frame_cpu_permille() == frame_cpu_cycles() * 1000 / frame_budget_cycles());
+    CHECK(frame_cpu_permille() > 0);
+}
+
 static void frame_cpu_cycles_measures_work(void) {
     frame_begin();
     frame_end();
@@ -76,16 +85,12 @@ static void frame_cpu_cycles_measures_work(void) {
 
 static void sys_render_draws_positioned_sprites(void) {
     static const u32 tiles[8] = {0};
-    static const SpriteAsset sprite = {.frame_count = 1, .tiles_per_frame = 1, .tiles = tiles};
+    static const SpriteAsset sprite = {.size = SPRITE_8x8, .tiles = tiles};
     static const SpriteAsset* const table[] = {&sprite};
     static const u16 ids[] = {0};
     static const u16 palette[16] = {0};
-    static const SpriteGroup group = {.sprite_count = 1,
-                                      .palette_count = 1,
-                                      .flags = SPRITE_GROUP_RESIDENT,
-                                      .sprite_ids = ids,
-                                      .palettes = palette,
-                                      .tile_count = 1};
+    static const SpriteGroup group = {
+        .sprite_ids = ids, .palettes = palette, .sprite_count = 1, .palette_count = 1};
     sprite_table_set(table, 1);
     CHECK(sprite_group_load(&group));
     ecs_reset();
@@ -93,12 +98,15 @@ static void sys_render_draws_positioned_sprites(void) {
     entity_create(C_POS); // no sprite: not drawn
     pos_x[entity_index(drawn)] = FX(30) + FX(1) / 2;
     pos_y[entity_index(drawn)] = FX(40);
+    spr_flags[entity_index(drawn)] = SPRITE_FLIP_H | SPRITE_ABOVE_HUD;
 
     frame_begin();
     sys_render();
     frame_end();
     CHECK((oam_mem[0].attr1 & ATTR1_X_MASK) == 30);
     CHECK((oam_mem[0].attr0 & ATTR0_Y_MASK) == 40);
+    CHECK(oam_mem[0].attr1 & ATTR1_HFLIP); // spr_flags
+    CHECK((oam_mem[0].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(0));
     CHECK(oam_mem[1].attr0 & ATTR0_HIDE);
     ecs_reset();
 }
@@ -111,4 +119,5 @@ TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns
            {"init_enables_sprites", init_enables_sprites},
            {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0},
            {"frame_cpu_cycles_measures_work", frame_cpu_cycles_measures_work},
+           {"cpu_permille_matches_cycles", cpu_permille_matches_cycles},
            {"sys_render_draws_positioned_sprites", sys_render_draws_positioned_sprites});

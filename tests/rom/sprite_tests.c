@@ -15,24 +15,14 @@ static const u32 small_tiles[8] = {0x11111111, 0x22222222, 0x33333333, 0x4444444
 static const u32 anim_tiles[16] = {[0] = 0xAAAAAAAA, [8] = 0xBBBBBBBB}; // 2 frames
 static const u32 wide_tiles[16] = {[0] = 0xCCCCCCCC};
 
-static const SpriteAsset small = {.shape = SPRITE_SHAPE_SQUARE,
-                                  .size = 0,
-                                  .frame_count = 1,
-                                  .tiles_per_frame = 1,
-                                  .tiles = small_tiles};
-static const SpriteAsset anim = {.shape = SPRITE_SHAPE_SQUARE,
-                                 .size = 0,
+static const SpriteAsset small = {.size = SPRITE_8x8, .tiles = small_tiles};
+static const SpriteAsset anim = {.size = SPRITE_8x8,
                                  .frame_count = 2,
-                                 .tiles_per_frame = 1,
                                  .tiles = anim_tiles,
                                  .origin_x = 4,
                                  .origin_y = 2,
                                  .palette_slot = 1};
-static const SpriteAsset wide = {.shape = SPRITE_SHAPE_WIDE,
-                                 .size = 0, // 16x8
-                                 .frame_count = 1,
-                                 .tiles_per_frame = 2,
-                                 .tiles = wide_tiles};
+static const SpriteAsset wide = {.size = SPRITE_16x8, .tiles = wide_tiles}; // 2 tiles
 
 static const SpriteAsset* const table[SPRITE_COUNT] = {
     [SPR_SMALL] = &small, [SPR_ANIM] = &anim, [SPR_WIDE] = &wide, [SPR_UNLOADED] = &small};
@@ -40,20 +30,22 @@ static const SpriteAsset* const table[SPRITE_COUNT] = {
 static const u16 palettes[32] = {[1] = 0x1111, [17] = 0x2222};
 
 static const u16 first_ids[] = {SPR_SMALL, SPR_ANIM};
-static const SpriteGroup first = {.sprite_count = 2,
-                                  .palette_count = 2,
-                                  .flags = SPRITE_GROUP_RESIDENT,
-                                  .sprite_ids = first_ids,
-                                  .palettes = palettes,
-                                  .tile_count = 3};
+static const SpriteGroup first = {
+    .sprite_ids = first_ids, .palettes = palettes, .sprite_count = 2, .palette_count = 2};
 
 static const u16 second_ids[] = {SPR_WIDE};
-static const SpriteGroup second = {.sprite_count = 1,
-                                   .palette_count = 1,
-                                   .flags = SPRITE_GROUP_RESIDENT,
-                                   .sprite_ids = second_ids,
-                                   .palettes = palettes,
-                                   .tile_count = 2};
+static const SpriteGroup second = {
+    .sprite_ids = second_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+
+// 17 sprites of 64x64 (64 tiles each): 1088 tiles, more than the 1024 there are.
+static const SpriteAsset big = {.size = SPRITE_64x64, .tiles = small_tiles};
+#define BIG_COUNT 17
+static const SpriteAsset* const big_table[BIG_COUNT] = {
+    &big, &big, &big, &big, &big, &big, &big, &big, &big,
+    &big, &big, &big, &big, &big, &big, &big, &big,
+};
+static const SpriteGroup big_group = {
+    .palettes = palettes, .sprite_count = BIG_COUNT, .palette_count = 1};
 
 static const TILE* const obj_tiles = (const TILE*)MEM_VRAM_OBJ;
 
@@ -149,11 +141,10 @@ static void groups_are_allocated_one_after_another(void) {
 }
 
 static void load_fails_when_out_of_vram_or_palettes(void) {
-    sprite_table_set(table, SPRITE_COUNT);
-    SpriteGroup huge = first;
-    huge.tile_count = 1025;
-    CHECK(!sprite_group_load(&huge));
+    sprite_table_set(big_table, BIG_COUNT);
+    CHECK(!sprite_group_load(&big_group));
 
+    sprite_table_set(table, SPRITE_COUNT);
     SpriteGroup many_palettes = first;
     many_palettes.palette_count = 17;
     CHECK(!sprite_group_load(&many_palettes));
@@ -168,8 +159,16 @@ static void load_fails_when_out_of_vram_or_palettes(void) {
 static void load_rejects_unsupported_groups(void) {
     sprite_table_set(table, SPRITE_COUNT);
     SpriteGroup streamed = first;
-    streamed.flags = 0;
+    streamed.flags = SPRITE_GROUP_STREAMED;
     CHECK(!sprite_group_load(&streamed));
+
+    static const SpriteAsset no_size = {.tiles = small_tiles};
+    static const SpriteAsset* const no_size_table[] = {&no_size};
+    static const SpriteGroup no_size_group = {
+        .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+    sprite_table_set(no_size_table, 1);
+    CHECK(!sprite_group_load(&no_size_group));
+    sprite_table_set(table, SPRITE_COUNT);
 
     static const u16 bad_ids[] = {SPRITE_COUNT};
     SpriteGroup bad_id = first;
@@ -198,9 +197,9 @@ static void misuse_is_reported_once_in_debug_builds(void) {
     frame_end();
     u32 after_draws = debug_warning_count();
 
-    SpriteGroup too_big = first;
-    too_big.tile_count = 2000;
-    CHECK(!sprite_group_load(&too_big));
+    sprite_table_set(big_table, BIG_COUNT);
+    CHECK(!sprite_group_load(&big_group));
+    sprite_table_set(table, SPRITE_COUNT);
 #ifdef SERVAL_DEBUG
     CHECK(after_draws == before + 1);
     CHECK(debug_warning_count() == after_draws + 1);
@@ -209,6 +208,21 @@ static void misuse_is_reported_once_in_debug_builds(void) {
     (void)before;
     (void)after_draws;
 #endif
+}
+
+static void defaults_and_computed_tile_counts(void) {
+    // `wide` gives no frame_count or tiles_per_frame: one frame of 16x8 = 2
+    // tiles. A group without sprite_ids holds IDs 0 to sprite_count - 1.
+    static const SpriteAsset* const wide_first[] = {&wide, &small};
+    static const SpriteGroup all = {.palettes = palettes, .sprite_count = 2, .palette_count = 1};
+    sprite_table_set(wide_first, 2);
+    CHECK(sprite_group_load(&all));
+    frame_begin();
+    sprite_draw(1, 0, 0, 0, 0); // `small` comes after wide's 2 tiles
+    sprite_draw(0, 1, 0, 0, 0); // frame 1 doesn't exist
+    frame_end();
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 2);
+    CHECK(oam_mem[1].attr0 & ATTR0_HIDE);
 }
 
 TEST_SUITE(sprite_tests, "sprites",
@@ -225,4 +239,5 @@ TEST_SUITE(sprite_tests, "sprites",
            {"load_fails_when_out_of_vram_or_palettes", load_fails_when_out_of_vram_or_palettes},
            {"load_rejects_unsupported_groups", load_rejects_unsupported_groups},
            {"reset_unloads_everything", reset_unloads_everything},
-           {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds});
+           {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds},
+           {"defaults_and_computed_tile_counts", defaults_and_computed_tile_counts});

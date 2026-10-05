@@ -9,6 +9,7 @@ void frame_begin(void);
 void frame_end(void);                 // VBlank sync + flush shadow OAM/palettes/queues
 
 u32  frame_cpu_cycles(void);           // previous frame's work, in CPU cycles
+u32  frame_cpu_permille(void);         // the same, in thousandths of the frame budget
 u32  frame_budget_cycles(void);        // 280,896 per frame at 60 Hz
 
 bool button_down(u16 buttons);        // BUTTON_A, BUTTON_LEFT, ... (OR-able)
@@ -28,8 +29,9 @@ Other modules, all in `include/serval/`:
 | Header | Provides |
 | --- | --- |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
+| `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`) |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)` |
-| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer) |
+| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_print_line()` (also blanks the rest of the row), `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer) |
 | `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |
 
 ## Debug builds report misuse

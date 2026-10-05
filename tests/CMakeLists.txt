@@ -1,4 +1,4 @@
-add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c)
+add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c)
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
@@ -40,7 +40,9 @@ else()
     add_library(serval_api_only_check OBJECT
         public_headers.c
         "${PROJECT_SOURCE_DIR}/examples/hello/main.c"
-        "${PROJECT_SOURCE_DIR}/examples/bunnymark/main.c")
+        "${PROJECT_SOURCE_DIR}/examples/bunnymark/main.c"
+        "${PROJECT_SOURCE_DIR}/examples/bunnymark/bunnymark.c"
+        "${PROJECT_SOURCE_DIR}/examples/bunnymark/bench.c")
     target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
     target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
     add_dependencies(serval_host_tests serval_api_only_check)

@@ -93,6 +93,10 @@ u32 frame_cpu_cycles(void) {
     return last_frame_cycles;
 }
 
+u32 frame_cpu_permille(void) {
+    return last_frame_cycles * 1000 / FRAME_BUDGET_CYCLES;
+}
+
 u32 frame_budget_cycles(void) {
     return FRAME_BUDGET_CYCLES;
 }

@@ -35,6 +35,29 @@ extern FIXED pos_x[MAX_ENT], pos_y[MAX_ENT]; // C_POS: top-left position in pixe
 extern FIXED vel_x[MAX_ENT], vel_y[MAX_ENT]; // C_VEL: pixels per frame
 extern u16 spr_id[MAX_ENT];                  // C_SPR: sprite ID (sprites.h)
 extern u8 spr_frame[MAX_ENT];                // C_SPR: animation frame
+extern u16 spr_flags[MAX_ENT];               // C_SPR: sprite_draw flags (flip, layer)
+
+// True if entity slot i has every component in `mask` (and is alive, when
+// `mask` is not 0). Prefer this to testing ent_mask by hand: `ent_mask[i] &
+// (A | B)` is true when *either* component is present.
+static inline bool ent_has(u32 i, u32 mask) {
+    // Free slots have a mask of 0, so they can only match an empty mask; with a
+    // constant mask this compiles down to a single test.
+    if (mask == 0)
+        return (ent_mask[i] & C_ALIVE) != 0;
+    return (ent_mask[i] & mask) == mask;
+}
+
+// Loops over the slot index `i` of every live entity that has all components
+// in `mask`:
+//
+//     ECS_FOR_EACH(i, C_POS | C_BUNNY) {
+//         pos_x[i] += FX(1);
+//     }
+#define ECS_FOR_EACH(i, mask)                                                                      \
+    for (u32 i = 0; i < MAX_ENT; i++)                                                              \
+        if (!ent_has(i, (mask))) {                                                                 \
+        } else
 
 // Destroys every entity, e.g. on room change. Outstanding handles go stale.
 void ecs_reset(void);
@@ -52,7 +75,8 @@ bool entity_alive(Entity e);
 // Systems, run once per frame by the game.
 // sys_movement: position += velocity for entities with C_POS and C_VEL.
 void sys_movement(void);
-// sys_render: draws entities with C_POS and C_SPR using sprite_draw().
+// sys_render: draws entities with C_POS and C_SPR using sprite_draw(), with
+// their spr_flags.
 void sys_render(void);
 
 static inline u8 entity_index(Entity e) {

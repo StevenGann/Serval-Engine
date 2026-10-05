@@ -82,12 +82,32 @@ static __attribute__((noinline, cold)) void warn_oam_full(void) {
 #define OAM_FULL() ((void)0)
 #endif
 
-// Width and height in pixels, by [shape][size].
-static const u8 sprite_dims[3][4][2] = {
-    {{8, 8}, {16, 16}, {32, 32}, {64, 64}},
-    {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
-    {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
+// SpriteAsset.size values, 1-12, in hardware terms: shape (square, wide,
+// tall) and size (0-3), with the width and height in pixels.
+typedef struct {
+    u8 shape, size, width, height;
+} HardwareSize;
+
+static const HardwareSize hardware_sizes[12] = {
+    {0, 0, 8, 8},  {0, 1, 16, 16}, {0, 2, 32, 32}, {0, 3, 64, 64}, // SPRITE_8x8 ...
+    {1, 0, 16, 8}, {1, 1, 32, 8},  {1, 2, 32, 16}, {1, 3, 64, 32}, // SPRITE_16x8 ...
+    {2, 0, 8, 16}, {2, 1, 8, 32},  {2, 2, 16, 32}, {2, 3, 32, 64}, // SPRITE_8x16 ...
 };
+
+static u32 frames_of(const SpriteAsset* sprite) {
+    return sprite->frame_count ? sprite->frame_count : 1;
+}
+
+static u32 tiles_per_frame_of(const SpriteAsset* sprite) {
+    if (sprite->tiles_per_frame)
+        return sprite->tiles_per_frame;
+    const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
+    return (u32)hw->width * hw->height / 64;
+}
+
+static u32 group_sprite_id(const SpriteGroup* group, u32 i) {
+    return group->sprite_ids ? group->sprite_ids[i] : i;
+}
 
 void sprite_groups_reset(void) {
     next_tile = 0;
@@ -108,48 +128,52 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count) {
     sprite_groups_reset();
 }
 
-// Checks that every sprite in the group can be loaded, reporting the first
-// problem in debug builds.
-static bool group_supported(const SpriteGroup* group) {
-    if (!(group->flags & SPRITE_GROUP_RESIDENT)) {
-        SERVAL_WARN("sprite_group_load: only resident groups (SPRITE_GROUP_RESIDENT) are "
-                    "supported so far");
-        return false;
+// Checks that every sprite in the group can be loaded and returns the tiles it
+// needs, or -1 after reporting the first problem (in debug builds).
+static int group_tiles(const SpriteGroup* group) {
+    if (group->flags & SPRITE_GROUP_STREAMED) {
+        SERVAL_WARN("sprite_group_load: streamed groups are not supported yet");
+        return -1;
     }
+    u32 tiles = 0;
     for (u32 i = 0; i < group->sprite_count; i++) {
-        u16 id = group->sprite_ids[i];
+        u32 id = group_sprite_id(group, i);
         if (id >= sprite_count) {
             SERVAL_WARN("sprite_group_load: sprite ID %u is not in the sprite table (%u sprites)",
                         id, sprite_count);
-            return false;
+            return -1;
         }
         const SpriteAsset* sprite = sprite_table[id];
         if (sprite->flags & (SPRITE_ASSET_STREAMED | SPRITE_ASSET_METASPRITE)) {
             SERVAL_WARN("sprite_group_load: sprite %u is streamed or a metasprite, which are not "
                         "supported yet",
                         id);
-            return false;
+            return -1;
         }
-        if (sprite->shape > SPRITE_SHAPE_TALL || sprite->size > 3) {
-            SERVAL_WARN("sprite_group_load: sprite %u has an invalid shape or size", id);
-            return false;
+        if (sprite->size < SPRITE_8x8 || sprite->size > SPRITE_32x64) {
+            SERVAL_WARN("sprite_group_load: sprite %u has no valid size; set .size, e.g. "
+                        "SPRITE_16x16",
+                        id);
+            return -1;
         }
         if (sprite->palette_slot >= group->palette_count) {
             SERVAL_WARN("sprite_group_load: sprite %u uses palette slot %u, but the group has %u "
                         "palettes",
                         id, sprite->palette_slot, group->palette_count);
-            return false;
+            return -1;
         }
+        tiles += frames_of(sprite) * tiles_per_frame_of(sprite);
     }
-    return true;
+    return (int)tiles;
 }
 
 bool sprite_group_load(const SpriteGroup* group) {
-    if (!group_supported(group))
+    int tiles = group_tiles(group);
+    if (tiles < 0)
         return false;
-    if (next_tile + group->tile_count > OBJ_TILE_COUNT) {
-        SERVAL_WARN("sprite_group_load: needs %u tiles, but only %u of %u are free",
-                    group->tile_count, OBJ_TILE_COUNT - next_tile, OBJ_TILE_COUNT);
+    if (next_tile + (u32)tiles > OBJ_TILE_COUNT) {
+        SERVAL_WARN("sprite_group_load: needs %u tiles, but only %u of %u are free", tiles,
+                    OBJ_TILE_COUNT - next_tile, OBJ_TILE_COUNT);
         return false;
     }
     if (next_palette_bank + group->palette_count > OBJ_PALETTE_BANKS) {
@@ -160,39 +184,29 @@ bool sprite_group_load(const SpriteGroup* group) {
 
     u32 tile = next_tile;
     for (u32 i = 0; i < group->sprite_count; i++) {
-        const SpriteAsset* sprite = sprite_table[group->sprite_ids[i]];
-        u32 tiles = (u32)sprite->frame_count * sprite->tiles_per_frame;
-        if (tile + tiles > (u32)next_tile + group->tile_count) {
-            SERVAL_WARN("sprite_group_load: tile_count is %u, but the group's sprites need more",
-                        group->tile_count);
-            return false;
-        }
-        tile += tiles;
-    }
-
-    tile = next_tile;
-    for (u32 i = 0; i < group->sprite_count; i++) {
-        u16 id = group->sprite_ids[i];
+        u32 id = group_sprite_id(group, i);
         const SpriteAsset* sprite = sprite_table[id];
-        u32 tiles = (u32)sprite->frame_count * sprite->tiles_per_frame;
-        memcpy32(obj_tiles + tile, sprite->tiles, tiles * (sizeof(TILE) / 4));
+        const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
+        u32 frames = frames_of(sprite);
+        u32 per_frame = tiles_per_frame_of(sprite);
+        memcpy32(obj_tiles + tile, sprite->tiles, frames * per_frame * (sizeof(TILE) / 4));
 
         SpriteDraw* d = &sprite_draws[id];
-        d->attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | (sprite->shape << 14));
-        d->attr1 = (u16)(sprite->size << 14);
+        d->attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | (hw->shape << 14));
+        d->attr1 = (u16)(hw->size << 14);
         d->attr2 = (u16)(ATTR2_ID(tile) | ATTR2_PALBANK(next_palette_bank + sprite->palette_slot));
-        d->width = sprite_dims[sprite->shape][sprite->size][0];
-        d->height = sprite_dims[sprite->shape][sprite->size][1];
+        d->width = hw->width;
+        d->height = hw->height;
         d->origin_x = sprite->origin_x;
         d->origin_y = sprite->origin_y;
-        d->frame_count = sprite->frame_count;
-        d->tiles_per_frame = sprite->tiles_per_frame;
-        tile += tiles;
+        d->frame_count = (u8)frames;
+        d->tiles_per_frame = (u8)per_frame;
+        tile += frames * per_frame;
     }
 
     memcpy16(&pal_obj_bank[next_palette_bank], group->palettes, group->palette_count * 16u);
 
-    next_tile = (u16)(next_tile + group->tile_count);
+    next_tile = (u16)tile;
     next_palette_bank = (u8)(next_palette_bank + group->palette_count);
     return true;
 }
@@ -239,7 +253,8 @@ SERVAL_IWRAM_CODE void sys_render(void) {
             continue;
         u32 id = spr_id[i];
         if (id < sprite_count)
-            draw(id, &sprite_draws[id], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]), 0);
+            draw(id, &sprite_draws[id], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]),
+                 spr_flags[i]);
         else
             DRAW_REJECTED(id, spr_frame[i]);
     }

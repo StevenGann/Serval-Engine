@@ -45,9 +45,10 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 - Generations start at 1 and skip 0 when wrapping, so no handle ever equals `ENTITY_NONE` (0).
 - Free slots are kept on a stack: creation and destruction are O(1), with no scan.
 - Component bits 0-15 belong to the engine and 16-30 to games (`C_GAME(n)`); bit 31 is `C_ALIVE`.
-- Engine components so far: `C_POS` (`pos_x`, `pos_y`), `C_VEL` (`vel_x`, `vel_y`), both 24.8 `FIXED`, and `C_SPR` (`spr_id`, `spr_frame`). `entity_create()` zeroes them.
+- Engine components so far: `C_POS` (`pos_x`, `pos_y`), `C_VEL` (`vel_x`, `vel_y`), both 24.8 `FIXED`, and `C_SPR` (`spr_id`, `spr_frame`, `spr_flags`). `entity_create()` zeroes them.
+- Writing systems: `ECS_FOR_EACH(i, C_POS | C_VEL) { ... }` loops over matching entities, and `ent_has(i, mask)` tests one; both require *every* component in the mask (a hand-written `ent_mask[i] & (A | B)` is true for either).
 - Engine systems so far: `sys_movement()` (position += velocity) and `sys_render()` (`sprite_draw()` for `C_POS | C_SPR`). Games call them once per frame, alongside their own systems.
-- None of this is optimized yet (Thumb code in ROM, no IWRAM placement); bunnymark measures it ([development.md](development.md#benchmark)).
+- `sys_movement` and `sys_render` run as ARM code from IWRAM; bunnymark measures them ([development.md](development.md#benchmark)).
 
 ## Sprite component
 

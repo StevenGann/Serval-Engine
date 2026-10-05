@@ -7,6 +7,7 @@ FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
 FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
 u16 spr_id[MAX_ENT];
 u8 spr_frame[MAX_ENT];
+u16 spr_flags[MAX_ENT];
 
 static u8 ent_gen[MAX_ENT];
 
@@ -60,6 +61,7 @@ Entity entity_create(u32 components) {
     vel_x[index] = vel_y[index] = 0;
     spr_id[index] = 0;
     spr_frame[index] = 0;
+    spr_flags[index] = 0;
     return make_handle(index);
 }
 

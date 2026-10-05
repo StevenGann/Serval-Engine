@@ -19,8 +19,8 @@ int main(void) {
     serval_init();
 
     static const TestSuite* const suites[] = {
-        &ecs_tests,  &random_tests, &text_format_tests, &core_tests,
-        &libc_tests, &sprite_tests, &gba_text_tests,
+        &ecs_tests,  &math_tests, &random_tests, &text_format_tests,
+        &core_tests, &libc_tests, &sprite_tests, &gba_text_tests,
     };
     debug_exit((int)test_run(suites, sizeof(suites) / sizeof(suites[0])));
 }

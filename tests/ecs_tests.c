@@ -115,6 +115,41 @@ static void movement_adds_velocity_to_position(void) {
     CHECK(fx_to_int(-FX(1) / 2) == -1); // rounds toward negative infinity
 }
 
+static void ent_has_requires_every_component(void) {
+    ecs_reset();
+    Entity e = entity_create(C_POS);
+    u32 i = entity_index(e);
+    CHECK(ent_has(i, C_POS));
+    CHECK(!ent_has(i, C_POS | C_VEL)); // not just either
+    CHECK(ent_has(i, 0));              // alive
+    entity_destroy(e);
+    CHECK(!ent_has(i, 0)); // free slots never match
+}
+
+static void for_each_visits_matching_entities(void) {
+    ecs_reset();
+    Entity a = entity_create(C_POS | C_VEL);
+    entity_create(C_POS);
+    Entity c = entity_create(C_POS | C_VEL | C_SPR);
+    u32 visited = 0, count = 0;
+    ECS_FOR_EACH(i, C_POS | C_VEL) {
+        visited |= 1u << i;
+        count++;
+    }
+    CHECK(count == 2);
+    CHECK(visited == ((1u << entity_index(a)) | (1u << entity_index(c))));
+
+    // Usable as the body of an if without swallowing a following else.
+    bool else_taken = false;
+    if (count == 0)
+        ECS_FOR_EACH(i, C_POS) {
+            (void)i;
+        }
+    else
+        else_taken = true;
+    CHECK(else_taken);
+}
+
 TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"slots_are_handed_out_in_order", slots_are_handed_out_in_order},
            {"destroy_makes_handle_stale", destroy_makes_handle_stale},
@@ -124,4 +159,6 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"generation_wraps_without_reaching_none", generation_wraps_without_reaching_none},
            {"invalid_handles_are_not_alive", invalid_handles_are_not_alive},
            {"create_zeroes_components", create_zeroes_components},
-           {"movement_adds_velocity_to_position", movement_adds_velocity_to_position});
+           {"movement_adds_velocity_to_position", movement_adds_velocity_to_position},
+           {"ent_has_requires_every_component", ent_has_requires_every_component},
+           {"for_each_visits_matching_entities", for_each_visits_matching_entities});

@@ -10,38 +10,51 @@
 
 #include "serval/platform.h"
 
-// SpriteAsset.shape and .size select the hardware sprite dimensions:
-//            size 0   size 1   size 2   size 3
-//   SQUARE    8x8     16x16    32x32    64x64
-//   WIDE     16x8     32x8     32x16    64x32
-//   TALL      8x16     8x32    16x32    32x64
-#define SPRITE_SHAPE_SQUARE 0
-#define SPRITE_SHAPE_WIDE 1
-#define SPRITE_SHAPE_TALL 2
+// SpriteAsset.size: the sprite's dimensions in pixels (width x height). These
+// are the sizes the hardware supports.
+#define SPRITE_8x8 1
+#define SPRITE_16x16 2
+#define SPRITE_32x32 3
+#define SPRITE_64x64 4
+#define SPRITE_16x8 5
+#define SPRITE_32x8 6
+#define SPRITE_32x16 7
+#define SPRITE_64x32 8
+#define SPRITE_8x16 9
+#define SPRITE_8x32 10
+#define SPRITE_16x32 11
+#define SPRITE_32x64 12
 
 // SpriteAsset.flags
 #define SPRITE_ASSET_STREAMED (1 << 0)   // not supported yet
 #define SPRITE_ASSET_METASPRITE (1 << 1) // not supported yet
 
+// A sprite: its pixels and how to draw them. Fields left out of an
+// initializer take sensible defaults; only .size and .tiles are required.
 typedef struct {
-    u8 shape, size;        // SPRITE_SHAPE_*, 0-3
-    u8 frame_count;        // animation frames
-    u8 tiles_per_frame;    // 8x8 4bpp tiles per frame
-    const u32* tiles;      // frame_count * tiles_per_frame tiles, 8 words each
-    const u8* frame_times; // animation timing, may be NULL
+    const u32* tiles;      // pixel data: 8x8 tiles of 4 bits per pixel, 8 words each,
+                           // frame after frame (each frame row by row, tile by tile)
+    u8 size;               // SPRITE_16x16 etc. (required)
+    u8 frame_count;        // animation frames; 0 means 1
+    u8 tiles_per_frame;    // 0: computed from size (the usual case)
+    u8 palette_slot;       // which of its group's palettes it uses
     s8 origin_x, origin_y; // drawn position = (x, y) - origin
-    u8 palette_slot;       // logical palette bank within its group
     u8 flags;              // SPRITE_ASSET_*
+    const u8* frame_times; // animation timing, may be NULL
 } SpriteAsset;
 
 // SpriteGroup.flags
-#define SPRITE_GROUP_RESIDENT (1 << 0) // all frames copied to VRAM on load (the only mode so far)
+#define SPRITE_GROUP_RESIDENT 0        // all frames copied to VRAM on load (the default)
+#define SPRITE_GROUP_STREAMED (1 << 0) // not supported yet
 
+// Sprites loaded and unloaded together, with the palettes they share.
 typedef struct {
-    u8 sprite_count, palette_count, flags;
-    const u16* sprite_ids; // IDs (sprite table indices) of the group's sprites
-    const u16* palettes;   // palette_count banks of 16 colors (index 0 transparent)
-    u16 tile_count;        // total tiles of all sprites in the group
+    const u16* sprite_ids; // IDs (sprite table indices) of its sprites; NULL means
+                           // IDs 0 to sprite_count - 1
+    const u16* palettes;   // palette_count banks of 16 colors (color 0 transparent)
+    u8 sprite_count;
+    u8 palette_count;
+    u8 flags; // SPRITE_GROUP_*
 } SpriteGroup;
 
 // Most sprite IDs a sprite table may hold.

@@ -35,26 +35,29 @@ Emitted as constant C tables by the build tooling.
 
 ```c
 typedef struct {
-    u8  shape, size;          // OBJ shape/size, or metasprite
-    u8  frame_count, tiles_per_frame;
-    const u32 *tiles;         // ROM tile data
-    const u8  *frame_times;   // animation timing
-    s8  origin_x, origin_y;
+    const u32 *tiles;         // ROM tile data, frame after frame
+    u8  size;                 // SPRITE_8x8 ... SPRITE_32x64 (required)
+    u8  frame_count;          // 0 means 1
+    u8  tiles_per_frame;      // 0: computed from size
     u8  palette_slot;         // logical bank within group
+    s8  origin_x, origin_y;
     u8  flags;                // STREAMED, METASPRITE, ...
+    const u8  *frame_times;   // animation timing
 } SpriteAsset;
 
 typedef struct {
-    u8  sprite_count, palette_count, flags; // RESIDENT, LZ77...
-    const u16 *sprite_ids;    // sprite table indices of the group's sprites
+    const u16 *sprite_ids;    // sprite table indices of the group's sprites; NULL: 0..sprite_count-1
     const u16 *palettes;
-    u16 tile_count;
+    u8  sprite_count, palette_count;
+    u8  flags;                // 0 = resident (default); STREAMED, LZ77...
 } SpriteGroup;
 ```
 
+Fields left out of a C initializer take usable defaults, so a hand-written sprite needs only `.size` and `.tiles`, and a group only its palettes and counts. The engine computes how many tiles a group needs; `size` names the hardware dimensions directly (e.g. `SPRITE_16x16`), replacing the hardware's separate shape and size fields.
+
 **Sprite IDs** are indices into a project-wide sprite table (`const SpriteAsset *const table[]`) emitted by the build. IDs rather than pointers keep the sprite component compact and keep addresses out of bytecode ([vm.md](vm.md)); groups list their sprites by ID for the same reason.
 
-The sprite component stores only `(sprite_id, frame)`. The render system resolves it to a VRAM tile index through the group's load offset or the instance's streamed slot.
+The sprite component stores `(sprite_id, frame)` plus per-entity draw flags (`spr_flags`: flip and layer). The render system resolves it to a VRAM tile index through the group's load offset or the instance's streamed slot.
 
 ## API
 

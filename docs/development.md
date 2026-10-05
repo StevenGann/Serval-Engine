@@ -89,11 +89,11 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 
 ## Benchmark
 
-`examples/bunnymark` doubles as the engine's CPU benchmark: built as `bunnymark_bench`, it starts with 128 bunnies (the entity limit) from a fixed random seed, runs 600 frames headless in mGBA and reports the CPU cycles spent per frame. Lower is better; the frame budget is 280,896 cycles.
+`examples/bunnymark` doubles as the engine's CPU benchmark: its game (`bunnymark.c`) is also built with `bench.c` as `bunnymark_bench`, which starts with 128 bunnies (the entity limit) from a fixed random seed, runs 600 frames headless in mGBA and reports the CPU cycles spent per frame. Lower is better; the frame budget is 280,896 cycles.
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 164650 cycles (58.6%), peak 171675 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 57173 cycles (20.3%), peak 62799 (gba-release)
 ```
 
 The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
@@ -105,7 +105,8 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-04 | `b79fc9e` | 83,072 | 29.5% | `sprite_draw`/`sys_render` as ARM code in IWRAM, per-sprite draw data resolved at load, no per-sprite call |
 | 2026-10-04 | `245f01f` | 82,929 | 29.5% | Debug checks (compiled out of release builds) |
 | 2026-10-04 | `7a3e296` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
-| 2026-10-04 | (text and ROM speed) | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
+| 2026-10-04 | `9f52373` | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
+| 2026-10-04 | (API cleanup) | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
 
 ## Code style
 

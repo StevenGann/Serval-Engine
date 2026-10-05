@@ -33,6 +33,11 @@ void frame_end(void);
 // 2 and 3, which the engine reserves.
 u32 frame_cpu_cycles(void);
 
+// frame_cpu_cycles() as thousandths of the frame budget: 500 means the previous
+// frame used half the available time. Display as percent with one decimal:
+// text_format("%u.%u%%", p / 10, p % 10).
+u32 frame_cpu_permille(void);
+
 // CPU cycles available per frame at 60 Hz (280,896 on the GBA). A frame whose
 // frame_cpu_cycles() exceeds this misses the next refresh.
 u32 frame_budget_cycles(void);
