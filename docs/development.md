@@ -100,16 +100,16 @@ The result is deterministic for a given build, so any change in the number comes
 
 | Date | Commit | avg cycles | % of frame | Change |
 | --- | --- | --- | --- | --- |
-| 2026-10-04 | `0d320c5` | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
-| 2026-10-04 | `e3caba8` | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
-| 2026-10-04 | `b79fc9e` | 83,072 | 29.5% | `sprite_draw`/`sys_render` as ARM code in IWRAM, per-sprite draw data resolved at load, no per-sprite call |
-| 2026-10-04 | `245f01f` | 82,929 | 29.5% | Debug checks (compiled out of release builds) |
-| 2026-10-04 | `7a3e296` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
-| 2026-10-04 | `9f52373` | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
-| 2026-10-04 | `2a15678` | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
-| 2026-10-04 | `bab424a` | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
-| 2026-10-04 | `b9dae7f` | 71,345 | 25.3% | Open-edge checks in `sys_physics` (Pong) |
-| 2026-10-04 | `e51e33b` | 72,875 | 25.9% | One rotation check per sprite in the render systems; physics loop specialized for wrapping (Asteroids) |
+| 2026-10-04 | `e5fbaf0` | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
+| 2026-10-04 | `657244b` | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
+| 2026-10-04 | `d685165` | 83,072 | 29.5% | `sprite_draw`/`sys_render` as ARM code in IWRAM, per-sprite draw data resolved at load, no per-sprite call |
+| 2026-10-04 | `06cbcca` | 82,929 | 29.5% | Debug checks (compiled out of release builds) |
+| 2026-10-04 | `55d56f0` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
+| 2026-10-04 | `5969c88` | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
+| 2026-10-04 | `2075d3b` | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
+| 2026-10-04 | `8cac6a0` | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
+| 2026-10-04 | `1116a04` | 71,345 | 25.3% | Open-edge checks in `sys_physics` (Pong) |
+| 2026-10-04 | `a10fd04` | 72,875 | 25.9% | One rotation check per sprite in the render systems; physics loop specialized for wrapping (Asteroids) |
 
 ## Memory use
 
