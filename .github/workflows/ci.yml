@@ -70,6 +70,14 @@ jobs:
           cmake --preset gba-release
           cmake --build --preset gba-release
 
+      # Release builds compile out the debug checks (SERVAL_DEBUG), so they get
+      # their own warnings-as-errors pass; the gba-release build tree is then
+      # reused by build-all.sh and bench.sh.
+      - name: Build release with warnings as errors
+        run: |
+          cmake --preset gba-release -DSERVAL_WARNINGS_AS_ERRORS=ON
+          cmake --build --preset gba-release
+
       - name: Build every example
         run: examples/build-all.sh
 

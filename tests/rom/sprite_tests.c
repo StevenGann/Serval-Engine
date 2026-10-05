@@ -3,6 +3,7 @@
 
 #include "../test.h"
 #include "serval/core.h"
+#include "serval/debug.h"
 #include "serval/sprites.h"
 
 #include <tonc.h>
@@ -175,6 +176,29 @@ static void reset_unloads_everything(void) {
     CHECK(oam_mem[0].attr0 & ATTR0_HIDE);
 }
 
+static void misuse_is_reported_once_in_debug_builds(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    u32 before = debug_warning_count();
+    frame_begin();
+    sprite_draw(SPR_UNLOADED, 0, 10, 10, 0);
+    sprite_draw(SPR_UNLOADED, 0, 10, 10, 0); // same problem: not reported again
+    frame_end();
+    u32 after_draws = debug_warning_count();
+
+    SpriteGroup too_big = first;
+    too_big.tile_count = 2000;
+    CHECK(!sprite_group_load(&too_big));
+#ifdef SERVAL_DEBUG
+    CHECK(after_draws == before + 1);
+    CHECK(debug_warning_count() == after_draws + 1);
+#else
+    CHECK(debug_warning_count() == 0); // release builds report nothing
+    (void)before;
+    (void)after_draws;
+#endif
+}
+
 TEST_SUITE(sprite_tests, "sprites",
            {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
            {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
@@ -187,4 +211,5 @@ TEST_SUITE(sprite_tests, "sprites",
            {"groups_are_allocated_one_after_another", groups_are_allocated_one_after_another},
            {"load_fails_when_out_of_vram_or_palettes", load_fails_when_out_of_vram_or_palettes},
            {"load_rejects_unsupported_groups", load_rejects_unsupported_groups},
-           {"reset_unloads_everything", reset_unloads_everything});
+           {"reset_unloads_everything", reset_unloads_everything},
+           {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds});

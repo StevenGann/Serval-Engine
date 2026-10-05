@@ -1,3 +1,4 @@
+#include "serval/debug.h"
 #include "serval/ecs.h"
 #include "test.h"
 
@@ -46,7 +47,14 @@ static void pool_full_returns_none(void) {
         if (i == 0)
             first = e;
     }
+    u32 warnings = debug_warning_count();
     CHECK(entity_create(0) == ENTITY_NONE);
+    CHECK(entity_create(0) == ENTITY_NONE);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1); // reported once
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
 
     entity_destroy(first);
     CHECK(entity_create(0) != ENTITY_NONE);

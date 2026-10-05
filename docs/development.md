@@ -80,6 +80,8 @@ Test cases use the small harness in `tests/test.h` (`CHECK(cond)`, `TEST_SUITE(.
 
 The test ROM writes results to mGBA's debug log and ends with `swi 3`, passing the number of failed checks in `r0`; `mgba-rom-test -S 3 -R r0` turns that into its exit code. Register new suites in `tests/host/main.c` and/or `tests/rom/main.c`.
 
+Debug-only behavior (`SERVAL_DEBUG` warnings, [core-api.md](core-api.md#debug-builds-report-misuse)) is tested with `debug_warning_count()`, with `#ifdef SERVAL_DEBUG` branches for what release builds must do instead. CI runs the test ROM in a RelWithDebInfo build (checks on) and builds Release with warnings as errors (checks off).
+
 Two compile-only checks keep third-party libraries behind the API ([core-api.md](core-api.md#dependencies-stay-behind-the-api)):
 
 - **Host build:** `tests/public_headers.c` and every example's sources compile without libtonc on the include path. Add new examples to `serval_api_only_check` in `tests/CMakeLists.txt`.

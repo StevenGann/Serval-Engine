@@ -30,7 +30,19 @@ Other modules, all in `include/serval/`:
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)` |
 | `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer) |
-| `debug.h` | `debug_log()` (mGBA debug log) and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |
+| `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |
+
+## Debug builds report misuse
+
+In Debug and RelWithDebInfo builds (`SERVAL_DEBUG`), the engine reports API misuse as warnings in the emulator's debug log (mGBA: *Tools > View Logs*), prefixed `serval:`, instead of failing silently. For example:
+
+```
+serval: sprite_draw: sprite 3 is not loaded; load a sprite group containing it
+serval: sprite_group_load: needs 1025 tiles, but only 1024 of 1024 are free
+serval: entity_create: all 128 entities are in use; returning ENTITY_NONE
+```
+
+Each problem is reported once rather than every frame. Release builds compile the checks out entirely, so they cost nothing; the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too.
 
 **Hardware the engine reserves:** timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
 

@@ -1,5 +1,7 @@
 #include "serval/ecs.h"
 
+#include "../core/warn.h"
+
 u32 ent_mask[MAX_ENT];
 FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
 FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
@@ -12,6 +14,10 @@ static u8 ent_gen[MAX_ENT];
 static u8 free_slots[MAX_ENT];
 static u32 free_count;
 
+#ifdef SERVAL_DEBUG
+static bool warned_full;
+#endif
+
 static u8 next_generation(u8 gen) {
     gen++;
     return gen ? gen : 1; // 0 is reserved so no handle equals ENTITY_NONE
@@ -22,6 +28,9 @@ static Entity make_handle(u32 index) {
 }
 
 void ecs_reset(void) {
+#ifdef SERVAL_DEBUG
+    warned_full = false;
+#endif
     free_count = 0;
     // Push in reverse so slots are handed out in ascending order.
     for (u32 i = MAX_ENT; i-- > 0;) {
@@ -35,8 +44,16 @@ void ecs_reset(void) {
 }
 
 Entity entity_create(u32 components) {
-    if (free_count == 0)
+    if (free_count == 0) {
+#ifdef SERVAL_DEBUG
+        if (!warned_full) {
+            warned_full = true;
+            SERVAL_WARN("entity_create: all %u entities are in use; returning ENTITY_NONE",
+                        MAX_ENT);
+        }
+#endif
         return ENTITY_NONE;
+    }
     u32 index = free_slots[--free_count];
     ent_mask[index] = components | C_ALIVE;
     pos_x[index] = pos_y[index] = 0;

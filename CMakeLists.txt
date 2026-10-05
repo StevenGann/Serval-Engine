@@ -37,6 +37,14 @@ add_library(serval_portable STATIC
 target_include_directories(serval_portable PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(serval_portable PRIVATE serval_warnings)
 
+# Debug builds report API misuse as warnings (src/core/warn.h). Public, so
+# games can key their own debug code off SERVAL_DEBUG too.
+target_compile_definitions(serval_portable PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>)
+
+if(NOT SERVAL_TARGET_GBA)
+    target_sources(serval_portable PRIVATE src/host/debug.c)
+endif()
+
 if(SERVAL_TARGET_GBA)
     enable_language(ASM)
     target_compile_definitions(serval_portable PUBLIC SERVAL_GBA)
