@@ -20,6 +20,7 @@ typedef enum {
 #define TIME_START 300
 #define FRAMES_PER_TICK 24 // the countdown ticks a little faster than seconds
 #define HURRY_TIME 100
+#define HURRY_TEMPO 180 // the level's tune speeds up from 150 when time runs low
 #define GEMS_PER_LIFE 20
 #define CARD_FRAMES 150
 #define CLEAR_FRAMES 300
@@ -244,7 +245,7 @@ static void update_time(void) {
     time_ticks = 0;
     if (time_left > 0 && --time_left == HURRY_TIME) {
         psg_play(SND_HURRY);
-        psg_music_play(&hurry_song); // from the top, faster, once the warning ends
+        psg_music_set_tempo(HURRY_TEMPO); // faster from where it is
     }
     if (time_left == 0)
         player_die(false);
@@ -253,8 +254,8 @@ static void update_time(void) {
 static void update_playing(void) {
     if (button_pressed(BUTTON_START)) {
         state = PAUSED;
+        psg_music_pause(); // silent, and holding its place
         psg_play(SND_PAUSE);
-        psg_music_set_volume(0); // the music keeps time, silently
         text_print_centered(9, "PAUSED");
         return;
     }
@@ -377,7 +378,7 @@ static void update_state(void) {
         if (start) {
             state = PLAYING;
             psg_play(SND_PAUSE);
-            psg_music_set_volume(15);
+            psg_music_resume(); // where it stopped (square 1 once the tick ends)
             text_print_line(0, 9, "");
         }
         break;

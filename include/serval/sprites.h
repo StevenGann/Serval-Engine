@@ -28,7 +28,14 @@
 // SpriteAsset.flags
 #define SPRITE_ASSET_STREAMED (1 << 0)   // not supported yet
 #define SPRITE_ASSET_METASPRITE (1 << 1) // not supported yet
-#define SPRITE_ASSET_ANIM_ONCE (1 << 2)  // sys_animate stops on the last frame instead of looping
+#define SPRITE_ASSET_ANIM_ONCE                                                                     \
+    (1 << 2) // sys_animate stops on the last frame (or
+             // frame_order step) instead of looping
+
+// SpriteAsset.frame_order entries: a frame index (0-63), optionally drawn
+// flipped, e.g. {0, 1, 2, 1 | SPRITE_FRAME_FLIP_H}.
+#define SPRITE_FRAME_FLIP_H (1 << 6)
+#define SPRITE_FRAME_FLIP_V (1 << 7)
 
 // A sprite: its pixels and how to draw them. Fields left out of an
 // initializer take sensible defaults; only .size and .tiles are required.
@@ -36,15 +43,21 @@ typedef struct {
     const u32* tiles;      // pixel data: 8x8 tiles of 4 bits per pixel, 8 words each,
                            // frame after frame (each frame row by row, tile by tile)
     u8 size;               // SPRITE_16x16 etc. (required)
-    u8 frame_count;        // animation frames; 0 means 1
     u8 tiles_per_frame;    // 0: computed from size (the usual case); if set, at least
                            // what the size needs (more leaves padding between frames)
+    u8 frame_count;        // animation frames; 0 means 1
+    u8 order_length;       // frame_order entries (steps); at least 1 if frame_order is set
     u8 palette_slot;       // which of its group's palettes it uses
     s8 origin_x, origin_y; // drawn position = (x, y) - origin
     u8 flags;              // SPRITE_ASSET_*
     const u8* frame_times; // animation timing for sys_animate (ecs.h): how many frames
-                           // (1/60 s) each animation frame shows, frame_count entries;
-                           // 0 holds that frame. NULL: every frame shows for one frame
+                           // (1/60 s) each animation frame shows, frame_count entries
+                           // (order_length with frame_order); 0 holds that frame.
+                           // NULL: every frame shows for one frame
+    const u8* frame_order; // the animation sys_animate plays: frame indices, each with
+                           // optional SPRITE_FRAME_FLIP_H/V, so frames can repeat, play
+                           // backwards or mirrored without duplicate tiles. NULL: frames
+                           // 0 to frame_count - 1 in order
 } SpriteAsset;
 
 // SpriteGroup.flags
@@ -81,6 +94,12 @@ typedef struct {
 // Not drawn at all, e.g. to make an entity blink by toggling it in spr_flags.
 // The sprite keeps its place in the game; it just takes no hardware sprite.
 #define SPRITE_HIDDEN (1 << 4)
+
+// Set in spr_flags (ecs.h) by sys_animate: the flips that come from the
+// current frame_order step, on top of the game's (XORed with them). Drawing
+// ignores these two bits.
+#define SPRITE_ANIM_FLIP_H (1 << 5)
+#define SPRITE_ANIM_FLIP_V (1 << 6)
 
 // Registers the game's sprite table: table[id] is the sprite with that ID.
 // Unloads all sprite groups.

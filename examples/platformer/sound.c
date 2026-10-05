@@ -10,7 +10,9 @@
 //
 // The music (PsgSong) uses all three channels: melody on square 2, bass on
 // square 1, drums on noise. Sound effects play over it on their channel, and
-// the music comes back on that channel when they end.
+// the music comes back on that channel when they end. When time runs low the
+// game speeds it up where it is (psg_music_set_tempo), and pausing the game
+// pauses it (psg_music_pause).
 
 #include "game.h"
 
@@ -298,8 +300,6 @@ static const PsgTrack level_tracks[] = {
 };
 
 const PsgSong level_song = {.tempo = 150, .tracks = level_tracks, .track_count = 3};
-// The same tune, faster: once the time runs low.
-const PsgSong hurry_song = {.tempo = 180, .tracks = level_tracks, .track_count = 3};
 
 // The fanfare as the serval hops off the goal pole: played once (PSG_NO_LOOP).
 static const PsgNote fanfare_melody[] = {

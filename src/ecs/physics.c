@@ -230,15 +230,6 @@ static FIXED vel_of(const FIXED* vel, u32 i) {
     return (ent_mask[i] & C_VEL) ? vel[i] : 0;
 }
 
-// Penetration of a into b along one axis, and whether a's far side ("max",
-// right or bottom) is the one inside b.
-static FIXED penetration(FIXED a, FIXED a_size, FIXED b, FIXED b_size, bool* max_side) {
-    FIXED from_min = a + a_size - b; // a's right/bottom side past b's left/top
-    FIXED from_max = b + b_size - a; // a's left/top side past b's right/bottom
-    *max_side = from_min < from_max || (from_min == from_max && a < b);
-    return *max_side ? from_min : from_max;
-}
-
 u32 body_hit_side(u32 a, u32 b) {
     if (a >= MAX_ENT || b >= MAX_ENT || a == b || !body_overlap(a, b))
         return 0;
@@ -276,14 +267,8 @@ u32 body_hit_side(u32 a, u32 b) {
         return side_y;
     if (side_x)
         return side_x;
-
-    // Already overlapping before the frame (moved together, spawned inside,
-    // or moved by the game rather than by velocity): the side of least
-    // penetration now, top/bottom on a tie.
-    bool max_x, max_y;
-    FIXED px = penetration(pos_x[a], aw, pos_x[b], bw, &max_x);
-    FIXED py = penetration(pos_y[a], ah, pos_y[b], bh, &max_y);
-    if (px < py)
-        return max_x ? BODY_SIDE_RIGHT : BODY_SIDE_LEFT;
-    return max_y ? BODY_SIDE_BOTTOM : BODY_SIDE_TOP;
+    // They already overlapped before the frame (spawned or teleported inside,
+    // moved together, or moved by the game rather than by velocity): no side
+    // was crossed this frame, so none is guessed.
+    return BODY_SIDE_INSIDE;
 }

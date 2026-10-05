@@ -117,7 +117,6 @@ enum {
 };
 extern const PsgSound* const sound_table[SOUND_COUNT];
 extern const PsgSong level_song; // the level's tune, looping
-extern const PsgSong hurry_song; // the same, faster, when time runs low
 extern const PsgSong goal_song;  // a short fanfare after the goal pole, once
 
 // Game components (C_GAME bits): what an entity is.

@@ -13,7 +13,7 @@ enum {
     SPR_BEETLE,       // walking (animated: sys_animate)
     SPR_BEETLE_FLAT,  // stomped
     SPR_FROG,         // sitting, hopping
-    SPR_GEM,          // spinning (animated)
+    SPR_GEM,          // spinning (animated: frame_order, one frame mirrored)
     SPR_FISH,
     SPR_BANNER,
     SPR_SPARKLE, // 8x8, twinkling (animated)
@@ -21,7 +21,7 @@ enum {
     SPR_HUD_SERVAL,
     SPR_HUD_CLOCK,
     SPR_BLOCK,  // a bouncing block: BLOCK_FRAME_*
-    SPR_DEBRIS, // 8x8, tumbling (animated)
+    SPR_DEBRIS, // 8x8, tumbling (animated: frame_order, one frame flipped)
     SPRITE_COUNT
 };
 

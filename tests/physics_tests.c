@@ -382,14 +382,14 @@ static void hit_side_uses_relative_motion(void) {
     vel_y[b] = FX(6);
     CHECK(body_hit_side(a, b) == BODY_SIDE_TOP);
     CHECK(body_hit_side(b, a) == BODY_SIDE_BOTTOM);
-    // Moving together: no relative motion, they overlapped before already;
-    // falls back to the side of least overlap (a's right side, 2 pixels in).
+    // Moving together: no relative motion, they overlapped before already, so
+    // no side is guessed (by least overlap it would be a's right side).
     pos_x[b] = FX(56);
     pos_y[b] = FX(50);
     vel_x[a] = vel_x[b] = FX(5);
     vel_y[a] = vel_y[b] = FX(5);
-    CHECK(body_hit_side(a, b) == BODY_SIDE_RIGHT);
-    CHECK(body_hit_side(b, a) == BODY_SIDE_LEFT);
+    CHECK(body_hit_side(a, b) == BODY_SIDE_INSIDE);
+    CHECK(body_hit_side(b, a) == BODY_SIDE_INSIDE);
     reset();
 }
 
@@ -443,6 +443,73 @@ static void hit_side_with_static_colliders(void) {
     reset();
 }
 
+// Bodies that overlapped before this frame's movement get BODY_SIDE_INSIDE,
+// never a guessed side: not the side of least overlap, which can be a face
+// the other body has already passed.
+static void hit_side_inside_when_overlapping_before(void) {
+    reset();
+    u32 b = make_collider(50, 50, 16, 16, 0, 0);
+    // Spawned inside, still: 1 pixel from b's left side, which least overlap
+    // would report.
+    u32 a = make_collider(43, 54, 8, 8, 0, 0);
+    CHECK(body_hit_side(a, b) == BODY_SIDE_INSIDE);
+    CHECK(body_hit_side(b, a) == BODY_SIDE_INSIDE);
+    // Moving out through b's top: overlapped before (y was 58), overlaps now.
+    ent_mask[a] |= C_VEL;
+    pos_x[a] = FX(54);
+    vel_x[a] = 0;
+    vel_y[a] = -FX(4);
+    CHECK(body_hit_side(a, b) == BODY_SIDE_INSIDE);
+    // Deep inside, moving fast: still no side.
+    pos_y[a] = FX(52);
+    vel_y[a] = FX(3);
+    CHECK(body_hit_side(a, b) == BODY_SIDE_INSIDE);
+    // Overlapping on one axis only before the frame: the other axis was
+    // crossed, so that side is known.
+    pos_x[a] = FX(44);
+    pos_y[a] = FX(54);
+    vel_x[a] = FX(2); // was at x 42: touching b's left side
+    vel_y[a] = FX(1);
+    CHECK(body_hit_side(a, b) == BODY_SIDE_RIGHT);
+    // The result is non-zero whenever they overlap, and 0 once they don't.
+    pos_x[a] = FX(100);
+    CHECK(body_hit_side(a, b) == 0);
+    reset();
+}
+
+// Pong's left paddle (x 8-16) moved up 3 pixels a frame by the game, without
+// C_VEL, and a ball moving (-3, +1.5) coming down onto its top end. The ball
+// is never in front of the face while they overlap, so the face (the ball's
+// left side) must never be reported.
+static void hit_side_paddle_moved_onto_ball(void) {
+    reset();
+    u32 paddle = make_collider(8, 26, 8, 32, 0, 0);
+    u32 ball = make_collider(12, 21, 8, 8, -FX(3), FX(3) / 2);
+    pos_x[ball] = FX(12) + FX_ONE / 2; // x 12.5-20.5, was at 15.5: already over x 8-16
+    for (int frame = 14; frame <= 16; frame++) {
+        // Least overlap said BOTTOM, then LEFT (the face, 6.5 pixels behind
+        // it: Pong would catch the ball with the paddle's end), then RIGHT.
+        CHECK(body_overlap(ball, paddle));
+        CHECK(body_hit_side(ball, paddle) == BODY_SIDE_INSIDE);
+        CHECK(body_hit_side(paddle, ball) == BODY_SIDE_INSIDE);
+        pos_y[paddle] -= FX(3);
+        pos_x[ball] += vel_x[ball];
+        pos_y[ball] += vel_y[ball];
+    }
+    // A paddle that has C_VEL (and is moved by sys_movement) has its motion
+    // counted: at the first frame they overlap, the paddle was 3 pixels lower
+    // (y 29), clear of the ball (bottom at 27.5), so the ball landed on it.
+    ent_mask[paddle] |= C_VEL;
+    pos_y[paddle] = FX(26);
+    vel_y[paddle] = -FX(3);
+    vel_x[paddle] = 0;
+    pos_x[ball] = FX(12) + FX_ONE / 2;
+    pos_y[ball] = FX(21);
+    CHECK(body_hit_side(ball, paddle) == BODY_SIDE_BOTTOM);
+    CHECK(body_hit_side(paddle, ball) == BODY_SIDE_TOP);
+    reset();
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
@@ -466,4 +533,6 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"hit_side_of_fast_bodies", hit_side_of_fast_bodies},
            {"hit_side_uses_relative_motion", hit_side_uses_relative_motion},
            {"hit_side_at_corners", hit_side_at_corners},
-           {"hit_side_with_static_colliders", hit_side_with_static_colliders});
+           {"hit_side_with_static_colliders", hit_side_with_static_colliders},
+           {"hit_side_inside_when_overlapping_before", hit_side_inside_when_overlapping_before},
+           {"hit_side_paddle_moved_onto_ball", hit_side_paddle_moved_onto_ball});

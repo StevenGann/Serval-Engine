@@ -44,9 +44,11 @@
 //   - HUD text with a drop shadow (text_set_shadow), text_print_centered
 //   - A level written as text in the source (level.c), converted at boot
 //   - Music (PsgSong): an original looping tune on all three tone
-//     generators, a faster copy when time runs low, a fanfare played once;
-//     sound effects play over it with priorities (jingles aren't cut short)
-//     and the music comes back after them
+//     generators, sped up where it is when time runs low
+//     (psg_music_set_tempo), paused and resumed with the game
+//     (psg_music_pause), a fanfare played once; sound effects play over it
+//     with priorities (jingles aren't cut short) and the music comes back
+//     after them
 //   - Frogs hop at random intervals, seeded with random_entropy() when START
 //     is pressed: the same input plays the same game on the GBA and the web
 //
@@ -87,7 +89,8 @@
 //   - Brown tree stumps of rising height block the way; there are pits to
 //     jump, two stone pyramids (the second with a gap in the middle) and a
 //     tall final staircase. Falling into a pit loses a life.
-//   - With 100 time left: a warning jingle, then the tune restarts faster.
+//   - With 100 time left: a warning jingle over the tune, which speeds up
+//     from where it is (150 to 180 beats per minute) until the level ends.
 //   - Losing a life: the music stops, the serval hops up and falls off the
 //     screen to a sad tune, then a fade to the "STAGE 1" card; after the
 //     checkpoint (about 40% of the way) the level restarts there. With no
@@ -98,7 +101,8 @@
 //     short fanfare and walks into the striped tent. The time left counts
 //     into the score with ticks (50 per unit), "STAGE CLEAR!" appears with a
 //     jingle, and after a few seconds the screen fades back to the title.
-//   - START pauses ("PAUSED", a tick; the music goes quiet) and resumes.
+//   - START pauses ("PAUSED", a tick; the music stops) and resumes (a tick;
+//     the music carries on from where it stopped).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   START = Enter.)
 //

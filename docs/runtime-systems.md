@@ -42,7 +42,7 @@ Standardize on fixed-point types and lookup tables for trig early. There is no F
 
 **Status:** pairwise test implemented; broad phase and collision events planned.
 
-**Implemented so far:** `body_overlap(a, b)` (`include/serval/physics.h`), a rectangle test between two bodies, which the game calls for the pairs it cares about (Pong: ball against each paddle; Asteroids: every shot against every rock, and the ship against every rock), and `body_hit_side(a, b)`, which side of `a` met `b` (a stomp is `BODY_SIDE_BOTTOM`), judged from their positions before the frame's movement and their relative motion, so it holds for fast bodies and static colliders. Hitboxes can be smaller than sprites, with the sprite's origin centering the art. No broad phase or collision events yet.
+**Implemented so far:** `body_overlap(a, b)` (`include/serval/physics.h`), a rectangle test between two bodies, which the game calls for the pairs it cares about (Pong: ball against each paddle; Asteroids: every shot against every rock, and the ship against every rock), and `body_hit_side(a, b)`, which side of `a` met `b` (a stomp is `BODY_SIDE_BOTTOM`), judged from their positions before the frame's movement and their relative motion, so it holds for fast bodies and static colliders; bodies that already overlapped before the frame get `BODY_SIDE_INSIDE` rather than a guessed side. Hitboxes can be smaller than sprites, with the sprite's origin centering the art. No broad phase or collision events yet.
 
 Planned: avoid all-pairs checks (about 8,000 pairs at 128 entities). Use a coarse spatial grid or collision groups as the broad phase. The collision system emits collision events to the VM ([vm.md](vm.md)).
 

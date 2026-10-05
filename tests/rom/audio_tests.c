@@ -445,6 +445,133 @@ static void changing_the_sound_table_keeps_the_music(void) {
     psg_stop_all();
 }
 
+static void pause_holds_the_music_where_it_is(void) {
+    psg_music_pause(); // no song: nothing happens
+    CHECK(!psg_music_paused() && !psg_music_playing());
+    psg_music_play(&test_song);
+    frames(1); // C5 (2 ticks) half over, the bass held, the first drum fading
+    psg_music_pause();
+    CHECK(psg_music_paused() && psg_music_playing());
+    CHECK(VOLUME(REG_SND1CNT) == 0 && VOLUME(REG_SND2CNT) == 0 && VOLUME(REG_SND4CNT) == 0);
+    frames(10); // time stands still, silently
+    CHECK(VOLUME(REG_SND1CNT) == 0 && VOLUME(REG_SND2CNT) == 0 && VOLUME(REG_SND4CNT) == 0);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_C5));
+    psg_music_pause(); // already paused: nothing happens
+    psg_music_resume();
+    CHECK(!psg_music_paused() && psg_music_playing());
+    // Held notes come back at once; the fading drum with its next note.
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_C5) && VOLUME(REG_SND2CNT) == 10);
+    CHECK(serval_psg_rate(PSG_SQUARE1) == SQUARE_RATE(PSG_C3) && VOLUME(REG_SND1CNT) == 15);
+    CHECK(VOLUME(REG_SND4CNT) == 0);
+    frames(1); // the rest of C5's second tick: on to the rest and the second drum
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    CHECK((REG_SND4FREQ & 0xFF) == serval_psg_noise_rates[PSG_C8] && VOLUME(REG_SND4CNT) == 15);
+    frames(1);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5) && VOLUME(REG_SND2CNT) == 10);
+    // Resuming music that isn't paused does nothing (no note restarts).
+    serval_psg_quiet(PSG_SQUARE2);
+    psg_music_resume();
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    psg_stop_all();
+}
+
+static void pause_keeps_the_phase_within_a_tick(void) {
+    // Half a tick per frame: C5's 2 ticks take 4 frames. Paused after 1 for
+    // 7 frames, the rest still comes after 3 more.
+    static const PsgSong half_speed = {
+        .tempo = 1791, .ticks_per_beat = 1, .tracks = song_tracks, .track_count = 3};
+    psg_music_play(&half_speed);
+    frames(1);
+    psg_music_pause();
+    frames(7);
+    psg_music_resume();
+    frames(2);
+    CHECK(VOLUME(REG_SND2CNT) == 10);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    psg_stop_all();
+}
+
+static void sounds_play_while_the_music_is_paused(void) {
+    // Even below the song's priority; the paused music doesn't come back when
+    // they end, and comes back on resume.
+    static const PsgSong important = {TICK_PER_FRAME, .priority = 1, .tracks = song_tracks,
+                                      .track_count = 3};
+    psg_table_set(sfx_sounds, SFX_COUNT);
+    psg_music_play(&important);
+    psg_music_pause();
+    psg_play(SFX_BLIP); // priority 0
+    CHECK(serval_psg_rate(PSG_SQUARE2) == 2048 - 131072 / 1000 && VOLUME(REG_SND2CNT) == 15);
+    frames(2); // the sound ends
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == 2048 - 131072 / 1000);
+    psg_play(SFX_BLIP);
+    psg_music_resume(); // the music comes back where the sound isn't
+    CHECK(serval_psg_rate(PSG_SQUARE2) == 2048 - 131072 / 1000);
+    CHECK(serval_psg_rate(PSG_SQUARE1) == SQUARE_RATE(PSG_C3) && VOLUME(REG_SND1CNT) == 15);
+    frames(2); // the sound ends as the music, on from where it paused, reaches its rest
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    frames(1);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5) && VOLUME(REG_SND2CNT) == 10);
+    psg_play(SFX_LOW_PRIORITY); // the song's priority holds again
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5));
+    // Playing a song, stopping, and psg_stop_all end a pause.
+    psg_music_pause();
+    psg_music_play(&test_song);
+    CHECK(!psg_music_paused() && VOLUME(REG_SND2CNT) == 10);
+    psg_music_pause();
+    psg_stop_all();
+    CHECK(!psg_music_paused() && !psg_music_playing());
+    psg_music_play(&test_song);
+    psg_music_pause();
+    psg_music_stop();
+    CHECK(!psg_music_paused());
+}
+
+static void tempo_changes_from_where_the_music_is(void) {
+    // A tick per frame, then half that after a frame: C5's second tick takes
+    // 2 frames, the rest 2, then E5.
+    psg_music_play(&test_song);
+    frames(1);
+    psg_music_set_tempo(1791);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 10);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    frames(1);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5));
+    psg_music_set_tempo(0); // the song's own again: E5's 3 ticks take 3 frames
+    frames(2);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5));
+    frames(1);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_C5)); // looped
+    // Playing a song starts it at its own tempo: C5 lasts 2 frames.
+    psg_music_set_tempo(900);
+    psg_music_play(&test_song);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 10);
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    // The tempo holds through a pause.
+    psg_music_set_tempo(1791);
+    psg_music_pause();
+    frames(5);
+    psg_music_resume();
+    frames(1);
+    CHECK(VOLUME(REG_SND2CNT) == 0);
+    frames(1);
+    CHECK(serval_psg_rate(PSG_SQUARE2) == SQUARE_RATE(PSG_E5));
+    psg_stop_all();
+    // No song: ignored, reported once.
+    u32 before = debug_warning_count();
+    psg_music_set_tempo(100);
+    psg_music_set_tempo(100);
+    REPORTED_ONCE(debug_warning_count() - before);
+    CHECK(!psg_music_playing());
+}
+
 static void bad_songs_are_reported_and_nothing_plays(void) {
     psg_table_set(sounds, SOUND_COUNT); // makes song problems reportable again
     u32 before = debug_warning_count();
@@ -485,4 +612,8 @@ TEST_SUITE(
     {"songs_that_dont_loop_stop_playing", songs_that_dont_loop_stop_playing},
     {"music_volume_scales_the_tracks", music_volume_scales_the_tracks},
     {"changing_the_sound_table_keeps_the_music", changing_the_sound_table_keeps_the_music},
+    {"pause_holds_the_music_where_it_is", pause_holds_the_music_where_it_is},
+    {"pause_keeps_the_phase_within_a_tick", pause_keeps_the_phase_within_a_tick},
+    {"sounds_play_while_the_music_is_paused", sounds_play_while_the_music_is_paused},
+    {"tempo_changes_from_where_the_music_is", tempo_changes_from_where_the_music_is},
     {"bad_songs_are_reported_and_nothing_plays", bad_songs_are_reported_and_nothing_plays});

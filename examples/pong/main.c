@@ -334,8 +334,10 @@ static void control_cpu(void) {
 // side, faster, at an angle set by how far from the paddle's center it hit.
 // Only the paddle's face counts: a ball that was already past it last frame
 // (pos - vel) can't be caught by the paddle's end or from behind; it scores.
-// (body_hit_side() isn't enough here: once the ball is inside a paddle that
-// moved onto it, it reports the side of least overlap, which can be the face.)
+// (body_hit_side() is stricter: a ball that was in front of the face last
+// frame but crossed the face's line just beyond the paddle's end, then met
+// the end, hit the end (BODY_SIDE_TOP/BOTTOM) and would pass through. Pong
+// catches it.)
 static void hit_paddle(u32 paddle, int direction) {
     if (!body_overlap(ball, paddle) || (direction > 0) == (vel_x[ball] > 0))
         return; // no contact, or already moving away from this paddle

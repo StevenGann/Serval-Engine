@@ -43,13 +43,17 @@ Emitted as constant C tables by the build tooling.
 typedef struct {
     const u32 *tiles;         // ROM tile data, frame after frame
     u8  size;                 // SPRITE_8x8 ... SPRITE_32x64 (required)
-    u8  frame_count;          // 0 means 1
     u8  tiles_per_frame;      // 0: computed from size; if set, at least what size needs
+    u8  frame_count;          // 0 means 1
+    u8  order_length;         // frame_order entries (steps); 0: no frame_order
     u8  palette_slot;         // logical bank within group
     s8  origin_x, origin_y;   // drawn position = (x, y) - origin
     u8  flags;                // SPRITE_ASSET_ANIM_ONCE; STREAMED, METASPRITE (planned)
-    const u8  *frame_times;   // frames each animation frame shows (frame_count entries), or NULL
+    const u8  *frame_times;   // frames each animation frame (or step) shows, or NULL
+    const u8  *frame_order;   // steps: frame index | SPRITE_FRAME_FLIP_H/V, or NULL
 } SpriteAsset;
+
+Format change (before the first release): `order_length` and `frame_order` were added for animation sequences ([Animation](#animation)), and `tiles_per_frame` now comes before `frame_count`, so `frame_count` and `order_length` are adjacent and `sys_animate` reads both with one load. The struct grew from 16 to 20 bytes. Emit and write it with designated initializers (field order then doesn't matter); zero/`NULL` for both new fields keeps the old behaviour.
 
 typedef struct {
     const u16 *sprite_ids;    // sprite table indices of the group's sprites; NULL: 0..sprite_count-1
@@ -90,10 +94,14 @@ Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `S
 
 `frame_times` holds one byte per animation frame: how many display frames (1/60 s, 1-255) it shows. 0 holds that frame (the animation stops there); `NULL` shows each frame for one display frame. The build tooling emits it from the art's frame durations. `SPRITE_ASSET_ANIM_ONCE` plays the animation once and stays on the last frame (death, a door opening); without it, animations loop.
 
-`sys_animate()` ([ecs.md](ecs.md)) plays them for entities with `C_SPR | C_ANIM`: `spr_anim_time` counts the display frames the current `spr_frame` has shown, and when it reaches the frame's time, `spr_frame` advances and the count restarts. Switching animation (say from run to jump) is a different sprite ID: set `spr_id`, `spr_frame = 0` and `spr_anim_time = 0`. A frame the sprite doesn't have (a forgotten `spr_frame = 0`) restarts the animation, with a warning in debug builds. Animation is independent of VRAM residency: all frames of a resident sprite are in VRAM already, so stepping frames costs nothing but the frame index.
+**Sequences:** `frame_order` (with `order_length` entries, the steps) makes the animation play frames in any order, repeating or reversing them, so a ping-pong cycle or a frame shown twice needs its tiles only once. Each entry is a frame index (0-63) optionally `| SPRITE_FRAME_FLIP_H` and/or `| SPRITE_FRAME_FLIP_V`, which draws that frame mirrored: a spinning coin or gem stores half its turn, tumbling debris one frame. `frame_times` then has one entry per step, and `SPRITE_ASSET_ANIM_ONCE` stops on the last step. `order_length` is what turns a sequence on: 0 plays frames 0 to `frame_count` − 1 as before. Example: `{0, 1, 2, 1 | SPRITE_FRAME_FLIP_H}` with `order_length = 4` and `frame_count = 3`.
+
+`sys_animate()` ([ecs.md](ecs.md)) plays them for entities with `C_SPR | C_ANIM`: `spr_anim_time` counts the display frames the current `spr_frame` has shown, and when it reaches the frame's time, `spr_frame` advances and the count restarts. Switching animation (say from run to jump) is a different sprite ID: set `spr_id`, `spr_frame = 0` and `spr_anim_time = 0`. A frame the sprite doesn't have (a forgotten `spr_frame = 0`) restarts the animation, with a warning in debug builds. For a sprite with a sequence, `spr_anim_step` is where the animation is (the step; with `SPRITE_ASSET_ANIM_ONCE`, `spr_anim_step == order_length − 1` means it is over), and `sys_animate` sets `spr_frame` to the step's frame every call, so `spr_frame` is always the frame drawn and the render systems don't need to know about sequences. Start one with `spr_anim_step = 0` and `spr_anim_time = 0` (any step can be a starting point, e.g. to put pieces out of phase); a step past the end restarts it (*warns*), as does an entry naming a frame the sprite doesn't have (shows frame 0, *warns*). Flips: the step's flips are XORed with the game's own in `spr_flags`, so a sprite the game faces left still spins; `sys_animate` records the flips it applied in `SPRITE_ANIM_FLIP_H`/`_V` (bits 5-6, which drawing ignores) and swaps them for the next step's. A game that assigns `spr_flags` whole, toggles a flip with `^=`, or doesn't touch flips gets the right result; setting or clearing a flip bit with `|=`/`&= ~` while the step has that flip applied inverts it until the next assignment. Sequences cost about twice as much per entity as plain animations (out-of-line path); sprites without one pay about 3 cycles each for the check (128 animated entities: 26,112 → 26,548 cycles per `sys_animate` call; with sequences about 49,000).
+
+Animation is independent of VRAM residency: all frames of a resident sprite are in VRAM already, so stepping frames costs nothing but the frame index.
 
 **Blinking:** `SPRITE_HIDDEN` in the draw flags (or `spr_flags`) draws nothing and uses no hardware sprite. The render systems test it together with `spr_angle`, sending hidden sprites down the out-of-line rotated path, so the check costs one instruction per entity (bunnymark: +128 cycles for 128 sprites).
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()`, hideable; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.
+Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.

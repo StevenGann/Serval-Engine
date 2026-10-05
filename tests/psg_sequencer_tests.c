@@ -159,6 +159,76 @@ static void real_tempo_rounds_to_the_closest_frame(void) {
     }
 }
 
+// A song of one-tick notes at 120 BPM changes tempo at frame change_at: it
+// keeps its place, and each later tick falls on the frame closest to its time
+// at the new tempo (in 16.16 ticks, as the sequencer counts them).
+static void check_tempo_change(u32 change_at, u16 new_tempo) {
+    static const PsgNote ticks[] = {{PSG_A4, 1}};
+    static const PsgTrack one = {.notes = ticks, .note_count = 1};
+    static const PsgSong slow = {.tracks = &one, .track_count = 1};
+    PsgSequencer seq;
+    serval_psg_seq_start(&seq, &slow);
+    u32 done = 0;
+    for (u32 f = 1; f <= change_at; f++)
+        done += (serval_psg_seq_advance(&seq) >> PSG_SQUARE1) & 1;
+    uint64_t old_step = seq.step;
+    serval_psg_seq_set_tempo(&seq, new_tempo);
+    uint64_t step = seq.step;
+    CHECK(step == serval_psg_tick_step(new_tempo, 0));
+    // Where the song is, exactly: change_at frames at the old tempo.
+    uint64_t position = change_at * old_step;
+    u32 frame = change_at;
+    for (u32 k = done + 1; k <= done + 300; k++) {
+        frame += frames_until_change(&seq, PSG_SQUARE1);
+        // Where tick k is, against where the frame it fell on is.
+        uint64_t exact = (uint64_t)k * SERVAL_PSG_TICK;
+        uint64_t got = position + (frame - change_at) * step;
+        // Within half a frame; the first tick may come up to a frame late (a
+        // tick due within half a frame of the change plays in the next one).
+        uint64_t error = got > exact ? got - exact : exact - got;
+        bool in_time = error <= (k == done + 1 ? step : step / 2 + 1);
+        CHECK(in_time);
+        if (!in_time)
+            return; // one failure per tempo change is enough
+    }
+}
+
+static void tempo_changes_keep_the_place(void) {
+    for (u32 at = 1; at <= 16; at++) { // every phase within a tick or two
+        check_tempo_change(at, 240);
+        check_tempo_change(at, 150);
+        check_tempo_change(at, 77);
+    }
+}
+
+static void tempo_change_takes_effect_at_once(void) {
+    // A tick per frame, halved: the note playing (C4, 1 tick, just started)
+    // lasts 2 frames, then 2 ticks of E4 take 4.
+    PsgSequencer seq;
+    serval_psg_seq_start(&seq, &song);
+    serval_psg_seq_set_tempo(&seq, 1791);
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 2);
+    CHECK(seq.tracks[PSG_SQUARE2].note == PSG_E4);
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 4);
+    // 0: the song's own tempo again, a tick per frame.
+    serval_psg_seq_set_tempo(&seq, 0);
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 1);
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 3);
+    // Starting a song resets it.
+    serval_psg_seq_set_tempo(&seq, 600);
+    serval_psg_seq_start(&seq, &song);
+    CHECK(seq.step == serval_psg_tick_step(3583, 1));
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 1);
+    // Too fast: a tick per frame, reported once.
+    serval_psg_seq_reset_warnings();
+    u32 before = debug_warning_count();
+    serval_psg_seq_set_tempo(&seq, 4000);
+    serval_psg_seq_set_tempo(&seq, 4000);
+    REPORTED_ONCE(debug_warning_count() - before);
+    CHECK(seq.step == SERVAL_PSG_TICK);
+    CHECK(frames_until_change(&seq, PSG_SQUARE2) == 2);
+}
+
 static void songs_that_dont_loop_end(void) {
     static const PsgNote once[] = {{PSG_C5, 2}, {PSG_D5, 1}};
     static const PsgTrack track = {
@@ -236,6 +306,8 @@ TEST_SUITE(psg_sequencer_tests, "psg_sequencer",
            {"default_length_is_a_beat", default_length_is_a_beat},
            {"tracks_loop_independently", tracks_loop_independently},
            {"real_tempo_rounds_to_the_closest_frame", real_tempo_rounds_to_the_closest_frame},
+           {"tempo_changes_keep_the_place", tempo_changes_keep_the_place},
+           {"tempo_change_takes_effect_at_once", tempo_change_takes_effect_at_once},
            {"songs_that_dont_loop_end", songs_that_dont_loop_end},
            {"loop_point_skips_the_intro", loop_point_skips_the_intro},
            {"song_mistakes_are_reported_and_safe", song_mistakes_are_reported_and_safe});

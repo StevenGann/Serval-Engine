@@ -37,8 +37,10 @@ Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI blee
 - **Time:** `.tempo` in beats per minute (default 120) and `.ticks_per_beat` (default 4, so a tick is a 16th note). Each frame adds the tempo's ticks per frame (16.16 fixed point) to a phase; each tick falls on the frame closest to its exact time, so tempos needn't divide the frame rate, and a song stays in time indefinitely. A tick can't be shorter than a frame (3583 ticks a minute; faster clamps, with a warning). A note's length 0 means the track's `.length`, which defaults to a beat.
 - **Loops:** each track loops on its own, from its `.loop` note (0 by default: the start; set it past an intro) or plays once with `PSG_NO_LOOP`. A song whose tracks have all ended stops (`psg_music_playing()` turns false).
 - **Sound effects over music:** a sound effect takes over a channel the music uses if its priority is at least the song's `.priority` (0 by default: every sound effect does). The music keeps time underneath and comes back when the sound ends: a held note (track `.fade` 0 or fading in) comes back at once at the current position; a fading note would come back louder than it would be by then, so that track comes back with its next note.
+- **Pause:** `psg_music_pause()` stops the song's time and silences its channels; sound effects play on, on every channel, whatever their priority (the song's `.priority` is set aside while paused), and the paused music doesn't come back when they end. `psg_music_resume()` carries on exactly where it stopped, to the fraction of a tick: held notes start again at once, fading tracks come back with their next note (as after a sound effect). `psg_music_playing()` stays true while paused; `psg_music_paused()` tells the two apart. Pausing with no song, pausing twice and resuming music that isn't paused do nothing; `psg_music_play()`, `psg_music_stop()` and `psg_stop_all()` end a pause.
+- **Tempo changes:** `psg_music_set_tempo(bpm)` changes the tempo of the song playing from where it is (0: back to the song's `.tempo`); `psg_music_play()` starts every song at its own tempo. The phase keeps the song's exact position within its tick and is re-centred on half a frame at the new tempo, so the song neither jumps nor drifts: later ticks fall on the frame closest to their time at the new tempo (the first one at most a frame late, when it was due within half a frame of the change). The division (ticks per frame for the tempo) happens in the call, not per frame. Without a song it does nothing and warns.
 - **Volume:** `psg_music_set_volume()` scales each note's starting volume from each channel's next note; sound effects keep theirs. It doesn't use the master volume (SOUNDCNT_L), which would turn the sound effects down too.
-- **Cost:** about 200 cycles per frame on average for a three-track song (peak about 1,300 when all three channels start a note in the same frame), under 0.1% of a frame; nothing when no song plays (the player is hooked in by `psg_music_play()`, so games without music don't link it). IWRAM: 4 bytes in every ROM, about 50 more with music.
+- **Cost:** about 200 cycles per frame on average for a three-track song (peak about 1,300 when all three channels start a note in the same frame), under 0.1% of a frame; a few cycles while paused; nothing when no song plays (the player is hooked in by `psg_music_play()`, so games without music don't link it). IWRAM: 4 bytes in every ROM, about 60 more with music.
 
 ```c
 static const PsgNote melody[] = {{PSG_E5, 2}, {PSG_A5, 2}, {PSG_C6, 4}, {PSG_REST, 8}};
@@ -75,6 +77,10 @@ void psg_music_play(const PsgSong *song);
 void psg_music_stop(void);
 bool psg_music_playing(void);
 void psg_music_set_volume(u8 volume); // 0-15, music only
+void psg_music_pause(void);           // time stands still, silent; sound effects play on
+void psg_music_resume(void);          // exactly where it paused
+bool psg_music_paused(void);
+void psg_music_set_tempo(u16 tempo);  // BPM from the current position; 0: the song's own
 ```
 
 Planned (Maxmod, not implemented yet; the Maxmod fork is still to be chosen):

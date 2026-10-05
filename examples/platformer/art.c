@@ -186,8 +186,9 @@ static const u32 frog_tiles[64] = {
     0x01233333, 0x01622222, 0x16611222, 0x16100111, 0x16100000, 0x16100000, 0x15100000, 0x11000000,
 };
 
-// A gem popping out of a block, spinning: front, turning, edge-on, turning
-// the other way (frame 1 mirrored, not shown).
+// A gem popping out of a block, spinning: front, turning, edge-on (frames
+// 0-2). Its animation plays frame 1 again mirrored, as the gem turns on
+// around (gem_spin below), so that frame needs no tiles of its own.
 //   ................
 //   ......KKKK......
 //   ....KKLwLDKK....
@@ -204,136 +205,19 @@ static const u32 frog_tiles[64] = {
 //   ................
 //   ................
 //   ................
-static const u32 gem_tiles[128] = {
-    0x00000000,
-    0x11000000,
-    0x54110000,
-    0x44541000,
-    0x44454100,
-    0x34444100,
-    0x33333100,
-    0x33331000,
-    0x00000000,
-    0x00000011,
-    0x00001134,
-    0x00012333,
-    0x00123333,
-    0x00123333,
-    0x00122333,
-    0x00012233,
-    0x33321000,
-    0x33210000,
-    0x32100000,
-    0x21000000,
-    0x10000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00012233,
-    0x00001223,
-    0x00000123,
-    0x00000012,
-    0x00000001,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x10000000,
-    0x41000000,
-    0x54100000,
-    0x44100000,
-    0x44100000,
-    0x33100000,
-    0x33100000,
-    0x00000000,
-    0x00000001,
-    0x00000013,
-    0x00000123,
-    0x00000123,
-    0x00000123,
-    0x00000123,
-    0x00000123,
-    0x32100000,
-    0x31000000,
-    0x31000000,
-    0x10000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000123,
-    0x00000012,
-    0x00000012,
-    0x00000001,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x00000000,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x10000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000001,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    // Frame 3: the turning frame, mirrored (the gem turns on around).
-    0x00000000,
-    0x10000000,
-    0x31000000,
-    0x32100000,
-    0x32100000,
-    0x32100000,
-    0x32100000,
-    0x32100000,
-    0x00000000,
-    0x00000001,
-    0x00000014,
-    0x00000145,
-    0x00000144,
-    0x00000144,
-    0x00000133,
-    0x00000133,
-    0x32100000,
-    0x21000000,
-    0x21000000,
-    0x10000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000123,
-    0x00000013,
-    0x00000013,
-    0x00000001,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
+static const u32 gem_tiles[96] = {
+    0x00000000, 0x11000000, 0x54110000, 0x44541000, 0x44454100, 0x34444100, 0x33333100, 0x33331000,
+    0x00000000, 0x00000011, 0x00001134, 0x00012333, 0x00123333, 0x00123333, 0x00122333, 0x00012233,
+    0x33321000, 0x33210000, 0x32100000, 0x21000000, 0x10000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00012233, 0x00001223, 0x00000123, 0x00000012, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x10000000, 0x41000000, 0x54100000, 0x44100000, 0x44100000, 0x33100000, 0x33100000,
+    0x00000000, 0x00000001, 0x00000013, 0x00000123, 0x00000123, 0x00000123, 0x00000123, 0x00000123,
+    0x32100000, 0x31000000, 0x31000000, 0x10000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000123, 0x00000012, 0x00000012, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x10000000, 0x10000000, 0x10000000, 0x10000000, 0x10000000, 0x10000000, 0x10000000,
+    0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000001, 0x00000001, 0x00000001, 0x00000001,
+    0x10000000, 0x10000000, 0x10000000, 0x10000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000001, 0x00000001, 0x00000001, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
 // The power-up: a fish that slides out of a block and flops along.
@@ -469,8 +353,8 @@ static const u32 block_tiles[96] = {
     0x22225222, 0x55555555, 0x54444444, 0x53333334, 0x52333333, 0x52222222, 0x55555555, 0x55555555,
 };
 
-// A piece of a broken brick, tumbling: four frames (the art below, then
-// flipped).
+// A piece of a broken brick, tumbling: one frame, which its animation shows
+// flipped horizontally, vertically and both ways (debris_tumble below).
 //   ........
 //   ..KKKK..
 //   .KEERRK.
@@ -479,40 +363,8 @@ static const u32 block_tiles[96] = {
 //   ..KKKK..
 //   ........
 //   ........
-static const u32 debris_tiles[32] = {
-    0x00000000,
-    0x00111100,
-    0x01334410,
-    0x01233410,
-    0x01223310,
-    0x00111100,
-    0x00000000,
-    0x00000000,
-    // Frames 1-3: the same piece flipped horizontally, vertically, and both.
-    0x00000000,
-    0x00111100,
-    0x01443310,
-    0x01433210,
-    0x01332210,
-    0x00111100,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00111100,
-    0x01223310,
-    0x01233410,
-    0x01334410,
-    0x00111100,
-    0x00000000,
-    0x00000000,
-    0x00000000,
-    0x00111100,
-    0x01332210,
-    0x01433210,
-    0x01443310,
-    0x00111100,
-    0x00000000,
+static const u32 debris_tiles[8] = {
+    0x00000000, 0x00111100, 0x01334410, 0x01233410, 0x01223310, 0x00111100, 0x00000000, 0x00000000,
 };
 
 static const u16 sprite_palettes[PALETTE_COUNT][16] = {
@@ -538,11 +390,18 @@ static const u16 sprite_palettes[PALETTE_COUNT][16] = {
                     COLOR_RGB(222, 180, 116), COLOR_RGB(176, 128, 70), COLOR_RGB(196, 146, 96)},
 };
 
-// Animation timing for sys_animate: frames (1/60 s) each animation frame shows.
+// Animation timing for sys_animate: frames (1/60 s) each animation frame (or
+// sequence step) shows.
 static const u8 beetle_walk_times[2] = {8, 8};
 static const u8 gem_spin_times[4] = {3, 3, 3, 3};
 static const u8 sparkle_times[2] = {4, 4};
 static const u8 debris_times[4] = {4, 4, 4, 4};
+
+// Animation sequences for sys_animate: frames to show, some flipped, so that
+// mirror images of a frame need no tiles of their own.
+static const u8 gem_spin[4] = {0, 1, 2, 1 | SPRITE_FRAME_FLIP_H};
+static const u8 debris_tumble[4] = {0, SPRITE_FRAME_FLIP_H, SPRITE_FRAME_FLIP_V,
+                                    SPRITE_FRAME_FLIP_H | SPRITE_FRAME_FLIP_V};
 
 static const SpriteAsset sprites[SPRITE_COUNT] = {
     [SPR_SERVAL_SMALL] = {.size = SPRITE_16x16,
@@ -575,8 +434,10 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                   .origin_y = 2},
     [SPR_GEM] = {.size = SPRITE_16x16,
                  .tiles = gem_tiles,
-                 .frame_count = 4,
+                 .frame_count = 3,
                  .frame_times = gem_spin_times,
+                 .frame_order = gem_spin,
+                 .order_length = 4,
                  .palette_slot = PAL_GEM},
     [SPR_FISH] = {.size = SPRITE_16x16,
                   .tiles = fish_tiles,
@@ -598,8 +459,9 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                    .palette_slot = PAL_BLOCKS},
     [SPR_DEBRIS] = {.size = SPRITE_8x8,
                     .tiles = debris_tiles,
-                    .frame_count = 4,
                     .frame_times = debris_times,
+                    .frame_order = debris_tumble,
+                    .order_length = 4,
                     .palette_slot = PAL_BLOCKS},
 };
 

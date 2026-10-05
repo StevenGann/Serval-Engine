@@ -21,7 +21,9 @@
 #define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth, spr_angle
 #define C_BODY (1u << 3) // body_w, body_h, body_bounce, body_friction (physics.h)
 // C_MAPBODY (1u << 4), bodies that collide with the map, is in map.h.
-#define C_ANIM (1u << 5) // spr_anim_time; with C_SPR, sys_animate plays the sprite's animation
+#define C_ANIM                                                                                     \
+    (1u << 5) // spr_anim_time, spr_anim_step; with C_SPR, sys_animate plays the
+              // sprite's animation
 #define C_GAME(n) ((1u << (16 + (n))) + 0u * (u32)sizeof(char[(unsigned)(n) < 15u ? 1 : -1]))
 #define C_ALIVE (1u << 31)
 
@@ -50,6 +52,7 @@ extern u16 spr_flags[MAX_ENT];               // C_SPR: sprite_draw flags (flip, 
 extern s16 spr_depth[MAX_ENT];    // C_SPR: sys_render_by_depth draws higher depths in front
 extern u16 spr_angle[MAX_ENT];    // C_SPR: rotation (sprite_draw_rotated); 0 = unrotated
 extern u8 spr_anim_time[MAX_ENT]; // C_ANIM: frames spr_frame has shown so far (sys_animate)
+extern u8 spr_anim_step[MAX_ENT]; // C_ANIM: step of the sprite's frame_order (sys_animate)
 
 // True if entity slot i is alive and has every component in `mask` (0 tests
 // only that it is alive). Prefer this to testing ent_mask by hand: `ent_mask[i]
@@ -115,6 +118,12 @@ void sys_render_by_depth(void);
 // rendering. To start an animation (or switch to another sprite's), set
 // spr_id, spr_frame = 0 and spr_anim_time = 0; a frame the sprite doesn't have
 // restarts it (warning in debug builds).
+// Sprites with a frame_order play its steps instead: spr_anim_step is the
+// step (frame_times are per step; with SPRITE_ASSET_ANIM_ONCE, spr_anim_step
+// == order_length - 1 means it is over) and sys_animate sets spr_frame to the
+// step's frame and its flips in spr_flags, XORed with the game's flips (the
+// SPRITE_ANIM_FLIP_* bits record them; assign spr_flags whole or toggle flips
+// with ^=). To start one, zero spr_anim_step and spr_anim_time.
 void sys_animate(void);
 
 static inline u8 entity_index(Entity e) {

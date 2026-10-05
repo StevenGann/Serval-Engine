@@ -11,6 +11,8 @@
 static PsgSequencer seq;
 static u16 controls[SERVAL_PSG_CHANNELS]; // control register bits of each track's notes
 static u8 quieter;                        // 15 - the music volume (0: full volume)
+static bool paused;                       // psg_music_pause(): time stands still, silent
+static u8 priority;                       // the song's .priority, while paused
 
 // Each track's control bits at the current music volume.
 static void set_controls(void) {
@@ -41,6 +43,8 @@ static void play_note(u32 c) {
 static void stop(void);
 
 static void update(void) {
+    if (paused)
+        return;
     u32 changed = serval_psg_seq_advance(&seq);
     if (!changed)
         return;
@@ -57,7 +61,7 @@ static void update(void) {
 // by now, so that track comes back with its next note.
 static void resume(u32 c) {
     const PsgSeqTrack* t = &seq.tracks[c];
-    if (t->track && t->track->fade >= 0 && t->note != PSG_REST)
+    if (!paused && t->track && t->track->fade >= 0 && t->note != PSG_REST)
         play_note(c);
 }
 
@@ -70,6 +74,7 @@ static void stop(void) {
     serval_music_channels = 0;
     serval_music_hooks = NULL;
     seq = (PsgSequencer){0};
+    paused = false;
 }
 
 void psg_music_play(const PsgSong* song) {
@@ -107,4 +112,47 @@ void psg_music_set_volume(u8 volume) {
     }
     quieter = (u8)(15 - volume);
     set_controls();
+}
+
+void psg_music_pause(void) {
+    if (!serval_music_channels || paused)
+        return;
+    paused = true;
+    for (u32 c = 0; c < SERVAL_PSG_CHANNELS; c++)
+        if ((serval_music_channels & 1u << c) && !serval_psg_sfx_active(c))
+            serval_psg_quiet(c);
+    // Silent music keeps no sound effect out.
+    priority = serval_music_priority;
+    serval_music_priority = 0;
+}
+
+void psg_music_resume(void) {
+    if (!paused)
+        return;
+    paused = false;
+    serval_music_priority = priority;
+    // As after a sound effect: held notes come back at once, fading tracks
+    // with their next note.
+    for (u32 c = 0; c < SERVAL_PSG_CHANNELS; c++)
+        if ((serval_music_channels & 1u << c) && !serval_psg_sfx_active(c))
+            resume(c);
+}
+
+bool psg_music_paused(void) {
+    return paused;
+}
+
+void psg_music_set_tempo(u16 tempo) {
+    if (!serval_music_channels) {
+#ifdef SERVAL_DEBUG
+        static bool warned;
+        if (!warned) {
+            warned = true;
+            SERVAL_WARN("psg_music_set_tempo: no song is playing; psg_music_play() starts a song "
+                        "at its own tempo, so set the tempo after starting it");
+        }
+#endif
+        return;
+    }
+    serval_psg_seq_set_tempo(&seq, tempo);
 }

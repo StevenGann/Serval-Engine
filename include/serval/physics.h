@@ -91,20 +91,33 @@ static inline bool body_overlap(u32 a, u32 b) {
 #define BODY_SIDE_TOP (1 << 1)
 #define BODY_SIDE_LEFT (1 << 2)
 #define BODY_SIDE_RIGHT (1 << 3)
+// From body_hit_side(): the bodies overlap but already did before this
+// frame's movement, so no side was crossed this frame.
+#define BODY_SIDE_INSIDE (1 << 4)
 
-// Which side of body a met body b: 0 if they don't overlap (body_overlap),
-// otherwise exactly one BODY_SIDE_*, e.g. BODY_SIDE_BOTTOM when a came down
-// onto b (a stomp) and BODY_SIDE_LEFT when a ran into b's right side. Judged
-// from where they were before this frame's movement (position minus
-// velocity; an entity without C_VEL counts as still), using their motion
-// relative to each other, so it is right for fast bodies that moved deep into
-// each other in one frame, and for two moving bodies. The side is the one a
-// crossed last to overlap b; an exact corner hit counts as top or bottom.
-// Bodies that already overlapped before the frame get the side where they
-// overlap least (top or bottom on a tie). Call it after the movement systems,
-// before changing velocities: a bounce that reversed a velocity this frame
-// (sys_physics, sys_map_movement) or a position the game set directly makes
-// "position minus velocity" a guess. Takes slot indices; 0 if a == b.
+// Which side of body a met body b this frame: 0 if they don't overlap
+// (body_overlap), otherwise exactly one BODY_SIDE_*, e.g. BODY_SIDE_BOTTOM when
+// a came down onto b (a stomp) and BODY_SIDE_LEFT when a ran into b's right
+// side. Judged from where they were before this frame's movement (position
+// minus velocity), using their motion relative to each other, so it is right
+// for fast bodies that moved deep into each other in one frame, and for two
+// moving bodies. The side is the one a crossed last to overlap b; an exact
+// corner hit counts as top or bottom.
+//
+// BODY_SIDE_INSIDE: they overlapped before the frame too (a spawned inside b,
+// they move together, or one moved into the other on an earlier frame and
+// stayed). No side is guessed: a ball that slipped past a paddle's face
+// doesn't later count as hitting it. Treat it as "still touching", e.g. hurt
+// the player but don't count a stomp; any non-zero result means overlap.
+//
+// An entity without C_VEL counts as still: its position now is also its
+// position before the frame. A body the game moves by setting pos_x/pos_y
+// (a paddle, a moving platform) is judged as if it had always been where it
+// is now; for its own motion to count, give it C_VEL and let sys_movement()
+// move it. Call it after the movement systems, before changing velocities: a
+// bounce that reversed a velocity this frame (sys_physics, sys_map_movement)
+// or a position the game set directly makes "position minus velocity" a
+// guess. Takes slot indices; 0 if a == b.
 u32 body_hit_side(u32 a, u32 b);
 
 // Bounces bodies off the bounds and applies gravity, maximum fall speed and

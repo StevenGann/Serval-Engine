@@ -143,17 +143,36 @@ typedef struct {
     u8 track_count;
 } PsgSong;
 
-// Starts a song from the beginning, replacing the one playing. Sound effects
-// playing keep their channels; the music comes in on each channel when its
-// sound ends. Advanced by frame_end().
+// Starts a song from the beginning at its own tempo, replacing the one
+// playing (paused or not). Sound effects playing keep their channels; the
+// music comes in on each channel when its sound ends. Advanced by frame_end().
 void psg_music_play(const PsgSong* song);
 
 // Stops the music. Sound effects keep playing.
 void psg_music_stop(void);
 
-// True while a song plays: until psg_music_stop() or psg_stop_all(), or until
-// every track of a song that doesn't loop has ended.
+// True while a song plays, paused or not: until psg_music_stop() or
+// psg_stop_all(), or until every track of a song that doesn't loop has ended.
 bool psg_music_playing(void);
+
+// Pauses the music where it is: its time stands still and its channels go
+// quiet. Sound effects play on, on every channel, whatever their priority.
+// Nothing happens if no song plays or it is already paused.
+void psg_music_pause(void);
+
+// Resumes paused music exactly where it stopped: held notes start again at
+// once, tracks that fade out come back with their next note. Nothing happens
+// if the music isn't paused. psg_music_play(), psg_music_stop() and
+// psg_stop_all() also end a pause.
+void psg_music_resume(void);
+
+// True while the music is paused (psg_music_playing() is true too).
+bool psg_music_paused(void);
+
+// Changes the tempo of the song playing, in beats per minute, from where it
+// is: no jump, and it stays in time. 0 goes back to the song's own .tempo,
+// which psg_music_play() also restores. Ignored if no song plays (warns).
+void psg_music_set_tempo(u16 tempo);
 
 // Music volume, 0 (silent) to 15 (the default: the tracks' own volumes). It
 // scales each note's starting volume, from each channel's next note on (a

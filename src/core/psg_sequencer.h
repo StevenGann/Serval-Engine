@@ -24,9 +24,14 @@ typedef struct {
 } PsgSeqTrack;
 
 typedef struct {
-    u32 step;                                // ticks per frame, 16.16; at most SERVAL_PSG_TICK
-    u32 phase;                               // fraction of the next tick elapsed, 16.16
+    u32 step;  // ticks per frame, 16.16; at most SERVAL_PSG_TICK
+    s32 phase; // fraction of the next tick elapsed, 16.16, plus half a frame
+               // (step / 2), so each tick falls on the frame closest to its time.
+               // Below 0 after a tempo change: the tick that just played fell
+               // early
     PsgSeqTrack tracks[SERVAL_PSG_CHANNELS]; // by channel
+    u16 tempo;                               // the song's tempo (0 means 120)
+    u8 ticks_per_beat;                       // the song's (0 means 4)
 } PsgSequencer;
 
 // Starts a song: every track is on its first note. Returns the channels
@@ -38,6 +43,11 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song);
 // its next note this frame (the note to play is tracks[c].note; a track that
 // ended has moved to PSG_REST and its track is NULL).
 u32 serval_psg_seq_advance(PsgSequencer* seq);
+
+// Changes the tempo from the current position on (0: the song's own tempo):
+// the song neither jumps nor drifts, and the next tick falls on the frame
+// closest to its time at the new tempo. serval_psg_seq_start() resets it.
+void serval_psg_seq_set_tempo(PsgSequencer* seq, u16 tempo);
 
 // The channels whose track is still playing.
 u32 serval_psg_seq_channels(const PsgSequencer* seq);

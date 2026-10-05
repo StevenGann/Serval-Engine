@@ -308,7 +308,7 @@ void spawn_debris(int mx, int my) {
             body_max_fall[i] = MAX_FALL;
             vel_x[i] = vx[k] * FX_ONE;
             vel_y[i] = vy[k] * FX_ONE;
-            spr_frame[i] = (u8)k; // each piece starts at a different turn
+            spr_anim_step[i] = (u8)k; // each piece starts at a different turn
         }
     }
 }

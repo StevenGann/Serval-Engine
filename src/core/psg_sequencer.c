@@ -77,9 +77,9 @@ u32 serval_psg_tick_step(u16 tempo, u8 ticks_per_beat) {
     u32 per_minute = (u32)(tempo ? tempo : 120) * (ticks_per_beat ? ticks_per_beat : 4);
     if (per_minute > MAX_TICKS_PER_MINUTE) {
         WARN_ONCE(WARN_TEMPO,
-                  "psg_music_play: .tempo %u at %u ticks per beat is faster than a tick per "
-                  "frame (%u ticks a minute at most); it plays at that speed. Lower .tempo or "
-                  ".ticks_per_beat",
+                  "PSG music: tempo %u at %u ticks per beat is faster than a tick per frame "
+                  "(%u ticks a minute at most); it plays at that speed. Lower the tempo "
+                  "(PsgSong.tempo, psg_music_set_tempo) or .ticks_per_beat",
                   tempo, ticks_per_beat ? ticks_per_beat : 4u, MAX_TICKS_PER_MINUTE);
         return SERVAL_PSG_TICK;
     }
@@ -122,6 +122,8 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
         seq->tracks[c] = (PsgSeqTrack){.track = NULL, .note = PSG_REST};
     seq->step = 0;
     seq->phase = 0;
+    seq->tempo = 0;
+    seq->ticks_per_beat = 0;
     if (!serval_plausible_pointer(song)) {
         WARN_ONCE(WARN_SONG, "psg_music_play: the song is NULL or not a valid pointer; nothing "
                              "plays");
@@ -134,9 +136,11 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
                   song->track_count);
         return 0;
     }
+    seq->tempo = song->tempo;
+    seq->ticks_per_beat = song->ticks_per_beat;
     seq->step = serval_psg_tick_step(song->tempo, song->ticks_per_beat);
     // Half a frame ahead: each tick falls on the frame closest to its time.
-    seq->phase = seq->step / 2;
+    seq->phase = (s32)(seq->step / 2);
     u32 beat = song->ticks_per_beat ? song->ticks_per_beat : 4u;
     u32 channels = 0;
     for (u32 i = 0; i < song->track_count; i++) {
@@ -192,10 +196,10 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
 }
 
 u32 serval_psg_seq_advance(PsgSequencer* seq) {
-    seq->phase += seq->step;
-    if (seq->phase < SERVAL_PSG_TICK)
+    seq->phase += (s32)seq->step;
+    if (seq->phase < (s32)SERVAL_PSG_TICK)
         return 0;
-    seq->phase -= SERVAL_PSG_TICK;
+    seq->phase -= (s32)SERVAL_PSG_TICK;
     u32 changed = 0;
     for (u32 c = 0; c < SERVAL_PSG_CHANNELS; c++) {
         PsgSeqTrack* t = &seq->tracks[c];
@@ -213,6 +217,17 @@ u32 serval_psg_seq_advance(PsgSequencer* seq) {
         load_note(t);
     }
     return changed;
+}
+
+void serval_psg_seq_set_tempo(PsgSequencer* seq, u16 tempo) {
+    u32 step = serval_psg_tick_step(tempo ? tempo : seq->tempo, seq->ticks_per_beat);
+    // The phase is the song's position within its tick plus half a frame at
+    // the old tempo: keep the position, and lead by half a frame at the new
+    // one. Below 0, the tick that just played fell early by the new rounding;
+    // at a tick or more, the next one is due now and plays next frame (a
+    // frame late, once). Either way the song keeps its time.
+    seq->phase += (s32)(step / 2) - (s32)(seq->step / 2);
+    seq->step = step;
 }
 
 u32 serval_psg_seq_channels(const PsgSequencer* seq) {
