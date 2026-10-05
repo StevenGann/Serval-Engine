@@ -5,6 +5,8 @@
 
 #include <tonc.h>
 
+#include "internal.h"
+
 // Resident sprite groups only, for now. Tiles are bump-allocated in OBJ VRAM
 // and palettes in OBJ palette banks; sprite_groups_reset() frees everything.
 // Not yet implemented from docs/sprites.md: streamed sprites, LZ77 groups,
@@ -12,7 +14,6 @@
 
 #define OBJ_TILE_COUNT 1024 // 32 KB of 4bpp tiles in tiled modes
 #define OBJ_PALETTE_BANKS 16
-#define NOT_LOADED 0xFFFF
 
 // OBJ VRAM as one array of tiles (it spans two of libtonc's 512-tile charblocks).
 static TILE* const obj_tiles = (TILE*)MEM_VRAM_OBJ;
@@ -23,9 +24,20 @@ static u16 sprite_count;
 static u16 next_tile;
 static u8 next_palette_bank;
 
-// Where each loaded sprite's tiles and palette ended up. Indexed by sprite ID.
-static EWRAM_BSS u16 sprite_tile_base[SPRITE_MAX];
-static EWRAM_BSS u8 sprite_palette_bank[SPRITE_MAX];
+// Everything sprite_draw needs for a loaded sprite, resolved once at load
+// time so drawing is a lookup and a few ORs. frame_count is 0 while the sprite
+// is not loaded. Indexed by sprite ID.
+typedef struct {
+    u16 attr0;        // shape | 4bpp
+    u16 attr1;        // size
+    u16 attr2;        // first tile | palette bank
+    u8 width, height; // pixels
+    s8 origin_x, origin_y;
+    u8 frame_count;
+    u8 tiles_per_frame;
+} SpriteDraw;
+
+static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
 
 // Width and height in pixels, by [shape][size].
 static const u8 sprite_dims[3][4][2] = {
@@ -37,8 +49,7 @@ static const u8 sprite_dims[3][4][2] = {
 void sprite_groups_reset(void) {
     next_tile = 0;
     next_palette_bank = 0;
-    for (u32 id = 0; id < SPRITE_MAX; id++)
-        sprite_tile_base[id] = NOT_LOADED;
+    memset32(sprite_draws, 0, sizeof(sprite_draws) / 4);
 }
 
 void sprite_table_set(const SpriteAsset* const* table, u16 count) {
@@ -73,15 +84,30 @@ bool sprite_group_load(const SpriteGroup* group) {
 
     u32 tile = next_tile;
     for (u32 i = 0; i < group->sprite_count; i++) {
-        u16 id = group->sprite_ids[i];
-        const SpriteAsset* sprite = sprite_table[id];
+        const SpriteAsset* sprite = sprite_table[group->sprite_ids[i]];
         u32 tiles = (u32)sprite->frame_count * sprite->tiles_per_frame;
         if (tile + tiles > (u32)next_tile + group->tile_count)
             return false; // group->tile_count is inconsistent with its sprites
+        tile += tiles;
+    }
 
+    tile = next_tile;
+    for (u32 i = 0; i < group->sprite_count; i++) {
+        u16 id = group->sprite_ids[i];
+        const SpriteAsset* sprite = sprite_table[id];
+        u32 tiles = (u32)sprite->frame_count * sprite->tiles_per_frame;
         memcpy32(obj_tiles + tile, sprite->tiles, tiles * (sizeof(TILE) / 4));
-        sprite_tile_base[id] = (u16)tile;
-        sprite_palette_bank[id] = (u8)(next_palette_bank + sprite->palette_slot);
+
+        SpriteDraw* d = &sprite_draws[id];
+        d->attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | (sprite->shape << 14));
+        d->attr1 = (u16)(sprite->size << 14);
+        d->attr2 = (u16)(ATTR2_ID(tile) | ATTR2_PALBANK(next_palette_bank + sprite->palette_slot));
+        d->width = sprite_dims[sprite->shape][sprite->size][0];
+        d->height = sprite_dims[sprite->shape][sprite->size][1];
+        d->origin_x = sprite->origin_x;
+        d->origin_y = sprite->origin_y;
+        d->frame_count = sprite->frame_count;
+        d->tiles_per_frame = sprite->tiles_per_frame;
         tile += tiles;
     }
 
@@ -92,38 +118,39 @@ bool sprite_group_load(const SpriteGroup* group) {
     return true;
 }
 
-void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
-    if (sprite_id >= sprite_count || sprite_tile_base[sprite_id] == NOT_LOADED)
+// Appends a sprite to the shadow OAM. Shared by sprite_draw and sys_render;
+// both run as ARM code from IWRAM, the fastest place to run code on the GBA.
+static inline __attribute__((always_inline, target("arm"))) void
+draw(const SpriteDraw* d, u32 frame, int x, int y, u32 flags) {
+    if (frame >= d->frame_count) // also rejects sprites that are not loaded
         return;
-    const SpriteAsset* sprite = sprite_table[sprite_id];
-    if (frame >= sprite->frame_count)
-        return;
-
-    x -= sprite->origin_x;
-    y -= sprite->origin_y;
-    int width = sprite_dims[sprite->shape][sprite->size][0];
-    int height = sprite_dims[sprite->shape][sprite->size][1];
-    if (x >= screen_width() || y >= screen_height() || x + width <= 0 || y + height <= 0)
+    x -= d->origin_x;
+    y -= d->origin_y;
+    // On screen if x is in (-width, 240) and y in (-height, 160).
+    if ((u32)(x + d->width - 1) >= (u32)(240 + d->width - 1) ||
+        (u32)(y + d->height - 1) >= (u32)(160 + d->height - 1))
         return; // off screen: don't spend a hardware sprite on it
+    if (serval_oam_used >= 128)
+        return;
 
     // Coordinates wrap in hardware (9-bit x, 8-bit y), so negative positions
-    // must be masked rather than passed through.
-    u16 attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | ((u32)y & ATTR0_Y_MASK) | (sprite->shape << 14));
-    u16 attr1 = (u16)(((u32)x & ATTR1_X_MASK) | (sprite->size << 14));
-    if (flags & SPRITE_FLIP_H)
-        attr1 |= ATTR1_HFLIP;
-    if (flags & SPRITE_FLIP_V)
-        attr1 |= ATTR1_VFLIP;
-    u32 tile = sprite_tile_base[sprite_id] + (u32)frame * sprite->tiles_per_frame;
-    u16 attr2 = (u16)(ATTR2_ID(tile) | ATTR2_PRIO((flags >> 2) & 3) |
-                      ATTR2_PALBANK(sprite_palette_bank[sprite_id]));
-
-    gba_oam_submit(attr0, attr1, attr2);
+    // are masked rather than passed through. Flip flags map onto attr1 bits
+    // 12-13, priority onto attr2 bits 10-11.
+    OBJ_ATTR* obj = &serval_shadow_oam[serval_oam_used++];
+    obj->attr0 = (u16)(d->attr0 | ((u32)y & ATTR0_Y_MASK));
+    obj->attr1 = (u16)(d->attr1 | ((u32)x & ATTR1_X_MASK) | ((flags & 3) << 12));
+    obj->attr2 = (u16)(d->attr2 + frame * d->tiles_per_frame + ((flags & 0xC) << 8));
 }
 
-void sys_render(void) {
+SERVAL_IWRAM_CODE void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags) {
+    if (sprite_id < sprite_count)
+        draw(&sprite_draws[sprite_id], frame, x, y, flags);
+}
+
+SERVAL_IWRAM_CODE void sys_render(void) {
     for (u32 i = 0; i < MAX_ENT; i++) {
-        if ((ent_mask[i] & (C_POS | C_SPR)) == (C_POS | C_SPR))
-            sprite_draw(spr_id[i], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]), 0);
+        if ((ent_mask[i] & (C_POS | C_SPR)) == (C_POS | C_SPR) && spr_id[i] < sprite_count)
+            draw(&sprite_draws[spr_id[i]], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]),
+                 0);
     }
 }

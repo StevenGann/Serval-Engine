@@ -7,6 +7,8 @@
 
 #include <tonc.h>
 
+#include "internal.h"
+
 // The portable button bits are the GBA's KEYINPUT bits, so no translation is needed.
 _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SELECT &&
                    BUTTON_START == KEY_START && BUTTON_RIGHT == KEY_RIGHT &&
@@ -16,8 +18,8 @@ _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SE
 
 // Rebuilt from draw calls every frame and copied to OAM in VBlank, so sprites
 // that are not drawn disappear. See "Sprite submission model" in docs/core-api.md.
-static OBJ_ATTR shadow_oam[128] ALIGN4;
-static u32 oam_used;
+OBJ_ATTR serval_shadow_oam[128] ALIGN4;
+u32 serval_oam_used;
 
 // CPU cycles per frame: 228 scanlines of 1232 cycles.
 #define FRAME_BUDGET_CYCLES 280896u
@@ -50,8 +52,8 @@ void serval_init(void) {
     irq_enable(II_VBLANK);
 
     oam_init(oam_mem, 128); // hide whatever OAM held at power-on
-    oam_init(shadow_oam, 128);
-    oam_used = 0;
+    oam_init(serval_shadow_oam, 128);
+    serval_oam_used = 0;
 
     // Mode 0 (tiled backgrounds), sprites on, sprite tiles mapped linearly.
     REG_DISPCNT = DCNT_MODE0 | DCNT_OBJ | DCNT_OBJ_1D;
@@ -68,16 +70,16 @@ void serval_init(void) {
 void frame_begin(void) {
     frame_start_cycles = cycles_now();
     key_poll();
-    oam_used = 0;
+    serval_oam_used = 0;
 }
 
 void frame_end(void) {
-    for (u32 i = oam_used; i < 128; i++)
-        shadow_oam[i].attr0 = ATTR0_HIDE;
+    for (u32 i = serval_oam_used; i < 128; i++)
+        serval_shadow_oam[i].attr0 = ATTR0_HIDE;
 
     last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
-    oam_copy(oam_mem, shadow_oam, 128);
+    oam_copy(oam_mem, serval_shadow_oam, 128);
 }
 
 u32 frame_cpu_cycles(void) {
@@ -101,8 +103,8 @@ void screen_set_backdrop(Color color) {
 }
 
 bool gba_oam_submit(u16 attr0, u16 attr1, u16 attr2) {
-    if (oam_used >= 128)
+    if (serval_oam_used >= 128)
         return false;
-    obj_set_attr(&shadow_oam[oam_used++], attr0, attr1, attr2);
+    obj_set_attr(&serval_shadow_oam[serval_oam_used++], attr0, attr1, attr2);
     return true;
 }

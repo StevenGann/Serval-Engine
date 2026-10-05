@@ -99,7 +99,8 @@ The result is deterministic for a given build, so any change in the number comes
 | Date | Commit | avg cycles | % of frame | Change |
 | --- | --- | --- | --- | --- |
 | 2026-10-04 | `0d320c5` | 149,564 | 53.2% | Baseline: unoptimized Thumb code in ROM |
-| 2026-10-04 | (gravity) | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
+| 2026-10-04 | `e3caba8` | 164,650 | 58.6% | **Workload change**, not an engine change: bunnymark gained gravity, friction and a third HUD line. New baseline; peak 171,675 |
+| 2026-10-04 | (sprite fast path) | 83,072 | 29.5% | `sprite_draw`/`sys_render` as ARM code in IWRAM, per-sprite draw data resolved at load, no per-sprite call |
 
 ## Code style
 

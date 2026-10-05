@@ -36,7 +36,8 @@ function(serval_add_rom target)
         set(ARG_GAME_CODE "0000")
     endif()
 
-    add_executable(${target} ${ARG_SOURCES} $<TARGET_OBJECTS:serval_crt0>)
+    add_executable(${target} ${ARG_SOURCES} $<TARGET_OBJECTS:serval_crt0>
+                   $<TARGET_OBJECTS:serval_libc>)
     set_target_properties(${target} PROPERTIES SUFFIX ".elf")
     target_link_libraries(${target} PRIVATE serval)
     # No C library: the engine provides the few routines GCC may call

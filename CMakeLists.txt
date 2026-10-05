@@ -46,7 +46,6 @@ if(SERVAL_TARGET_GBA)
     add_library(serval STATIC
         src/gba/core.c
         src/gba/debug.c
-        src/gba/libc.c
         src/gba/sprites.c
         src/gba/text.c
     )
@@ -56,13 +55,16 @@ if(SERVAL_TARGET_GBA)
         PUBLIC serval_portable tonc
         PRIVATE serval_warnings
     )
-    # libc.c implements memcpy and friends: stop GCC from turning its loops
-    # back into calls to themselves.
-    set_source_files_properties(src/gba/libc.c PROPERTIES
-        COMPILE_OPTIONS "-fno-builtin;-fno-tree-loop-distribute-patterns")
-
     # Startup code, linked first into every ROM by serval_add_rom().
     add_library(serval_crt0 OBJECT src/gba/crt0.s)
+
+    # memcpy and friends, which GCC may call from any library (engine, libtonc,
+    # game). Linked into every ROM as an object, so archive order can't leave
+    # them unresolved. -fno-builtin and -fno-tree-loop-distribute-patterns stop
+    # GCC from turning their loops back into calls to themselves.
+    add_library(serval_libc OBJECT src/gba/libc.c)
+    target_link_libraries(serval_libc PRIVATE tonc serval_warnings)
+    target_compile_options(serval_libc PRIVATE -fno-builtin -fno-tree-loop-distribute-patterns)
 endif()
 
 if(SERVAL_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
