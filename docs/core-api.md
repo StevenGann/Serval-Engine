@@ -2,14 +2,14 @@
 
 The lowest engine layer is a raylib-style flat C API over libtonc. It is also the abstraction boundary for future platforms: each call means the same thing on every target (see [platforms.md](platforms.md)).
 
-**Status:** implemented (input, frame loop, sprites, map backgrounds and the camera, PSG sound, text, math, random, debug). Music is planned ([audio.md](audio.md)); so are tileset groups ([tilemaps.md](tilemaps.md)). The full function list with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design and the hardware the engine owns.
+**Status:** implemented (input, frame loop, sprites, map backgrounds and the camera, PSG sound effects and music, brightness fades, text, math, random, paths, save data, debug). Maxmod music and sampled sound are planned ([audio.md](audio.md)); so are tileset groups ([tilemaps.md](tilemaps.md)), palette management ([sprites.md](sprites.md#palettes)) and alpha blending ([runtime-systems.md](runtime-systems.md#special-effects)). The full function list with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design and the hardware the engine owns.
 
 ```c
 void serval_init(void);               // once at startup: wait states, interrupts, display, ECS, sound
 void serval_splash(void);             // optional: the "Made with Serval Engine" splash
 
 void frame_begin(void);               // poll buttons, empty the sprite draw list
-void frame_end(void);                 // VBlank sync, copy shadow OAM to hardware, step PSG sounds
+void frame_end(void);                 // VBlank sync, copy shadow OAM, stream maps, step sound and music
 
 u32  frame_count(void);               // frames since serval_init()
 u32  frame_cpu_cycles(void);          // previous frame's work, in CPU cycles
@@ -34,18 +34,21 @@ Modules, all in `include/serval/` (details in [api-reference.md](api-reference.m
 
 | Header | Provides |
 | --- | --- |
-| `core.h` | Init, splash, frame loop, frame count, CPU timing, buttons |
-| `screen.h` | Screen size, `Color`, `COLOR_RGB`, backdrop color |
-| `sprites.h` | Sprite assets, groups, drawing, rotation, layers ([sprites.md](sprites.md)) |
-| `ecs.h` | Entities, engine components, `ECS_FOR_EACH`, `sys_movement`, `sys_render`, `sys_render_by_depth` ([ecs.md](ecs.md)) |
-| `physics.h` | Bouncing bodies (`C_BODY`): gravity, maximum fall speed, bounds, open edges, wrap-around, `sys_physics()`, `body_overlap()`, `body_hit_side()`. For balls, particles and debris, not platformer characters |
-| `audio.h` | PSG sound effects on the tone generators: `psg_table_set()`, `psg_play()`, `psg_stop_all()` ([audio.md](audio.md)) |
+| `core.h` | Init, splash, frame loop, frame count, CPU timing, buttons, held-button repeat (`button_repeat`, `button_repeat_set`) |
+| `screen.h` | Screen size, `Color`, `COLOR_RGB`, backdrop color, brightness fades (`screen_set_brightness`) |
+| `sprites.h` | Sprite assets, groups, drawing, rotation, layers, per-draw palettes, animation data ([sprites.md](sprites.md)) |
+| `map.h` | Tilesets, metatile map layers on BG1-BG3, scroll offsets, the camera, runtime cell changes, map collision and map bodies (`C_MAPBODY`, `sys_map_movement`) ([tilemaps.md](tilemaps.md)) |
+| `ecs.h` | Entities, engine components, `ECS_FOR_EACH`, `ecs_count`, `ecs_gather`, `sys_movement`, `sys_animate`, `sys_render`, `sys_render_by_depth` ([ecs.md](ecs.md)) |
+| `path.h` | Movement patterns as `PathStep` tables: `path_start()`, `sys_path()` ([runtime-systems.md](runtime-systems.md#paths)) |
+| `physics.h` | Bouncing bodies (`C_BODY`): gravity (global and per body), maximum fall speed, bounds, open edges, wrap-around, contacts, `sys_physics()`, `body_overlap()`, `body_hit_side()`. For balls, particles and debris; platformer characters are map bodies |
+| `audio.h` | PSG sound effects (`psg_table_set()`, `psg_play()`, `psg_stop_all()`) and PSG music (`psg_music_play()`, pause, tempo, volume) on the tone generators ([audio.md](audio.md)) |
+| `save.h` | Save slots with checksums and versions on SRAM, Flash or EEPROM (`localStorage` on the web) ([runtime-systems.md](runtime-systems.md#save-data)) |
 | `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells, up to four color styles such as a highlight, centering within columns) and `text_format()` (printf-style without a C library) |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
-| `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`); u16 angles (`ANGLE_DEG(d)`, clockwise on screen) with `fx_sin`/`fx_cos` |
+| `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`); u16 angles (`ANGLE_DEG(d)`, clockwise on screen) with `fx_sin`/`fx_cos`, `angle_of` (atan2) and `fx_length` |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`, and `random_entropy()`, a seed from the player's input timing (the same input gives the same value on every platform) |
 | `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, `debug_exit()` |
-| `platform.h` | Integer types, `FIXED`, IWRAM/EWRAM placement macros |
+| `platform.h` | Integer types, `FIXED`, `NULL`, IWRAM/EWRAM placement macros |
 | `gba.h` | GBA-only escape hatches (`gba_oam_submit()`); not included by `serval.h` |
 
 ## Debug builds report misuse
@@ -66,7 +69,7 @@ Each problem is reported once rather than every frame. Release builds compile th
 
 ## Splash screen
 
-`serval_splash()` shows "made with" (grey) and "Serval Engine" (white) on a black backdrop and returns about three seconds later: a 500 ms fade-in, a 500 ms hold, a coin-like jingle, a 1.5 s hold and a 500 ms fade-out (hardware fade-to-black on the text layer). Any button after the fade-in skips the rest. It borrows the backdrop, BG0 (control register and on/off state), the text layer (drawing without the text shadow), one color in each of BG palette banks 14-15, the blend registers (the game's `screen_set_brightness` level) and PSG square 1, and puts them back, so the screen then shows the game's backdrop (black by default). Not restored: text already on the layer (cleared) and, if the game hadn't used text yet, charblock 0 tiles 0-95 (the font) and BG0's scroll. A logo is planned. Pong and Asteroids call it.
+`serval_splash()` shows "made with" (grey) and "Serval Engine" (white) on a black backdrop and returns about three seconds later: a 500 ms fade-in, a 500 ms hold, a coin-like jingle, a 1.5 s hold and a 500 ms fade-out (hardware fade-to-black on the text layer). Any button after the fade-in skips the rest. It borrows the backdrop, BG0 (control register and on/off state), the text layer (drawing without the text shadow), one color in each of BG palette banks 14-15, the blend registers (the game's `screen_set_brightness` level) and PSG square 1, and puts them back, so the screen then shows the game's backdrop (black by default). Not restored: text already on the layer (cleared) and, if the game hadn't used text yet, charblock 0 tiles 0-95 (the font) and BG0's scroll. A logo is planned. Every example except `hello` and `bunnymark` calls it.
 
 ## Dependencies stay behind the API
 

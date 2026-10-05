@@ -2,9 +2,24 @@
 
 Examples drive the engine: each one is written as a game developer would write it, and what it needs (or has to work around) becomes engine API. This is the list of candidates, chosen to show the engine's strengths, teach its use, and expose its weaknesses. The existing examples are in [`examples/`](../examples/) ([getting-started.md](getting-started.md#1-build-the-examples) has a reading order).
 
-**Status:** `platformer` is implemented ([`examples/platformer`](../examples/platformer/main.c); what it exposed is [below](#what-platformer-exposed)), so are `breakout` ([`examples/breakout`](../examples/breakout/main.c); [below](#what-breakout-exposed)) `shmup` ([`examples/shmup`](../examples/shmup/main.c); [below](#what-shmup-exposed)) and `blackjack` ([`examples/blackjack`](../examples/blackjack/main.c); [below](#what-blackjack-exposed)), and "Save and high scores" is done in `asteroids` ([`examples/asteroids/scores.c`](../examples/asteroids/scores.c); [below](#what-the-high-score-table-exposed)). Everything else on this page is a candidate. ✱ marks examples blocked on engine features that are still only designs.
+**Status:** implemented: `platformer` ([what it exposed](#what-platformer-exposed)), `breakout` ([below](#what-breakout-exposed)), `shmup` ([below](#what-shmup-exposed)) and `blackjack` ([below](#what-blackjack-exposed)), and "Save and high scores" in `asteroids` ([`scores.c`](../examples/asteroids/scores.c); [below](#what-the-high-score-table-exposed)), next to `hello`, `bunnymark` and `pong`. Everything else on this page is a candidate. ✱ marks examples blocked on engine features that are still only designs. Most gaps the implemented examples exposed are closed by engine API; the ones still open are gathered in [Open gaps](#open-gaps).
 
 Each entry says what the example **shows** and what it would **expose**: missing API, limits, or workarounds that should become engine features.
+
+## Open gaps
+
+Every gap still open from the sections below, in one place (closed ones are struck through there). API surprises that aren't missing features are in [open-questions.md](open-questions.md#api-caveats-found-by-the-examples).
+
+- **Sprites:** metasprites drawn, rotated and depth-sorted as one (`breakout`'s paddle, `blackjack`'s cards); sprite scaling (a scale factor on rotated sprites: flips, zoom, pop-in); writing a sprite's tiles at runtime, like `tileset_set_tiles` (composed card faces); the 32-matrix limit with many distinct angles; draw order on a layer is slot order.
+- **Palettes and effects:** palette writes and palette cycling (a shadow palette), palette fades; alpha blending (it shares the hardware's one color effect with `screen_set_brightness`); windows and mosaic.
+- **Text and UI:** a variable-width or large font (also for sprites); text above every sprite but `SPRITE_ABOVE_HUD`, on an 8-pixel grid; a text-input or menu helper; dialogue boxes.
+- **Motion:** tweens, easing and springs; swept collision and body-to-body response; slopes and ladders; a body placed overlapping a solid metatile falls through it (by design).
+- **Maps:** `MAP_MAX_CHANGES` (64 runtime cell changes); map bodies bounce at most 255/256 of their speed.
+- **Diagnostics:** reporting dropped sprites (OAM full, out of matrices, the per-scanline budget, which rotated sprites run out); a plain (non-double) affine mode for small angles.
+- **Sound:** wave-channel music; Maxmod music and sampled sound effects (and their web path).
+- **Hardware and input:** HBlank / per-scanline effects; input recording and playback; input remapping; a touch API.
+- **ECS and VRAM:** only 15 game component bits; components added and removed by writing `ent_mask`; all-or-nothing sprite residency with no allocator or defragmentation.
+- **Projects:** a shared header of sound IDs, as a generated project would have; levels as const cells in ROM (a Studio Advance build gives that; nothing in the engine to change).
 
 ## Showing the strengths
 
@@ -22,8 +37,8 @@ Each entry says what the example **shows** and what it would **expose**: missing
 | --- | --- | --- |
 | **Tutorial series** (`tutorial/01`–`05`) | One concept per step: a sprite, input, entities, physics, sound and text. Could become the backbone of [getting-started.md](getting-started.md) | Gaps in the beginner path |
 | **Animation playground** | A walk cycle with frame timing (`sys_animate`, `frame_times`, `SPRITE_ASSET_ANIM_ONCE`), flips, layers | ~~`sys_animate` plays a sprite's frames in order~~ (closed by `SpriteAsset.frame_order`: sequences with per-step flips; the platformer's gem and debris no longer duplicate tiles) |
-| **Game states and menus** | Title, options, pause, game over, fades between screens (`screen_set_brightness`), structured without hidden objects | No menu cursor or highlight support for text (`text_set_color` changes all text at once) |
-| **Custom components and systems** | Health, a damage-flash system, a homing system: `C_GAME(n)` and `ECS_FOR_EACH` | Only 15 game component bits, adding and removing components by writing `ent_mask`, no `ecs_count` |
+| **Game states and menus** | Title, options, pause, game over, fades between screens (`screen_set_brightness`), structured without hidden objects | ~~No highlight support for text~~ (closed by text styles, `TEXT_HIGHLIGHT`); no menu cursor helper |
+| **Custom components and systems** | Health, a damage-flash system, a homing system: `C_GAME(n)` and `ECS_FOR_EACH` | Only 15 game component bits, adding and removing components by writing `ent_mask`, ~~no `ecs_count`~~ (closed) |
 | **Fixed-point and trig primer** | Orbits, sine waves, a clock face: 24.8 fixed point and angles | The cost of `fx_mul`/`fx_div` (64-bit software division in Thumb code) |
 
 ## Stress tests
@@ -41,7 +56,7 @@ Each entry says what the example **shows** and what it would **expose**: missing
 | --- | --- | --- |
 | **`platformer`** (implemented: "Serval Dash") | A side-scrolling first level in the classic style, with original art and characters: a serval runs and jumps, hits bonus blocks and bricks from below, grows by eating a fish, stomps beetles and frogs, clears pits and stone staircases, and slides down a banner pole into a tent | Drove the tilemap, camera, scrolling and map-collision API ([tilemaps.md](tilemaps.md)); see [below](#what-platformer-exposed) |
 | **`blackjack`** (implemented) | Blackjack in a bold, bouncy modern card-game style: composed cards that slide, flip, tilt and wobble, a swirling background, banners, chip and number pops, double and split, a saved bankroll. A first look at what a poker roguelike would need | Cards as several sprites (no metasprites), flips without scaling; palette variants copying tiles (closed by `SPRITE_PALETTE`); see [below](#what-blackjack-exposed) |
-| ✱ **Top-down RPG slice** | Map, NPCs, dialogue boxes, inventory, save and load | Needs dialogue text, save data and the scripting VM ([vm.md](vm.md)) |
+| ✱ **Top-down RPG slice** | Map, NPCs, dialogue boxes, inventory, save and load | Needs dialogue text and the scripting VM ([vm.md](vm.md)); save data exists |
 | ✱ **Music player** | Maxmod modules with sound effects on top | The mixer's CPU cost against game logic; music on the web, which doesn't emulate the DMA sound channels ([platforms.md](platforms.md#web)) |
 
 ## Web and portability
@@ -56,10 +71,18 @@ Each entry says what the example **shows** and what it would **expose**: missing
 
 ## Order
 
-1. **`platformer`** (done): the biggest gap between Serval and a typical engine was backgrounds, scrolling and map collision, and a first level in the classic style needs all three.
-2. **`breakout`** (done): quick, pushes for directional contacts and `ecs_count`, a good web demo.
-3. **Sprite stress test**: turns hidden limits into documented numbers and tests both renderers.
-4. **Tutorial series**: the biggest win for newcomers, kept honest by CI building it.
+Done, in the order they were written:
+
+1. **`platformer`**: the biggest gap between Serval and a typical engine was backgrounds, scrolling and map collision, and a first level in the classic style needs all three.
+2. **Save and high scores** (in `asteroids`; later also `breakout`, `shmup` and `blackjack`): `save.h`.
+3. **`breakout`**: pushed for directional contacts and `ecs_count`.
+4. **`shmup`** (written alongside `breakout`): screen-space entities, fixed and self-scrolling layers, paths, cheap per-kind loops.
+5. **`blackjack`**: per-draw palettes, and the sprite gaps (metasprites, scaling, runtime tiles) that a card game or poker roguelike runs into.
+
+Next:
+
+1. **Sprite stress test**: turns hidden limits into documented numbers and tests both renderers.
+2. **Tutorial series**: the biggest win for newcomers, kept honest by CI building it.
 
 ## What `platformer` exposed
 

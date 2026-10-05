@@ -1,5 +1,7 @@
 # Development
 
+**Status:** current: describes the build, tests, benchmark and CI/CD as they are.
+
 ## Requirements
 
 | Tool | Version | Notes |
@@ -60,7 +62,8 @@ The `web` and `web-release` presets build every example as one self-contained HT
 source ~/opt/emsdk/emsdk_env.sh
 cmake --preset web-release
 cmake --build --preset web-release
-# -> build/web-release/examples/hello.html, bunnymark.html, pong.html, asteroids.html
+# -> build/web-release/examples/hello.html, bunnymark.html, pong.html, asteroids.html,
+#    breakout.html, platformer.html, shmup.html, blackjack.html
 ```
 
 Open a page from disk, or upload it to any static host. A page waits for a click or key press before starting the game, because browsers only allow sound after one.
@@ -81,12 +84,13 @@ Frame numbers don't line up exactly with an emulator's. The page counts `frame_e
 | Path | Contents |
 | --- | --- |
 | `include/serval/` | Public headers: `serval.h` (umbrella: includes everything), `core.h` (init, splash, frames, buttons), `screen.h`, `sprites.h`, `ecs.h`, `physics.h`, `map.h` (tilemaps, camera, map collision), `audio.h`, `text.h`, `math.h`, `fixed.h`, `random.h`, `save.h` (save slots), `debug.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
-| `src/ecs/`, `src/core/` | Platform-neutral modules: ECS (`ecs.c`), physics (`physics.c`), map bodies (`map_movement.c`), map layers as data, the camera, runtime cell changes and collision queries (`map.c`), random numbers, text formatting, trigonometry, `angle_of` and `fx_length` (`trig.c`), paths (`path.c`, `sys_path`), save slots on a byte-addressed save memory (`save.c`), and internal headers (`warn.h`, the warning macro; `map_internal.h` and `physics_internal.h`, state shared between modules; `save_internal.h`, the save memory each platform supplies). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` (stderr output, clock-based entropy, save memory in RAM) |
-| `src/gba/` | GBA-only code: core API, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, streaming and background registers (`map.c`), text layer (`text.c`), PSG sound effects (`psg.c`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
-| `src/web/` | The web backend: virtual GBA hardware for the GBA backend compiled to WebAssembly. Renderer (`ppu.c`), PSG sound (`apu.c`), BIOS and libtonc-assembly stand-ins, the VBlank wait that yields to the browser, debug output (`platform.c`), save memory of the game's save type kept in `localStorage` (`save.c`, one `serval_save_<type>` object per type), their interface (`web.h`), and the page template (`shell.html`) |
+| `src/ecs/` | Platform-neutral systems: entities, `ecs_count`/`ecs_gather` and `sys_movement` (`ecs.c`), bouncing bodies, `sys_physics`, `body_overlap`, `body_hit_side` (`physics.c`, with `physics_internal.h`, state shared with map bodies), map bodies and `sys_map_movement` (`map_movement.c`), `sys_animate` (`animate.c`) |
+| `src/core/` | Platform-neutral modules: map layers as data, the camera, runtime cell changes and collision queries (`map.c`, with `map_internal.h`), held-button repeat (`input.c`), random numbers and `random_entropy` (`random.c`), text formatting (`text_format.c`), trigonometry, `angle_of` and `fx_length` (`trig.c`), paths and `sys_path` (`path.c`), the PSG music sequencer (`psg_sequencer.c`), the registered sprite table, so `sys_animate` can read assets (`sprite_table.c`), save slots on a byte-addressed save memory (`save.c`, with `save_internal.h`, the memory each platform supplies), and `warn.h` (the warning macro) |
+| | `src/ecs/` and `src/core/` compile on the host (no libtonc, no hardware access). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` (stderr output, clock-based entropy, save memory in RAM) |
+| `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
-| `tests/` | The harness (`test.h`, `test.c`), shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `save_tests.c`, `input_tests.c`), hardware suites (`rom/`: core, sprites, map layers, text, audio, splash, save memory, libc, libtonc compatibility, ECS and physics costs), the runners (`rom/save_main.c` for the per-save-type test ROMs, `rom/run-rom-test.cmake` to run them and check mGBA's log), `public_headers.c`, and `consumer/` (a minimal game project built against the release archive) |
-| `examples/` | Example ROMs, one directory each, plus `build-all.sh`: `hello` (smallest game), `bunnymark` (ECS, physics, benchmark), `pong` (a complete small game with AI, shaded sprites, effects and sound), `asteroids` (rotation, wrap-around, many short-lived entities, sound) |
+| `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; and `consumer/` (a minimal game project built against the release archive, plus a game that saves) |
+| `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`; `build-all.sh` builds them all into `roms/` and `html/` |
 | `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` (`Serval.cmake`, with its web variant in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
 | `tools/` | ROM header fixer (`gbafix.py`), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`) |
 
@@ -132,7 +136,7 @@ Compile-only checks keep third-party libraries behind the API ([core-api.md](cor
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 74976 cycles (26.6%), peak 80782 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 74969 cycles (26.6%), peak 80489 (gba-release)
 ```
 
 The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
@@ -149,23 +153,28 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-04 | `8cac6a0` | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
 | 2026-10-04 | `1116a04` | 71,345 | 25.3% | Open-edge checks in `sys_physics` (Pong) |
 | 2026-10-04 | `a10fd04` | 72,875 | 25.9% | One rotation check per sprite in the render systems; physics loop specialized for wrapping (Asteroids) |
-| 2026-10-04 | 724c283 | 74,976 | 26.6% | Correctness fixes (before: avg 72,875, peak 76,551; after: peak 80,782). Mainly `ent_has` requiring `C_ALIVE` (~+1,430), `text_format` (~+490) and the physics fixes (~+230) |
-| 2026-10-05 | 724c283 | 74,684 | 26.5% | Tilemaps and camera (before: avg 74,976, peak 80,782; after: peak 80,081). The render systems subtract the camera (~+740: the loops are out of registers, so it costs two IWRAM loads per sprite), paid for by checking sprite IDs against the constant `SPRITE_MAX` instead of reloading the table size (~−725); `sys_physics` reads gravity once per call (~−310) |
-| 2026-10-05 | 724c283 | 75,052 | 26.7% | `body_max_fall` in `sys_physics` (before: avg 74,887, peak 80,326, same tree without it; after: peak 80,545). A separate pass that skips 16 zero limits per word-group read (~+165); inside the main loop it cost ~+2,900, as that loop is out of registers |
-| 2026-10-05 | 724c283 | 75,052 | 26.7% | `SPRITE_HIDDEN` (before: avg 74,938, peak 80,441, same tree without the check; after: peak 80,545). The render systems test it together with `spr_angle` (one ORR per entity), sending hidden sprites down the out-of-line rotated path, which drops them (~+115); a separate test before the draw cost ~+645 |
-| 2026-10-05 | 3847b50 | 75,057 | 26.7% | `SPRITE_SCREEN` and `SPRITE_PALETTE(n)` (before: avg 75,052, peak 80,545; after: peak 80,520). Screen-space entities skip the camera with a test and conditional moves; the camera is loaded only for the others (two loads became one load-multiple, so ~+5 net). Sprites with a palette take the out-of-line rotated path, folded into the existing angle/hidden test (one ARM immediate covers both bits), so others don't pay; an inline palette test cost ~+500, and subtracting the camera conditionally ~+420. IWRAM +224 bytes (the palette path) |
-| 2026-10-05 | 3847b50 | 75,165 | 26.7% | Per-body gravity (`body_gravity`), contacts (`physics_set_contacts`), `ecs_gather`/`ecs_count` in IWRAM (before: avg 75,052, peak 80,545, HEAD without them; after: peak 80,573). bunnymark keeps `sys_physics`' fast loop; the cost is the check for gravity scales (~+110, sixteen per word read, only while there is gravity). Recording contacts in the fast loop cost ~+1,000-2,000 (out of registers) and scaling gravity per body ~+3,500, so both go to the general loop (out of line, IWRAM), scaled bodies further out of line in ROM. IWRAM +288 bytes (the two pools) |
+| 2026-10-04 | `724c283` | 74,976 | 26.6% | Correctness fixes (before: avg 72,875, peak 76,551; after: peak 80,782). Mainly `ent_has` requiring `C_ALIVE` (~+1,430), `text_format` (~+490) and the physics fixes (~+230) |
+| 2026-10-05 | `724c283` | 74,684 | 26.5% | Tilemaps and camera (before: avg 74,976, peak 80,782; after: peak 80,081). The render systems subtract the camera (~+740: the loops are out of registers, so it costs two IWRAM loads per sprite), paid for by checking sprite IDs against the constant `SPRITE_MAX` instead of reloading the table size (~−725); `sys_physics` reads gravity once per call (~−310) |
+| 2026-10-05 | `724c283` | 75,052 | 26.7% | `body_max_fall` in `sys_physics` (before: avg 74,887, peak 80,326, same tree without it; after: peak 80,545). A separate pass that skips 16 zero limits per word-group read (~+165); inside the main loop it cost ~+2,900, as that loop is out of registers |
+| 2026-10-05 | `724c283` | 75,052 | 26.7% | `SPRITE_HIDDEN` (before: avg 74,938, peak 80,441, same tree without the check; after: peak 80,545). The render systems test it together with `spr_angle` (one ORR per entity), sending hidden sprites down the out-of-line rotated path, which drops them (~+115); a separate test before the draw cost ~+645 |
+| 2026-10-05 | `6ba7de7` | 75,057 | 26.7% | `SPRITE_SCREEN` and `SPRITE_PALETTE(n)` (before: avg 75,052, peak 80,545; after: peak 80,520). Screen-space entities skip the camera with a test and conditional moves; the camera is loaded only for the others (two loads became one load-multiple, so ~+5 net). Sprites with a palette take the out-of-line rotated path, folded into the existing angle/hidden test (one ARM immediate covers both bits), so others don't pay; an inline palette test cost ~+500, and subtracting the camera conditionally ~+420. IWRAM +224 bytes (the palette path) |
+| 2026-10-05 | `6ba7de7` | 75,165 | 26.7% | Per-body gravity (`body_gravity`), contacts (`physics_set_contacts`), `ecs_gather`/`ecs_count` in IWRAM (before: avg 75,052, peak 80,545, HEAD without them; after: peak 80,573). bunnymark keeps `sys_physics`' fast loop; the cost is the check for gravity scales (~+110, sixteen per word read, only while there is gravity). Recording contacts in the fast loop cost ~+1,000-2,000 (out of registers) and scaling gravity per body ~+3,500, so both go to the general loop (out of line, IWRAM), scaled bodies further out of line in ROM. IWRAM +288 bytes (the two pools) |
+| 2026-10-05 | `6ba7de7` | 74,969 | 26.6% | Net result of the commit, with all its engine changes (before: avg 75,052, peak 80,545; after: peak 80,489); the two rows above were measured on intermediate trees |
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (IWRAM code and data plus `.bss`):
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `6ba7de7`:
 
 | Example | IWRAM used |
 | --- | --- |
-| `hello` | 8,336 bytes |
-| `pong` | 16,356 bytes |
-| `bunnymark` | 16,496 bytes |
-| `asteroids` | 16,676 bytes |
+| `hello` | 8,684 bytes |
+| `shmup` | 15,208 bytes |
+| `blackjack` | 16,836 bytes |
+| `pong` | 17,260 bytes |
+| `bunnymark` | 17,396 bytes |
+| `asteroids` | 18,044 bytes |
+| `platformer` | 20,368 bytes |
+| `breakout` | 20,840 bytes |
 
 Bouncing bodies' `body_gravity` and `body_contact` pools add 256 bytes to games that use `sys_physics` or `sys_map_movement`, and `ecs_count` and `ecs_gather` about 120 bytes each to games that call them (each has an IWRAM section of its own).
 
@@ -175,7 +184,7 @@ The linker script reserves 2 KB below the stack and fails the build if IWRAM ove
 
 ## Checking what a game shows and plays
 
-Tests check state (OAM, VRAM, registers), not what the screen looks like or what the speakers play. During development, a small capture tool built on mGBA's core library ran ROMs headlessly with scripted buttons, saved chosen frames as images and recorded the audio, to check each example against its header comment. It is not part of the repository yet; adding it (and turning it into screenshot tests in CI) is an open question.
+Tests check state (OAM, VRAM, registers), not what the screen looks like or what the speakers play. During development, a small capture tool built on mGBA's core library ran ROMs headlessly with scripted buttons, saved chosen frames as images and recorded the audio, to check each example against its header comment; it loads and writes the ROM's `.sav` as mGBA does, so saves carry over between runs. It is not part of the repository yet; adding it (and turning it into screenshot tests in CI) is an open question.
 
 ## Code style
 

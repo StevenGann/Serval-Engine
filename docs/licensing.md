@@ -1,5 +1,7 @@
 # Licensing
 
+**Status:** current. Licenses verified against upstream on 2026-10-04; Maxmod is listed but not linked yet.
+
 ## Engine
 
 The runtime engine and bytecode VM are released under the **[MIT License](../LICENSE)**. It is linked into every game ROM, so the license must be permissive, attribution-light and impose no copyleft on games.

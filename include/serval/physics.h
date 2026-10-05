@@ -2,10 +2,11 @@
 #define SERVAL_PHYSICS_H
 
 // Bouncing bodies: gravity, plus bounces off the edges of the world. Suits
-// balls, particles, debris and bunnies; it is not a platformer character
-// controller (bodies don't collide with each other or with tilemaps). For
-// characters that walk on a tilemap, see map bodies (C_MAPBODY and
-// sys_map_movement() in map.h), which sys_physics() skips.
+// balls, particles, debris and bunnies. sys_physics() doesn't collide bodies
+// with each other (the game tests pairs with body_overlap() and
+// body_hit_side() and decides what happens) or with tilemaps: characters and
+// items that walk on, land on or bounce off a tilemap are map bodies
+// (C_MAPBODY and sys_map_movement() in map.h), which sys_physics() skips.
 //
 // An entity with C_POS, C_VEL and C_BODY is a body. Each frame, after
 // sys_movement() has moved it, sys_physics():
@@ -35,10 +36,13 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
 extern u8 body_friction[MAX_ENT];
-// Maximum fall speed in pixels per frame (0 = no limit): after gravity is
-// added, the velocity in the direction gravity pulls is limited to this, on
+// Maximum fall speed in whole pixels per frame (0 = no limit): after gravity
+// is added, the velocity in the direction gravity pulls is limited to this, on
 // each axis gravity acts on. Speeds the game sets beyond it (a jump against
 // gravity, a dive) are kept until gravity is next applied.
+// Caveat: whole pixels only (a u8, not FIXED), so a cap such as 1.5 pixels
+// per frame can't be expressed; for one, leave this 0 and limit vel_x/vel_y
+// in the game after sys_physics()/sys_map_movement().
 extern u8 body_max_fall[MAX_ENT];
 // How strongly gravity pulls this body, as a scale in 16ths written with
 // BODY_GRAVITY(): BODY_GRAVITY(16) is normal gravity, BODY_GRAVITY(8) half,
@@ -99,6 +103,12 @@ void physics_set_wrap(bool x, bool y);
 // entity_index() or ECS_FOR_EACH. Works for any entities with C_POS, so a
 // body without C_VEL makes a static collider, like a paddle or a wall the
 // game moves itself.
+// Caveat: compares pos_x/pos_y as stored. An entity drawn with SPRITE_SCREEN
+// (sprites.h) has screen coordinates and world entities world ones, so
+// between the two this tests the wrong rectangles once the camera moves.
+// Compare such a pair in the game instead, adding the camera (camera_x(),
+// camera_y(), map.h) to the screen-space entity's position. The same holds
+// for body_hit_side().
 static inline bool body_overlap(u32 a, u32 b) {
     return pos_x[a] < pos_x[b] + FX(body_w[b]) && pos_x[b] < pos_x[a] + FX(body_w[a]) &&
            pos_y[a] < pos_y[b] + FX(body_h[b]) && pos_y[b] < pos_y[a] + FX(body_h[a]);
@@ -149,10 +159,16 @@ u32 body_hit_side(u32 a, u32 b);
 // signs: `if (body_contact[ball] & (BODY_SIDE_TOP | BODY_SIDE_BOTTOM))`.
 // A wrapping axis has no walls, so it reports nothing.
 extern u8 body_contact[MAX_ENT];
-// In body_contact, with the side bit of the open edge (physics_set_open_edges)
-// the body left through: set on the frame the body ends up entirely outside
-// the bounds past that edge, e.g. BODY_CONTACT_EXIT | BODY_SIDE_LEFT for a ball
-// that left through the open left edge.
+// In body_contact (with physics_set_contacts(true)), with the side bit of the
+// open edge (physics_set_open_edges) the body left through: set only on the
+// frame the body ends up entirely outside the bounds past that edge, e.g.
+// BODY_CONTACT_EXIT | BODY_SIDE_LEFT for a ball that left through the open
+// left edge.
+// Caveat: "entirely outside" includes touching the edge from outside: a body
+// at pos_x + body_w == left (or pos_x == right, and likewise for top and
+// bottom) has exited. A body that lands exactly there exits a frame earlier
+// than a game's own `pos_x < left - body_w` check says it is out; use one
+// test or the other, not both.
 #define BODY_CONTACT_EXIT (1 << 5)
 
 // Makes sys_physics() report contacts in body_contact (true) or not (false,

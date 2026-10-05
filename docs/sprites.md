@@ -54,9 +54,11 @@ typedef struct {
     const u8  *frame_times;   // frames each animation frame (or step) shows, or NULL
     const u8  *frame_order;   // steps: frame index | SPRITE_FRAME_FLIP_H/V, or NULL
 } SpriteAsset;
+```
 
 Format change (before the first release): `order_length` and `frame_order` were added for animation sequences ([Animation](#animation)), and `tiles_per_frame` now comes before `frame_count`, so `frame_count` and `order_length` are adjacent and `sys_animate` reads both with one load. The struct grew from 16 to 20 bytes. Emit and write it with designated initializers (field order then doesn't matter); zero/`NULL` for both new fields keeps the old behaviour.
 
+```c
 typedef struct {
     const u16 *sprite_ids;    // sprite table indices of the group's sprites; NULL: 0..sprite_count-1
     const u16 *palettes;      // palette_count banks of 16 colors, color 0 transparent

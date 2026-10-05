@@ -105,7 +105,9 @@ typedef struct {
 // For entities (spr_flags): drawn at the entity's position on the screen, not
 // at its world position minus the camera, so it stays put while the camera
 // scrolls the map (a shooter's ship, enemies and bullets; a HUD icon).
-// sprite_draw() always takes screen coordinates and ignores it.
+// sprite_draw() always takes screen coordinates and ignores it. Only drawing
+// changes: body_overlap() and body_hit_side() (physics.h) compare positions
+// as stored, so against world entities the game adds the camera itself.
 #define SPRITE_SCREEN (1 << 15)
 
 // Draws the sprite with palette n (0-14) of its sprite group instead of its

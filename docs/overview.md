@@ -6,6 +6,8 @@ Serval Engine is the GBA-side runtime for Studio Advance, a cross-platform edito
 
 The engine is open source; the editor is a separate, closed-source product. See [Relationship to Studio Advance](#relationship-to-studio-advance).
 
+**Status:** design overview. The core API and the ECS world are implemented; the game-logic layer (objects, events and the bytecode VM) is planned, so games are written in C today. The [layers table](#layers) has the details.
+
 ## Design inspirations
 
 - **raylib:** a flat, simple C API with no hidden objects.
@@ -25,8 +27,8 @@ flowchart TD
 
 | Layer | Borrowed from | Role | Status | Doc |
 | --- | --- | --- | --- | --- |
-| Core API | raylib | Flat C calls over libtonc: input, drawing, sound | Implemented (sprites, PSG sound, text); backgrounds and music planned | [core-api.md](core-api.md) |
-| World | ECS | Fixed-pool entity storage and per-frame bulk processing | Implemented | [ecs.md](ecs.md) |
+| Core API | raylib | Flat C calls over libtonc: input, drawing, sound, saves | Implemented (sprites, tilemaps and the camera, PSG sound effects and music, text, fades, save data); Maxmod audio, palette management and more effects planned | [core-api.md](core-api.md) |
+| World | ECS | Fixed-pool entity storage and per-frame bulk processing: movement, physics, map collision, animation, paths, rendering | Implemented | [ecs.md](ecs.md) |
 | Game logic | GameMaker | Objects with events, executed by the bytecode VM | Planned; games are written in C today | [vm.md](vm.md) |
 
 ## Guiding principle: precompute everything
@@ -35,7 +37,7 @@ The tooling does the heavy lifting (sprite packing, tile deduplication, palette 
 
 ## 1.0 scope
 
-In scope (see each doc's status line for what exists today): regular tiled backgrounds, sprites (resident and streamed), the ECS, the bytecode VM, Maxmod audio plus PSG SFX, save data, text, special effects, camera, and the debug link hooks.
+In scope (see each doc's status line for what exists today; the [README](../README.md#features) has the summary): regular tiled backgrounds, sprites (resident and streamed), the ECS, the bytecode VM, Maxmod audio plus PSG SFX, save data, text, special effects, camera, and the debug link hooks.
 
 **Not in 1.0:** Mode 7 / affine backgrounds, GB/GBC and DS targets, streamed PCM audio, link cable multiplayer. Raster effects are a 1.0 candidate if time allows.
 

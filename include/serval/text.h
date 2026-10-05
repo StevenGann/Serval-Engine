@@ -12,7 +12,7 @@
 #define TEXT_COLS 30
 #define TEXT_ROWS 20
 
-// Writes a string starting at a character cell. Clipped at the right edge;
+// Writes a string starting at a character cell. Clipped at the screen's edges;
 // characters outside printable ASCII are shown as '?'. The first text call
 // sets up the font and turns layer 0 on.
 void text_print(int col, int row, const char* s);

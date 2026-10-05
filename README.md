@@ -6,7 +6,7 @@ Serval Engine is the code linked into every game ROM built with Studio Advance, 
 
 It is designed as three layers:
 
-1. **Core API**: a flat, raylib-style C API over libtonc (input, sprites, sound; backgrounds planned).
+1. **Core API**: a flat, raylib-style C API over libtonc (input, sprites, tilemaps and the camera, sound, text, save data).
 2. **World**: a fixed-pool, bitmask ECS for entity data.
 3. **Game logic** (planned): GameMaker-style objects and events, run by a compact bytecode VM. Until then, games are written in C against the first two layers.
 
@@ -16,17 +16,20 @@ It is designed as three layers:
 
 Implemented:
 
-- Frame loop with CPU-cycle timing, button input, 24.8 fixed point, integer and trig helpers, deterministic random numbers.
-- Sprites: resident sprite groups, 12 hardware sizes, animation frames, flips, layers, rotation (32 shared matrices per frame), depth sorting; 128 on screen.
-- ECS: 128 entities with generational handles; engine components for position, velocity, sprite and body; movement and render systems; game-defined components and systems.
-- Physics for bouncing bodies: gravity in any direction, bounce and friction, open edges, wrap-around, rectangle overlap tests.
-- PSG sound effects on the tone generators: tones, envelopes, pitch slides, short melodies.
-- HUD and debug text (8x8 font) with printf-style formatting, and a "Made with Serval Engine" splash screen.
+- Frame loop with CPU-cycle timing; buttons with held-button repeat for menus; 24.8 fixed point, integer helpers, trig with `angle_of` (atan2) and `fx_length`, all without division; deterministic random numbers seeded from the player's input.
+- Sprites: resident sprite groups, 12 hardware sizes, flips, layers, rotation (32 shared matrices per frame), depth sorting, any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; 128 on screen.
+- Tilemaps: one tileset per room, up to three layers of 16x16 metatiles on BG1-BG3, streamed around a camera (any map size); parallax, wrapping, fixed and self-scrolling layers; runtime cell changes; animated tiles.
+- ECS: 128 entities with generational handles; engine components for position, velocity, sprite, animation, body, map body and path; movement, physics, map movement, animation, path and render systems; game-defined components and systems; `ecs_count` and `ecs_gather` for cheap per-kind loops.
+- Physics: bouncing bodies (gravity in any direction and per body, bounce, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; rectangle overlap and hit-side tests.
+- Paths: movement patterns as data tables (lines, swoops, circles, weaves), mirrored or rotated per entity.
+- Sound on the PSG tone generators: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
+- Screen fades (hardware brightness) and the backdrop color.
+- HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
-- Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound.
+- Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrounds and scrolling tilemaps, Maxmod music and sampled sound effects, streamed and compressed sprites, palette sharing and fades, dialogue text, the bytecode VM, and the editor debug link.
+Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, metasprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, the bytecode VM, and the editor debug link.
 
 ## Documentation
 
@@ -58,7 +61,8 @@ Requires CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC ([ARM GNU To
 export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain   # or put arm-none-eabi-gcc on PATH
 cmake --preset gba-release
 cmake --build --preset gba-release
-# -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba, platformer.gba
+# -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
+#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba
 ```
 
 Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()`; see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.

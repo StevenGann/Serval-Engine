@@ -57,7 +57,10 @@ typedef struct {
 } Metatile;
 
 // MapLayer.flags
-#define MAP_LAYER_WRAP (1 << 0) // repeats in both directions (small parallax backgrounds)
+// Repeats in both directions (small parallax backgrounds). On the playfield
+// only the graphics repeat: collision, map_cell() and the camera's clamp use
+// the single map.
+#define MAP_LAYER_WRAP (1 << 0)
 // Ignores the camera: shows the layer's top-left (moved by map_set_scroll()
 // only), e.g. a HUD panel or a frame around the playfield.
 #define MAP_LAYER_FIXED (1 << 1)
@@ -132,6 +135,11 @@ void map_set_scroll(u32 bg, int x, int y);
 // without one, any position is kept. Backgrounds scroll at the next
 // frame_end(); entities drawn by sys_render afterwards in this frame already
 // use it, so set it before them.
+// Caveat: the clamp follows the playfield alone, silently (no warning). With
+// a playfield no bigger than the screen on an axis, wrapping or not, the
+// camera stays at 0 on that axis, and so do the other layers it scrolls. To
+// scroll a small or wrapping layer (a starfield, clouds) on such a screen,
+// move it with map_set_scroll() instead.
 void camera_set(int x, int y);
 int camera_x(void);
 int camera_y(void);

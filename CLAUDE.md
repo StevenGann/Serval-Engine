@@ -4,7 +4,7 @@ Serval Engine: the open-source GBA game runtime (C on libtonc) that every Studio
 
 ## Status
 
-Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (rotation, depth, layers), ECS with movement/physics/render systems, text, math, sound effects, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen; four examples; tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (animation, rotation, depth, layers, per-draw palettes, screen-space), tilemaps with a camera and map collision, ECS with movement/physics/animation/path/render systems, PSG sound effects and music, text, fades, math, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen, a web target; eight examples (hello, bunnymark, pong, asteroids, breakout, platformer, shmup, blackjack); tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
 
 ## Commands
 
@@ -37,13 +37,13 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 
 - `../Studio-Advance` is the closed-source Qt editor that depends on this engine. Dependency direction is one-way: **this repo must never depend on, reference code from, or describe proprietary internals of Studio Advance** (e.g. its packing/dedupe/palette algorithms, legal strategy, or business plans). It is fine to mention Studio Advance as the commercial editor.
 - Versioned independently of the editor; each game project pins an engine release, downloaded from GitHub Releases. Breaking changes to the API, data formats, bytecode or debug link require a major version bump. See `docs/releases.md`.
-- The engine defines the data formats (`SpriteAsset`, `SpriteGroup`, `MapLayer`, bytecode) that the editor's build pipeline emits. Changes to these formats are cross-repo changes and breaking for existing projects.
+- The engine defines the data formats (`SpriteAsset`, `SpriteGroup`, `Tileset`, `Metatile`, `MapLayer`, `PsgSound`, `PsgSong`, `Path`, bytecode) that the editor's build pipeline emits. Changes to these formats are cross-repo changes and breaking for existing projects.
 
 ## Hard constraints
 
 - Target: ARM7TDMI at 16.78 MHz, no FPU, no hardware divider, no data cache. Use fixed-point math and lookup tables.
 - No malloc and no garbage collection at runtime. Fixed pools only (128 entities).
-- Hot data and per-frame system loops go in IWRAM as ARM code (`SERVAL_IWRAM_CODE`, `SERVAL_IWRAM_DATA` in `platform.h`); large buffers in EWRAM (`SERVAL_EWRAM_BSS`). IWRAM is 32 KB shared with games (and the stack): a ROM uses about 8 KB with hello's features and about 16.5 KB with physics, rotation and depth sorting (unused engine code is dropped at link time; check `arm-none-eabi-size -A` on the `.elf`), so add IWRAM code only where bunnymark shows it pays.
+- Hot data and per-frame system loops go in IWRAM as ARM code (`SERVAL_IWRAM_CODE`, `SERVAL_IWRAM_DATA` in `platform.h`); large buffers in EWRAM (`SERVAL_EWRAM_BSS`). IWRAM is 32 KB shared with games (and the stack): a ROM uses about 8.5 KB with hello's features and 15-21 KB for the bigger examples (physics, rotation, depth sorting, maps; table in `docs/development.md#memory-use`; unused engine code is dropped at link time; check `arm-none-eabi-size -A` on the release `.elf`: `.iwram` + `.bss`), so add IWRAM code only where bunnymark shows it pays.
 - Keep rarely-used paths out of hot loops (e.g. the rotated-sprite path is out of line): unrotated sprites must not pay for rotation. Check the benchmark.
 - Prefer build-time precomputation over runtime work.
 - VRAM, palette RAM and OAM writes happen in VBlank or forced blank.
@@ -64,4 +64,4 @@ Flat, raylib-style C API: plain functions, no hidden objects, `snake_case`, `u8`
 
 ## Verifying visuals and sound
 
-Headless checks can't see the screen. A capture tool built on mGBA's core (runs a ROM with scripted buttons, saves frames as images, records audio to WAV) was used during development; it is not in the repository yet. If available, check new examples' screens and sound with it, and describe in the example's header comment what correct looks like.
+Headless checks can't see the screen. A capture tool built on mGBA's core (runs a ROM with scripted buttons, saves frames as images, records audio to WAV) was used during development; it is not in the repository yet. If available (`~/opt/mgba-capture/capture ROM FRAMES OUT_PREFIX [shot=N]... [key=FRAME:KEYS:LENGTH]... [nosave]`, see its README), check new examples' screens and sound with it, and describe in the example's header comment what correct looks like. It loads and writes `ROM.sav` next to the ROM, as mGBA does (copy the ROM to a scratch directory to keep runs apart, or pass `nosave` for blank save memory); `CAPTURE_LOG=1` prints mGBA's log (`serval:` warnings, save type detection). `tools/web-shots.py` does the same for web pages, with the same frame numbering and button letters.

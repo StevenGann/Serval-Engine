@@ -27,9 +27,10 @@ void serval_init(void);
 // any button once it has faded in skips the rest. Call it after serval_init(),
 // before loading your game's graphics. Puts back the backdrop color (so the
 // screen then shows the game's backdrop, black by default), background 0's
-// control register and on/off state, the blend control register, the two
-// palette entries it uses and whether the text layer was set up; silences
-// square channel 1. Not restored: the text layer's map (text_print output is
+// control register and on/off state, the blend control register and the
+// brightness (screen_set_brightness), the two palette entries it uses, whether
+// the text layer was set up and the text shadow setting; silences square
+// channel 1. Not restored: the text layer's map (text_print output is
 // cleared), and if the text layer wasn't set up, charblock 0's first 96 tiles
 // (overwritten by the font) and background 0's scroll (reset to 0).
 void serval_splash(void);
@@ -37,8 +38,9 @@ void serval_splash(void);
 // Starts a frame: polls input and clears the sprite draw list.
 void frame_begin(void);
 
-// Ends a frame: waits for VBlank, then flushes the shadow OAM to hardware and
-// advances sound effects (notes and lengths).
+// Ends a frame: waits for VBlank, then flushes the shadow OAM to hardware,
+// copies queued map and tile changes (map.h) to VRAM, and advances sound
+// effects and music by one frame.
 void frame_end(void);
 
 // Frames since serval_init(): the number of frame_end() calls, so 0 during
@@ -69,9 +71,11 @@ bool button_pressed(u16 buttons);
 // stays held, again after a delay and from then on at an interval (default:
 // 20 frames, then every 4, about 1/3 second and 15 times a second). Each
 // button counts on its own; with several OR'd buttons, true if any of them is
-// due. Counted from input alone, so it is deterministic. A button already held
-// when a menu opens keeps repeating: check button_pressed() first if the menu
-// should wait for a fresh press.
+// due. Counted from input alone, so it is deterministic.
+// Caveat: repeats count from the press, not from when a menu opens, so a
+// button still held from the previous screen (the A that opened the menu)
+// keeps repeating in it at once. If the menu should wait for a fresh press,
+// act on button_pressed() until the button has been released once.
 bool button_repeat(u16 buttons);
 
 // The frames from a press to its first repeat, and between repeats after that

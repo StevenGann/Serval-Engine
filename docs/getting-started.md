@@ -2,7 +2,7 @@
 
 Write a GBA game in C with Serval Engine. This covers building the examples, the shape of a game, and the engine's main pieces. Function details are in [api-reference.md](api-reference.md).
 
-**Status:** describes what is implemented today: sprites, entities, bouncing physics, PSG sound effects, HUD text. Backgrounds/tilemaps, music and the scripting VM are not implemented yet ([README.md](README.md) lists what is planned).
+**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, fades, paths, save data, web builds). Maxmod music and the scripting VM are not implemented yet ([the README](../README.md#features) lists what is planned).
 
 ## 1. Build the examples
 
@@ -12,7 +12,8 @@ Install CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC (the [ARM GNU
 export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain   # or put arm-none-eabi-gcc on PATH
 cmake --preset gba-debug
 cmake --build --preset gba-debug
-# -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba, platformer.gba
+# -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
+#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba
 ```
 
 Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash cart). Each example's `main.c` begins with what it demonstrates and what you should see and hear. Read them in this order:
@@ -21,8 +22,8 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | --- | --- |
 | [`hello`](../examples/hello/main.c) | The smallest game: a hand-made sprite moved with the D-pad |
 | [`bunnymark`](../examples/bunnymark/main.c) | Entities, engine systems, gravity, a game-defined component and system, HUD text |
-| [`pong`](../examples/pong/main.c) | A complete game: title screen, states, collisions, sound, splash screen |
-| [`asteroids`](../examples/asteroids/main.c) | Rotation, wrap-around, trigonometry, many short-lived entities |
+| [`pong`](../examples/pong/main.c) | A complete game: title screen, states, collisions, wall contacts (`body_contact`), sound, splash screen |
+| [`asteroids`](../examples/asteroids/main.c) | Rotation, wrap-around, trigonometry, many short-lived entities, a saved high-score table with initials entry (`save.h`, `button_repeat`, text styles) |
 | [`breakout`](../examples/breakout/main.c) | A game split into files: bricks as entities and which side the ball hit (`body_hit_side`), game components and `ecs_count`, directions as angles, power-ups, map layers as a static background, music, save data |
 | [`platformer`](../examples/platformer/main.c) | A bigger game split into files: tilesets, metatiles and map layers, a scrolling camera, map bodies and collision, changing the map at runtime, a platformer controller |
 | [`shmup`](../examples/shmup/main.c) | A vertical shooter: a stage scrolled by the camera with a wrapping parallax layer, a HUD panel layer, an entity budget with caps, movement patterns from a wave table, aimed bullets, a multi-phase boss, cheap per-frame loops over the entities of each kind |
@@ -188,5 +189,9 @@ debug_log(text_format("spawned %u", count));              // mGBA's log window
 
 - [api-reference.md](api-reference.md): every function, its units and limits.
 - [core-api.md](core-api.md): hardware the engine uses and reserves, and what games must not touch.
+- [sprites.md](sprites.md#animation): sprite animation (`sys_animate`, frame sequences).
+- [tilemaps.md](tilemaps.md): tilesets, map layers, the camera, map bodies and map collision.
+- [audio.md](audio.md#psg-music): PSG music.
+- [runtime-systems.md](runtime-systems.md): save data, fades, paths, physics details.
 - [development.md](development.md#memory-use): memory (IWRAM) budgets and the benchmark.
 - [licensing.md](licensing.md): the notices a shipped game must include.
