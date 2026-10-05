@@ -1,4 +1,5 @@
-add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c)
+add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c
+    physics_tests.c)
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)

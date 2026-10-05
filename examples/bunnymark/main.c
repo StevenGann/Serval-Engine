@@ -1,19 +1,21 @@
 // bunnymark: Serval Engine's CPU benchmark, after raylib's bunnymark example.
 //
 // Demonstrates:
-//   - Entities built from engine components (position, velocity, sprite),
-//     updated and drawn by the engine's systems (sys_movement, sys_render)
-//   - A game-defined component and system (C_BUNNY, bunny_physics: gravity
-//     and bounces) written with ECS_FOR_EACH, alongside the engine's
+//   - Entities built from engine components (position, velocity, sprite, body)
+//     and the engine's systems: sys_movement, sys_physics (gravity, bounces,
+//     friction) and sys_render_by_depth (draw order)
+//   - A game-defined component and system (C_BUNNY, bunny_animate) written
+//     with ECS_FOR_EACH, setting per-entity sprite flags and depth
 //   - Several colors of one sprite: one SpriteAsset per palette, same tiles
 //   - Random numbers, HUD text that is redrawn every frame (text_print_line),
 //     and per-frame CPU timing (frame_cpu_permille)
 //
 // What to expect when booting the ROM:
-//   - A dark screen with 16 bunnies (16x16 pixels; white, gold, blue or green)
-//     flying out from the top center. Gravity pulls them down: they bounce
-//     lower and lower, slide to a stop and come to rest along the floor
-//     (overlapping; bunnies don't collide with each other).
+//   - A dark screen with 16 bunnies seen from the side (16x16 pixels; white,
+//     gold, blue or green) flying out from the top center. Each faces the way
+//     it's moving. Gravity pulls them down: they bounce lower and lower, slide
+//     to a stop and come to rest along the floor. Bunnies don't collide, so
+//     they overlap; one lower on screen is drawn in front of one above it.
 //   - Three lines of white text at the top, which bunnies stay below:
 //       BUNNIES  16/128  A:ADD B:DEL
 //       CPU   x.x%    nnnnn CYCLES

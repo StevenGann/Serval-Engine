@@ -47,8 +47,12 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 - Component bits 0-15 belong to the engine and 16-30 to games (`C_GAME(n)`); bit 31 is `C_ALIVE`.
 - Engine components so far: `C_POS` (`pos_x`, `pos_y`), `C_VEL` (`vel_x`, `vel_y`), both 24.8 `FIXED`, and `C_SPR` (`spr_id`, `spr_frame`, `spr_flags`). `entity_create()` zeroes them.
 - Writing systems: `ECS_FOR_EACH(i, C_POS | C_VEL) { ... }` loops over matching entities, and `ent_has(i, mask)` tests one; both require *every* component in the mask (a hand-written `ent_mask[i] & (A | B)` is true for either).
-- Engine systems so far: `sys_movement()` (position += velocity) and `sys_render()` (`sprite_draw()` for `C_POS | C_SPR`). Games call them once per frame, alongside their own systems.
-- `sys_movement` and `sys_render` run as ARM code from IWRAM; bunnymark measures them ([development.md](development.md#benchmark)).
+- Engine components also include `C_BODY` (`body_w`, `body_h`, `body_bounce`, `body_friction`; `include/serval/physics.h`) and, under `C_SPR`, `spr_depth`.
+- Engine systems so far, called once per frame by games alongside their own systems:
+  - `sys_movement()`: position += velocity.
+  - `sys_physics()`: gravity, bounces off the world bounds, friction and resting for `C_BODY` entities. Bounces mirror the overshoot and gravity is applied after the bounce, so no energy is created; floor bounces lose speed, so bodies come to rest.
+  - `sys_render()`: `sprite_draw()` for `C_POS | C_SPR` in entity order; `sys_render_by_depth()` draws higher `spr_depth` in front (a radix sort, about 10,000 cycles for 128 sprites, so opt-in).
+- `sys_movement`, `sys_physics`, `sys_render` and `sys_render_by_depth` run as ARM code from IWRAM; bunnymark measures them ([development.md](development.md#benchmark)).
 
 ## Sprite component
 

@@ -125,6 +125,60 @@ static void sys_render_draws_positioned_sprites(void) {
     ecs_reset();
 }
 
+// Loads one 8x8 sprite (ID 0) for the render tests.
+static void load_render_sprite(void) {
+    static const u32 tiles[8] = {0};
+    static const SpriteAsset sprite = {.size = SPRITE_8x8, .tiles = tiles};
+    static const SpriteAsset* const table[] = {&sprite};
+    static const u16 palette[16] = {0};
+    static const SpriteGroup group = {.palettes = palette, .sprite_count = 1, .palette_count = 1};
+    sprite_table_set(table, 1);
+    sprite_group_load(&group);
+}
+
+// Creates a drawable entity at x (used to identify it in OAM) with a depth.
+static void make_drawn(int x, s16 depth) {
+    u32 i = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[i] = FX(x);
+    pos_y[i] = FX(50);
+    spr_depth[i] = depth;
+}
+
+static int oam_x(u32 k) {
+    return oam_mem[k].attr1 & ATTR1_X_MASK;
+}
+
+static void render_by_depth_puts_higher_depths_in_front(void) {
+    load_render_sprite();
+    ecs_reset();
+    make_drawn(10, 5);
+    make_drawn(20, 20);
+    make_drawn(30, -3);
+    make_drawn(40, 5);    // ties with x=10: lower index first
+    entity_create(C_POS); // no sprite: skipped
+    frame_begin();
+    sys_render_by_depth();
+    frame_end();
+    CHECK(oam_x(0) == 20 && oam_x(1) == 10 && oam_x(2) == 40 && oam_x(3) == 30);
+    CHECK(oam_mem[4].attr0 & ATTR0_HIDE);
+    ecs_reset();
+}
+
+static void render_by_depth_handles_wide_depth_ranges(void) {
+    load_render_sprite(); // keys differ in their high byte: two sort passes
+    ecs_reset();
+    make_drawn(10, -1000);
+    make_drawn(20, 500);
+    make_drawn(30, 0);
+    make_drawn(40, 32767);
+    make_drawn(50, -32768);
+    frame_begin();
+    sys_render_by_depth();
+    frame_end();
+    CHECK(oam_x(0) == 40 && oam_x(1) == 20 && oam_x(2) == 30 && oam_x(3) == 10 && oam_x(4) == 50);
+    ecs_reset();
+}
+
 TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns_in_vblank},
            {"frame_end_flushes_submitted_sprites", frame_end_flushes_submitted_sprites},
            {"sprites_disappear_when_not_drawn", sprites_disappear_when_not_drawn},
@@ -134,6 +188,9 @@ TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns
            {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0},
            {"frame_cpu_cycles_measures_work", frame_cpu_cycles_measures_work},
            {"cpu_permille_matches_cycles", cpu_permille_matches_cycles},
+           {"render_by_depth_puts_higher_depths_in_front",
+            render_by_depth_puts_higher_depths_in_front},
+           {"render_by_depth_handles_wide_depth_ranges", render_by_depth_handles_wide_depth_ranges},
            {"entropy_changes_over_time", entropy_changes_over_time},
            {"screen_constants_match_functions", screen_constants_match_functions},
            {"sys_render_draws_positioned_sprites", sys_render_draws_positioned_sprites});

@@ -10,7 +10,7 @@ It is built as three layers:
 2. **World**: a fixed-pool, bitmask ECS for entity data.
 3. **Game logic**: GameMaker-style objects and events, run by a compact bytecode VM.
 
-> **Status:** pre-alpha. The build system, startup code, frame loop, input, sprites (resident groups), ECS with movement and render systems, HUD text, random numbers and frame timing are in place, with tests running natively and on emulated hardware. The design is documented in [`docs/`](docs/README.md).
+> **Status:** pre-alpha. The build system, startup code, frame loop, input, sprites (resident groups), ECS with movement, physics and (depth-sorted) render systems, HUD text, random numbers and frame timing are in place, with tests running natively and on emulated hardware. The design is documented in [`docs/`](docs/README.md).
 
 ## Building
 

@@ -33,6 +33,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/random.c
     src/core/text_format.c
     src/ecs/ecs.c
+    src/ecs/physics.c
 )
 
 if(SERVAL_TARGET_GBA)

@@ -259,3 +259,62 @@ SERVAL_IWRAM_CODE void sys_render(void) {
             DRAW_REJECTED(id, spr_frame[i]);
     }
 }
+
+// sys_render_by_depth's draw order, rebuilt every call with a stable radix
+// sort of the renderable entities by depth: one pass per key byte, and only
+// one pass when all keys share their high byte (any depth range under 256,
+// such as screen y coordinates). (Keeping last frame's order and repairing it
+// with an insertion sort measured slower on bunnymark: bouncing sprites
+// reorder too much.)
+static u8 depth_order[MAX_ENT], depth_scratch[MAX_ENT];
+static u16 depth_key[MAX_ENT]; // ascending key = descending depth
+static u16 bucket_start[256];
+
+static inline __attribute__((always_inline, target("arm"))) void radix_pass(const u8* from, u8* to,
+                                                                            u32 n, u32 shift) {
+    u32* clear = (u32*)bucket_start;
+    for (u32 w = 0; w < 128; w++)
+        clear[w] = 0;
+    for (u32 k = 0; k < n; k++)
+        bucket_start[(depth_key[from[k]] >> shift) & 0xFF]++;
+    u32 sum = 0;
+    for (u32 b = 0; b < 256; b++) {
+        u32 c = bucket_start[b];
+        bucket_start[b] = (u16)sum;
+        sum += c;
+    }
+    for (u32 k = 0; k < n; k++)
+        to[bucket_start[(depth_key[from[k]] >> shift) & 0xFF]++] = from[k];
+}
+
+SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
+    u32 n = 0, high_and = 0xFF00, high_or = 0;
+    for (u32 i = 0; i < MAX_ENT; i++) {
+        if ((ent_mask[i] & (C_POS | C_SPR)) != (C_POS | C_SPR))
+            continue;
+        u32 key = (u16)(0x7FFF - spr_depth[i]);
+        depth_key[i] = (u16)key;
+        high_and &= key;
+        high_or |= key & 0xFF00;
+        depth_order[n++] = (u8)i;
+    }
+    const u8* order = depth_order;
+    if (n > 1) {
+        radix_pass(depth_order, depth_scratch, n, 0);
+        order = depth_scratch;
+        if (high_and != high_or) { // keys differ in their high byte too
+            radix_pass(depth_scratch, depth_order, n, 8);
+            order = depth_order;
+        }
+    }
+
+    for (u32 k = 0; k < n; k++) {
+        u32 i = order[k];
+        u32 id = spr_id[i];
+        if (id < sprite_count)
+            draw(id, &sprite_draws[id], spr_frame[i], fx_to_int(pos_x[i]), fx_to_int(pos_y[i]),
+                 spr_flags[i]);
+        else
+            DRAW_REJECTED(id, spr_frame[i]);
+    }
+}

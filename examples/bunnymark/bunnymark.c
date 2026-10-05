@@ -9,30 +9,31 @@ enum { SPR_BUNNY_WHITE, SPR_BUNNY_GOLD, SPR_BUNNY_BLUE, SPR_BUNNY_GREEN, SPRITE_
 
 #define BUNNY_SIZE 16
 
-// A 16x16 bunny, 4 bits per pixel, as four 8x8 tiles (top-left, top-right,
-// bottom-left, bottom-right). Generated from this art:
+// A 16x16 bunny seen from the side, facing right, 4 bits per pixel, as four
+// 8x8 tiles (top-left, top-right, bottom-left, bottom-right). Generated from
+// this art:
 //
 //   ................    . transparent (color 0)
-//   ...KK.....KK....    W fur         (color 1)
-//   ..KWWK...KWWK...    P pink        (color 2)
-//   ..KWPK...KPWK...    K outline     (color 3)
-//   ..KWPK...KPWK...
-//   ..KWPK...KPWK...
-//   ...KWWK.KWWK....
-//   ...KWWWKWWWK....
-//   ..KWWWWWWWWWK...
-//   ..KWKWWWWWKWK...
-//   .KWWWWWPWWWWWK..
+//   ........KK.KK...    W fur         (color 1)
+//   .......KWPKWPK..    P pink        (color 2)
+//   .......KWPKWPK..    K outline     (color 3)
+//   .......KWPKWPK..
+//   ........KWWWK...
+//   ......KKWWWWWK..
+//   .....KWWWWWWKWK.
+//   ....KWWWWWWWWWPK
+//   ..KKWWWWWWWWWWK.
 //   .KWWWWWWWWWWWK..
-//   ..KWWWWWWWWWK...
-//   ..KWWKKKKKWWK...
-//   ...KK.....KK....
+//   KWWWWWWWWWWWWK..
+//   KWWKWWWWWWWWWK..
+//   .KK.KWWKKKWWK...
+//   .....KK...KK....
 //   ................
 static const u32 bunny_tiles[32] = {
-    0x00000000, 0x00033000, 0x00311300, 0x00321300, 0x00321300, 0x00321300, 0x03113000, 0x31113000,
-    0x00000000, 0x00003300, 0x00031130, 0x00031230, 0x00031230, 0x00031230, 0x00003113, 0x00003111,
-    0x11111300, 0x11131300, 0x21111130, 0x11111130, 0x11111300, 0x33311300, 0x00033000, 0x00000000,
-    0x00031111, 0x00031311, 0x00311111, 0x00311111, 0x00031111, 0x00031133, 0x00003300, 0x00000000,
+    0x00000000, 0x00000000, 0x30000000, 0x30000000, 0x30000000, 0x00000000, 0x33000000, 0x11300000,
+    0x00000000, 0x00033033, 0x00321321, 0x00321321, 0x00321321, 0x00031113, 0x00311111, 0x03131111,
+    0x11130000, 0x11113300, 0x11111130, 0x11111113, 0x11113113, 0x31130330, 0x03300000, 0x00000000,
+    0x32111111, 0x03111111, 0x00311111, 0x00311111, 0x00311111, 0x00031133, 0x00003300, 0x00000000,
 };
 
 // One palette per bunny color; only the fur color differs.
@@ -71,7 +72,7 @@ static const SpriteGroup bunny_group = {
 
 // --- Game --------------------------------------------------------------------
 
-// Game-defined component: marks entities the bunny physics system handles.
+// Game-defined component: marks entities the bunny_animate system handles.
 #define C_BUNNY C_GAME(0)
 
 #define HUD_HEIGHT 24 // three text rows; bunnies stay below them
@@ -79,41 +80,44 @@ static const SpriteGroup bunny_group = {
 // Like raylib's bunnymark: up to 250 pixels per second each way, at 60 fps.
 #define MAX_SPEED (FX(250) / 60)
 
-// Added to a bunny's velocity every frame, in the direction of gravity.
+// Gravity: a quarter pixel per frame per frame, in the chosen direction.
 #define GRAVITY (FX_ONE / 4)
 
-// A bounce against the wall gravity pulls toward keeps 7/8 of the speed; below
-// this speed the bunny stops instead, so it rests without jittering.
-#define REST_SPEED (GRAVITY * 2)
-
-// While touching that wall, friction removes 1/8 of the speed along it each
-// frame, stopping the bunny below this speed.
-#define STOP_SPEED (FX_ONE / 16)
+// Physics for every bunny: floor bounces keep 7/8 of the speed, and sliding
+// along a floor loses 1/8 of it each frame.
+#define BUNNY_BOUNCE 224
+#define BUNNY_FRICTION 32
 
 static Entity bunnies[MAX_ENT];
 static int count;
 
-static int gravity_x = 0, gravity_y = 1; // starts pointing down
+static int gravity_x = 0, gravity_y = 1; // direction, for the HUD
 
 void bunnymark_init(void) {
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&bunny_group);
     screen_set_backdrop(COLOR_RGB(24, 24, 40));
     text_clear(); // sets up the text layer now, not during the first frame
+
+    physics_set_bounds(0, HUD_HEIGHT, SCREEN_W, SCREEN_H);
+    gravity_set(0, 1); // down
 }
 
 void bunny_add(void) {
     if (count == MAX_ENT)
         return;
-    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BUNNY);
+    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BODY | C_BUNNY);
     if (e == ENTITY_NONE)
         return;
     u32 i = entity_index(e);
-    pos_x[i] = FX((screen_width() - BUNNY_SIZE) / 2);
+    pos_x[i] = FX((SCREEN_W - BUNNY_SIZE) / 2);
     pos_y[i] = FX(HUD_HEIGHT);
     vel_x[i] = random_range(-MAX_SPEED, MAX_SPEED);
     vel_y[i] = random_range(-MAX_SPEED, MAX_SPEED);
     spr_id[i] = (u16)random_range(0, SPRITE_COUNT - 1);
+    body_w[i] = body_h[i] = BUNNY_SIZE;
+    body_bounce[i] = BUNNY_BOUNCE;
+    body_friction[i] = BUNNY_FRICTION;
     bunnies[count++] = e;
 }
 
@@ -129,72 +133,18 @@ int bunny_count(void) {
 void gravity_set(int x, int y) {
     gravity_x = x;
     gravity_y = y;
+    physics_set_gravity(x * GRAVITY, y * GRAVITY);
 }
 
-// Speed after bouncing off the wall gravity pulls toward: 7/8 of `speed`, or
-// 0 once the bunny is slow enough to rest.
-static FIXED floor_bounce(FIXED speed) {
-    speed -= speed >> 3; // 7/8: a cheap fx_mul(speed, FX(7) / 8)
-    return speed < REST_SPEED ? 0 : speed;
-}
-
-// Friction while sliding along the wall gravity pulls toward.
-static FIXED friction(FIXED speed) {
-    speed -= speed >> 3;
-    return (speed < STOP_SPEED && speed > -STOP_SPEED) ? 0 : speed;
-}
-
-// Bounces one axis of a bunny off the ends of [lo, hi], then applies that
-// axis's gravity (-1, 0 or 1). Returns true if the bunny is on the wall that
-// gravity pulls toward (its floor), bouncing or resting.
-//
-// - A bunny that moved past a wall is mirrored back inside by the distance it
-//   overshot, as if it had bounced mid-frame. (Snapping it onto the wall would
-//   lift it a little on every bounce and keep it hopping forever.)
-// - Gravity is applied after the bounce, so it slows the rebound rather than
-//   adding to it.
-// - Bounces off the floor lose speed (floor_bounce). Once too slow, the bunny
-//   rests: it sits exactly on the floor with zero speed, and the floor cancels
-//   gravity, so it stays put even if gravity is switched off.
-static bool update_axis(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi, int gravity) {
-    bool at_lo = *pos <= lo && *vel <= 0;
-    bool at_hi = *pos >= hi && *vel >= 0;
-    bool on_floor = (at_lo && gravity < 0) || (at_hi && gravity > 0);
-
-    if (at_lo || at_hi) {
-        FIXED wall = at_lo ? lo : hi;
-        FIXED speed = *vel < 0 ? -*vel : *vel;
-        if (on_floor) {
-            speed = floor_bounce(speed);
-            if (speed == 0) {
-                *pos = wall;
-                *vel = 0;
-                return true;
-            }
-        }
-        *pos = 2 * wall - *pos;
-        if (*pos < lo)
-            *pos = lo;
-        if (*pos > hi)
-            *pos = hi;
-        *vel = at_lo ? speed : -speed;
-    }
-
-    *vel += gravity * GRAVITY;
-    return on_floor;
-}
-
-// Game system: bounces every bunny off the screen edges and the bottom of the
-// HUD, applies gravity, and slows bunnies down while they slide along a floor.
-static void bunny_physics(void) {
-    const FIXED max_x = FX(screen_width() - BUNNY_SIZE);
-    const FIXED min_y = FX(HUD_HEIGHT);
-    const FIXED max_y = FX(screen_height() - BUNNY_SIZE);
+// Game system: turns each bunny to face the way it's moving (the art faces
+// right) and sorts bunnies lower on screen in front of those above them.
+static void bunny_animate(void) {
     ECS_FOR_EACH(i, C_BUNNY) {
-        if (update_axis(&pos_x[i], &vel_x[i], 0, max_x, gravity_x))
-            vel_y[i] = friction(vel_y[i]);
-        if (update_axis(&pos_y[i], &vel_y[i], min_y, max_y, gravity_y))
-            vel_x[i] = friction(vel_x[i]);
+        if (vel_x[i] > 0)
+            spr_flags[i] = 0;
+        else if (vel_x[i] < 0)
+            spr_flags[i] = SPRITE_FLIP_H;
+        spr_depth[i] = (s16)fx_to_int(pos_y[i]);
     }
 }
 
@@ -219,7 +169,8 @@ static void draw_hud(void) {
 
 void bunnymark_update(void) {
     sys_movement();
-    bunny_physics();
-    sys_render();
+    sys_physics();
+    bunny_animate();
+    sys_render_by_depth();
     draw_hud();
 }

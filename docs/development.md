@@ -93,7 +93,7 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 57173 cycles (20.3%), peak 62799 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 71266 cycles (25.3%), peak 74804 (gba-release)
 ```
 
 The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
@@ -106,7 +106,8 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-04 | `245f01f` | 82,929 | 29.5% | Debug checks (compiled out of release builds) |
 | 2026-10-04 | `7a3e296` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
 | 2026-10-04 | `9f52373` | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
-| 2026-10-04 | (API cleanup) | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
+| 2026-10-04 | `2a15678` | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
+| 2026-10-04 | (physics, depth) | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
 
 ## Code style
 

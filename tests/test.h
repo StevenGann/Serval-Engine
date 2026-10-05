@@ -39,5 +39,6 @@ extern const TestSuite ecs_tests;
 extern const TestSuite random_tests;
 extern const TestSuite text_format_tests;
 extern const TestSuite math_tests;
+extern const TestSuite physics_tests;
 
 #endif // SERVAL_TEST_H

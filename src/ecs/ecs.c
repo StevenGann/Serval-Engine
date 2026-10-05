@@ -1,4 +1,5 @@
 #include "serval/ecs.h"
+#include "serval/physics.h"
 
 #include "../core/warn.h"
 
@@ -8,6 +9,7 @@ FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
 u16 spr_id[MAX_ENT];
 u8 spr_frame[MAX_ENT];
 u16 spr_flags[MAX_ENT];
+s16 spr_depth[MAX_ENT];
 
 static u8 ent_gen[MAX_ENT];
 
@@ -62,6 +64,9 @@ Entity entity_create(u32 components) {
     spr_id[index] = 0;
     spr_frame[index] = 0;
     spr_flags[index] = 0;
+    spr_depth[index] = 0;
+    body_w[index] = body_h[index] = 0;
+    body_bounce[index] = body_friction[index] = 0;
     return make_handle(index);
 }
 

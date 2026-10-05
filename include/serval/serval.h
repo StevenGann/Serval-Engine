@@ -9,6 +9,7 @@
 #include "serval/ecs.h"
 #include "serval/fixed.h"
 #include "serval/math.h"
+#include "serval/physics.h"
 #include "serval/platform.h"
 #include "serval/random.h"
 #include "serval/screen.h"

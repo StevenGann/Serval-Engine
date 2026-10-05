@@ -1,5 +1,7 @@
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/physics.h"
+#include "serval/sprites.h"
 #include "test.h"
 
 static void create_sets_mask(void) {
@@ -92,10 +94,15 @@ static void create_zeroes_components(void) {
     pos_x[i] = FX(5);
     vel_y[i] = FX(2);
     spr_id[i] = 9;
+    spr_flags[i] = SPRITE_FLIP_H;
+    spr_depth[i] = 7;
+    body_w[i] = 16;
+    body_bounce[i] = 200;
     entity_destroy(e);
     Entity again = entity_create(C_POS);
     CHECK(entity_index(again) == i);
     CHECK(pos_x[i] == 0 && vel_y[i] == 0 && spr_id[i] == 0);
+    CHECK(spr_flags[i] == 0 && spr_depth[i] == 0 && body_w[i] == 0 && body_bounce[i] == 0);
 }
 
 static void movement_adds_velocity_to_position(void) {
