@@ -89,6 +89,10 @@ void frame_end(void) {
     oam_copy(oam_mem, serval_shadow_oam, 128);
 }
 
+u32 random_entropy(void) {
+    return cycles_now();
+}
+
 u32 frame_cpu_cycles(void) {
     return last_frame_cycles;
 }

@@ -53,7 +53,7 @@ Each example builds separately, so one that fails to build doesn't stop the rest
 | Path | Contents |
 | --- | --- |
 | `include/serval/` | Public headers: `serval.h` (umbrella), `core.h`, `screen.h`, `sprites.h`, `ecs.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
-| `src/ecs/`, `src/core/` | Platform-neutral modules (`serval_portable`: ECS, random numbers, text formatting), built for the GBA and for the host |
+| `src/ecs/`, `src/core/` | Platform-neutral modules (ECS, random numbers, text formatting). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` |
 | `src/gba/` | GBA-only code (`serval`): core API and frame timing (`core.c`), sprites and `sys_render` (`sprites.c`), text layer (`text.c`), debug output (`debug.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |

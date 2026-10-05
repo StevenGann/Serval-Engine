@@ -27,6 +27,16 @@ static void range_stays_within_bounds(void) {
     CHECK(seen_lo && seen_hi); // both ends are reachable
 }
 
+static void entropy_seeds_without_breaking_the_sequence(void) {
+    random_seed(random_entropy());
+    u32 v = random_u32();
+    (void)v; // the value varies; seeding with it must just work
+    random_seed(1234);
+    u32 a = random_u32();
+    random_seed(1234);
+    CHECK(random_u32() == a); // explicit seeds stay deterministic
+}
+
 static void degenerate_ranges(void) {
     CHECK(random_range(5, 5) == 5);
     CHECK(random_range(7, 2) == 7);
@@ -37,4 +47,6 @@ static void degenerate_ranges(void) {
 TEST_SUITE(random_tests, "random", {"same_seed_same_sequence", same_seed_same_sequence},
            {"zero_seed_still_produces_numbers", zero_seed_still_produces_numbers},
            {"range_stays_within_bounds", range_stays_within_bounds},
-           {"degenerate_ranges", degenerate_ranges});
+           {"degenerate_ranges", degenerate_ranges},
+           {"entropy_seeds_without_breaking_the_sequence",
+            entropy_seeds_without_breaking_the_sequence});

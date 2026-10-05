@@ -27,42 +27,50 @@ option(SERVAL_BUILD_EXAMPLES "Build the example ROMs" ${PROJECT_IS_TOP_LEVEL})
 
 include(cmake/Serval.cmake)
 
-# Platform-neutral engine code. Builds for the GBA and for the host, so its
+# Platform-neutral engine code: builds for the GBA and for the host, so its
 # logic can be unit tested natively. See docs/platforms.md.
-add_library(serval_portable STATIC
+set(SERVAL_PORTABLE_SOURCES
     src/core/random.c
     src/core/text_format.c
     src/ecs/ecs.c
 )
-target_include_directories(serval_portable PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(serval_portable PRIVATE serval_warnings)
-
-# Debug builds report API misuse as warnings (src/core/warn.h). Public, so
-# games can key their own debug code off SERVAL_DEBUG too.
-target_compile_definitions(serval_portable PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>)
-
-if(NOT SERVAL_TARGET_GBA)
-    target_sources(serval_portable PRIVATE src/host/debug.c)
-endif()
 
 if(SERVAL_TARGET_GBA)
     enable_language(ASM)
-    target_compile_definitions(serval_portable PUBLIC SERVAL_GBA)
-
     add_subdirectory(third_party)
 
+    # The whole engine is one library on the GBA. Portable and GBA code call
+    # each other (e.g. the ECS reports warnings through debug.c), and the
+    # linker only resolves references between libraries in link order, but
+    # within one library in any order.
     add_library(serval STATIC
+        ${SERVAL_PORTABLE_SOURCES}
         src/gba/core.c
         src/gba/debug.c
         src/gba/sprites.c
         src/gba/text.c
     )
+    target_compile_definitions(serval PUBLIC SERVAL_GBA)
     # libtonc stays available to games that want it, but public engine headers
     # never require it.
-    target_link_libraries(serval
-        PUBLIC serval_portable tonc
-        PRIVATE serval_warnings
-    )
+    target_link_libraries(serval PUBLIC tonc PRIVATE serval_warnings)
+    add_library(serval_portable ALIAS serval)
+    set(serval_engine_target serval)
+else()
+    # Host builds (unit tests) get only the portable code, plus host versions
+    # of the platform functions it needs.
+    add_library(serval_portable STATIC ${SERVAL_PORTABLE_SOURCES} src/host/platform.c)
+    target_link_libraries(serval_portable PRIVATE serval_warnings)
+    set(serval_engine_target serval_portable)
+endif()
+
+target_include_directories(${serval_engine_target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+# Debug builds report API misuse as warnings (src/core/warn.h). Public, so
+# games can key their own debug code off SERVAL_DEBUG too.
+target_compile_definitions(${serval_engine_target}
+    PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>)
+
+if(SERVAL_TARGET_GBA)
     # Startup code, linked first into every ROM by serval_add_rom().
     add_library(serval_crt0 OBJECT src/gba/crt0.s)
 

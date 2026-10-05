@@ -15,7 +15,7 @@ u32  frame_budget_cycles(void);        // 280,896 per frame at 60 Hz
 bool button_down(u16 buttons);        // BUTTON_A, BUTTON_LEFT, ... (OR-able)
 bool button_pressed(u16 buttons);
 
-int  screen_width(void);
+int  screen_width(void);              // also SCREEN_W / SCREEN_H constants
 int  screen_height(void);
 void screen_set_backdrop(Color color); // Color from COLOR_RGB(r, g, b), 0-255 components
 
@@ -30,8 +30,8 @@ Other modules, all in `include/serval/`:
 | --- | --- |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` |
 | `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`) |
-| `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)` |
-| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_print_line()` (also blanks the rest of the row), `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer) |
+| `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`; `random_entropy()` for a seed that varies between runs (e.g. taken when the player presses START) |
+| `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells): `text_print()`, `text_print_line()` (also blanks the rest of the row), `text_clear()`, `text_format()` (printf-style without a C library; `%d %u %x` take any 32-bit integer; not compiler-checked, but a NULL `%s` prints `(null)` and debug builds catch a `%s` that isn't a pointer) |
 | `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, and `debug_exit()` (ends a headless `mgba-rom-test` run with an exit code) |
 
 ## Debug builds report misuse

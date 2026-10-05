@@ -32,7 +32,9 @@ void text_clear(void);
 // static buffers of TEXT_FORMAT_MAX characters, so a few results can be used
 // together; longer output is truncated.
 //
-// Not checked by the compiler like printf, since its integer rules differ.
+// Not checked by the compiler like printf, since its integer rules differ. A
+// NULL %s prints "(null)"; debug builds also catch a %s argument that isn't a
+// pointer at all (usually a number), printing "(?)" and warning.
 #define TEXT_FORMAT_MAX 128
 const char* text_format(const char* fmt, ...);
 

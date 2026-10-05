@@ -4,6 +4,7 @@
 #include "serval/core.h"
 #include "serval/ecs.h"
 #include "serval/gba.h"
+#include "serval/random.h"
 #include "serval/screen.h"
 #include "serval/sprites.h"
 
@@ -58,6 +59,19 @@ static void backdrop_sets_bg_color_0(void) {
     screen_set_backdrop(COLOR_RGB(255, 0, 0));
     CHECK(pal_bg_mem[0] == RGB15(31, 0, 0));
     CHECK(COLOR_RGB(8, 16, 255) == RGB15(1, 2, 31));
+}
+
+static void entropy_changes_over_time(void) {
+    u32 a = random_entropy();
+    frame_begin();
+    frame_end();
+    CHECK(random_entropy() != a);
+}
+
+static void screen_constants_match_functions(void) {
+    static const u8 row[SCREEN_W] = {0}; // usable as an array size
+    CHECK(sizeof(row) == 240 && SCREEN_H == 160);
+    CHECK(screen_width() == SCREEN_W && screen_height() == SCREEN_H);
 }
 
 static void cpu_permille_matches_cycles(void) {
@@ -120,4 +134,6 @@ TEST_SUITE(core_tests, "core", {"frame_end_returns_in_vblank", frame_end_returns
            {"backdrop_sets_bg_color_0", backdrop_sets_bg_color_0},
            {"frame_cpu_cycles_measures_work", frame_cpu_cycles_measures_work},
            {"cpu_permille_matches_cycles", cpu_permille_matches_cycles},
+           {"entropy_changes_over_time", entropy_changes_over_time},
+           {"screen_constants_match_functions", screen_constants_match_functions},
            {"sys_render_draws_positioned_sprites", sys_render_draws_positioned_sprites});

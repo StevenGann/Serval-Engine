@@ -1,5 +1,7 @@
 #include "serval/text.h"
 
+#include "warn.h"
+
 #include <stdarg.h>
 
 typedef struct {
@@ -118,6 +120,17 @@ const char* text_format(const char* fmt, ...) {
             break;
         case 's': {
             const char* s = va_arg(args, const char*);
+            if (!s)
+                s = "(null)";
+#ifdef SERVAL_DEBUG
+            // Usually a number passed for %s; reading it as a string would
+            // print garbage or scan memory until a zero byte.
+            if (!serval_plausible_pointer(s)) {
+                SERVAL_WARN("text_format: the %%s argument (0x%x) is not a string",
+                            (u32)(uintptr_t)s);
+                s = "(?)";
+            }
+#endif
             u32 n = 0;
             while (s[n])
                 n++;

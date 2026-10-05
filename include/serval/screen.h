@@ -12,12 +12,17 @@ typedef u16 Color;
 // cannot show. Usable in static initializers, e.g. palettes.
 #define COLOR_RGB(r, g, b) ((Color)(((r) >> 3) | (((g) >> 3) << 5) | (((b) >> 3) << 10)))
 
+// Screen size in pixels, as constants for array sizes, static initializers and
+// case labels. (libtonc's SCREEN_WIDTH is the same value under another name.)
+#define SCREEN_W 240
+#define SCREEN_H 160
+
 static inline int screen_width(void) {
-    return 240;
+    return SCREEN_W;
 }
 
 static inline int screen_height(void) {
-    return 160;
+    return SCREEN_H;
 }
 
 // Sets the color shown wherever nothing else is drawn.
