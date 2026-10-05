@@ -9,9 +9,9 @@ so the shots can be compared with an emulator's.
 Usage: tools/web-shots.py [--require-picture] PAGE.html FRAMES OUT_PREFIX
                           [shot=N]... [key=FRAME:KEYS:LENGTH]... [save=FILE]
 Writes OUT_PREFIX-<frame>.png for each shot. save=FILE stands in for the
-cartridge's save memory (32 KiB, like an emulator's .sav): the game starts from
-FILE if it exists, and FILE gets the save memory at the end if the game used it,
-so consecutive runs see each other's saves. --require-picture fails if a shot
+cartridge's save memory (as big as the game's save type, like an mGBA .sav):
+the game starts from FILE if it exists, and FILE gets the save memory at the
+end if the game used it, so consecutive runs see each other's saves. --require-picture fails if a shot
 is a single flat color (a smoke test that the game draws). Needs Chrome or
 Chromium (found on PATH, or set SERVAL_CHROME).
 """
@@ -32,8 +32,20 @@ BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-brows
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    save = None  # the save memory to serve at /serval-save.sav (save=FILE)
+
     def log_message(self, *args):
         pass
+
+    def do_GET(self):
+        if self.path == "/serval-save.sav" and self.save is not None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(self.save)))
+            self.end_headers()
+            self.wfile.write(self.save)
+        else:
+            super().do_GET()
 
 
 def find_browser():
@@ -101,6 +113,11 @@ def main():
 
     # Served over HTTP: browsers installed as snaps can't read every local path.
     directory, filename = os.path.split(os.path.abspath(page))
+    if save and os.path.exists(save):
+        # Served rather than put in the URL: a 128 KiB save is too long for a
+        # command line.
+        with open(save, "rb") as f:
+            QuietHandler.save = f.read()
     handler = functools.partial(QuietHandler, directory=directory)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -110,9 +127,8 @@ def main():
         fragment += "&shot=" + ",".join(shots)
     if keys:
         fragment += "&keys=" + ",".join(keys)
-    if save and os.path.exists(save):
-        with open(save, "rb") as f:
-            fragment += "&save=" + base64.urlsafe_b64encode(f.read()).decode("ascii")
+    if QuietHandler.save is not None:
+        fragment += "&saveurl=/serval-save.sav"
     url = f"http://127.0.0.1:{server.server_address[1]}/{filename}#{fragment}"
     # Virtual time runs the page's timers as fast as it can, and the DOM is
     # dumped once nothing is left to run (the page stops after the last frame).

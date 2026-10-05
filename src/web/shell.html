@@ -14,13 +14,14 @@
   l) and no sound. Each shot frame is appended to <pre id="shots"> as
   "frame <F> <PNG data URL>", then "done".
 
-  Saves (src/web/save.c): the game's 32 KiB of save memory is kept in
-  localStorage under "serval-save:<title>:<game code>", loaded when the game
+  Saves (src/web/save.c): the game's save memory (the size of its save type:
+  32 KiB for SRAM, 64 or 128 KiB for Flash, 8 KiB or 512 bytes for EEPROM;
+  byte for byte an mGBA .sav file) is kept in localStorage under "serval-save:<title>:<game code>", loaded when the game
   first uses it and stored after every save_write() and save_erase(). Without
   localStorage (some privacy modes) the game still runs; its saves last until
   the page closes. Test mode leaves localStorage alone, so runs are
-  deterministic: "&save=<base64>" starts from that save memory instead of a
-  blank one, and if the game used its saves, "save <base64>" is appended
+  deterministic: "&save=<base64>" (or "&saveurl=<url>", fetched before the
+  game starts) starts from that save memory instead of a blank one, and if the game used its saves, "save <base64>" is appended
   before "done" (tools/web-shots.py save=FILE does both). "&persist=1" uses
   localStorage as a normal page does.
 -->
@@ -303,7 +304,8 @@
     servalSaveLoad(dst, size) {
       let data = null;
       try {
-        if (test && params.has("save")) data = fromBase64(params.get("save"));
+        if (test && test.save) data = test.save;
+        else if (test && params.has("save")) data = fromBase64(params.get("save"));
         else if (saves.persist) {
           const storage = saveStorage();
           const text = storage && storage.getItem(saves.key);
@@ -313,13 +315,16 @@
         saveWarn("couldn't load the saves (" + e + "); starting without them");
         data = null;
       }
-      if (data && data.length !== size) {
-        saveWarn("the stored saves are " + data.length + " bytes, not " + size + "; starting without them");
+      // Shorter is fine (the rest stays 0xFF, as in mGBA): an mGBA .sav of an
+      // 8 KiB EEPROM is 512 bytes until the game writes past them.
+      if (data && data.length > size) {
+        saveWarn("the stored saves are " + data.length + " bytes, more than this game's " + size +
+                 " (another save type?); starting without them");
         data = null;
       }
       if (!data) return 0;
       Module.HEAPU8.set(data, dst);
-      saves.bytes = data;
+      saves.bytes = Module.HEAPU8.slice(dst, dst + size);
       return 1;
     },
     servalSaveStore(src, size) {
@@ -336,6 +341,13 @@
     print: text => console.log(text),
     printErr: text => console.warn(text),
     onRuntimeInitialized() {
+      if (test && params.has("saveurl")) {
+        // A save too big for the URL (128 KiB Flash), fetched from the page's server.
+        return fetch(params.get("saveurl"))
+          .then(r => (r.ok ? r.arrayBuffer() : null))
+          .then(b => { if (b) test.save = new Uint8Array(b); }, () => {})
+          .then(() => Module.callMain([]));
+      }
       if (test) return Module.callMain([]);
       // Browsers only start sound after a click or key press, so wait for one
       // (the game's first sounds, like the splash jingle, would be lost).

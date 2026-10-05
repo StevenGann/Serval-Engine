@@ -36,29 +36,53 @@ if(SERVAL_TARGET_GBA)
     endif()
 endif()
 
-# serval_add_rom(<target> SOURCES <files...> [TITLE <title>] [GAME_CODE <code>])
+# serval_add_rom(<target> SOURCES <files...> [TITLE <title>] [GAME_CODE <code>]
+#                [SAVE SRAM|FLASH64K|FLASH128K|EEPROM8K|EEPROM512])
 #
 # Builds <target>.elf from the given sources linked against the engine, then
 # converts it to <target>.gba and fixes the ROM header. The header never
 # contains Nintendo's logo (see docs/licensing.md).
 #
+# SAVE is the cartridge save memory the game's save data (save.h) uses: SRAM
+# (32 KiB, the default), FLASH64K, FLASH128K, EEPROM8K or EEPROM512. It sets
+# the number of slots and their capacity (docs/runtime-systems.md#save-data).
+# Only that type's code and ROM ID string are linked, and none of it if the
+# game never calls save_*.
+#
 # In web builds (the web preset), builds <target>.html instead: the game as one
 # self-contained page (cmake/ServalWeb.cmake). TITLE and GAME_CODE name its
-# saves in the browser's localStorage there.
+# saves in the browser's localStorage there; SAVE gives it the same slots as
+# on the GBA.
 function(serval_add_rom target)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "TITLE;GAME_CODE" "SOURCES")
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "TITLE;GAME_CODE;SAVE" "SOURCES")
     if(NOT ARG_TITLE)
         string(TOUPPER "${target}" ARG_TITLE)
     endif()
     if(NOT ARG_GAME_CODE)
         set(ARG_GAME_CODE "0000")
     endif()
+    if(NOT DEFINED ARG_SAVE)
+        set(ARG_SAVE "SRAM")
+    endif()
+    set(save_types SRAM FLASH64K FLASH128K EEPROM8K EEPROM512)
+    if(NOT ARG_SAVE IN_LIST save_types)
+        list(JOIN save_types ", " save_types)
+        message(FATAL_ERROR "serval_add_rom(${target}): SAVE ${ARG_SAVE} is not a save type; "
+                            "use one of ${save_types}.")
+    endif()
+    string(TOLOWER "${ARG_SAVE}" save_name)
+    if(NOT TARGET serval_save_${save_name})
+        message(FATAL_ERROR "serval_add_rom(${target}): the engine is not configured "
+                            "(serval_save_${save_name} is missing).")
+    endif()
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         if(NOT TARGET serval)
             message(FATAL_ERROR "serval_add_rom(${target}): the engine is not configured.")
         endif()
-        _serval_add_web_page(${target} "${ARG_TITLE}" "${ARG_GAME_CODE}" ${ARG_SOURCES})
+        _serval_add_web_page(${target} "${ARG_TITLE}" "${ARG_GAME_CODE}"
+                             ${ARG_SOURCES} $<TARGET_OBJECTS:serval_save_${save_name}>)
+        set_target_properties(${target} PROPERTIES SERVAL_ROM_SAVE_TYPE "${ARG_SAVE}")
         return()
     endif()
 
@@ -80,12 +104,16 @@ function(serval_add_rom target)
                             "'${SERVAL_PYTHON_EXECUTABLE}', SERVAL_OBJCOPY='${SERVAL_OBJCOPY}').")
     endif()
 
+    # The save memory object goes in like crt0 and libc: as an object, so it
+    # defines the device save.c (in the serval archive) uses; --gc-sections
+    # drops it with save.c when the game never saves.
     add_executable(${target} ${ARG_SOURCES} $<TARGET_OBJECTS:serval_crt0>
-                   $<TARGET_OBJECTS:serval_libc>)
+                   $<TARGET_OBJECTS:serval_libc> $<TARGET_OBJECTS:serval_save_${save_name}>)
     set_target_properties(${target} PROPERTIES
         SUFFIX ".elf"
         SERVAL_ROM_TITLE "${ARG_TITLE}"
-        SERVAL_ROM_GAME_CODE "${ARG_GAME_CODE}")
+        SERVAL_ROM_GAME_CODE "${ARG_GAME_CODE}"
+        SERVAL_ROM_SAVE_TYPE "${ARG_SAVE}")
     target_link_libraries(${target} PRIVATE serval)
     # No C library: the engine provides the few routines GCC may call
     # (src/gba/libc.c) so newlib is never linked.

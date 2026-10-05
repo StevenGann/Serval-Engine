@@ -55,7 +55,7 @@ cmake --build build
 # -> build/my_game.gba
 ```
 
-`TITLE` (up to 12 characters) and `GAME_CODE` (4 characters) go into the ROM header. A game can have any number of source files; unused functions are dropped at link time. The engine's tests and examples are not built when it is added this way. [`tests/consumer/`](../tests/consumer/CMakeLists.txt) in the engine repository is a complete, CI-tested example of such a project.
+`TITLE` (up to 12 characters) and `GAME_CODE` (4 characters) go into the ROM header. If the game saves (`save.h`) and will ship on a cartridge with Flash or EEPROM rather than SRAM, add `SAVE FLASH64K`, `FLASH128K`, `EEPROM8K` or `EEPROM512` to match it (the default, `SRAM`, suits emulators and flash carts; [save types](runtime-systems.md#save-types)). A game can have any number of source files; unused functions are dropped at link time. The engine's tests and examples are not built when it is added this way. [`tests/consumer/`](../tests/consumer/CMakeLists.txt) in the engine repository is a complete, CI-tested example of such a project.
 
 To experiment inside the engine's own tree instead, add the same `serval_add_rom()` line to `examples/CMakeLists.txt` (target name = directory name, e.g. `examples/my_game/main.c`).
 

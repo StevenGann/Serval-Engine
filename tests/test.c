@@ -47,6 +47,10 @@ void test_fail(const char* file, int line_number, const char* expr) {
     test_output(line.text);
 }
 
+unsigned test_failures(void) {
+    return failures;
+}
+
 unsigned test_run(const TestSuite* const* suites, unsigned count) {
     unsigned cases = 0;
     for (unsigned s = 0; s < count; s++) {

@@ -3,7 +3,8 @@
 # Adds a test per ROM built by serval_add_rom() that runs tools/check-rom.py:
 # the ROM is padded and its header is valid, newlib's libc.a is not in the
 # link map, the code has no BLX instruction (the ARM7TDMI has none), and a ROM
-# linking the save code contains the SRAM ID string.
+# linking the save code contains exactly one save type ID string, its save
+# type's (serval_add_rom's SAVE), and a ROM without it none.
 # Used by the engine's own tests and examples, and by tests/consumer.
 
 function(serval_add_rom_checks)
@@ -23,6 +24,7 @@ function(serval_add_rom_checks)
                     --elf "$<TARGET_FILE:${target}>"
                     --objdump "${SERVAL_OBJDUMP}"
                     --title "$<TARGET_PROPERTY:${target},SERVAL_ROM_TITLE>"
-                    --game-code "$<TARGET_PROPERTY:${target},SERVAL_ROM_GAME_CODE>")
+                    --game-code "$<TARGET_PROPERTY:${target},SERVAL_ROM_GAME_CODE>"
+                    --save-type "$<TARGET_PROPERTY:${target},SERVAL_ROM_SAVE_TYPE>")
     endforeach()
 endfunction()

@@ -1,14 +1,15 @@
-// Save slots (save.h) on a byte-addressed save memory (save_internal.h).
+// Save slots (save.h) on the game's save memory (save_internal.h).
 //
-// Format (docs/runtime-systems.md#save-data): the 32 KiB memory holds 8
-// slots, each two 2048-byte copies, A and B. A copy is a 16-byte header, then
-// the data (up to SAVE_SLOT_MAX bytes). The header, little-endian:
+// Format (docs/runtime-systems.md#save-data): the memory holds the save
+// type's slots (8 for SRAM, Flash and 8 KiB EEPROM, 2 for 512-byte EEPROM),
+// each two copies, A and B, of copy_size bytes. A copy is a 16-byte header,
+// then the data (up to save_slot_capacity() bytes). The header, little-endian:
 //
 //   0  4 bytes  magic "SVS1": this copy holds a save
 //   4  u32      sequence number: the newer copy has the higher number
 //               (compared modulo 2^32)
 //   8  u16      the game's save format version
-//   10 u16      data size in bytes (1 to SAVE_SLOT_MAX)
+//   10 u16      data size in bytes (1 to the slot capacity)
 //   12 u32      CRC-32 of bytes 4-11 and the data
 //
 // A copy is *empty* without the magic (never-written memory reads as 0xFF or
@@ -17,19 +18,21 @@
 // valid copy; it reads as corrupt only if no copy is valid and one is damaged.
 //
 // save_write() writes the copy that does not hold the slot's save. It first
-// clears that copy's magic, then writes the data and the rest of the header,
-// and the magic last, so until the very last byte the copy reads as empty and
-// the old save stays the slot's save; then it reads everything back.
-// save_erase() clears the magic of the older copy first, then the newer one,
-// so it is all or nothing too.
+// clears that copy's magic (Flash: programs it to zeros, which needs no
+// erase; EEPROM: rewrites the 8-byte block holding it), erases the copy's
+// sectors (Flash), then writes the data, the rest of the header, and the
+// magic last, so until the very last write the copy reads as empty and the
+// old save stays the slot's save; then it reads everything back. On EEPROM,
+// whose writes are 8-byte blocks, the last write is the block holding the
+// magic and the sequence number, and the one before it the block with the
+// version, size and CRC. save_erase() clears the magic of the older copy
+// first, then the newer one, so it is all or nothing too.
 
 #include "serval/save.h"
 
 #include "save_internal.h"
 #include "warn.h"
 
-_Static_assert(SAVE_SLOTS * 2 * SAVE_COPY_SIZE <= SAVE_MEMORY_SIZE, "slots must fit the memory");
-_Static_assert(SAVE_HEADER_SIZE + SAVE_SLOT_MAX <= SAVE_COPY_SIZE, "a save must fit its copy");
 _Static_assert(SAVE_SLOT_MAX <= 0xFFFF, "the header stores the size in 16 bits");
 
 const SaveDevice* serval_save_device = &serval_platform_save_device;
@@ -38,6 +41,8 @@ static const u8 magic[4] = {'S', 'V', 'S', '1'};
 
 // Bytes read or compared at a time (on the stack).
 #define CHUNK 64u
+// The largest write block (EEPROM's 8 bytes).
+#define MAX_BLOCK 8u
 
 // CRC-32, reflected polynomial 0xEDB88320, a byte at a time (the table is
 // 1 KiB of ROM).
@@ -110,8 +115,25 @@ static void put32(u8* p, u32 v) {
     put16(p + 2, v >> 16);
 }
 
+u32 save_slot_count(void) {
+    u32 slots = serval_save_device->slots;
+    return slots < SAVE_SLOTS ? slots : SAVE_SLOTS;
+}
+
+u32 save_slot_capacity(void) {
+    u32 capacity = serval_save_device->copy_size - SAVE_HEADER_SIZE;
+    return capacity < SAVE_SLOT_MAX ? capacity : SAVE_SLOT_MAX;
+}
+
 static u32 copy_offset(u32 copy) {
-    return copy * SAVE_COPY_SIZE;
+    return copy * serval_save_device->copy_size;
+}
+
+// Where the header splits into the part written before the data's last
+// write and the part written last (the magic): 4 bytes, or a whole block.
+static u32 magic_part(void) {
+    u32 block = serval_save_device->block_size;
+    return block > sizeof magic ? block : sizeof magic;
 }
 
 static bool has_magic(const u8* bytes) {
@@ -135,7 +157,7 @@ static bool read_header(u32 copy, Header* h) {
 // Whether a copy with this header (and magic) is intact: its size is in range
 // and the CRC over the header fields and the data in memory matches.
 static bool copy_intact(u32 copy, const Header* h) {
-    if (h->size == 0 || h->size > SAVE_SLOT_MAX)
+    if (h->size == 0 || h->size > save_slot_capacity())
         return false;
     u8 bytes[CHUNK];
     put32(bytes, h->seq);
@@ -195,12 +217,13 @@ static bool first_warning(u32 fn, u32 problem) {
 #endif
 
 static bool slot_ok(u32 fn, u32 slot) {
-    if (slot < SAVE_SLOTS)
+    if (slot < save_slot_count())
         return true;
 #ifdef SERVAL_DEBUG
     if (first_warning(fn, BAD_SLOT))
-        SERVAL_WARN("%s: there is no slot %u; slots are 0 to %u (SAVE_SLOTS - 1)", fn_names[fn],
-                    slot, SAVE_SLOTS - 1);
+        SERVAL_WARN("%s: there is no slot %u; this game's save type, %s, has slots 0 to %u "
+                    "(save_slot_count() - 1)",
+                    fn_names[fn], slot, serval_save_device->name, save_slot_count() - 1);
 #endif
     (void)fn;
     return false;
@@ -220,12 +243,13 @@ static bool data_ok(u32 fn, u32 slot, const void* data) {
 }
 
 static bool size_ok(u32 fn, u32 slot, u32 size) {
-    if (size != 0 && size <= SAVE_SLOT_MAX)
+    if (size != 0 && size <= save_slot_capacity())
         return true;
 #ifdef SERVAL_DEBUG
     if (first_warning(fn, BAD_SIZE))
-        SERVAL_WARN("%s(slot %u): size %u; it must be 1 to %u bytes (SAVE_SLOT_MAX)%s",
-                    fn_names[fn], slot, size, SAVE_SLOT_MAX,
+        SERVAL_WARN("%s(slot %u): size %u; a slot holds 1 to %u bytes with this game's save "
+                    "type, %s (save_slot_capacity())%s",
+                    fn_names[fn], slot, size, save_slot_capacity(), serval_save_device->name,
                     fn == FN_WRITE ? ", nothing saved" : "");
 #endif
     (void)fn;
@@ -236,16 +260,33 @@ static bool size_ok(u32 fn, u32 slot, u32 size) {
 static void warn_not_written(u32 fn, u32 slot) {
 #ifdef SERVAL_DEBUG
     if (first_warning(fn, NOT_WRITTEN))
-        SERVAL_WARN("%s(slot %u): the save memory didn't keep what was written (no save RAM?)%s",
-                    fn_names[fn], slot, fn == FN_WRITE ? "; the old save is kept" : "");
+        SERVAL_WARN("%s(slot %u): the save memory didn't keep what was written (does the "
+                    "cartridge have %s save memory? serval_add_rom's SAVE picks the type)%s",
+                    fn_names[fn], slot, serval_save_device->name,
+                    fn == FN_WRITE ? "; the old save is kept" : "");
 #endif
     (void)fn;
     (void)slot;
 }
 
-static void clear_magic(u32 copy) {
-    static const u8 zeros[sizeof magic] = {0};
-    serval_save_device->write(copy_offset(copy), zeros, sizeof zeros);
+// Zeroes a copy's magic: the first 4 bytes, or the whole first block.
+static bool clear_magic(u32 copy) {
+    static const u8 zeros[MAX_BLOCK] = {0};
+    return serval_save_device->write(copy_offset(copy), zeros, magic_part());
+}
+
+// Writes count bytes at offset (a block boundary), the last block padded.
+static bool write_blocks(u32 offset, const u8* src, u32 count) {
+    u32 block = serval_save_device->block_size;
+    u32 whole = count - count % block;
+    if (whole && !serval_save_device->write(offset, src, whole))
+        return false;
+    if (whole == count)
+        return true;
+    u8 last[MAX_BLOCK];
+    for (u32 i = 0; i < block; i++)
+        last[i] = whole + i < count ? src[whole + i] : 0xFF;
+    return serval_save_device->write(offset + whole, last, block);
 }
 
 static void flush(void) {
@@ -290,15 +331,16 @@ bool save_write(u32 slot, const void* data, u32 size, u16 version) {
     put16(header + 10, size);
     put32(header + 12, serval_save_crc32(serval_save_crc32(0, header + 4, 8), data, size));
 
+    const SaveDevice* device = serval_save_device;
     u32 offset = copy_offset(target);
-    clear_magic(target);
-    serval_save_device->write(offset + SAVE_HEADER_SIZE, data, size);
-    serval_save_device->write(offset + sizeof magic, header + sizeof magic,
-                              SAVE_HEADER_SIZE - sizeof magic);
-    serval_save_device->write(offset, header, sizeof magic);
-
-    bool ok = memory_matches(offset, header, SAVE_HEADER_SIZE) &&
-              memory_matches(offset + SAVE_HEADER_SIZE, data, size);
+    u32 split = magic_part();
+    bool ok = clear_magic(target);
+    if (ok && device->erase)
+        ok = device->erase(offset, SAVE_HEADER_SIZE + size);
+    ok = ok && write_blocks(offset + SAVE_HEADER_SIZE, data, size) &&
+         device->write(offset + split, header + split, SAVE_HEADER_SIZE - split) &&
+         device->write(offset, header, split) && memory_matches(offset, header, SAVE_HEADER_SIZE) &&
+         memory_matches(offset + SAVE_HEADER_SIZE, data, size);
     if (!ok) {
         clear_magic(target); // the old save stays the slot's save
         warn_not_written(FN_WRITE, slot);

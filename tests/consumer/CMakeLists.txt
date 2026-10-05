@@ -17,6 +17,8 @@ endif()
 add_subdirectory("${SERVAL_ENGINE_DIR}" serval-engine)
 
 serval_add_rom(consumer SOURCES main.c TITLE "CONSUMER" GAME_CODE "SVCO")
+# A game that saves, with a save type other than the default SRAM.
+serval_add_rom(consumer_save SOURCES save.c TITLE "CONSUMER SV" GAME_CODE "SVCS" SAVE EEPROM8K)
 
 enable_testing()
 
@@ -24,10 +26,14 @@ find_program(MGBA_ROM_TEST mgba-rom-test HINTS ENV MGBA_ROM_TEST_DIR REQUIRED)
 add_test(NAME consumer_runs
     COMMAND "${MGBA_ROM_TEST}" -S 3 -R r0 -l 15 "$<TARGET_FILE_DIR:consumer>/consumer.gba")
 set_tests_properties(consumer_runs PROPERTIES TIMEOUT 60)
+add_test(NAME consumer_save_runs
+    COMMAND "${MGBA_ROM_TEST}" -S 3 -R r0 -l 15
+            "$<TARGET_FILE_DIR:consumer_save>/consumer_save.gba")
+set_tests_properties(consumer_save_runs PROPERTIES TIMEOUT 60)
 
 # The checker comes from this repository: release archives don't ship it.
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/ServalRomChecks.cmake")
-serval_add_rom_checks(consumer)
+serval_add_rom_checks(consumer consumer_save)
 
 # Game code must get its own sections, or --gc-sections can't drop unused
 # game functions.

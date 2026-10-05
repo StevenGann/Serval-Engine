@@ -18,7 +18,8 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Animated tiles (`tileset_set_tiles`), sprite animation (`sys_animate`), screen brightness fades, text color and shadow ([tilemaps.md](tilemaps.md), [sprites.md](sprites.md#animation)).
 - [ ] Remaining tilemap features: tileset groups, LZ77 tilesets, slopes and ladders, 8bpp layers ([tilemaps.md](tilemaps.md)).
 - [x] Save data on SRAM: slot format, checksums, versions, power-loss safety; `localStorage` on the web ([runtime-systems.md](runtime-systems.md#save-data)).
-- [ ] Flash and EEPROM save types, and testing saves on real flash carts ([runtime-systems.md](runtime-systems.md#save-data)).
+- [x] Flash (64 and 128 KiB) and EEPROM (8 KiB and 512 bytes) save types, picked per game with `serval_add_rom(... SAVE <type>)`; slot count and capacity per type (`save_slot_count()`, `save_slot_capacity()`), tested in mGBA ([runtime-systems.md](runtime-systems.md#save-types)).
+- [ ] Testing saves on real cartridges and flash carts, for every save type ([runtime-systems.md](runtime-systems.md#real-cart-testing)).
 - [ ] Maxmod music and sampled sound effects ([audio.md](audio.md)); the PSG wave channel is unused.
 - [ ] A logo for `serval_splash()` ([core-api.md](core-api.md#splash-screen)).
 - [ ] Add the mGBA capture tool to the repository and use it for screenshot tests in CI ([development.md](development.md#checking-what-a-game-shows-and-plays)).

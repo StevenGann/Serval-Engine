@@ -6,12 +6,14 @@
 - newlib's libc.a is not in the link map: games stay free of its license.
 - The code contains no BLX instruction: the ARM7TDMI (ARMv4T) has none, so
   one would crash on hardware.
-- If the game links the save code (save.h), the ROM contains the "SRAM_V"
-  ID string on a 4-byte boundary, which emulators and flash carts look for to
-  give the game save RAM.
+- If the game links the save code (save.h), the ROM contains exactly one
+  save type ID string on a 4-byte boundary, the one of its save type
+  (serval_add_rom's SAVE: "SRAM_V", "FLASH512_V", "FLASH1M_V" or "EEPROM_V"),
+  which emulators and flash carts look for to give the game its save memory;
+  if it doesn't, the ROM contains none.
 
 Usage: check-rom.py --rom R.gba [--map R.map] [--elf R.elf --objdump OBJDUMP]
-                    [--title T] [--game-code C]
+                    [--title T] [--game-code C] [--save-type TYPE]
 Exits non-zero, listing every failed check, if any fails.
 """
 
@@ -62,20 +64,58 @@ def check_map(path):
     return []
 
 
-def check_save_id(rom_path, map_path):
-    """The SRAM ID string is in the ROM if the save memory code was linked."""
+# Save type ID strings scanners look for (on 4-byte boundaries), and the one
+# each serval_add_rom() SAVE type puts in the ROM.
+SAVE_IDS = (b"SRAM_V", b"SRAM_F_V", b"FLASH_V", b"FLASH512_V", b"FLASH1M_V", b"EEPROM_V")
+SAVE_TYPE_IDS = {
+    "SRAM": b"SRAM_V113",
+    "FLASH64K": b"FLASH512_V131",
+    "FLASH128K": b"FLASH1M_V103",
+    "EEPROM8K": b"EEPROM_V124",
+    "EEPROM512": b"EEPROM_V124",
+}
+
+
+def find_save_ids(rom):
+    """(offset, ID string) of every save type ID string on a 4-byte boundary."""
+    found = []
+    for prefix in SAVE_IDS:
+        at = rom.find(prefix)
+        while at >= 0:
+            if at % 4 == 0:
+                end = at + len(prefix)
+                while end < len(rom) and end - at < 16 and 0x21 <= rom[end] < 0x7F:
+                    end += 1
+                found.append((at, rom[at:end]))
+            at = rom.find(prefix, at + 1)
+    return sorted(found)
+
+
+def check_save_id(rom_path, map_path, save_type):
+    """The save type's ID string is in the ROM, alone, if the save code was linked."""
     with open(map_path, encoding="utf-8", errors="replace") as f:
         linked = f.read().split("Linker script and memory map", 1)[-1]
-    if not re.search(r"^\s*\.rodata\.serval_save_sram\b", linked, re.MULTILINE):
-        return []
+    saves = re.search(r"^\s*\.rodata\.serval_save_device\b", linked, re.MULTILINE)
     with open(rom_path, "rb") as f:
         rom = f.read()
-    at = rom.find(b"SRAM_V")
-    while at >= 0 and at % 4:
-        at = rom.find(b"SRAM_V", at + 1)
-    if at < 0:
-        return [f"{rom_path}: links the save code but has no \"SRAM_V\" ID string on a 4-byte "
-                "boundary: emulators and flash carts won't give it save RAM"]
+    found = find_save_ids(rom)
+    listed = ", ".join(f"{s.decode('ascii', 'replace')!r} at 0x{at:X}" for at, s in found)
+    if not saves:
+        if found:
+            return [f"{rom_path}: doesn't link the save code but contains save type ID "
+                    f"strings ({listed}): emulators and flash carts would give it save memory"]
+        return []
+    if save_type is None:
+        return []
+    expected = SAVE_TYPE_IDS.get(save_type)
+    if expected is None:
+        return [f"{rom_path}: unknown save type {save_type!r}"]
+    if not found:
+        return [f"{rom_path}: links the save code but has no {expected.decode()!r} ID string on "
+                "a 4-byte boundary: emulators and flash carts won't give it save memory"]
+    if len(found) > 1 or found[0][1] != expected:
+        return [f"{rom_path}: save type {save_type} needs exactly one save type ID string, "
+                f"{expected.decode()!r}, but the ROM has {listed}"]
     return []
 
 
@@ -99,6 +139,7 @@ def main():
     parser.add_argument("--objdump")
     parser.add_argument("--title")
     parser.add_argument("--game-code")
+    parser.add_argument("--save-type", choices=sorted(SAVE_TYPE_IDS))
     args = parser.parse_args()
     if bool(args.elf) != bool(args.objdump):
         parser.error("--elf and --objdump go together")
@@ -107,7 +148,7 @@ def main():
         errors = check_rom(args.rom, args.title, args.game_code)
         if args.map:
             errors += check_map(args.map)
-            errors += check_save_id(args.rom, args.map)
+            errors += check_save_id(args.rom, args.map, args.save_type)
         if args.elf:
             errors += check_no_blx(args.elf, args.objdump)
     except OSError as e:

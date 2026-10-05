@@ -28,7 +28,8 @@ endfunction()
 #
 # Builds <target>.html: the game and the engine as one self-contained page
 # (WebAssembly embedded), from the src/web/shell.html template. The title and
-# game code name the game's saves in localStorage.
+# game code name the game's saves in localStorage. The sources include the
+# game's save type's object (serval_save_<type>: save memory of that size).
 function(_serval_add_web_page target title game_code)
     set(engine_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
     set(shell "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}-shell.html")

@@ -28,6 +28,9 @@ typedef struct {
 // Records a failure of the current test case.
 void test_fail(const char* file, int line, const char* expr);
 
+// The number of failed checks so far.
+unsigned test_failures(void);
+
 // Runs every case of the suites and returns the number of failed checks.
 unsigned test_run(const TestSuite* const* suites, unsigned count);
 

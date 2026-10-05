@@ -34,14 +34,59 @@ if(SERVAL_TARGET_GBA)
         GAME_CODE "SVTS")
     target_link_libraries(serval_tests PRIVATE serval_test_harness serval_warnings)
 
-    # mgba-rom-test runs the ROM headless until SWI 3 and exits with r0: 0 if
+    # One more test ROM per save type other than SRAM: the save suites, on
+    # the ROM's Flash or EEPROM (tests/rom/save_main.c).
+    set(save_test_types FLASH64K FLASH128K EEPROM8K EEPROM512)
+    set(save_test_codes SVF6 SVF1 SVE8 SVE5)
+    foreach(type code IN ZIP_LISTS save_test_types save_test_codes)
+        string(TOLOWER "${type}" name)
+        serval_add_rom(serval_tests_${name}
+            SOURCES rom/save_main.c rom/save_tests.c
+            TITLE "SV ${type}"
+            GAME_CODE "${code}"
+            SAVE ${type})
+        target_link_libraries(serval_tests_${name} PRIVATE serval_test_harness serval_warnings)
+        serval_add_rom_checks(serval_tests_${name})
+    endforeach()
+
+    # mgba-rom-test runs a ROM headless until SWI 3 and exits with r0: 0 if
     # every check passed, 1 otherwise. Build it with tools/build-mgba-rom-test.sh.
+    # rom/run-rom-test.cmake also checks mGBA's log: that it detected the save
+    # type the ROM was built for, and reported no malformed Flash or EEPROM
+    # access.
     find_program(MGBA_ROM_TEST mgba-rom-test HINTS ENV MGBA_ROM_TEST_DIR)
+    set(save_access_errors "Bad flash|Unsupported flash|Flash entered bad state|beyond end of EEPROM|Bad flash bank")
     if(MGBA_ROM_TEST)
         add_test(NAME rom_tests
-            COMMAND "${MGBA_ROM_TEST}" -S 3 -R r0 -l 15
-                    "$<TARGET_FILE_DIR:serval_tests>/serval_tests.gba")
+            COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
+                    "-DROM=$<TARGET_FILE_DIR:serval_tests>/serval_tests.gba"
+                    "-DEXPECT=Detected SRAM savegame"
+                    "-DREJECT=Detected (Flash|EEPROM)"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
         set_tests_properties(rom_tests PROPERTIES TIMEOUT 60)
+        set(expect_FLASH64K "Detected Flash savegame")
+        set(reject_FLASH64K "Detected (SRAM|EEPROM)|Updating flash chip")
+        set(expect_FLASH128K "Detected Flash savegame@@Updating flash chip from 512kb to 1Mb")
+        set(reject_FLASH128K "Detected (SRAM|EEPROM)")
+        # Once a bank switch has made it a 128 KiB chip, mGBA reports Sanyo's
+        # ID, and logs (and ignores) the second "leave ID mode" write that
+        # real Sanyo chips need (src/gba/save_flash.c).
+        set(allow_FLASH128K "Bad flash write: 0x5555 = 0xf0")
+        set(expect_EEPROM8K "Detected EEPROM savegame")
+        set(reject_EEPROM8K "Detected (SRAM|Flash)")
+        set(expect_EEPROM512 "Detected EEPROM savegame")
+        set(reject_EEPROM512 "Detected (SRAM|Flash)")
+        foreach(type IN LISTS save_test_types)
+            string(TOLOWER "${type}" name)
+            add_test(NAME rom_tests_${name}
+                COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
+                        "-DROM=$<TARGET_FILE_DIR:serval_tests_${name}>/serval_tests_${name}.gba"
+                        "-DEXPECT=${expect_${type}}"
+                        "-DREJECT=${reject_${type}}|${save_access_errors}"
+                        "-DALLOW=${allow_${type}}"
+                        -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
+            set_tests_properties(rom_tests_${name} PROPERTIES TIMEOUT 120)
+        endforeach()
     elseif(SERVAL_REQUIRE_ROM_TESTS)
         message(FATAL_ERROR "mgba-rom-test not found, and SERVAL_REQUIRE_ROM_TESTS is ON. "
                             "Build it with tools/build-mgba-rom-test.sh and set MGBA_ROM_TEST_DIR.")
@@ -69,7 +114,7 @@ else()
     # examples use nothing but Serval's API.
     file(GLOB _serval_example_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*/*.c")
     add_library(serval_api_only_check OBJECT public_headers.c ${_serval_example_sources}
-        consumer/main.c)
+        consumer/main.c consumer/save.c)
     target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
     target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
     add_dependencies(serval_host_tests serval_api_only_check)

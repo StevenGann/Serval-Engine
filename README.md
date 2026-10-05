@@ -22,11 +22,11 @@ Implemented:
 - Physics for bouncing bodies: gravity in any direction, bounce and friction, open edges, wrap-around, rectangle overlap tests.
 - PSG sound effects on the tone generators: tones, envelopes, pitch slides, short melodies.
 - HUD and debug text (8x8 font) with printf-style formatting, and a "Made with Serval Engine" splash screen.
-- Save data: 8 slots on cartridge SRAM with checksums, version numbers and power-loss-safe writes (`localStorage` in web builds).
+- Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrounds and scrolling tilemaps, Maxmod music and sampled sound effects, streamed and compressed sprites, palette sharing and fades, Flash and EEPROM saves, dialogue text, the bytecode VM, and the editor debug link.
+Planned (designed in [`docs/`](docs/README.md), not implemented): tiled backgrounds and scrolling tilemaps, Maxmod music and sampled sound effects, streamed and compressed sprites, palette sharing and fades, dialogue text, the bytecode VM, and the editor debug link.
 
 ## Documentation
 

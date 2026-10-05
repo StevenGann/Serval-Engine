@@ -85,7 +85,6 @@ if(SERVAL_TARGET_GBA)
         src/gba/map.c
         src/gba/music.c
         src/gba/psg.c
-        src/gba/save_sram.c
         src/gba/screen.c
         src/gba/splash.c
         src/gba/sprites.c
@@ -120,7 +119,6 @@ elseif(SERVAL_TARGET_WEB)
         src/web/apu.c
         src/web/platform.c
         src/web/ppu.c
-        src/web/save.c
         "${CMAKE_CURRENT_BINARY_DIR}/sys8_glyphs.c"
     )
     target_compile_definitions(serval PUBLIC SERVAL_WEB)
@@ -140,6 +138,29 @@ target_include_directories(${serval_engine_target} PUBLIC "${CMAKE_CURRENT_SOURC
 # games can key their own debug code off SERVAL_DEBUG too.
 target_compile_definitions(${serval_engine_target}
     PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>)
+
+# Save memory, one object per save type (serval_add_rom's SAVE): each ROM or
+# page links its game's type, and --gc-sections drops it if the game never
+# calls save_*. On the GBA each object holds the type's backend and ROM ID
+# string; on the web, a buffer of the type's size kept in localStorage.
+if(SERVAL_TARGET_GBA OR SERVAL_TARGET_WEB)
+    foreach(type IN ITEMS SRAM FLASH64K FLASH128K EEPROM8K EEPROM512)
+        if(SERVAL_TARGET_WEB)
+            set(source src/web/save.c)
+        elseif(type STREQUAL "SRAM")
+            set(source src/gba/save_sram.c)
+        elseif(type MATCHES "^FLASH")
+            set(source src/gba/save_flash.c)
+        else()
+            set(source src/gba/save_eeprom.c)
+        endif()
+        string(TOLOWER "${type}" name)
+        add_library(serval_save_${name} OBJECT ${source})
+        target_compile_definitions(serval_save_${name}
+            PRIVATE SERVAL_SAVE_TYPE=${type} SERVAL_SAVE_${type})
+        target_link_libraries(serval_save_${name} PRIVATE serval serval_warnings)
+    endforeach()
+endif()
 
 if(SERVAL_TARGET_GBA)
     # Startup code, linked first into every ROM by serval_add_rom().
