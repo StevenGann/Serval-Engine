@@ -2,6 +2,8 @@
 
 Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffered screenblocks as the camera scrolls. 1.0 uses regular tiled backgrounds only; affine (Mode 7) is post-1.0.
 
+**Not implemented yet:** there is no background or tilemap API; only the text layer uses BG0 (`text.h`).
+
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
 
 ## Default layer roles

@@ -10,7 +10,18 @@ It is built as three layers:
 2. **World**: a fixed-pool, bitmask ECS for entity data.
 3. **Game logic**: GameMaker-style objects and events, run by a compact bytecode VM.
 
-> **Status:** pre-alpha. The build system, startup code, frame loop, input, sprites (resident groups), ECS with movement, physics and (depth-sorted) render systems, HUD text, random numbers, frame timing and PSG sound effects are in place, with tests running natively and on emulated hardware. The design is documented in [`docs/`](docs/README.md).
+> **Status:** pre-alpha, no release yet. In place: the build system and startup code, the frame loop, input, sprites (resident groups, rotation, depth sorting, layers), an ECS with movement, physics (bouncing bodies, wrap-around, collisions) and render systems, HUD text, fixed-point math and trigonometry, random numbers, frame timing, PSG sound effects and a splash screen. Debug builds report API misuse. Tests run natively and on emulated hardware, and a benchmark tracks performance. The design is documented in [`docs/`](docs/README.md).
+
+## Examples
+
+| Example | Shows |
+| --- | --- |
+| [`hello`](examples/hello/main.c) | The smallest game: one sprite moved with the D-pad |
+| [`bunnymark`](examples/bunnymark/main.c) | ECS, physics with gravity, depth sorting; doubles as the CPU benchmark |
+| [`pong`](examples/pong/main.c) | A complete small game: AI opponent, collisions, effects, sound, splash screen |
+| [`asteroids`](examples/asteroids/main.c) | Rotating sprites, wrap-around, many short-lived entities, sound, splash screen |
+
+Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. `examples/build-all.sh` builds them all into `examples/roms/`.
 
 ## Building
 

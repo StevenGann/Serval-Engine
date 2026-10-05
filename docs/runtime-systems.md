@@ -1,6 +1,6 @@
 # Other runtime systems
 
-These systems are scoped but not yet designed in detail.
+These systems are scoped; several have a first implementation (marked below), the rest are not designed in detail yet.
 
 ## Save data
 
@@ -10,11 +10,13 @@ Support SRAM, Flash and EEPROM, detected by emulators and flash carts from ROM I
 
 Variable-width font renderer drawing glyphs into BG tiles; text boxes with typewriter effect and choices; localization support. Japanese glyph sets need early planning.
 
-**Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, and `text_format()` for numbers without a C library. The full system above will build on or replace it.
+**Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, one color (white), `text_print_line()` for lines redrawn with changing content, and `text_format()` for numbers without a C library. The full system above will build on or replace it.
 
 ## Special effects
 
 Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and mosaic, exposed as API calls and script ops for transitions.
+
+Not exposed yet. `serval_splash()` uses the hardware fade-to-black internally; examples build effects from palettes (Pong's paddle flash, score glow via `screen_set_backdrop`).
 
 ## Math
 
@@ -28,7 +30,7 @@ Standardize on fixed-point types and lookup tables for trig early. There is no F
 
 ## Entity collision
 
-**Implemented so far:** `body_overlap(a, b)` (`include/serval/physics.h`), a rectangle test between two bodies, which the game calls for the pairs it cares about (Pong: ball against each paddle). No broad phase or collision events yet.
+**Implemented so far:** `body_overlap(a, b)` (`include/serval/physics.h`), a rectangle test between two bodies, which the game calls for the pairs it cares about (Pong: ball against each paddle; Asteroids: every shot against every rock, and the ship against every rock). Hitboxes can be smaller than sprites, with the sprite's origin centering the art. No broad phase or collision events yet.
 
 Avoid all-pairs checks (about 8,000 pairs at 128 entities). Use a coarse spatial grid or collision groups as the broad phase. The collision system emits collision events to the VM ([vm.md](vm.md)).
 

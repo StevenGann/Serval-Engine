@@ -21,14 +21,32 @@ Set per project at build time:
 
 Unused by Maxmod, so exposed as a zero-mixer-cost SFX API for UI bleeps and pickups.
 
-**Implemented** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2 and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests), stepped once per frame by `frame_end()`. Fields left out default sensibly. The wave channel (3) is unused so far. `examples/pong` uses it for every sound.
+**Implemented** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2 and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests), stepped once per frame by `frame_end()`. Fields left out default sensibly; each channel plays one sound at a time, and a new sound replaces the old one. The wave channel (3) is unused so far. `examples/pong` and `examples/asteroids` use it for every sound, and `serval_splash()` for its jingle.
+
+```c
+static const u16 win_notes[] = {523, 659, 784, 1047};          // Hz; 0 is a rest
+static const PsgSound sounds[] = {
+    [SND_HIT] = {.channel = PSG_SQUARE1, .frequency = 880, .frames = 8, .fade = -1},
+    [SND_WIN] = {.channel = PSG_SQUARE2, .frames = 7, .notes = win_notes, .note_count = 4},
+};
+psg_play(SND_HIT);
+```
 
 ## API
+
+Implemented (PSG):
+
+```c
+void psg_table_set(const PsgSound *const *table, u16 count);
+void psg_play(u16 sound_id);
+void psg_stop_all(void);
+```
+
+Planned (Maxmod, not implemented yet; the Maxmod fork is still to be chosen):
 
 ```c
 SoundHandle sfx_play(u16 sfx_id, u8 vol, u8 pan, u8 priority);
 void        sfx_stop(SoundHandle h);
-void        psg_play(u16 psg_sfx_id);
 
 void music_play(u16 song_id, bool loop);
 void music_stop(void);

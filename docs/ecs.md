@@ -7,19 +7,20 @@ Game world state lives in a simple bitmask ECS with fixed pools of 128 entities,
 - **System:** a function looping over entities whose mask includes the required components.
 
 ```c
-#define MAX_ENT 128
-enum { C_POS = 1<<0, C_VEL = 1<<1, C_SPR = 1<<2, C_HIT = 1<<3 };
+// Engine pools (include/serval/ecs.h): one array per component field.
+extern u32   ent_mask[MAX_ENT];             // component bits per slot
+extern FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
+extern FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
 
-IWRAM_DATA u32   ent_mask[MAX_ENT];
-IWRAM_DATA FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
-IWRAM_DATA FIXED vel_x[MAX_ENT], vel_y[MAX_ENT];
+// A game system (from examples/bunnymark): ECS_FOR_EACH visits every live
+// entity with all the given components; i is the slot index.
+#define C_BUNNY C_GAME(0)
 
-IWRAM_CODE void sys_movement(void) {
-    for (int i = 0; i < MAX_ENT; i++)
-        if ((ent_mask[i] & (C_POS|C_VEL)) == (C_POS|C_VEL)) {
-            pos_x[i] += vel_x[i];
-            pos_y[i] += vel_y[i];
-        }
+static void bunny_animate(void) {
+    ECS_FOR_EACH(i, C_BUNNY) {
+        spr_flags[i] = vel_x[i] < 0 ? SPRITE_FLIP_H : 0;
+        spr_depth[i] = (s16)fx_to_int(pos_y[i]);
+    }
 }
 ```
 
@@ -56,4 +57,4 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 
 ## Sprite component
 
-The sprite component stores only `(sprite_id, frame)`. The render system resolves it to a VRAM tile index; see [sprites.md](sprites.md#rom-data-format).
+`C_SPR` holds `spr_id` and `spr_frame` (which sprite and animation frame), `spr_flags` (flip and layer, as for `sprite_draw`), `spr_depth` (draw order for `sys_render_by_depth`) and `spr_angle` (rotation; 0 draws unrotated). The render systems resolve the sprite to its VRAM tiles and palette; see [sprites.md](sprites.md#rom-data-format).

@@ -12,7 +12,13 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Provide `memcpy`/`memset`/`memmove` in the engine so newlib is never linked.
 - [x] Define the sprite asset format and implement `sprite_draw` for resident groups ([sprites.md](sprites.md#api)).
 - [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, palette sharing, shadow palette, global/room watermark ([sprites.md](sprites.md#api)).
-- [ ] Optimize the per-frame path measured by bunnymark (`sprite_draw`, `sys_render`, `sys_movement`, `frame_end`'s OAM rebuild): ARM code in IWRAM, fewer EWRAM lookups ([development.md](development.md#benchmark)).
+- [x] Optimize the per-frame path measured by bunnymark: sprite drawing, render, movement and physics systems in IWRAM as ARM code, cartridge wait states, division-free text formatting ([development.md](development.md#benchmark)).
+- [ ] Further optimization: `text_format` stays in ROM (2.5 KB; IWRAM is shared with games), depth sorting costs ~10,000 cycles for 128 sprites.
+- [ ] Background and tilemap API (BG1-BG3, metatiles, streaming) ([tilemaps.md](tilemaps.md)).
+- [ ] Maxmod music and sampled sound effects ([audio.md](audio.md)); the PSG wave channel is unused.
+- [ ] A logo for `serval_splash()` ([core-api.md](core-api.md#splash-screen)).
+- [ ] Add the mGBA capture tool to the repository and use it for screenshot tests in CI ([development.md](development.md#checking-what-a-game-shows-and-plays)).
+- [ ] First release (`v0.1.0`).
 - [ ] Choose the toolchain: devkitARM vs ARM `arm-none-eabi-gcc`.
 - [ ] Decide whether raster effects make 1.0 ([tilemaps.md](tilemaps.md#raster-effects)).
 - [ ] Decide where the mGBA fork lives (its own repository is likely).

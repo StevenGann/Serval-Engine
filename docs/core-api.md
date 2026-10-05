@@ -21,6 +21,7 @@ int  screen_height(void);
 void screen_set_backdrop(Color color); // Color from COLOR_RGB(r, g, b), 0-255 components
 
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
+void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
 ```
 
 Headers: `serval/serval.h` includes everything. All of the above is implemented; sprite loading is described in [sprites.md](sprites.md#api).
@@ -49,9 +50,9 @@ serval: entity_create: all 128 entities are in use; returning ENTITY_NONE
 
 Each problem is reported once rather than every frame. Release builds compile the checks out entirely, so they cost nothing; the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too.
 
-**Hardware the engine configures:** `serval_init()` sets `WAITCNT` to the standard 3/1 ROM wait states with prefetch (power-on default is 4/2 without prefetch), which speeds up all code and data in ROM, including the game's.
+**Hardware the engine configures:** `serval_init()` sets `WAITCNT` to the standard 3/1 ROM wait states with prefetch (power-on default is 4/2 without prefetch), which speeds up all code and data in ROM, including the game's; sets display mode 0 with sprites on and 1D sprite tile mapping; enables the VBlank interrupt; and turns sound on (tone generators at full volume on both speakers).
 
-**Hardware the engine reserves:** the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15.
+**Hardware the engine reserves:** OAM and the 32 sprite rotation matrices (rebuilt every frame from draw calls), OBJ VRAM and OBJ palettes (sprite groups), the PSG sound channels 1, 2 and 4 (`audio.h`), timers 2 and 3 (the cycle counter behind `frame_cpu_cycles()`), BG0 with charblock 0 and screenblock 31 once text is used, and BG palette bank 15 (plus bank 14 and the blend registers during `serval_splash()`).
 
 ## Splash screen
 
@@ -84,5 +85,6 @@ Immediate-mode submission applies to OAM only. These scarce resources are manage
 
 - Tile VRAM ([sprites.md](sprites.md), [tilemaps.md](tilemaps.md))
 - Palette banks ([sprites.md](sprites.md#palettes))
-- The 32 affine matrices, deduplicated per frame
 - Background data ([tilemaps.md](tilemaps.md))
+
+The 32 sprite rotation matrices are not persistent: like OAM, they are rebuilt each frame from draw calls, shared by sprites with the same angle and flips ([sprites.md](sprites.md#api)).

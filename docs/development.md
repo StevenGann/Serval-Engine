@@ -52,11 +52,11 @@ Each example builds separately, so one that fails to build doesn't stop the rest
 
 | Path | Contents |
 | --- | --- |
-| `include/serval/` | Public headers: `serval.h` (umbrella), `core.h`, `screen.h`, `sprites.h`, `ecs.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
-| `src/ecs/`, `src/core/` | Platform-neutral modules (ECS, random numbers, text formatting). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` |
-| `src/gba/` | GBA-only code (`serval`): core API and frame timing (`core.c`), sprites and `sys_render` (`sprites.c`), text layer (`text.c`), debug output (`debug.c`), startup code (`crt0.s`), linker script (`gba.ld`), `memcpy` and friends (`libc.c`) |
+| `include/serval/` | Public headers: `serval.h` (umbrella: includes everything), `core.h` (init, splash, frames, buttons), `screen.h`, `sprites.h`, `ecs.h`, `physics.h`, `audio.h`, `text.h`, `math.h`, `fixed.h`, `random.h`, `debug.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
+| `src/ecs/`, `src/core/` | Platform-neutral modules: ECS (`ecs.c`), physics (`physics.c`), random numbers, text formatting, trigonometry (`trig.c`), and the internal warning macro (`warn.h`). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` (stderr output, clock-based entropy) |
+| `src/gba/` | GBA-only code: core API, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), text layer (`text.c`), PSG sound effects (`psg.c`), splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
-| `tests/` | Shared test cases (`ecs_tests.c`), the harness, and the host and ROM runners |
+| `tests/` | The harness (`test.h`, `test.c`), shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`), hardware suites (`rom/`: core, sprites, text, audio, splash, libc, libtonc compatibility), the runners, and `public_headers.c` |
 | `examples/` | Example ROMs, one directory each, plus `build-all.sh`: `hello` (smallest game), `bunnymark` (ECS, physics, benchmark), `pong` (a complete small game with AI, shaded sprites, effects and sound), `asteroids` (rotation, wrap-around, many short-lived entities, sound) |
 | `cmake/` | Toolchain file and `serval_add_rom()` |
 | `tools/` | ROM header fixer, mGBA test runner build, release packaging, benchmark (`bench.sh`) |
@@ -93,7 +93,7 @@ Two compile-only checks keep third-party libraries behind the API ([core-api.md]
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 71266 cycles (25.3%), peak 74804 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 72875 cycles (25.9%), peak 76551 (gba-release)
 ```
 
 The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
@@ -107,7 +107,26 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-04 | `7a3e296` | 86,510 | 30.7% | Partly a workload change: bunnymark's HUD now uses `text_print_line`, which blanks the rest of each row |
 | 2026-10-04 | `9f52373` | 53,217 | 18.9% | `text_format` without division; `WAITCNT` set to 3/1 + prefetch (all ROM code, including the game's, ~40% faster); `sys_movement` in IWRAM |
 | 2026-10-04 | `2a15678` | 57,173 | 20.3% | Per-entity `spr_flags` in `sys_render` (~29 cycles per sprite); bunnymark uses `ECS_FOR_EACH` |
-| 2026-10-04 | (physics, depth) | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
+| 2026-10-04 | `bab424a` | 71,266 | 25.3% | **Workload change**: bunnymark now uses the engine's `sys_physics` (faster than its own) plus depth-sorted drawing (~10,000) and a facing/depth system (~5,400) |
+| 2026-10-04 | `b9dae7f` | 71,345 | 25.3% | Open-edge checks in `sys_physics` (Pong) |
+| 2026-10-04 | `e51e33b` | 72,875 | 25.9% | One rotation check per sprite in the render systems; physics loop specialized for wrapping (Asteroids) |
+
+## Memory use
+
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (IWRAM code and data plus `.bss`):
+
+| Example | IWRAM used |
+| --- | --- |
+| `hello` | 8,044 bytes |
+| `pong` | 14,972 bytes |
+| `bunnymark` | 15,120 bytes |
+| `asteroids` | 15,300 bytes |
+
+The linker script reserves 2 KB below the stack and fails the build if IWRAM overflows. Large engine buffers live in EWRAM (256 KB) instead.
+
+## Checking what a game shows and plays
+
+Tests check state (OAM, VRAM, registers), not what the screen looks like or what the speakers play. During development, a small capture tool built on mGBA's core library ran ROMs headlessly with scripted buttons, saved chosen frames as images and recorded the audio, to check each example against its header comment. It is not part of the repository yet; adding it (and turning it into screenshot tests in CI) is an open question.
 
 ## Code style
 
@@ -121,7 +140,7 @@ The result is deterministic for a given build, so any change in the number comes
 
 - `clang-format` check.
 - Host tests with sanitizers.
-- GBA build with warnings as errors, the test ROM run in mGBA, a check that the release archive builds on its own, every example built, the bunnymark benchmark (result in the job summary), and the ROMs uploaded as artifacts.
+- GBA build (RelWithDebInfo, debug checks on) with warnings as errors and the test ROM run in mGBA; a check that the release archive builds on its own; a Release build with warnings as errors (debug checks compiled out); every example built; the bunnymark benchmark (result in the job summary); and the ROMs uploaded as artifacts.
 
 The ARM toolchain and mGBA versions are set in `.github/actions/setup-gba/action.yml`; `mgba-rom-test` is built once and cached.
 

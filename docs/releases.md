@@ -22,12 +22,14 @@ The repository root contains `serval.json`, which describes the engine to the to
 {
   "name": "serval-engine",
   "version": "1.4.0",
-  "toolchain": { "gcc": ">=14.2" }
+  "toolchain": { "gcc": ">=15.3" }
 }
 ```
 
 - `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease.
-- `toolchain.gcc` is the minimum GCC version the engine needs. The editor bundles a single toolchain and warns when it is older than this.
+- `toolchain.gcc` is the minimum GCC version the engine needs (currently 15.3, the version CI builds and tests with). The editor bundles a single toolchain and warns when it is older than this.
+
+No release has been published yet; `serval.json` says `0.1.0`.
 
 ## Release contents
 

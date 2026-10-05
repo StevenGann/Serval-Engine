@@ -4,7 +4,7 @@ Serval Engine: the open-source GBA game runtime (C on libtonc) that every Studio
 
 ## Status
 
-Pre-alpha: build system, startup code, frame loop, input, shadow OAM and ECS core, with tests and CI/CD. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (rotation, depth, layers), ECS with movement/physics/render systems, text, math, sound effects, splash screen; four examples; tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
 
 ## Commands
 
@@ -41,7 +41,8 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 
 - Target: ARM7TDMI at 16.78 MHz, no FPU, no hardware divider, no data cache. Use fixed-point math and lookup tables.
 - No malloc and no garbage collection at runtime. Fixed pools only (128 entities).
-- Hot data and per-frame system loops go in IWRAM (`IWRAM_DATA`, `IWRAM_CODE`, ARM mode).
+- Hot data and per-frame system loops go in IWRAM as ARM code (`SERVAL_IWRAM_CODE`, `SERVAL_IWRAM_DATA` in `platform.h`); large buffers in EWRAM (`SERVAL_EWRAM_BSS`). IWRAM is 32 KB shared with games (and the stack): a ROM uses about 8 KB with hello's features and about 15 KB with physics, rotation and depth sorting (unused engine code is dropped at link time; check `arm-none-eabi-size -A` on the `.elf`), so add IWRAM code only where bunnymark shows it pays.
+- Keep rarely-used paths out of hot loops (e.g. the rotated-sprite path is out of line): unrotated sprites must not pay for rotation. Check the benchmark.
 - Prefer build-time precomputation over runtime work.
 - VRAM, palette RAM and OAM writes happen in VBlank or forced blank.
 - VM opcodes must stay platform-neutral (no hardware addresses, no hard 32-bit dependency).
@@ -50,4 +51,15 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 
 ## Style
 
-Flat, raylib-style C API: plain functions, no hidden objects, `snake_case`, libtonc types (`u8`, `u16`, `FIXED`, …).
+Flat, raylib-style C API: plain functions, no hidden objects, `snake_case`, `u8`/`u16`/`u32`/`FIXED` types (identical to libtonc's). Hand-written assets use designated initializers and rely on defaults (`.size` and `.tiles` are enough for a sprite).
+
+## Hardware quirks learned the hard way
+
+- Square-channel frequency bits and `BLDY` are write-only: never read them back (the PSG module keeps the last written rate; tests use `serval_psg_rate`).
+- mGBA 0.8.x treats ROMs ≤ 256 KiB whose startup code loads an EWRAM address as multiboot: `gbafix.py` pads ROMs to 512 KiB.
+- `WAITCNT` must be set (3/1 + prefetch, done in `serval_init`), or all ROM code runs ~40% slower.
+- GCC turns loops into `memcpy`/`strlen` calls; `src/gba/libc.c` provides them and is linked as an object so archive order can't break it.
+
+## Verifying visuals and sound
+
+Headless checks can't see the screen. A capture tool built on mGBA's core (runs a ROM with scripted buttons, saves frames as images, records audio to WAV) was used during development; it is not in the repository yet. If available, check new examples' screens and sound with it, and describe in the example's header comment what correct looks like.
