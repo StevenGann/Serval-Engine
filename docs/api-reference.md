@@ -113,6 +113,7 @@ Fixed-pool bitmask ECS of `MAX_ENT` (128) entities. Design: [ecs.md](ecs.md).
 | `void entity_destroy(Entity e)` | Destroys the entity; does nothing for a stale handle or `ENTITY_NONE`. Also frees an entity whose `C_ALIVE` bit was cleared by hand (*warns*). Safe inside `ECS_FOR_EACH`. |
 | `bool entity_alive(Entity e)` | True if the handle refers to a live entity. |
 | `Entity entity_at(u32 index)` | The handle of the live entity in slot `index`, or `ENTITY_NONE` if the slot is free or out of range. E.g. `ECS_FOR_EACH(i, C_ROCK) entity_destroy(entity_at(i));`. |
+| `u32 ecs_count(u32 mask)` | The number of live entities that have every component in `mask` (0 counts all live entities), e.g. `ecs_count(C_ROCK)` for the rocks left in a wave. Loops over the pool: call it a few times per frame, not per entity. |
 | `void ecs_reset(void)` | Destroys every entity (e.g. on room change); outstanding handles go stale, including those of entities whose `C_ALIVE` bit was cleared by hand. Slots are then handed out in ascending order. |
 | `ECS_FOR_EACH(i, mask) { ... }` | Loops `u32 i` over every live slot that has *all* components in `mask`, in slot order. A mask of 0 visits every live entity. An entity created inside the loop may or may not be visited in the same loop. |
 | `bool ent_has(u32 i, u32 mask)` | True if slot `i` is alive (has `C_ALIVE`) and has every component in `mask` (mask 0 tests only that it is alive). Prefer it to `ent_mask[i] & (A \| B)`, which is true for either. `i` must be below `MAX_ENT` (not checked). |

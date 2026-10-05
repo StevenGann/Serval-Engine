@@ -94,6 +94,10 @@ bool entity_alive(Entity e);
 // system is looking at: ECS_FOR_EACH(i, C_ROCK) entity_destroy(entity_at(i));
 Entity entity_at(u32 index);
 
+// The number of live entities that have every component in `mask` (0 counts
+// all live entities), e.g. the rocks left in a wave: ecs_count(C_ROCK).
+u32 ecs_count(u32 mask);
+
 // Systems, run once per frame by the game.
 // sys_movement: position += velocity for entities with C_POS and C_VEL, except
 // map bodies (C_MAPBODY, map.h), which sys_map_movement() moves.

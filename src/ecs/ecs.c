@@ -113,6 +113,14 @@ Entity entity_at(u32 index) {
     return make_handle(index);
 }
 
+u32 ecs_count(u32 mask) {
+    u32 count = 0;
+    ECS_FOR_EACH(i, mask) {
+        count++;
+    }
+    return count;
+}
+
 bool entity_alive(Entity e) {
     u32 index = entity_index(e);
     return index < MAX_ENT && ent_used[index] && (ent_mask[index] & C_ALIVE) &&

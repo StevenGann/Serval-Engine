@@ -279,7 +279,24 @@ static void alive_bit_in_create_mask_warns(void) {
     CHECK(C_GAME(14) == (1u << 30));
 }
 
+static void count_matches_live_entities(void) {
+    ecs_reset();
+    CHECK(ecs_count(0) == 0);
+    Entity a = entity_create(C_POS);
+    entity_create(C_POS | C_VEL);
+    entity_create(C_VEL);
+    CHECK(ecs_count(0) == 3);
+    CHECK(ecs_count(C_POS) == 2);
+    CHECK(ecs_count(C_POS | C_VEL) == 1);
+    CHECK(ecs_count(C_GAME(0)) == 0);
+    entity_destroy(a);
+    CHECK(ecs_count(C_POS) == 1);
+    CHECK(ecs_count(0) == 2);
+    ecs_reset();
+}
+
 TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
+           {"count_matches_live_entities", count_matches_live_entities},
            {"slots_are_handed_out_in_order", slots_are_handed_out_in_order},
            {"destroy_makes_handle_stale", destroy_makes_handle_stale},
            {"reused_slot_gets_new_generation", reused_slot_gets_new_generation},

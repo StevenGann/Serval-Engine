@@ -23,7 +23,9 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`bunnymark`](../examples/bunnymark/main.c) | Entities, engine systems, gravity, a game-defined component and system, HUD text |
 | [`pong`](../examples/pong/main.c) | A complete game: title screen, states, collisions, sound, splash screen |
 | [`asteroids`](../examples/asteroids/main.c) | Rotation, wrap-around, trigonometry, many short-lived entities |
+| [`breakout`](../examples/breakout/main.c) | A game split into files: bricks as entities and which side the ball hit (`body_hit_side`), game components and `ecs_count`, directions as angles, power-ups, map layers as a static background, music, save data |
 | [`platformer`](../examples/platformer/main.c) | A bigger game split into files: tilesets, metatiles and map layers, a scrolling camera, map bodies and collision, changing the map at runtime, a platformer controller |
+| [`shmup`](../examples/shmup/main.c) | A vertical shooter: a stage scrolled by the camera with a wrapping parallax layer, a HUD panel layer, an entity budget with caps, movement patterns from a wave table, aimed bullets, a multi-phase boss, cheap per-frame loops over the entities of each kind |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 
