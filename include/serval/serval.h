@@ -19,5 +19,6 @@
 #include "serval/screen.h"
 #include "serval/sprites.h"
 #include "serval/text.h"
+#include "serval/vm.h"
 
 #endif // SERVAL_H

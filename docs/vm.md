@@ -49,7 +49,7 @@ typedef struct {
     const u8* pc;              // NULL: this context is free
     Entity self;               // bound entity, or ENTITY_NONE for detached threads
     Entity other;              // the event's other entity (collision), else ENTITY_NONE
-    u8 event;                  // EV_* this context is running
+    u8 event;                  // VM_EV_* this context is running
     u8 wait_kind;              // WAIT_NONE / FRAMES / ANIM / MOVE
     u16 wait_frames;           // for WAIT_KIND_FRAMES
     u8 sp, cp;                 // value and call stack tops
@@ -108,7 +108,7 @@ Immediately after the header: one 32-byte record per object.
 | 0 | 4 | Default component mask (`C_*` bits, as `entity_create` takes) |
 | 4 | 2 | Default sprite ID |
 | 6 | 2 | Reserved = 0 |
-| 8 | 4 × 6 | Handler offsets for `EV_CREATE, EV_STEP, EV_DESTROY, EV_COLLISION, EV_ANIM_END, EV_ROOM_START` (blob-relative; 0 = no handler) |
+| 8 | 4 × 6 | Handler offsets for `VM_EV_CREATE, VM_EV_STEP, VM_EV_DESTROY, VM_EV_COLLISION, VM_EV_ANIM_END, VM_EV_ROOM_START` (blob-relative; 0 = no handler) |
 
 ### String table and code
 
@@ -182,7 +182,7 @@ Entity handles travel in cells (`Entity` is a u16; `ENTITY_NONE` is 0).
 | 0x3C | `SPAWN` | u16 object | x, y → entity. `entity_create` with the object's component mask, sprite and position set; Create queued (runs this phase) |
 | 0x3D | `KILL` | | e → ; queues Destroy: dispatcher halts e's context, runs the handler to completion (a wait in Destroy warns and halts), then `entity_destroy` |
 
-Properties (`GETP`/`SETP` page, v1): `P_X 0, P_Y 1` (FIXED, world), `P_VX 2, P_VY 3` (FIXED), `P_SPR 4, P_FRAME 5, P_FLAGS 6, P_ANGLE 7, P_DEPTH 8, P_SCALE 9` — the ECS arrays of the same names. Dead or `ENTITY_NONE` entity: warn; `GETP` pushes 0, `SETP` is dropped. A property whose component bit the entity lacks warns in debug builds but still reads/writes the (zeroed-at-create) array. Unknown property: warn, 0/dropped. The page is append-only.
+Properties (`GETP`/`SETP` page, v1): `VM_P_X 0, VM_P_Y 1` (FIXED, world), `VM_P_VX 2, VM_P_VY 3` (FIXED), `VM_P_SPR 4, VM_P_FRAME 5, VM_P_FLAGS 6, VM_P_ANGLE 7, VM_P_DEPTH 8, VM_P_SCALE 9` — the ECS arrays of the same names. Dead or `ENTITY_NONE` entity: warn; `GETP` pushes 0, `SETP` is dropped. A property whose component bit the entity lacks warns in debug builds but still reads/writes the (zeroed-at-create) array. Unknown property: warn, 0/dropped. The page is append-only.
 
 ### Engine calls
 
@@ -202,7 +202,7 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 5 | `camera_set` | x, y (whole pixels) | |
 | 6 | `text_print` | col, row, string index | |
 | 7 | `random_range` | lo, hi | cell |
-| 8 | `button_held` | button mask | 0/1 |
+| 8 | `button_down` | button mask | 0/1 |
 | 9 | `button_pressed` | button mask | 0/1 |
 | 10 | `screen_brightness` | value | |
 | 11 | `path_start` | entity, path index (bindings), flags | |
@@ -222,34 +222,67 @@ Pointer-taking engine calls go through **bindings** the game registers once: `vm
 - `vm_reload(blob, size)`: the same, but keeps global values when the global count matches (else zeroes and warns) — so the debug link can swap scripts mid-game without losing story flags. Swaps happen between frames (outside `vm_step`/`vm_events`).
 - Scripts execute from the blob in place; the editor's debugger owns the PC → event-block mapping (emitted by its compiler, never shipped in the blob).
 
-## Public API (`include/serval/vm.h`)
+## Public API
+
+[`include/serval/vm.h`](../include/serval/vm.h) is the API and names every number in this document (`VM_OP_*`, `VM_EV_*`, `VM_P_*`, `VM_SYS_*`, the limits). The ECS gains one query for `WAIT_ANIM`:
 
 ```c
-bool vm_load(const u8* blob, u32 size);
-bool vm_reload(const u8* blob, u32 size);     // keeps globals when layouts match
-void vm_unload(void);
-void vm_bind(const VmBindings* bindings);
-
-void vm_attach(Entity e, u16 object);         // bind + queue Create
-void vm_detach(Entity e);                     // halt its script; no Destroy event
-void vm_kill(Entity e);                       // Destroy handler, then entity_destroy
-int  vm_start(u16 object, u8 event);          // detached thread; context index or -1
-void vm_event(Entity e, Entity other, u8 ev); // queue an event (engine glue, C code)
-
-void vm_step(void);                           // phase 1 (after input)
-void vm_events(void);                         // phase 2 (after physics)
-
-s32  vm_global(u16 index);                    // C code and tests
-void vm_set_global(u16 index, s32 value);
-u32  vm_ops_last_frame(void);                 // perf counter
-bool vm_idle(void);                           // nothing running or waiting (tests)
+// ecs.h: true if e is alive, has C_SPR and C_ANIM, its sprite has
+// SPRITE_ASSET_ANIM_ONCE, and it is on its last frame (or, with a
+// frame_order, its last step), where sys_animate leaves it.
+bool anim_finished(Entity e);
 ```
 
-C code that destroys scripted entities directly must use `vm_kill`/`vm_detach` so the VM's entity→context map stays honest.
+C code that destroys scripted entities directly must use `vm_kill`/`vm_detach` so the VM's entity→context map stays honest (the stale-binding guard below makes a mistake safe, not correct).
+
+## Exact semantics
+
+The rules an implementation must follow where the sections above leave room. Tests are written against these.
+
+**Starting scripts.**
+- `vm_attach(e, obj)`: binds `e` to `obj` and queues Create (even when the object has no Create handler: then the queued event simply does nothing). An entity already attached is rebound: its live context is halted first. Dead entity, object out of range or no blob: warn, ignore.
+- `vm_start(obj, ev)` allocates a context at once (`self = other = ENTITY_NONE`) in the *ready* state; ready contexts first run in the next `vm_step()`'s resume pass. `vm_events()` never resumes contexts.
+- A queued event, when drained, allocates a context for its entity and runs it immediately (to completion or its first wait), within the drain.
+
+**The resume pass** (start of `vm_step()`): visits each context once, in pool index order. A ready context runs. A `WAIT n` context decrements its counter and runs when it reaches 0 (so `WAIT 1` resumes in the next frame's pass; counters are clamped to 65535). `WAIT_ANIM`/`WAIT_MOVE` contexts run when their condition holds. A context that waits again during the pass is not visited again in the same pass.
+
+**Step handlers** run after the resume pass, in entity index order, for attached entities whose object has a Step handler and that have no live context.
+
+**Draining** (`vm_step()` after Step handlers, and `vm_events()`): FIFO until the queue is empty, including events queued during the drain. Per entry:
+- `VM_EV_DESTROY` (from `KILL`): if the entity is dead, skip. If attached: halt its live context, run its Destroy handler (if any) to completion — a wait inside it warns and halts it — then unbind. Then `entity_destroy`. Unattached live entities are just destroyed.
+- Any other event: skip silently if the entity is dead or unattached, or its object has no handler for the event. If the entity has a live context: warn and drop. Otherwise allocate a context (`self = e`, `other` as queued) and run it. No free context: warn, drop.
+
+**Stale bindings.** The VM stores each binding's `Entity` handle. Wherever it looks a binding up, a handle that no longer matches a live entity (destroyed behind the VM's back) counts as unbound: the binding is cleared, its context halted, and it warns once.
+
+**`vm_kill(e)`** runs the Destroy logic above immediately when called outside the VM's phases; if called during one it is queued like `KILL`.
+
+**Spawning.** `SPAWN obj` pops `y` then `x` (x was pushed first), calls `entity_create` with the object's component mask, sets `pos_x`/`pos_y` to x/y, sets `spr_id` to the object's sprite if the mask has `C_SPR`, attaches it (queueing Create, which runs in the same drain or, from the resume pass or a Step handler, in this phase's drain), and pushes the entity. `entity_create` failing (pool full) or an object out of range: warn, push 0.
+
+**Arithmetic** is defined on two's-complement 32-bit wrapping and must be implemented without C undefined behaviour (the host tests run under UBSan): do `ADD SUB MUL NEG SHL` in `u32`; `DIV` and `MOD` of `INT32_MIN` by −1 give `INT32_MIN` and 0; `SHR` is arithmetic; `FXMUL` is `(s32)(((s64)a * b) >> 8)` truncated to 32 bits; `FXDIV` is `(s64)a * 256 / b` truncated (never `a << 8` on a negative value).
+
+**Budget.** Ops are counted per context per phase. The op that makes the count exceed `VM_OPS_PER_SLICE` is not run: the context becomes `WAIT 1` at that op and warns once per context lifetime. `vm_ops_this_frame()` counts ops run since the latest `vm_step()` began (both phases).
+
+**Halting a context** frees it: `pc = NULL`, and the entity's context link (if any) is cleared. Every "warn, halt context" in this document halts only the offending context; the phase continues with the next one.
+
+**Debug ops.** `TRACE` peeks at the top of the stack (does not pop); with an empty stack it logs only the string; an invalid string index logs `?`. `BRK` logs `vm: BRK at <offset>` in debug builds. Both log through `debug_log` and are silent no-ops in release builds (operands still skipped).
+
+## Worked example (golden bytes)
+
+The smallest complete blob: one object (component mask 0, sprite 0) with only a Create handler that stores 5 + 7 in global 0, and one string, `"HI"`. Both this engine's tests and the editor's compiler tests must reproduce these 63 bytes exactly.
+
+```text
+0000: 53 56 4D 42 01 04 00 00 01 00 01 00 01 00 00 00   header: "SVMB" v1, cells 4, 1 object, 1 string, 1 global
+0010: 00 00 00 00 00 00 00 00 37 00 00 00 00 00 00 00   object 0: mask 0, sprite 0, Create @ 0x37, Step 0
+0020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   Destroy, Collision, Anim End, Room Start: none
+0030: 34 00 00 00 48 49 00 02 05 02 07 10 09 00 01      string 0 @ 0x34 = "HI"; code @ 0x37:
+                                                         PUSH8 5, PUSH8 7, ADD, STG 0, HALT
+```
+
+`vm_load` accepts it; `vm_start(0, VM_EV_CREATE)` returns a context, the next `vm_step()` runs it, and afterwards `vm_global(0) == 12` and `vm_idle()`.
 
 ## Implementation notes
 
-- **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `SVM_OP_*`, `EV_*`, `P_*` and SYS enums public (tests and the editor's compiler both need the numbers; the blob format is MIT, the compiler is not part of this repo).
+- **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `VM_OP_*`, `VM_EV_*`, `VM_P_*` and `VM_SYS_*` enums public (tests and the editor's compiler both need the numbers; the blob format is MIT, the compiler is not part of this repo).
 - **Placement:** the dispatch loop starts as Thumb in ROM (~3-4 KB expected). It moves to IWRAM as ARM only if a script-heavy benchmark shows it pays, per the house rule; contexts, globals and the queue are `SERVAL_EWRAM_BSS`.
 - **Dispatch:** a `switch` on the opcode byte is fine for v1; measure before anything cleverer.
 - **Cost intuition:** ~280,000 CPU cycles per frame at 60 fps; budget scripts at well under 40,000. A ROM Thumb switch dispatch lands near 50-100 cycles per simple op, so the practical ceiling is a few hundred ops per frame across all scripts — consistent with "scripts decide what happens": a Step handler should be a handful of ops, and anything per-frame-heavy belongs in a C system.
@@ -270,7 +303,7 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 1. ~~Specify the format and opcode set~~ (this document).
 2. **Core interpreter:** loader + stack/variable/arithmetic/control ops, budget, validation; `vm_tests.c` for all of it, green on host and in the test ROM.
 3. **Scheduler:** contexts, waits, the two phases, event queue, `vm_attach`/`vm_detach`/`vm_kill`/`SPAWN`/`KILL`, Step dispatch, one-per-entity rule; frame-simulation tests.
-4. **Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; collision glue queueing `EV_COLLISION` from physics contacts; update [frame-loop.md](frame-loop.md) from proposed to confirmed.
+4. **Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; update [frame-loop.md](frame-loop.md) from proposed to confirmed. Collisions reach scripts through `vm_event(a, b, VM_EV_COLLISION)` from game (or editor-generated) C code after `body_overlap`: `body_contact` reports only walls, and the engine has no entity-pair broad phase yet. An engine-side collision pass is future work.
 5. **Proof example:** a small `examples/` game whose logic is entirely hand-assembled bytecode (objects, Step movement, a collision, waits, a spawn, sound) — the usual example rules apply (header comment, `serval_add_rom`, ROM checks, web build, screenshots).
 6. **Debug and performance:** `BRK` semantics finalized with [debug-link.md](debug-link.md), `vm_reload`, a script benchmark, and the IWRAM decision from its numbers. Freeze format v1 alongside the first release that ships it.
 
@@ -278,7 +311,7 @@ Milestones 2 and 3 are pure `src/core` work with no hardware dependencies — bu
 
 ## Open items
 
-- The event set will grow (buttons, timers, script-to-script messages); `EV_*`, the property page and the SYS page are all append-only by design.
+- The event set will grow (buttons, timers, script-to-script messages); `VM_EV_*`, the property page and the SYS page are all append-only by design.
 - 16-bit cells for a GB target: the header field and width-agnostic semantics keep the door open; nothing else is done for it in v1.
 - Whether rooms bring per-room global banks or the compiler just partitions the global space (compiler-side concern for now).
 - Everything type-shaped (checking, constant folding, dead handler elimination) is the editor compiler's job and stays out of the engine.
