@@ -22,11 +22,13 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr);
 // Host build only (src/host/platform.c): what serval_vm_platform_call saw,
 // for the tests. Not defined in GBA or web builds.
 typedef struct {
-    u32 calls;        // platform calls since the test last zeroed this
-    u32 fn;           // the latest call's VM_SYS_* number
-    s32 args[3];      // its arguments (unused ones 0)
-    const void* ptr;  // its resolved string or song
-    s32 button_value; // what VM_SYS_BUTTON_DOWN and VM_SYS_BUTTON_PRESSED return
+    u32 calls;            // platform calls since the test last zeroed this
+    u32 fn;               // the latest call's VM_SYS_* number
+    s32 args[3];          // its arguments (unused ones 0)
+    const void* ptr;      // its resolved string or song
+    s32 button_value;     // what VM_SYS_BUTTON_DOWN and VM_SYS_BUTTON_PRESSED return
+    void (*during)(void); // if set, called by each call: stands in for game code
+                          // that runs during vm_step or vm_events
 } ServalHostVmCalls;
 extern ServalHostVmCalls serval_host_vm_calls;
 

@@ -41,7 +41,6 @@ typedef struct {
     u8 event;            // the VM_EV_* handler it runs
     u16 wait_frames;     // CTX_WAIT_FRAMES: resume passes left
     u8 sp, cp;           // value and call stack depths
-    bool warned_budget;  // the budget warning comes once per context
     s32 stack[VM_STACK]; // value stack
     u32 calls[VM_CALLS]; // return offsets
     s32 loc[VM_LOCALS];  // zeroed when the context starts
@@ -83,8 +82,7 @@ _Static_assert(VM_GLOBALS >= 256, "LDG and STG take any u8 global index");
 
 #ifdef SERVAL_DEBUG
 // Each kind of problem is reported once per loaded blob (vm_load, vm_reload
-// and vm_unload start over), not every frame a faulty script runs. The budget
-// warning is per context instead (docs/vm.md).
+// and vm_unload start over), not every frame a faulty script runs (docs/vm.md).
 enum {
     WARN_ESCAPED,
     WARN_UNKNOWN_OP,
@@ -92,6 +90,8 @@ enum {
     WARN_UNDERFLOW,
     WARN_CALL_DEPTH,
     WARN_DIV_ZERO,
+    WARN_BUDGET,
+    WARN_DESTROY_BUDGET,
     WARN_LOCAL,
     WARN_SELF,
     WARN_WAIT_ANIM,
@@ -101,6 +101,7 @@ enum {
     WARN_PROP_COMPONENT,
     WARN_SPAWN_OBJECT,
     WARN_SPAWN_FULL,
+    WARN_KILL_NONE,
     WARN_SYS,
     WARN_SONG,
     WARN_PATH,
@@ -116,6 +117,8 @@ enum {
     WARN_START_OBJECT,
     WARN_START_HANDLER,
     WARN_EVENT,
+    WARN_EVENT_DESTROY_NONE,
+    WARN_LOAD_IN_PHASE,
     WARN_GLOBAL,
     WARN_COUNT
 };
@@ -164,21 +167,21 @@ static u32 handler_of(u32 object, u32 event) {
     return le32(object_record(object) + 8 + event * 4);
 }
 
-// String `index` of the blob, or NULL (warning) if there is no such string or
-// it runs off the end of the blob without its NUL.
+// String `index` (< string_count). vm_load checked that its NUL is inside the
+// blob.
+static const char* string_of(u32 index) {
+    return (const char*)(blob +
+                         le32(blob + VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + index * 4));
+}
+
+// String `index` of the blob, or NULL (warning) if there is no such string.
 static const char* string_at(s32 index) {
     if (index < 0 || (u32)index >= string_count) {
         WARN_ONCE(WARN_STRING, "vm: string index %d is not in the blob (%u strings)", (int)index,
                   string_count);
         return NULL;
     }
-    u32 offset = le32(blob + VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + (u32)index * 4);
-    for (u32 at = offset; at < blob_size; at++) {
-        if (blob[at] == 0)
-            return (const char*)(blob + offset);
-    }
-    WARN_ONCE(WARN_STRING, "vm: string %d runs off the end of the blob (no NUL)", (int)index);
-    return NULL;
+    return string_of((u32)index);
 }
 
 // A cell holding an entity handle. Values that no u16 handle has are no
@@ -242,7 +245,6 @@ static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 
         c->event = (u8)event;
         c->wait_frames = 0;
         c->sp = c->cp = 0;
-        c->warned_budget = false;
         for (u32 n = 0; n < VM_LOCALS; n++)
             c->loc[n] = 0;
         if (self != ENTITY_NONE)
@@ -411,6 +413,7 @@ static Entity spawn(u32 object, s32 x, s32 y, u32 at) {
 }
 
 // WAIT_ANIM can wait for e: it has C_SPR | C_ANIM and a one-shot sprite.
+// Checked when WAIT_ANIM runs and on every resume pass while it waits.
 static bool anim_waitable(Entity e) {
     if (!entity_alive(e))
         return false;
@@ -785,10 +788,22 @@ static u32 execute(Context* c, bool must_finish) {
                 return ops; // halted from outside (cannot happen today)
             break;
         }
-        case VM_OP_KILL:
+        case VM_OP_KILL: {
             NEED(1);
-            enqueue(cell_entity(st[--sp]), ENTITY_NONE, VM_EV_DESTROY);
+            s32 cell = st[--sp];
+            Entity e = cell_entity(cell);
+            // A dead entity is skipped when its Destroy is drained, silently:
+            // two scripts killing the same thing is normal. No entity at all
+            // is a script bug.
+            if (e == ENTITY_NONE)
+                WARN_ONCE(WARN_KILL_NONE,
+                          "vm: KILL at 0x%x of %d, which is no entity (a failed SPAWN, or a "
+                          "variable never set?); ignored",
+                          at, (int)cell);
+            else
+                enqueue(e, ENTITY_NONE, VM_EV_DESTROY);
             break;
+        }
 
         case VM_OP_SYS: {
             OPERAND(1);
@@ -822,17 +837,7 @@ static u32 execute(Context* c, bool must_finish) {
             OPERAND(2);
 #ifdef SERVAL_DEBUG
             u32 index = le16(code + pc);
-            const char* s = "?";
-            if (index < string_count) {
-                u32 offset =
-                    le32(code + VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + index * 4);
-                for (u32 k = offset; k < size; k++) {
-                    if (code[k] == 0) {
-                        s = (const char*)(code + offset);
-                        break;
-                    }
-                }
-            }
+            const char* s = index < string_count ? string_of(index) : "?";
             if (sp)
                 debug_log(text_format("vm: %s %d", s, (int)st[sp - 1]));
             else
@@ -876,14 +881,12 @@ destroy_wait:
               "vm: a Destroy handler waits at 0x%x; it must run to completion, so it is halted",
               at);
     goto halted;
-budget:
+budget: // the op at `at` is not run
 #ifdef SERVAL_DEBUG
-    if (!c->warned_budget) {
-        c->warned_budget = true;
+    if (first_warning(must_finish ? WARN_DESTROY_BUDGET : WARN_BUDGET))
         SERVAL_WARN("vm: a %s handler ran %d ops in one phase (an endless loop?); it %s at 0x%x",
                     event_names[c->event], VM_OPS_PER_SLICE,
-                    must_finish ? "is halted (Destroy must finish)" : "waits a frame", at);
-    }
+                    must_finish ? "is halted (Destroy can't wait)" : "waits a frame", at);
 #endif
     if (must_finish)
         goto halted;
@@ -1011,7 +1014,17 @@ void vm_step(void) {
             resume = --c->wait_frames == 0;
             break;
         case CTX_WAIT_ANIM:
-            resume = anim_finished(c->self);
+            // The game may have switched self to a sprite without a one-shot
+            // animation since: then nothing would end the wait.
+            if (anim_waitable(c->self)) {
+                resume = anim_finished(c->self);
+            } else {
+                WARN_ONCE(WARN_WAIT_ANIM,
+                          "vm: WAIT_ANIM at 0x%x: self no longer has a one-shot animation to "
+                          "wait for (its sprite or components changed); not waiting",
+                          c->pc - 1);
+                resume = true;
+            }
             break;
         case CTX_WAIT_MOVE:
             resume = !path_active(c->self);
@@ -1107,6 +1120,12 @@ void vm_event(Entity e, Entity other, u8 event) {
                   (u32)event);
         return;
     }
+    // Destroy is exactly KILL: queued, `other` unused (the handler's OTHER is
+    // 0), and no entity at all warns.
+    if (event == VM_EV_DESTROY && e == ENTITY_NONE) {
+        WARN_ONCE(WARN_EVENT_DESTROY_NONE, "vm_event: Destroy for ENTITY_NONE; ignored");
+        return;
+    }
     enqueue(e, other, event);
 }
 
@@ -1163,12 +1182,23 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
         }
     }
     const u8* string_table = b + VM_HEADER_SIZE + objects * VM_OBJECT_SIZE;
+    // A string ends inside the blob if it starts before `ended`, just past the
+    // blob's last NUL (tables_end if it has none past the tables).
+    u32 ended = size;
+    while (strings && ended > tables_end && b[ended - 1] != 0)
+        ended--;
     for (u32 index = 0; index < strings; index++) {
         u32 offset = le32(string_table + index * 4);
         if (offset < tables_end || offset >= size) {
             SERVAL_WARN("%s: string %u is at 0x%x, outside the blob's data (0x%x to 0x%x); "
                         "nothing is loaded",
                         who, index, offset, tables_end, size);
+            return false;
+        }
+        if (offset >= ended) {
+            SERVAL_WARN("%s: string %u (at 0x%x) has no NUL before the end of the blob; nothing "
+                        "is loaded",
+                        who, index, offset);
             return false;
         }
     }
@@ -1199,8 +1229,23 @@ static void install(const u8* b, u32 size, bool keep) {
     global_count = b ? le16(b + 12) : 0;
 }
 
+// True (warning) if a phase is running: vm_load, vm_reload and vm_unload
+// would pull the blob, contexts and queue from under the running script.
+// Scripts can't call them in v1 (no SYS call leads there), so only game C code
+// run from inside vm_step or vm_events could; it is refused.
+static bool loading_in_phase(const char* who) {
+    (void)who; // only for warnings
+    if (!in_phase)
+        return false;
+    WARN_ONCE(WARN_LOAD_IN_PHASE,
+              "%s: called during vm_step or vm_events; ignored (load between frames)", who);
+    return true;
+}
+
 // vm_load and vm_reload (keep: hot reload). An invalid blob unloads.
 static bool load(const u8* b, u32 size, bool keep, const char* who) {
+    if (loading_in_phase(who))
+        return false;
     if (!valid_blob(b, size, who)) {
         install(NULL, 0, false);
         return false;
@@ -1226,7 +1271,8 @@ bool vm_reload(const u8* b, u32 size) {
 }
 
 void vm_unload(void) {
-    install(NULL, 0, false);
+    if (!loading_in_phase("vm_unload"))
+        install(NULL, 0, false);
 }
 
 void vm_bind(const VmBindings* b) {

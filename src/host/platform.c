@@ -71,5 +71,7 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     for (u32 k = 0; k < 3; k++)
         r->args[k] = args && k < n ? args[k] : 0;
     r->ptr = ptr;
+    if (r->during)
+        r->during();
     return fn == VM_SYS_BUTTON_DOWN || fn == VM_SYS_BUTTON_PRESSED ? r->button_value : 0;
 }

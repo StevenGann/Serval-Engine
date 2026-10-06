@@ -611,9 +611,9 @@ static void arithmetic_ops(void) {
     check_rows(arithmetic_rows, sizeof arithmetic_rows / sizeof arithmetic_rows[0]);
 }
 
-// vm.md "Exact semantics: Arithmetic": FXMUL is (s32)(((s64)a * b) >> 8) (an
-// arithmetic shift: rounds down), FXDIV (s64)a * 256 / b (rounds toward zero),
-// both truncated to 32 bits.
+// vm.md "Exact semantics: Arithmetic": FXMUL is the 64-bit product shifted
+// right arithmetically by 8 (rounding toward negative infinity), FXDIV
+// (s64)a * 256 / b (rounding toward zero), both truncated modulo 2^32.
 static const OpRow fixed_point_rows[] = {
     {VM_OP_FXMUL, FX(3), FX(2), FX(6), "FXMUL 3.0 * 2.0"},
     {VM_OP_FXMUL, -384, 512, -768, "FXMUL -1.5 * 2.0"},
@@ -1640,6 +1640,119 @@ static void wait_inside_destroy_warns_and_halts(void) {
     CHECK_WARNED(before, 1);
 }
 
+// vm.md "Exact semantics: Destroy details", "Entity cells": KILL of
+// ENTITY_NONE, or of a cell no handle has (never truncated into one), warns
+// and the script goes on; KILL of an entity that is already dead (destroyed,
+// or a stale handle to a reused slot) is skipped silently.
+static void kill_of_no_entity_warns_but_of_a_dead_one_is_silent(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    ldg(5);         // destroyed
+    op(VM_OP_KILL); // silently skipped
+    ldg(6);         // stale: live's slot, another generation
+    op(VM_OP_KILL); // silently skipped
+    store(0, 1);    // carried on
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    push8(0);       // ENTITY_NONE
+    op(VM_OP_KILL); // warns
+    ldg(7);         // 0x10000 | live: no handle, not live once truncated
+    op(VM_OP_KILL); // the same problem: no second warning
+    store(1, 1);    // carried on
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity live = entity_create(C_POS);
+    Entity gone = entity_create(C_POS);
+    entity_destroy(gone);
+    u32 generation = entity_generation(live) == 255 ? 1u : entity_generation(live) + 1u;
+    Entity stale = (Entity)(generation << 8 | entity_index(live));
+    CHECK(!entity_alive(stale));
+    vm_set_global(5, gone);
+    vm_set_global(6, stale);
+    vm_set_global(7, (s32)(0x10000u | live));
+    u32 before = debug_warning_count();
+    start(0);
+    vm_step();
+    CHECK(vm_global(0) == 1);
+    CHECK(entity_alive(live));
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    start(1);
+    vm_step();
+    CHECK(vm_global(1) == 1);
+    CHECK(entity_alive(live));
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Exact semantics: Destroy details": vm_event(e, x, VM_EV_DESTROY)
+// behaves exactly like KILL: queued until a phase drains it, then the Destroy
+// logic. A Destroy handler sees OTHER = 0, whatever the event or the killing
+// handler had. vm_event of Destroy for ENTITY_NONE warns, as KILL does.
+static void destroy_event_behaves_like_kill(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_DESTROY);
+    op(VM_OP_OTHER); // 0
+    ldg(0);          //
+    op(VM_OP_ADD);   //
+    stg(0);          // glob[0] += OTHER
+    count(1);        // glob[1]: Destroys run
+    op(VM_OP_HALT);  //
+    handler(1, VM_EV_COLLISION);
+    op(VM_OP_OTHER); // its other entity
+    op(VM_OP_KILL);  // queues its Destroy
+    op(VM_OP_HALT);  //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity killer = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 0);
+    vm_attach(killer, 1);
+    vm_events();
+    u32 before = debug_warning_count();
+    vm_event(a, killer, VM_EV_DESTROY);   // from C, with an other
+    CHECK(entity_alive(a) && !vm_idle()); // queued, not run
+    vm_events();
+    CHECK(!entity_alive(a));
+    CHECK(vm_global(1) == 1 && vm_global(0) == 0);
+    vm_event(killer, b, VM_EV_COLLISION); // its handler KILLs b
+    vm_events();
+    CHECK(!entity_alive(b) && entity_alive(killer));
+    CHECK(vm_global(1) == 2 && vm_global(0) == 0);
+    CHECK_WARNED(before, 0);
+    vm_event(ENTITY_NONE, killer, VM_EV_DESTROY);
+    CHECK(vm_idle()); // nothing queued
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Exact semantics: Destroy details": vm_event with an event number of
+// VM_EV_COUNT or more warns and queues nothing.
+static void vm_event_rejects_unknown_events(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_COLLISION);
+    count(0);
+    op(VM_OP_HALT);
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events();
+    u32 before = debug_warning_count();
+    vm_event(e, ENTITY_NONE, VM_EV_COUNT);
+    vm_event(e, ENTITY_NONE, 255);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+    vm_events();
+    CHECK(vm_global(0) == 0);
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION); // e's handler is fine
+    vm_events();
+    CHECK(vm_global(0) == 1);
+    CHECK_WARNED(before, 1);
+}
+
 // vm.md "Exact semantics: vm_kill": from C, outside the phases, the Destroy
 // logic runs at once: force-halt, Destroy handler (if any), entity_destroy;
 // an unattached entity is just destroyed.
@@ -1917,8 +2030,8 @@ static void context_pool_exhaustion_warns(void) {
 
 // vm.md "Exact semantics: Budget": a context's op that would exceed
 // VM_OPS_PER_SLICE in a phase isn't run; the context waits 1 frame there and
-// warns once in its lifetime. Other contexts still run, and the endless loop
-// gets exactly one slice per frame.
+// warns (once per loaded blob, not every frame). Other contexts still run, and
+// the endless loop gets exactly one slice per frame.
 static void budget_throttles_an_endless_loop(void) {
     enum { L_LOOP };
     reset();
@@ -1950,7 +2063,70 @@ static void budget_throttles_an_endless_loop(void) {
     CHECK(vm_global(0) == 153);
     CHECK(vm_ops_this_frame() == VM_OPS_PER_SLICE);
     CHECK(!vm_idle());
-    CHECK_WARNED(before, 1); // once per context
+    CHECK_WARNED(before, 1); // not again in later frames
+}
+
+// An endless loop: glob[g] += 1 forever (5 ops a round).
+static void endless(u32 g, u32 l) {
+    label(l);
+    count(g);
+    jump(VM_OP_JMP, l);
+}
+
+// vm.md "Exact semantics: Warnings repeat once per problem, per loaded blob":
+// any number of contexts over budget, in any number of frames, warn once;
+// after a reload, the first one warns again.
+static void budget_warns_once_per_loaded_blob(void) {
+    enum { L_LOOP_1, L_LOOP_2 };
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    endless(0, L_LOOP_1);
+    handler(1, VM_EV_CREATE);
+    endless(1, L_LOOP_2);
+    CHECK(load());
+    start(0);
+    start(1);
+    u32 before = debug_warning_count();
+    frames(3);
+    CHECK(vm_global(0) > 0 && vm_global(1) > 0); // both run, throttled
+    CHECK_WARNED(before, 1);
+    CHECK(reload()); // the same blob: halts both
+    start(1);
+    frames(2);
+    CHECK_WARNED(before, 2);
+}
+
+// vm.md "Exact semantics: Budget": inside a Destroy handler, which cannot
+// wait, the op over the budget halts the handler instead (a loop that would
+// end after 60 rounds stops in round 32); the entity is destroyed all the
+// same.
+static void budget_halts_a_destroy_handler(void) {
+    enum { L_LOOP };
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_DESTROY);
+    count(1);                // 4 ops
+    label(L_LOOP);           //
+    count(0);                // round n: glob[0] = n
+    ldg(0);                  //
+    push8(60);               //
+    op(VM_OP_LT);            //
+    jump(VM_OP_JNZ, L_LOOP); // 8 ops a round: round 32's STG is op 256
+    store(2, 1);             // never runs
+    op(VM_OP_HALT);          //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events();
+    u32 before = debug_warning_count();
+    vm_kill(e);
+    CHECK(!entity_alive(e));
+    CHECK(vm_global(1) == 1 && vm_global(0) == 32 && vm_global(2) == 0);
+    CHECK(vm_idle()); // halted, not waiting
+    frames(2);
+    CHECK(vm_global(0) == 32);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Exact semantics: Budget": vm_ops_this_frame() counts the ops run in
@@ -2294,13 +2470,14 @@ static void wait_anim_resumes_on_the_last_frame(void) {
     restore_sprites();
 }
 
-// vm.md "Waits": WAIT_ANIM without C_ANIM, or on a looping sprite, warns
-// (once: one kind of problem) and goes on at once.
+// vm.md "Waits": WAIT_ANIM without C_ANIM, on a looping sprite, or in a
+// thread with no entity, warns (once: one kind of problem) and goes on at
+// once.
 static void wait_anim_without_a_one_shot_animation_continues(void) {
     reset();
     use_anim_sprites();
-    blob_begin(2, 0, GLOBALS);
-    for (u16 obj = 0; obj < 2; obj++) {
+    blob_begin(3, 0, GLOBALS);
+    for (u16 obj = 0; obj < 3; obj++) {
         handler(obj, VM_EV_CREATE);
         op(VM_OP_WAIT_ANIM); // warns, goes on
         store(obj, 1);       //
@@ -2316,6 +2493,39 @@ static void wait_anim_without_a_one_shot_animation_continues(void) {
     u32 before = debug_warning_count();
     vm_events();
     CHECK(vm_global(0) == 1 && vm_global(1) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+    start(2); // a thread
+    vm_step();
+    CHECK(vm_global(2) == 1);
+    CHECK(vm_idle());
+    restore_sprites();
+}
+
+// vm.md "Waits": WAIT_ANIM checks for a one-shot animation on every resume
+// pass while it waits. A game switching the sprite to a looping one mid-wait
+// makes the script warn and go on, instead of waiting forever.
+static void wait_anim_continues_if_the_sprite_stops_being_one_shot(void) {
+    reset();
+    use_anim_sprites();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_WAIT_ANIM); // waits: frame 0 of 3
+    store(0, 1);         //
+    op(VM_OP_HALT);      //
+    CHECK(load());
+    Entity e = entity_create(C_SPR | C_ANIM);
+    u32 i = entity_index(e);
+    spr_id[i] = SPR_ONCE;
+    vm_attach(e, 0);
+    u32 before = debug_warning_count();
+    vm_step();
+    vm_events();
+    CHECK(vm_global(0) == 0 && !vm_idle());
+    CHECK_WARNED(before, 0);
+    spr_id[i] = SPR_LOOPING; // the game switches sprites mid-wait
+    vm_step();
+    CHECK(vm_global(0) == 1);
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
     restore_sprites();
@@ -2759,6 +2969,55 @@ static void load_resets_everything(void) {
     CHECK(vm_global(0) == 0 && vm_global(1) == 0); // e detached, the thread gone
 }
 
+#ifndef SERVAL_GBA
+static u32 loads_refused;
+
+// Stands in for game C code run during a phase (none can be, in v1).
+static void load_during_the_phase(void) {
+    loads_refused += !vm_load(placed, placed_size);
+    loads_refused += !vm_reload(placed, placed_size);
+    vm_unload();
+}
+#endif
+
+// vm.md "Exact semantics: Loading during a phase": vm_load, vm_reload and
+// vm_unload called from inside vm_step or vm_events warn (once: one kind of
+// problem), do nothing and return false. Scripts can't reach them in v1; on
+// the host, the platform-call recorder's hook runs C code in the middle of a
+// script's SYS call.
+static void loading_during_a_phase_is_refused(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);          //
+    push8(5);             // sound 5
+    sys(VM_SYS_PSG_PLAY); // the hook tries to load, reload and unload
+    store(0, 2);          // the same blob runs on
+    wait_frames(1);       // still waiting after the hook's vm_unload
+    store(0, 3);          //
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    vm_set_global(5, 77); // vm_load would zero it
+    start(0);
+    serval_host_vm_calls = (ServalHostVmCalls){.during = load_during_the_phase};
+    loads_refused = 0;
+    u32 before = debug_warning_count();
+    vm_step();
+    serval_host_vm_calls.during = NULL;
+    CHECK(loads_refused == 2);
+    CHECK(vm_global(0) == 2 && vm_global(5) == 77);
+    CHECK(!vm_idle());
+    CHECK_WARNED(before, 1);
+    vm_events();
+    vm_step();
+    CHECK(vm_global(0) == 3);
+    CHECK(vm_load(placed, placed_size)); // between frames: fine
+    CHECK(vm_global(5) == 0);
+    CHECK_WARNED(before, 1);
+#endif
+}
+
 // --- Loader ------------------------------------------------------------------
 
 typedef struct {
@@ -2802,6 +3061,7 @@ static const Patch bad_patches[] = {
     {0x30, 0xFFFFFFFF, 4, "string at 2^32 - 1"},
     {0x30, 0x10, 4, "string in the object table"},
     {0x30, 0x30, 4, "string in the string table"},
+    {0x30, 0x3E, 4, "string with no NUL before the end"},
 };
 
 static const Patch good_patches[] = {
@@ -2810,12 +3070,14 @@ static const Patch good_patches[] = {
     {0x18, sizeof golden - 1, 4, "handler at the last byte rejected"},
     {0x2C, 0x37, 4, "Room Start handler rejected"},
     {0x30, 0x37, 4, "string past the tables rejected"},
+    {0x30, 0x3D, 4, "empty string at the blob's last NUL rejected"},
 };
 
 // vm.md "Load-time validation": vm_load returns false and warns (once per
-// call) for a bad header, tables past the end, globals over VM_GLOBALS, and
-// handler or string offsets outside the blob or inside its tables; offsets
-// anywhere past the tables are fine.
+// call) for a bad header, tables past the end, globals over VM_GLOBALS,
+// handler or string offsets outside the blob or inside its tables, and a
+// string whose NUL isn't in the blob; offsets anywhere past the tables are
+// fine.
 static void loader_rejects_bad_blobs(void) {
     reset();
     u32 before = debug_warning_count();
@@ -2849,6 +3111,27 @@ static void loader_rejects_bad_blobs(void) {
         vm_unload();
     }
     CHECK_WARNED(before, 0);
+}
+
+// vm.md "Load-time validation": every string's terminating NUL must be inside
+// the blob. The last string cut off before its NUL (the blob ends at the end
+// of its buffer, so ASan would catch a read past it) is rejected; the same
+// blob with its NUL loads.
+static void loader_rejects_a_string_without_its_nul(void) {
+    reset();
+    blob_begin(1, 2, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);
+    op(VM_OP_HALT);
+    string(0, "FINE");
+    string(1, "CUT"); // the blob's last bytes
+    CHECK(load());
+    vm_unload();
+    u32 before = debug_warning_count();
+    bld.size--; // without the NUL
+    CHECK(!load());
+    CHECK_WARNED(before, 1);
+    CHECK(vm_start(0, VM_EV_CREATE) == -1); // nothing loaded
 }
 
 // --- Determinism -------------------------------------------------------------
@@ -3014,6 +3297,10 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"kill_runs_destroy_before_destroying", kill_runs_destroy_before_destroying},
            {"kill_destroys_an_unattached_entity", kill_destroys_an_unattached_entity},
            {"wait_inside_destroy_warns_and_halts", wait_inside_destroy_warns_and_halts},
+           {"kill_of_no_entity_warns_but_of_a_dead_one_is_silent",
+            kill_of_no_entity_warns_but_of_a_dead_one_is_silent},
+           {"destroy_event_behaves_like_kill", destroy_event_behaves_like_kill},
+           {"vm_event_rejects_unknown_events", vm_event_rejects_unknown_events},
            {"vm_kill_runs_destroy_at_once", vm_kill_runs_destroy_at_once},
            {"detach_stops_the_script_without_destroy", detach_stops_the_script_without_destroy},
            {"attach_rebinds_an_attached_entity", attach_rebinds_an_attached_entity},
@@ -3023,6 +3310,8 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
            {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
            {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
+           {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
+           {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
            {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
            {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
            {"self_and_other", self_and_other},
@@ -3033,6 +3322,8 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
            {"wait_anim_without_a_one_shot_animation_continues",
             wait_anim_without_a_one_shot_animation_continues},
+           {"wait_anim_continues_if_the_sprite_stops_being_one_shot",
+            wait_anim_continues_if_the_sprite_stops_being_one_shot},
            {"animation_end_is_raised_when_an_animation_finishes",
             animation_end_is_raised_when_an_animation_finishes},
            {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
@@ -3046,7 +3337,9 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"reload_halts_contexts_and_empties_the_queue",
             reload_halts_contexts_and_empties_the_queue},
            {"load_resets_everything", load_resets_everything},
+           {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
            {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
+           {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
            {"runs_are_deterministic", runs_are_deterministic},
            {"debug_ops_log_and_continue", debug_ops_log_and_continue},
            {"unload_stops_everything", unload_stops_everything});
