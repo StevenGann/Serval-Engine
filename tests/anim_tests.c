@@ -1,5 +1,6 @@
 // Tests for sys_animate (src/ecs/animate.c): frame timing, looping, playing
-// once, restarting, and frame_order sequences with their flips.
+// once, restarting, and frame_order sequences with their flips; and for
+// anim_finished.
 
 #include "serval/debug.h"
 #include "serval/ecs.h"
@@ -61,6 +62,9 @@ static const SpriteAsset no_length = {
     .size = SPRITE_8x8, .tiles = tiles, .frame_count = 2, .frame_order = bad_order};
 static const SpriteAsset no_order = {
     .size = SPRITE_8x8, .tiles = tiles, .frame_count = 2, .order_length = 2};
+// One frame (frame_count 0 means 1), played once.
+static const SpriteAsset single_once = {
+    .size = SPRITE_8x8, .tiles = tiles, .flags = SPRITE_ASSET_ANIM_ONCE};
 enum {
     TIMED,
     UNTIMED,
@@ -73,6 +77,7 @@ enum {
     BAD_FRAME_ORDER,
     NO_LENGTH,
     NO_ORDER,
+    SINGLE_ONCE,
     TABLE_SIZE
 };
 static const SpriteAsset* const table[TABLE_SIZE] = {
@@ -87,6 +92,7 @@ static const SpriteAsset* const table[TABLE_SIZE] = {
     [BAD_FRAME_ORDER] = &bad_frame_order,
     [NO_LENGTH] = &no_length,
     [NO_ORDER] = &no_order,
+    [SINGLE_ONCE] = &single_once,
 };
 
 // Installs the test sprite table (sys_animate only reads it) and an animated
@@ -255,6 +261,64 @@ static void bad_sequences_warn_once(void) {
     CHECK(debug_warning_count() == before + warnings);
 }
 
+static void anim_finished_on_the_last_frame(void) {
+    u32 i = setup(ONCE); // frames 0, 1, 2 for 2, 1 and 3 frames, then stays on 2
+    Entity e = entity_at(i);
+    CHECK(!anim_finished(e));
+    u32 finished = 0;
+    for (u32 k = 0; k < 6; k++) {
+        sys_animate();
+        finished = finished * 10 + anim_finished(e);
+    }
+    CHECK(finished == 1111u); // frames 0, 1, 2, 2, 2, 2
+    CHECK(spr_frame[i] == 2);
+    i = setup(SINGLE_ONCE); // frame_count 0: one frame, so finished at once
+    CHECK(anim_finished(entity_at(i)));
+}
+
+static void anim_finished_on_the_last_step(void) {
+    u32 i = setup(SEQUENCE_ONCE); // steps 0, 1, 2 show frames 1, 0, 1
+    Entity e = entity_at(i);
+    spr_frame[i] = 1; // the last frame, but step 0: not finished
+    CHECK(!anim_finished(e));
+    sys_animate(); // step 1
+    CHECK(!anim_finished(e));
+    sys_animate(); // step 2, the last
+    CHECK(spr_anim_step[i] == 2 && anim_finished(e));
+    sys_animate();
+    CHECK(anim_finished(e));
+    spr_anim_step[i] = 5; // a step it doesn't have (sys_animate restarts it)
+    CHECK(!anim_finished(e));
+}
+
+static void anim_finished_never_for_looping_sprites(void) {
+    u32 i = setup(TIMED);
+    spr_frame[i] = 2; // the last frame of a looping sprite
+    CHECK(!anim_finished(entity_at(i)));
+    i = setup(SEQUENCE);
+    spr_anim_step[i] = 3; // the last step of a looping sequence
+    CHECK(!anim_finished(entity_at(i)));
+}
+
+static void anim_finished_needs_a_live_animated_entity(void) {
+    u32 i = setup(ONCE);
+    Entity e = entity_at(i);
+    spr_frame[i] = 2;
+    CHECK(anim_finished(e));
+    ent_mask[i] &= ~C_ANIM;
+    CHECK(!anim_finished(e));
+    ent_mask[i] = (ent_mask[i] | C_ANIM) & ~C_SPR;
+    CHECK(!anim_finished(e));
+    ent_mask[i] |= C_SPR;
+    spr_id[i] = 99; // not in the table
+    CHECK(!anim_finished(e));
+    spr_id[i] = ONCE;
+    CHECK(anim_finished(e));
+    entity_destroy(e);
+    CHECK(!anim_finished(e));
+    CHECK(!anim_finished(ENTITY_NONE));
+}
+
 TEST_SUITE(anim_tests, "anim", {"follows_frame_times_and_loops", follows_frame_times_and_loops},
            {"without_frame_times_advances_every_frame", without_frame_times_advances_every_frame},
            {"anim_once_stops_on_last_frame", anim_once_stops_on_last_frame},
@@ -265,4 +329,9 @@ TEST_SUITE(anim_tests, "anim", {"follows_frame_times_and_loops", follows_frame_t
            {"sequence_anim_once_stops_on_last_step", sequence_anim_once_stops_on_last_step},
            {"sequence_flips_combine_with_game_flips", sequence_flips_combine_with_game_flips},
            {"without_frame_order_leaves_step_and_flips", without_frame_order_leaves_step_and_flips},
-           {"bad_sequences_warn_once", bad_sequences_warn_once});
+           {"bad_sequences_warn_once", bad_sequences_warn_once},
+           {"anim_finished_on_the_last_frame", anim_finished_on_the_last_frame},
+           {"anim_finished_on_the_last_step", anim_finished_on_the_last_step},
+           {"anim_finished_never_for_looping_sprites", anim_finished_never_for_looping_sprites},
+           {"anim_finished_needs_a_live_animated_entity",
+            anim_finished_needs_a_live_animated_entity});

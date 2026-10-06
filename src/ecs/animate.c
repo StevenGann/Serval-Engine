@@ -188,3 +188,20 @@ void sys_animate(void) {
         spr_frame[i] = (u8)(last ? 0 : frame + 1);
     }
 }
+
+bool anim_finished(Entity e) {
+    if (!entity_alive(e))
+        return false;
+    u32 i = entity_index(e);
+    if (!ent_has(i, C_SPR | C_ANIM))
+        return false;
+    u32 id = spr_id[i];
+    const SpriteAsset* sprite = id < serval_sprite_count ? serval_sprite_table[id] : NULL;
+    if (!serval_plausible_pointer(sprite) || !(sprite->flags & SPRITE_ASSET_ANIM_ONCE))
+        return false;
+    // As in sys_animate: an order_length plays the frame_order's steps.
+    if (sprite->order_length)
+        return spr_anim_step[i] + 1u == sprite->order_length;
+    u32 frames = sprite->frame_count ? sprite->frame_count : 1; // 0 means 1
+    return spr_frame[i] + 1u == frames;
+}

@@ -171,6 +171,10 @@ void sys_render_by_depth(void);
 // SPRITE_ANIM_FLIP_* bits record them; assign spr_flags whole or toggle flips
 // with ^=). To start one, zero spr_anim_step and spr_anim_time.
 void sys_animate(void);
+// True if e is alive, has C_SPR and C_ANIM, its sprite has
+// SPRITE_ASSET_ANIM_ONCE, and it is on its last frame (or, with a
+// frame_order, its last step), where sys_animate leaves it.
+bool anim_finished(Entity e);
 
 static inline u8 entity_index(Entity e) {
     return (u8)(e & 0xFF);
