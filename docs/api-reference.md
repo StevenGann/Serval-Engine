@@ -12,7 +12,7 @@ Include `serval/serval.h` for everything except `gba.h`, which must be included 
 - A *frame* is one 60 Hz display refresh (about 59.73 per second).
 - **Misuse:** in debug builds (`SERVAL_DEBUG`: Debug and RelWithDebInfo), the calls marked *warns* below write a `serval: ...` warning to the emulator's debug log, once per problem, and count it in `debug_warning_count()`. Release builds compile the checks out; the call still fails safely as described. See [core-api.md](core-api.md#debug-builds-report-misuse).
 
-Contents: [core.h](#coreh) · [screen.h](#screenh) · [sprites.h](#spritesh) · [ecs.h](#ecsh) · [physics.h](#physicsh) · [map.h](#maph) · [audio.h](#audioh) · [text.h](#texth) · [fixed.h](#fixedh) · [math.h](#mathh) · [path.h](#pathh) · [random.h](#randomh) · [save.h](#saveh) · [debug.h](#debugh) · [platform.h](#platformh) · [gba.h](#gbah)
+Contents: [core.h](#coreh) · [screen.h](#screenh) · [sprites.h](#spritesh) · [ecs.h](#ecsh) · [physics.h](#physicsh) · [map.h](#maph) · [audio.h](#audioh) · [text.h](#texth) · [fixed.h](#fixedh) · [math.h](#mathh) · [path.h](#pathh) · [random.h](#randomh) · [save.h](#saveh) · [vm.h](#vmh) · [debug.h](#debugh) · [platform.h](#platformh) · [gba.h](#gbah)
 
 ## core.h
 
@@ -129,6 +129,7 @@ Fixed-pool bitmask ECS of `MAX_ENT` (128) entities. Design: [ecs.md](ecs.md).
 | `u32 ecs_gather(u32 mask, u8* out)` | Writes the slot indices of the live entities that have every component in `mask` (0: all live entities) to `out`, in ascending order, and returns how many. `out` must hold `MAX_ENT` entries. About 1,000 cycles (IWRAM). The cheap way to loop over a kind more than once a frame, or over pairs of kinds: gather each kind once per frame and loop over the lists ([ecs.md](ecs.md#iterating)). The list is a snapshot: an entity destroyed afterwards is still in it (`ent_has(i, 0)` tells). |
 | `u32 ecs_free_count(void)` | The number of entities `entity_create()` can still create, O(1). Create optional entities (effects) only while it leaves a reserve, so a full pool never *warns*: `if (ecs_free_count() > 8) spawn_spark(x, y);`. |
 | `void ecs_reset(void)` | Destroys every entity (e.g. on room change); outstanding handles go stale, including those of entities whose `C_ALIVE` bit was cleared by hand. Slots are then handed out in ascending order. |
+| `bool anim_finished(Entity e)` | True if `e` is alive, has `C_SPR` and `C_ANIM`, its sprite has `SPRITE_ASSET_ANIM_ONCE`, and it is on its last frame (`spr_frame == frame_count − 1`, a `frame_count` of 0 counting as 1) or, for a sprite with a `frame_order` (`order_length` set), its last step (`spr_anim_step == order_length − 1`): where `sys_animate` leaves a one-shot animation that has finished. False for looping sprites, sprite IDs outside the sprite table, and dead entities. The VM's `WAIT_ANIM` waits for it. |
 | `ECS_FOR_EACH(i, mask) { ... }` | Loops `u32 i` over every live slot that has *all* components in `mask`, in slot order. A mask of 0 visits every live entity. An entity created inside the loop may or may not be visited in the same loop. |
 | `bool ent_has(u32 i, u32 mask)` | True if slot `i` is alive (has `C_ALIVE`) and has every component in `mask` (mask 0 tests only that it is alive). Prefer it to `ent_mask[i] & (A \| B)`, which is true for either. `i` must be below `MAX_ENT` (not checked). |
 
@@ -392,6 +393,62 @@ if (save_read(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION) != SAVE_OK)
 ...
 save_write(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION); // after a game over
 ```
+
+## vm.h
+
+The bytecode VM: objects with event handlers (GameMaker's model), run as cooperative scripts with no allocation. The editor's script compiler emits one **script blob** holding every object, handler and string; its format, the opcodes, the property and engine-call pages and every scheduling rule are specified in [vm.md](vm.md), and `vm.h` names all their numbers (`VM_OP_*`, `VM_EV_*`, `VM_P_*`, `VM_SYS_*`, `VM_FORMAT_VERSION`, `VM_CELL_BYTES`, `VM_HEADER_SIZE`, `VM_OBJECT_SIZE`). An *instance* is an entity attached to an object; scripts can also run as *threads* with no entity (`vm_start`). Each entity runs at most one script at a time.
+
+```c
+vm_load(game_scripts, sizeof game_scripts);
+vm_bind(&(VmBindings){.songs = songs, .song_count = 2, .paths = paths, .path_count = 3});
+Entity e = entity_create(C_POS | C_SPR);
+vm_attach(e, OBJ_PLAYER); // its Create handler runs in the next phase
+for (;;) {
+    frame_begin();
+    vm_step();   // waits, Step handlers, queued events
+    sys_path();
+    sys_movement();
+    sys_physics();
+    if (body_overlap(entity_index(e), entity_index(coin)))
+        vm_event(e, coin, VM_EV_COLLISION);
+    vm_events(); // the collision handlers, this frame
+    sys_animate();
+    sys_render();
+    frame_end();
+}
+```
+
+**Limits** (compile-time): `VM_CONTEXTS` 32 scripts running or waiting at once, `VM_STACK` 8 cells of value stack and `VM_CALLS` 4 levels of `CALL` per script, `VM_LOCALS` 8 locals per script (zeroed when it starts), `VM_GLOBALS` 256 globals shared by all scripts, `VM_EVENT_QUEUE` 32 queued events, `VM_OPS_PER_SLICE` 256 opcodes per script per phase. Contexts, globals, bindings and the queue take about 4.9 KB of EWRAM.
+
+**Events** (`VM_EV_*`, an object's handler slots): `VM_EV_CREATE`, `VM_EV_STEP`, `VM_EV_DESTROY`, `VM_EV_COLLISION`, `VM_EV_ANIM_END`, `VM_EV_ROOM_START`; `VM_EV_COUNT` is 6.
+
+`VmBindings` holds what the `SYS` engine calls reach by index, since scripts hold no pointers: `const PsgSong* const* songs` and `u16 song_count` (`VM_SYS_MUSIC_PLAY`), `const Path* const* paths` and `u16 path_count` (`VM_SYS_PATH_START`). The arrays must stay valid while scripts run.
+
+| Function | Description |
+| --- | --- |
+| `bool vm_load(const u8* blob, u32 size)` | Validates the blob (magic `"SVMB"`, format version 1, 4-byte cells, at most 256 globals, its object and string tables inside it, every handler and string offset inside it and past the tables) and makes it the running scripts: halts every script, detaches every entity, empties the event queue and zeroes the globals. The blob is read in place (byte by byte: any alignment), so keep it valid while it is loaded. Returns false for an invalid blob (*warns*, naming the first problem), which also unloads the previous one: nothing runs. Call it after `ecs_reset()`. |
+| `bool vm_reload(const u8* blob, u32 size)` | Like `vm_load`, for hot reload (the debug link): keeps the globals' values if the new blob declares the same global count (else zeroes them, *warns*), and keeps entities attached to objects the new blob still has (without a new Create). Scripts are halted and the queue emptied. Call it between frames, not from inside `vm_step()` or `vm_events()`. |
+| `void vm_unload(void)` | Halts every script, detaches every entity and empties the queue. The globals keep their values. |
+| `void vm_bind(const VmBindings* bindings)` | Registers the songs and paths `SYS` calls reach by index (copies the struct; NULL clears them). |
+| `void vm_attach(Entity e, u16 object)` | Attaches `e` to an object and queues its Create event (even when the object has no Create handler). Re-attaching an attached entity halts its script first. Ignored for a dead entity, an object the blob doesn't have, or no blob loaded (*warns*). |
+| `void vm_detach(Entity e)` | Halts `e`'s script and detaches it, without a Destroy event. Nothing for an entity that isn't attached. |
+| `void vm_kill(Entity e)` | Destroys an attached entity the script way: halts its script, runs its Destroy handler (if any) to completion, detaches it, then `entity_destroy(e)`. A wait in the Destroy handler halts it (*warns*). Unattached live entities are just destroyed; dead handles are ignored. Called during `vm_step()` or `vm_events()`, it is queued like the `KILL` opcode. Use it, or `vm_detach`, instead of `entity_destroy` for attached entities. |
+| `int vm_start(u16 object, u8 event)` | Starts the object's handler for `event` as a thread with no entity (`SELF` warns and pushes 0); it first runs in the next `vm_step()`. Returns the context index, or −1 if there is no blob, no such object or handler, or no free context (*warns*). |
+| `void vm_event(Entity e, Entity other, u8 event)` | Queues an event for `e`, e.g. `vm_event(a, b, VM_EV_COLLISION)` after `body_overlap`; `OTHER` gives `other` to the handler. When drained, it runs if `e` is alive and attached and its object has a handler for the event, and is dropped (*warns*) if `e`'s script is still running or waiting; `VM_EV_DESTROY` does what `vm_kill` does. An event number of `VM_EV_COUNT` or more is ignored (*warns*). |
+| `void vm_step(void)` | Phase 1, after `frame_begin()` and before movement: resumes waiting scripts (in context order; `WAIT n` counts down one frame per call), runs the Step handler of every attached entity with no running script (in entity order), then runs queued events (oldest first, including events queued meanwhile, such as the Create of an entity `SPAWN`ed this phase). |
+| `void vm_events(void)` | Phase 2, after movement and physics: runs queued events, e.g. the collisions game code reported this frame. Never resumes waiting scripts. |
+| `s32 vm_global(u16 index)` | Global `index` (0-255). Others return 0 (*warns*). |
+| `void vm_set_global(u16 index, s32 value)` | Sets global `index` (0-255). Others are ignored (*warns*). |
+| `u32 vm_ops_this_frame(void)` | Opcodes run since the latest `vm_step()` began, both phases (and `vm_kill` Destroy handlers in between). |
+| `bool vm_idle(void)` | True when no script is running, ready or waiting and no event is queued. |
+
+**Scripts that go wrong** never stop the game: each problem warns (once per kind of problem until the next `vm_load`, `vm_reload` or `vm_unload`) and fails safe. Stack overflow or underflow, `CALL` nested deeper than 4, an unknown opcode or `SYS` call, and a jump, call or handler end that leaves the blob halt only that script. Dividing by zero (`DIV`, `MOD`, `FXDIV`) gives 0. A script that runs more than `VM_OPS_PER_SLICE` opcodes in one phase waits a frame and goes on from there (an endless loop throttles instead of hanging; warns once per script). `GETP`/`SETP` of a dead entity or an unknown property read 0 and write nothing; `SPAWN` of an unknown object or with all 128 entities in use pushes 0; a `SYS` song or path index that isn't bound, or a string index the blob doesn't have, skips the call.
+
+**Caveats**
+
+- `vm_step()` runs Step handlers before it drains the queue, so an entity whose Create is still queued when the Step handlers run gets its Step handler first, then its Create, in the same `vm_step()`: one attached after the previous `vm_events()` (at startup, say), or `SPAWN`ed during `vm_step()` by a resumed script or by the Step handler of an entity in a lower slot. Entities attached before a `vm_events()` call run their Create there, before their first Step.
+- Nothing queues Animation End or Room Start events yet: game (or editor-generated) code queues them with `vm_event`.
+- An entity attached to an object and then destroyed with `entity_destroy` leaves a stale binding: the VM notices, halts its script and *warns*. Use `vm_kill` or `vm_detach`.
 
 ## debug.h
 
