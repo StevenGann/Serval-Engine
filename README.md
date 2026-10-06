@@ -8,7 +8,7 @@ It is designed as three layers:
 
 1. **Core API**: a flat, raylib-style C API over libtonc (input, sprites, tilemaps and the camera, sound, text, save data).
 2. **World**: a fixed-pool, bitmask ECS for entity data.
-3. **Game logic** (planned): GameMaker-style objects and events, run by a compact bytecode VM. Until then, games are written in C against the first two layers.
+3. **Game logic** (in progress): GameMaker-style objects and events, run by a compact bytecode VM. The VM runs; nothing emits its bytecode yet, so games are written in C against the first two layers.
 
 > **Status:** pre-alpha, no release yet. The API will change.
 
@@ -27,9 +27,10 @@ Implemented:
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
+- Bytecode VM for GameMaker-style objects and events (Create, Step, Destroy, Collision, Animation End, Room Start): cooperative scripts with waits, entity properties and engine calls, no allocation, hot reload.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, the bytecode VM, and the editor debug link.
+Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, an example game written in VM bytecode, and the editor debug link.
 
 ## Documentation
 

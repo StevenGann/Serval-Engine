@@ -2,7 +2,7 @@
 
 Game logic uses GameMaker's mental model — objects with event handlers — compiled to a compact custom bytecode VM in the style of GB Studio's GBVM.
 
-**Status:** format v1 and interpreter behaviour specified below (proposed); nothing is implemented. Until the first engine release ships it, everything here may change without a version bump. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today, and C stays a first-class escape hatch forever.
+**Status:** format v1 and milestones 2-4 implemented (interpreter, scheduler, engine bridge: [`src/core/vm.c`](../src/core/vm.c), tested on the host and in the test ROM); the proof example and debug-link integration are still to come. Until the first engine release ships it, everything here may change without a version bump. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today, and C stays a first-class escape hatch forever.
 
 ## Why a custom VM
 
@@ -294,7 +294,7 @@ The smallest complete blob: one object (component mask 0, sprite 0) with only a 
 
 - **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `VM_OP_*`, `VM_EV_*`, `VM_P_*` and `VM_SYS_*` enums public (tests and the editor's compiler both need the numbers; the blob format is MIT, the compiler is not part of this repo).
 - **Platform calls:** `src/core` must link on the host, where sound, music, text, buttons and brightness don't exist. `vm.c` makes the portable SYS calls (`camera_set`, `random_range`, `path_start`) itself and passes the others to `serval_vm_platform_call` ([`src/core/vm_internal.h`](../src/core/vm_internal.h)): `src/gba/vm_platform.c` (listed for both the GBA and web builds in `CMakeLists.txt`) calls the engine, and `src/host/platform.c` records each call in `serval_host_vm_calls` for the host tests.
-- **Placement:** the dispatch loop starts as Thumb in ROM (~3-4 KB expected). It moves to IWRAM as ARM only if a script-heavy benchmark shows it pays, per the house rule; contexts, globals and the queue are `SERVAL_EWRAM_BSS`.
+- **Placement:** the dispatch loop runs as Thumb in ROM. Measured with GCC 15.3, `vm.o` is about 7.8 KB of ROM in a Release build (the interpreter loop about 3.1 KB plus a 448 B jump table) and about 12.1 KB with debug checks; contexts, globals, the queue and the bindings take about 4.9 KB of EWRAM (`SERVAL_EWRAM_BSS`), the rest of its state 45 B of IWRAM (81 B with debug checks). A ROM that never calls the VM links none of it. The loop moves to IWRAM as ARM only if a script-heavy benchmark shows it pays, per the house rule.
 - **Dispatch:** a `switch` on the opcode byte is fine for v1; measure before anything cleverer.
 - **Cost intuition:** ~280,000 CPU cycles per frame at 60 fps; budget scripts at well under 40,000. A ROM Thumb switch dispatch lands near 50-100 cycles per simple op, so the practical ceiling is a few hundred ops per frame across all scripts — consistent with "scripts decide what happens": a Step handler should be a handful of ops, and anything per-frame-heavy belongs in a C system.
 
@@ -312,9 +312,9 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 ## Milestones
 
 1. ~~Specify the format and opcode set~~ (this document).
-2. **Core interpreter:** loader + stack/variable/arithmetic/control ops, budget, validation; `vm_tests.c` for all of it, green on host and in the test ROM.
-3. **Scheduler:** contexts, waits, the two phases, event queue, `vm_attach`/`vm_detach`/`vm_kill`/`SPAWN`/`KILL`, Step dispatch, one-per-entity rule; frame-simulation tests.
-4. **Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; update [frame-loop.md](frame-loop.md) from proposed to confirmed. Collisions reach scripts through `vm_event(a, b, VM_EV_COLLISION)` from game (or editor-generated) C code after `body_overlap`: `body_contact` reports only walls, and the engine has no entity-pair broad phase yet. An engine-side collision pass is future work.
+2. ~~**Core interpreter:** loader + stack/variable/arithmetic/control ops, budget, validation; `vm_tests.c` for all of it, green on host and in the test ROM~~ ([`src/core/vm.c`](../src/core/vm.c), [`tests/vm_tests.c`](../tests/vm_tests.c)).
+3. ~~**Scheduler:** contexts, waits, the two phases, event queue, `vm_attach`/`vm_detach`/`vm_kill`/`SPAWN`/`KILL`, Step dispatch, one-per-entity rule; frame-simulation tests~~.
+4. ~~**Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; update [frame-loop.md](frame-loop.md) from proposed to confirmed~~. Collisions reach scripts through `vm_event(a, b, VM_EV_COLLISION)` from game (or editor-generated) C code after `body_overlap`: `body_contact` reports only walls, and the engine has no entity-pair broad phase yet. An engine-side collision pass is future work.
 5. **Proof example:** a small `examples/` game whose logic is entirely hand-assembled bytecode (objects, Step movement, a collision, waits, a spawn, sound) — the usual example rules apply (header comment, `serval_add_rom`, ROM checks, web build, screenshots).
 6. **Debug and performance:** `BRK` semantics finalized with [debug-link.md](debug-link.md), `vm_reload`, a script benchmark, and the IWRAM decision from its numbers. Freeze format v1 alongside the first release that ships it.
 

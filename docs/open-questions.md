@@ -4,8 +4,9 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 
 **Status:** living list: open items are unchecked; checked items record decisions already made (and implemented).
 
-- [ ] Confirm the frame loop order ([frame-loop.md](frame-loop.md)).
-- [ ] Implement the bytecode VM. Format v1, the opcode set and the milestones are specified in [vm.md](vm.md) (proposed 2026-10-05; changeable until a release ships it, then breaking changes bump the major version).
+- [x] Confirm the frame loop order: input, `vm_step`, movement and physics, `vm_events`, animation, render ([frame-loop.md](frame-loop.md#frame-order-with-scripts)).
+- [x] Implement the bytecode VM: format v1, the interpreter, the scheduler and the engine bridge, milestones 2-4 of [vm.md](vm.md#milestones) (format v1 stays changeable until a release ships it, then breaking changes bump the major version).
+- [ ] Finish the bytecode VM ([vm.md](vm.md#milestones) milestones 5-6): a proof example written in bytecode, then the debug link and `BRK`, a script benchmark, and the IWRAM decision from its numbers.
 - [ ] Define the debug link protocol: transport and message format ([debug-link.md](debug-link.md)).
 - [x] Choose the engine license: MIT ([licensing.md](licensing.md)).
 - [x] Verify licenses: libtonc (MIT), Maxmod (ISC), `mmutil` (BSD-3-Clause) ([licensing.md](licensing.md)).

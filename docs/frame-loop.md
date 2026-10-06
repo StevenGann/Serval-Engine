@@ -1,6 +1,6 @@
 # Frame loop
 
-**Status:** `frame_begin()`, `frame_end()` and the VBlank flush below are implemented, including map streaming, animated tiles and PSG music. The planned order and the rest of the VBlank flush depend on features not built yet (scripts, streamed sprites, shadow palettes, Maxmod).
+**Status:** `frame_begin()`, `frame_end()` and the VBlank flush below are implemented, including map streaming, animated tiles and PSG music. The [frame order with scripts](#frame-order-with-scripts) is confirmed: the VM implements it. The rest of the VBlank flush depends on features not built yet (streamed sprites, shadow palettes, Maxmod).
 
 ## What frame_begin and frame_end do today
 
@@ -8,9 +8,9 @@
 - Between them, the game updates and draws. The examples use this order: input, `sys_path()`, `sys_movement()` (and `sys_map_movement()` for map bodies), `sys_physics()`, game systems and collision checks, `camera_set()`, `sys_animate()`, `sys_render()` (or `sys_render_by_depth()`), HUD text.
 - `frame_end()`: hides unused sprite slots, brings the map layers' screenblock copies up to date with the camera (once a map layer has been loaded; [tilemaps.md](tilemaps.md#streaming)), records the frame's CPU cycles (`frame_cpu_cycles()`, which includes that map work), waits for VBlank, copies the shadow OAM (with the rotation matrices) to hardware, copies queued animated tiles and the changed map rows and columns to VRAM and sets the background registers, then steps PSG sound effects and music (music on the channels no sound effect holds) and counts the frame.
 
-## Planned order
+## Frame order with scripts
 
-**Status:** proposed in detail with the VM design ([vm.md](vm.md#scheduling-two-phases-per-frame)); confirmed when the VM's engine bridge lands. The VM runs in two phases, so collision handlers run the same frame as the collision, after movement (GameMaker's feel):
+**Status:** confirmed: `vm_step()` and `vm_events()` implement it ([vm.md](vm.md#scheduling-two-phases-per-frame)). The VM runs in two phases, so collision handlers run the same frame as the collision, after movement (GameMaker's feel):
 
 ```mermaid
 flowchart LR

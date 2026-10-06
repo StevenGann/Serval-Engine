@@ -6,7 +6,7 @@ Serval Engine is the GBA-side runtime for Studio Advance, a cross-platform edito
 
 The engine is open source; the editor is a separate, closed-source product. See [Relationship to Studio Advance](#relationship-to-studio-advance).
 
-**Status:** design overview. The core API and the ECS world are implemented; the game-logic layer (objects, events and the bytecode VM) is planned, so games are written in C today. The [layers table](#layers) has the details.
+**Status:** design overview. The core API and the ECS world are implemented; so is the game-logic layer's runtime (objects, events and the bytecode VM), but nothing emits its bytecode yet, so games are written in C today. The [layers table](#layers) has the details.
 
 ## Design inspirations
 
@@ -29,7 +29,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | Core API | raylib | Flat C calls over libtonc: input, drawing, sound, saves | Implemented (sprites, tilemaps and the camera, PSG sound effects and music, text, fades, save data); Maxmod audio, palette management and more effects planned | [core-api.md](core-api.md) |
 | World | ECS | Fixed-pool entity storage and per-frame bulk processing: movement, physics, map collision, animation, paths, rendering | Implemented | [ecs.md](ecs.md) |
-| Game logic | GameMaker | Objects with events, executed by the bytecode VM | Planned; games are written in C today | [vm.md](vm.md) |
+| Game logic | GameMaker | Objects with events, executed by the bytecode VM | Interpreter, scheduler and engine bridge implemented; a proof example and the debug link planned; games are written in C today | [vm.md](vm.md) |
 
 ## Guiding principle: precompute everything
 
