@@ -14,10 +14,10 @@
 
 ```mermaid
 flowchart LR
-    A[Input] --> B[vm_step<br/>waits, Step, queued events] --> C[Movement<br/>+ physics] --> D[vm_events<br/>collision handlers] --> E[sys_animate] --> F[Render<br/>shadow OAM] --> G[VBlank flush]
+    A[Input] --> B[vm_step<br/>waits, events, Step] --> C[Movement<br/>+ physics] --> D[vm_events<br/>collision handlers] --> E[sys_animate] --> F[Render<br/>shadow OAM] --> G[VBlank flush]
 ```
 
-Animation End events queued by `sys_animate` dispatch in the next frame's `vm_step`.
+An animation that `sys_animate` finishes raises Animation End in the next frame's `vm_step` (the VM checks `anim_finished()` for entities with a handler; [vm.md](vm.md#exact-semantics)).
 
 ## VBlank flush
 

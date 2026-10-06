@@ -68,15 +68,15 @@ Constants (in `vm.h`, compile-time): `VM_CONTEXTS 32`, `VM_STACK 8`, `VM_CALLS 4
 The VM runs in two phases, fixing the [frame loop order](frame-loop.md) question:
 
 1. `frame_begin()` — input.
-2. **`vm_step()`** — phase 1: resume waiting contexts (pool index order); run Step handlers for every attached entity whose object has one and whose context is free (entity index order); drain the event queue (FIFO; spawns queued here run their Create this phase).
+2. **`vm_step()`** — phase 1, in this order: resume waiting contexts (pool index order); queue Animation End events; drain the event queue (so Create runs before an entity's first Step); run Step handlers for every attached entity whose object has one, whose Create has been dispatched and whose context is free (entity index order); drain the queue again (spawns from Step handlers run their Create this phase).
 3. C systems: `sys_path`, `sys_movement`, `sys_map_movement`, `sys_physics`.
 4. **`vm_events()`** — phase 2: drain the event queue again — chiefly Collision events the physics glue queued this frame, so collision handlers run the same frame, after movement, GameMaker-style.
-5. Game C code, `camera_set`, `sys_animate` (Animation End events it queues dispatch next frame in phase 1), `sys_render*`, HUD.
+5. Game C code, `camera_set`, `sys_animate` (an animation it finishes raises Animation End in the next frame's phase 1), `sys_render*`, HUD.
 6. `frame_end()`.
 
 Draining runs handlers to completion or to their first wait; events queued during a drain (e.g. by `SPAWN`) are drained in the same phase. A full queue drops the event with a debug warning.
 
-**Budget:** a context that executes more than `VM_OPS_PER_SLICE` opcodes in one phase is forced into a one-frame wait with a debug warning (once per context) — an endless loop warns and throttles instead of hanging the game. The engine never fails silently: every misuse case below warns via `SERVAL_WARN` (debug builds) and fails safe.
+**Budget:** a context that executes more than `VM_OPS_PER_SLICE` opcodes in one phase is forced into a one-frame wait with a debug warning — an endless loop warns and throttles instead of hanging the game. The engine never fails silently: every misuse case below warns via `SERVAL_WARN` (debug builds) and fails safe.
 
 ### Determinism
 
@@ -166,7 +166,7 @@ No operands (`WAIT` pops its frame count). A waiting context sleeps until its co
 | Op | Mnemonic | Effect |
 | --- | --- | --- |
 | 0x30 | `WAIT` | n → ; resume after n frames (n ≤ 0: continue immediately; n = 1: next frame) |
-| 0x31 | `WAIT_ANIM` | Resume when `self`'s one-shot animation has finished. No `C_ANIM`, or a looping sprite: warn, continue immediately. Needs a small `anim_finished(Entity)` query added to the ECS |
+| 0x31 | `WAIT_ANIM` | Resume when `anim_finished(self)`. No one-shot animation (no `C_SPR` or `C_ANIM`, or a sprite without `SPRITE_ASSET_ANIM_ONCE`), checked when the op runs **and on every resume pass while waiting** (the game may switch sprites mid-wait): warn, continue. Already finished: continue immediately. In a thread with no entity: warn, continue |
 | 0x32 | `WAIT_MOVE` | Resume when `self` has no `C_PATH` (`sys_path` removes it when a path ends). Already pathless: continue immediately |
 
 ### Entities
@@ -246,7 +246,9 @@ The rules an implementation must follow where the sections above leave room. Tes
 
 **The resume pass** (start of `vm_step()`): visits each context once, in pool index order. A ready context runs. A `WAIT n` context decrements its counter and runs when it reaches 0 (so `WAIT 1` resumes in the next frame's pass; counters are clamped to 65535). `WAIT_ANIM`/`WAIT_MOVE` contexts run when their condition holds. A context that waits again during the pass is not visited again in the same pass.
 
-**Step handlers** run after the resume pass, in entity index order, for attached entities whose object has a Step handler and that have no live context.
+**Step handlers** run after the first drain of `vm_step()`, in entity index order, for attached entities whose object has a Step handler, that have no live context, and whose Create event has been dispatched. Each binding carries a *Create pending* flag, set by `vm_attach` and cleared when its Create event is drained (whether or not the object has a Create handler, and also if the event is dropped). So an entity never runs Step before Create: one attached before `vm_step()` runs Create in the first drain and, if Create finishes without waiting, its first Step the same frame; one spawned by a Step handler runs Create in the second drain and its first Step next frame.
+
+**Animation End** is raised by the VM itself, not by `sys_animate` (the ECS has no VM hook): after the resume pass, for each attached entity whose object has an Animation End handler, the VM checks `anim_finished(e)` and queues `VM_EV_ANIM_END` when it is true and was false at the previous check (each binding keeps that last value, false at attach). Edge-triggered: an animation restarted by the game (`spr_frame = 0`) can raise it again when it next finishes.
 
 **Draining** (`vm_step()` after Step handlers, and `vm_events()`): FIFO until the queue is empty, including events queued during the drain. Per entry:
 - `VM_EV_DESTROY` (from `KILL`): if the entity is dead, skip. If attached: halt its live context, run its Destroy handler (if any) to completion — a wait inside it warns and halts it — then unbind. Then `entity_destroy`. Unattached live entities are just destroyed.
@@ -260,9 +262,17 @@ The rules an implementation must follow where the sections above leave room. Tes
 
 **Arithmetic** is defined on two's-complement 32-bit wrapping and must be implemented without C undefined behaviour (the host tests run under UBSan): do `ADD SUB MUL NEG SHL` in `u32`; `DIV` and `MOD` of `INT32_MIN` by −1 give `INT32_MIN` and 0; `SHR` is arithmetic; `FXMUL` is `(s32)(((s64)a * b) >> 8)` truncated to 32 bits; `FXDIV` is `(s64)a * 256 / b` truncated (never `a << 8` on a negative value).
 
-**Budget.** Ops are counted per context per phase. The op that makes the count exceed `VM_OPS_PER_SLICE` is not run: the context becomes `WAIT 1` at that op and warns once per context lifetime. `vm_ops_this_frame()` counts ops run since the latest `vm_step()` began (both phases).
+**Budget.** Ops are counted per context per phase. The op that makes the count exceed `VM_OPS_PER_SLICE` is not run: the context becomes `WAIT 1` at that op. Inside a Destroy handler (which cannot wait) the handler is halted instead. `vm_ops_this_frame()` counts ops run since the latest `vm_step()` began (both phases).
 
 **Halting a context** frees it: `pc = NULL`, and the entity's context link (if any) is cleared. Every "warn, halt context" in this document halts only the offending context; the phase continues with the next one.
+
+**Warnings repeat once per problem, per loaded blob:** each kind of problem warns the first time it happens after `vm_load`, `vm_reload` or `vm_unload`, then stays quiet, so a problem that recurs every frame (a Step handler over budget, say) does not flood the log; the text names the object and event (or entity, or offset) involved so the first report is actionable.
+
+**Loading during a phase.** `vm_load`, `vm_reload` and `vm_unload` called from inside `vm_step`/`vm_events` (impossible from scripts in v1, but guarded): warn, do nothing, return false. A failed `vm_load`/`vm_reload` leaves the VM unloaded.
+
+**Destroy details.** A Destroy handler sees `OTHER` = 0. `vm_event(e, x, VM_EV_DESTROY)` behaves exactly like `KILL`.
+
+**Entity cells.** A cell used as an entity handle is valid only within 0..0xFFFF; other values count as `ENTITY_NONE` (never truncated into a real handle).
 
 **Debug ops.** `TRACE` peeks at the top of the stack (does not pop); with an empty stack it logs only the string; an invalid string index logs `?`. `BRK` logs `vm: BRK at <offset>` in debug builds. Both log through `debug_log` and are silent no-ops in release builds (operands still skipped).
 
@@ -294,7 +304,7 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 
 - Every opcode at least once; arithmetic edge cases (wrap, `DIV`/`MOD`/`FXDIV` by zero → 0 + warn, shift masking, `FXMUL` precision).
 - Loader rejection: bad magic, version, cell width, counts, out-of-range handler and string offsets.
-- Runtime safety: stack overflow/underflow, call depth, unknown opcode, unknown property/SYS id, `pc` escaping the blob — each warns and halts only the offending context.
+- Runtime safety: stack overflow/underflow, call depth, unknown opcode, unknown SYS id (its arity is unknown), `pc` escaping the blob — each warns and halts only the offending context. An unknown property warns and continues (`GETP` pushes 0, `SETP` drops), as the opcode reference says.
 - Scheduling across simulated frames: `WAIT` counts, `WAIT_ANIM`, `WAIT_MOVE` (with a real path), Step skipped while a context is live, the one-per-entity drop rule, Destroy force-halt, `SPAWN` running Create in-phase, queue overflow, budget throttling.
 - Determinism: two identical runs leave identical globals.
 - Per the house rule, verify each new test can fail.
