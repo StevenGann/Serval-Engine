@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** resident, uncompressed groups of 4bpp sprites, drawn regular or rotated, with any palette of their group, in world or screen coordinates, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, metasprites, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
+**Status:** resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, in world or screen coordinates, are implemented (reference: [api-reference.md](api-reference.md#spritesh)). Streamed sprites, LZ77 groups, palette sharing, the shadow palette and the global/room watermark are planned; see [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes) with 16 OBJ palette banks of 16 colors.
 
@@ -43,20 +43,33 @@ Emitted as constant C tables by the build tooling.
 
 ```c
 typedef struct {
-    const u32 *tiles;         // ROM tile data, frame after frame
-    u8  size;                 // SPRITE_8x8 ... SPRITE_32x64 (required)
-    u8  tiles_per_frame;      // 0: computed from size; if set, at least what size needs
+    s16 x, y;                 // the piece's center, relative to the metasprite's pivot
+    u16 sprite;               // an ordinary sprite's ID
+    u16 flags;                // SPRITE_FLIP_H/V, SPRITE_PALETTE(n)
+    u8  frame;
+} SpritePiece;
+
+typedef struct {
+    union {
+        const u32 *tiles;     // ROM tile data, frame after frame
+        const SpritePiece *pieces; // metasprites: piece_count pieces per frame
+    };
+    u8  size;                 // SPRITE_8x8 ... SPRITE_32x64 (required, except metasprites)
+    union {
+        u8 tiles_per_frame;   // 0: computed from size; if set, at least what size needs
+        u8 piece_count;       // metasprites: pieces per frame
+    };
     u8  frame_count;          // 0 means 1
     u8  order_length;         // frame_order entries (steps); 0: no frame_order
     u8  palette_slot;         // logical bank within group
     s8  origin_x, origin_y;   // drawn position = (x, y) - origin
-    u8  flags;                // SPRITE_ASSET_ANIM_ONCE; STREAMED, METASPRITE (planned)
+    u8  flags;                // SPRITE_ASSET_ANIM_ONCE, METASPRITE; STREAMED (planned)
     const u8  *frame_times;   // frames each animation frame (or step) shows, or NULL
     const u8  *frame_order;   // steps: frame index | SPRITE_FRAME_FLIP_H/V, or NULL
 } SpriteAsset;
 ```
 
-Format change (before the first release): `order_length` and `frame_order` were added for animation sequences ([Animation](#animation)), and `tiles_per_frame` now comes before `frame_count`, so `frame_count` and `order_length` are adjacent and `sys_animate` reads both with one load. The struct grew from 16 to 20 bytes. Emit and write it with designated initializers (field order then doesn't matter); zero/`NULL` for both new fields keeps the old behaviour.
+Format change (before the first release): `order_length` and `frame_order` were added for animation sequences ([Animation](#animation)), and `tiles_per_frame` now comes before `frame_count`, so `frame_count` and `order_length` are adjacent and `sys_animate` reads both with one load. The struct grew from 16 to 20 bytes. Emit and write it with designated initializers (field order then doesn't matter); zero/`NULL` for both new fields keeps the old behaviour. Metasprites added `SpritePiece` and the `pieces`/`piece_count` names, sharing storage with `tiles`/`tiles_per_frame`: the layout and size are unchanged, and existing data stays valid.
 
 ```c
 typedef struct {
@@ -85,11 +98,22 @@ void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
                                                     // SPRITE_FLIP_H/V, layer flags,
                                                     // SPRITE_HIDDEN, SPRITE_PALETTE(n)
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
+void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle,
+                    FIXED scale_x, FIXED scale_y, u16 flags);   // rotated and scaled
+SpriteStats sprite_stats(void);                     // last frame: drawn, matrices, dropped
 ```
 
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
 **Rotation:** `sprite_draw_rotated(id, frame, x, y, angle, flags)`, or a non-zero `spr_angle` with `sys_render`, rotates a sprite around its center with the hardware's affine mode (double size, so corners aren't clipped). The 32 rotation matrices are allocated per frame and shared by sprites with the same angle and flips; past 32, sprites are drawn unrotated and debug builds warn. Off-screen sprites take no matrix, and angle 0 draws like `sprite_draw` (no matrix). Unrotated sprites don't pay for rotation support beyond one check per entity (bunnymark: +1,530 cycles for 128 sprites).
+
+**Scaling:** `sprite_draw_ex(id, frame, x, y, angle, scale_x, scale_y, flags)` also scales around the center, along the art's own axes: `FX_ONE` is normal size, a negative scale mirrors (a card flip is `scale_x` going from `FX_ONE` through 0 to `-FX_ONE`), 0 draws nothing. The matrix is the inverse of the transform (rotate back, divide by the scales: one division per new matrix, at most 32 a frame), and matrices are shared by draws with the same angle, flips and scales, so animate scales in steps (a shrinking effect in sixteenths of its size, as the shooter's cannon debris does) rather than giving every sprite its own. Rotated or enlarged sprites use the double-size box: art grown beyond it is cut off (scale 2 unrotated, about 1.4 at 45°). Sprites that are only shrunk or mirrored (angle 0, scales within ±`FX_ONE`) are drawn in plain affine mode, in their own box, which costs half the per-scanline time of the double-size box. For entities, `SPRITE_SCALED` in `spr_flags` draws them scaled by `spr_scale` (one scale for both axes, 256ths). It is a flag rather than a non-zero `spr_scale` because reading `spr_scale` for every entity cost bunnymark ~1,000 cycles (the render loop is out of registers); the flag joins the existing one-instruction test of `spr_angle` and the flags, so unscaled sprites pay nothing measurable (~+75). Debug builds warn about a `spr_scale` set without the flag.
+
+**Limits made visible:** `sprite_stats()` returns the last frame's counts: hardware sprites `drawn` (of 128) and `matrices` used (of 32), draws `dropped` because OAM was full, and rotated or scaled draws shown `untransformed` because the matrices ran out. Counted in release builds too, only on the rare paths, so it costs nothing in the usual case; debug builds also warn once per problem. `sprite_stats_scanlines(true)` adds the per-scanline budget: `frame_end()` walks the frame's OAM in order, adding each sprite's cost to the lines it covers (1,210 cycles a line, 954 with DISPCNT's "H-Blank interval free"; an ordinary sprite costs its width, an affine one 10 + 2 × its box's width; sprites entirely off screen cost nothing, as in mGBA), and reports `cut_short` (sprites missing from a line that ran out) and `busiest_line` (the cycles the busiest line asked for). The web renderer draws by the same rules, so what it leaves out is what this counts. It walks every line of every sprite, a few thousand cycles for a busy screen, so it is off by default; Shmup turns it on with its debug readout, which shows the lost draws of all three kinds.
+
+**Metasprites:** a `SpriteAsset` with `SPRITE_ASSET_METASPRITE` is made of pieces, `SpritePiece {s16 x, y; u16 sprite; u16 flags; u8 frame}`: frames of ordinary sprites placed by their centers relative to the metasprite's pivot, the point drawn at (x, y) − origin. `.pieces` and `.piece_count` (pieces per frame) share their storage with `.tiles` and `.tiles_per_frame` (anonymous unions), so the struct and its layout are unchanged. A metasprite is drawn, flipped, rotated, scaled, animated (`sys_animate` steps its frames, each its own list of pieces) and depth-sorted as one sprite or entity. Rotating or scaling it turns and scales each piece's offset about the pivot and draws the piece with the same transform, so the pivot can be anywhere: Shmup's cannons turn about the dome while their barrels reach 39 pixels out, beyond what a 32x32 sprite turning about its own center could (16). Whole flips mirror the offsets and toggle each piece's flips; the draw's palette replaces the pieces' own (`SPRITE_PALETTE` in `spr_flags` recolors every piece: Breakout's glowing paddle). Pieces are drawn in order, the first in front, each taking a hardware sprite; pieces with the same flips share a rotation matrix. A metasprite takes no VRAM; the sprites its pieces use must be loaded to be drawn.
+
+Ordinary sprites pay nothing measurable for it in `sys_render_by_depth` and bunnymark: a metasprite's draw data has no frames, so the drawing path's existing "frame out of range" test rejects it, and the rejection path, out of line in ROM, draws its pieces before it would report a bad frame. Plain `sys_render` pays about 5 cycles per sprite (88 sprites: 16,578 → 17,018) for having that call in its loop: it needs registers kept across a call. The piece math (offsets turned and scaled in 64 bits, with `fx_sin`/`fx_cos`) runs from ROM, once per piece.
 
 **Layering:** by default sprites draw between the foreground (BG1) and the playfield (BG2), so the HUD (BG0) stays on top. `SPRITE_ABOVE_FOREGROUND`, `SPRITE_ABOVE_HUD` and `SPRITE_BEHIND_PLAYFIELD` move a sprite to another layer (see [tilemaps.md](tilemaps.md#default-layer-roles)).
 
@@ -113,4 +137,4 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites, regular or rotated, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, metasprites, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.
+Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order. **Not yet:** streamed sprites, LZ77 groups, palette sharing with reference counting, the shadow palette, the global/room watermark, and loading during forced blank.

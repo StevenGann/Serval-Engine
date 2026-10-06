@@ -4,7 +4,7 @@ Serval Engine: the open-source GBA game runtime (C on libtonc) that every Studio
 
 ## Status
 
-Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (animation, rotation, depth, layers, per-draw palettes, screen-space), tilemaps with a camera and map collision, ECS with movement/physics/animation/path/render systems, PSG sound effects and music, text, fades, math, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen, a web target; eight examples (hello, bunnymark, pong, asteroids, breakout, platformer, shmup, blackjack); tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (animation, rotation, scaling, metasprites, depth, layers, per-draw palettes, screen-space), tilemaps with a camera and map collision, ECS with movement/physics/animation/path/render systems, PSG sound effects and music, text, fades, math, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen, a web target; eight examples (hello, bunnymark, pong, asteroids, breakout, platformer, shmup, blackjack); tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
 
 ## Commands
 
@@ -43,7 +43,7 @@ git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i            
 
 - Target: ARM7TDMI at 16.78 MHz, no FPU, no hardware divider, no data cache. Use fixed-point math and lookup tables.
 - No malloc and no garbage collection at runtime. Fixed pools only (128 entities).
-- Hot data and per-frame system loops go in IWRAM as ARM code (`SERVAL_IWRAM_CODE`, `SERVAL_IWRAM_DATA` in `platform.h`); large buffers in EWRAM (`SERVAL_EWRAM_BSS`). IWRAM is 32 KB shared with games (and the stack): a ROM uses about 8.5 KB with hello's features and 15-21 KB for the bigger examples (physics, rotation, depth sorting, maps; table in `docs/development.md#memory-use`; unused engine code is dropped at link time; check `arm-none-eabi-size -A` on the release `.elf`: `.iwram` + `.bss`), so add IWRAM code only where bunnymark shows it pays.
+- Hot data and per-frame system loops go in IWRAM as ARM code (`SERVAL_IWRAM_CODE`, `SERVAL_IWRAM_DATA` in `platform.h`); large buffers in EWRAM (`SERVAL_EWRAM_BSS`). IWRAM is 32 KB shared with games (and the stack): a ROM uses about 9 KB with hello's features and 16-22 KB for the bigger examples (physics, rotation, depth sorting, maps; table in `docs/development.md#memory-use`; unused engine code is dropped at link time; check `arm-none-eabi-size -A` on the release `.elf`: `.iwram` + `.bss`), so add IWRAM code only where bunnymark shows it pays.
 - Keep rarely-used paths out of hot loops (e.g. the rotated-sprite path is out of line): unrotated sprites must not pay for rotation. Check the benchmark.
 - Prefer build-time precomputation over runtime work.
 - VRAM, palette RAM and OAM writes happen in VBlank or forced blank.

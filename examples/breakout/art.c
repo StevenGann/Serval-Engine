@@ -388,6 +388,19 @@ static const u8 capsule_times[5] = {40, 3, 3, 3, 3};
 
 static const u8 burst_times[4] = {5, 5, 5, 1};
 
+// The paddle, 32 or 48 pixels wide: more than one hardware sprite can be, so
+// a metasprite of 16x8 pieces, each placed by its center relative to the
+// paddle's top-left corner (where the entity is drawn).
+static const SpritePiece paddle_pieces[] = {
+    {.x = 8, .y = 4, .sprite = SPR_PADDLE_LEFT},
+    {.x = 24, .y = 4, .sprite = SPR_PADDLE_RIGHT},
+};
+static const SpritePiece paddle_wide_pieces[] = {
+    {.x = 8, .y = 4, .sprite = SPR_PADDLE_LEFT},
+    {.x = 24, .y = 4, .sprite = SPR_PADDLE_MIDDLE},
+    {.x = 40, .y = 4, .sprite = SPR_PADDLE_RIGHT},
+};
+
 static const SpriteAsset sprites[SPRITE_COUNT] = {
     // One brick for every color: drawn with SPRITE_PALETTE(PAL_ORANGE) and
     // so on (red is its own palette), and PAL_FLASH for a hit.
@@ -405,6 +418,10 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
     [SPR_PADDLE_RIGHT] = {.size = SPRITE_16x8,
                           .tiles = paddle_right_tiles,
                           .palette_slot = PAL_PADDLE},
+    [SPR_PADDLE] = {.flags = SPRITE_ASSET_METASPRITE, .pieces = paddle_pieces, .piece_count = 2},
+    [SPR_PADDLE_WIDE] = {.flags = SPRITE_ASSET_METASPRITE,
+                         .pieces = paddle_wide_pieces,
+                         .piece_count = 3},
     [SPR_CAPSULE_WIDE] = CAPSULE_SPRITE(capsule_wide_tiles, PAL_BLUE),
     [SPR_CAPSULE_MULTI] = CAPSULE_SPRITE(capsule_multi_tiles, PAL_PURPLE),
     [SPR_CAPSULE_SLOW] = CAPSULE_SPRITE(capsule_slow_tiles, PAL_ORANGE),
@@ -425,6 +442,8 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_PADDLE_LEFT] = &sprites[SPR_PADDLE_LEFT],
     [SPR_PADDLE_MIDDLE] = &sprites[SPR_PADDLE_MIDDLE],
     [SPR_PADDLE_RIGHT] = &sprites[SPR_PADDLE_RIGHT],
+    [SPR_PADDLE] = &sprites[SPR_PADDLE],
+    [SPR_PADDLE_WIDE] = &sprites[SPR_PADDLE_WIDE],
     [SPR_CAPSULE_WIDE] = &sprites[SPR_CAPSULE_WIDE],
     [SPR_CAPSULE_MULTI] = &sprites[SPR_CAPSULE_MULTI],
     [SPR_CAPSULE_SLOW] = &sprites[SPR_CAPSULE_SLOW],

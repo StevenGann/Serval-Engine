@@ -160,21 +160,28 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-05 | `6ba7de7` | 75,057 | 26.7% | `SPRITE_SCREEN` and `SPRITE_PALETTE(n)` (before: avg 75,052, peak 80,545; after: peak 80,520). Screen-space entities skip the camera with a test and conditional moves; the camera is loaded only for the others (two loads became one load-multiple, so ~+5 net). Sprites with a palette take the out-of-line rotated path, folded into the existing angle/hidden test (one ARM immediate covers both bits), so others don't pay; an inline palette test cost ~+500, and subtracting the camera conditionally ~+420. IWRAM +224 bytes (the palette path) |
 | 2026-10-05 | `6ba7de7` | 75,165 | 26.7% | Per-body gravity (`body_gravity`), contacts (`physics_set_contacts`), `ecs_gather`/`ecs_count` in IWRAM (before: avg 75,052, peak 80,545, HEAD without them; after: peak 80,573). bunnymark keeps `sys_physics`' fast loop; the cost is the check for gravity scales (~+110, sixteen per word read, only while there is gravity). Recording contacts in the fast loop cost ~+1,000-2,000 (out of registers) and scaling gravity per body ~+3,500, so both go to the general loop (out of line, IWRAM), scaled bodies further out of line in ROM. IWRAM +288 bytes (the two pools) |
 | 2026-10-05 | `6ba7de7` | 74,969 | 26.6% | Net result of the commit, with all its engine changes (before: avg 75,052, peak 80,545; after: peak 80,489); the two rows above were measured on intermediate trees |
+| 2026-10-05 | `01963b8` | 75,045 | 26.7% | Sprite scaling (`sprite_draw_ex`, `SPRITE_SCALED` with `spr_scale`) and `sprite_stats()` (before: avg 74,969, peak 80,489; after: peak 80,425). Reading `spr_scale` for every entity in the render loops cost ~+1,000 (the loop is out of registers), so entities opt in with the `SPRITE_SCALED` flag, which joins the existing one-immediate test of `spr_angle` and the flags (~+75). Dropped-draw counters only on the rare paths |
+| 2026-10-05 | `01963b8` | 75,162 | 26.7% | `body_max_fall` in fixed point, a `u16` (before: avg 75,045, peak 80,425; after: peak 80,641). Its zero-skipping pass reads twice the bytes (~+115) |
+| 2026-10-05 | `01963b8` | 75,693 | 26.9% | Net result of the commit (before: avg 74,969, peak 80,489; after: peak 81,301). The last +531 is code layout, not work: building a new rotation matrix moved out of IWRAM into ROM (saving IWRAM; bunnymark never calls it), which shifts the Thumb code after it in ROM; the same tree with it in IWRAM measures 75,162. The render loops call the transformed path with four arguments, so its nine don't spill in the usual path |
+| 2026-10-06 | `ae820a2` | 73,551 | 26.1% | `sys_render_by_depth` sorts by what the depths need (before: avg 75,693, peak 81,301; after: peak 78,741): no sort when depths are already in slot order, one counting pass over only the buckets the depths span (bunnymark's y range: about 160 instead of 256 cleared and summed), two passes only for ranges of 256 or more. The render cost test (88 sprites, two depths) went from 7,532 to about 4,100 cycles over `sys_render`; one depth from 9,132 to about 400 |
+| 2026-10-06 | `ae820a2` | 73,421 | 26.1% | Net result of the commit, with metasprites and the opt-in scanline count (before: avg 75,693, peak 81,301; after: peak 78,653). Metasprites ride on the drawing path's existing frame-out-of-range rejection, so `sys_render_by_depth` doesn't pay for them; plain `sys_render` (not in bunnymark) pays about 5 cycles per sprite for the call in its loop (88 sprites: 16,578 to 17,018). The scanline count is a flag test in `frame_end()` while off |
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `6ba7de7`:
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `ae820a2`:
 
 | Example | IWRAM used |
 | --- | --- |
-| `hello` | 8,684 bytes |
-| `shmup` | 15,208 bytes |
-| `blackjack` | 16,836 bytes |
-| `pong` | 17,260 bytes |
-| `bunnymark` | 17,396 bytes |
-| `asteroids` | 18,044 bytes |
-| `platformer` | 20,368 bytes |
-| `breakout` | 20,840 bytes |
+| `hello` | 9,536 bytes |
+| `shmup` | 16,268 bytes |
+| `blackjack` | 17,816 bytes |
+| `pong` | 18,272 bytes |
+| `bunnymark` | 18,408 bytes |
+| `asteroids` | 19,056 bytes |
+| `platformer` | 21,380 bytes |
+| `breakout` | 21,852 bytes |
+
+Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `01963b8`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 
 Bouncing bodies' `body_gravity` and `body_contact` pools add 256 bytes to games that use `sys_physics` or `sys_map_movement`, and `ecs_count` and `ecs_gather` about 120 bytes each to games that call them (each has an IWRAM section of its own).
 

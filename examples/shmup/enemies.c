@@ -72,9 +72,12 @@ static const KindInfo kinds[] = {
     [ENEMY_SPINNER] = {SPR_SPINNER, 0, 12, 12, 4, 200},
     [ENEMY_GUNSHIP] = {SPR_GUNSHIP, 0, 26, 24, 40, 2000},
     [ENEMY_TURRET] = {SPR_TURRET, 0, 12, 12, 8, 300},
+    [ENEMY_CANNON] = {SPR_CANNON, 0, 20, 20, 60, 3000},
     [ENEMY_BOSS] = {SPR_BOSS, 0, 48, 36, 0, 0}, // boss.c
     [ENEMY_POD] = {SPR_POD, 0, 20, 20, 0, 0},   // boss.c
 };
+
+static bool on_screen(u32 i, int margin);
 
 static u8 fire_at[MAX_ENT]; // C_ENEMY: the age (timer) at which a dart fires, 0 if never
 static u16 spin;            // spinners share one rotation (and one rotation matrix)
@@ -216,6 +219,90 @@ void spawn_turret(int x, int y) {
     }
 }
 
+// --- Cannons --------------------------------------------------------------------
+
+// Big turrets that turn to track the ship. Each has its own angle in
+// spr_angle (so its own rotation matrix: the hardware has 32, and at most
+// four cannons are on screen) and turns toward the ship by at most
+// CANNON_TURN a frame, so a ship that keeps moving stays ahead of the
+// barrels. Once aimed to within CANNON_AIM it fires three pairs of shots
+// along the barrels, from the muzzles.
+#define CANNON_TURN (ANGLE_DEG(3) / 2)
+#define CANNON_AIM ANGLE_DEG(8)
+#define CANNON_RELOAD 110 // frames from one burst to the next
+#define CANNON_MUZZLE 39  // pixels from the cannon's center to its muzzles
+#define DEBRIS_FRAMES 48  // a destroyed cannon's head spinning away
+
+void spawn_cannon(int x, int y) {
+    u32 i = spawn_enemy(ENEMY_CANNON, FX(x), FX(y), C_GROUND);
+    if (i < MAX_ENT) {
+        spr_depth[i] = DEPTH_GROUND;
+        spr_angle[i] = ANGLE_DEG(90); // barrels down the screen, toward where the ship comes from
+        timer[i] = (u16)random_range(1, 40);
+    }
+}
+
+// Turns `from` toward `to` by at most `step`. Angles are u16 turns, so their
+// difference as an s16 is the shorter way round (-180 to 180 degrees), with
+// no special case where the angle wraps from 359 degrees to 0.
+static u16 turn_toward(u16 from, u16 to, u16 step) {
+    s16 diff = (s16)(u16)(to - from);
+    if (diff > (s16)step)
+        diff = (s16)step;
+    else if (diff < -(s16)step)
+        diff = (s16)-step;
+    return (u16)(from + diff);
+}
+
+static void cannon_update(u32 i) {
+    FIXED x = center_x(i), y = center_y(i);
+    u16 aim = aim_at_player(x, y);
+    spr_angle[i] = turn_toward(spr_angle[i], aim, CANNON_TURN);
+    u16 phase = timer[i] % CANNON_RELOAD;
+    bool aimed = int_abs((s16)(u16)(aim - spr_angle[i])) < CANNON_AIM;
+    if (phase == 0 && (!aimed || !on_screen(i, 0) || !player_alive)) {
+        timer[i]--; // holds the burst until it has a shot
+        phase = CANNON_RELOAD - 1;
+    }
+    // Three pairs of shots, 12 frames apart, the muzzles flashing for 4.
+    spr_frame[i] = phase < 28 && phase % 12 < 4;
+    if (phase < 28 && phase % 12 == 0) {
+        // One shot from each barrel: CANNON_MUZZLE ahead of the center and
+        // 3 pixels to either side of the axis.
+        FIXED dx = fx_cos(spr_angle[i]), dy = fx_sin(spr_angle[i]);
+        FIXED mx = x + dx * CANNON_MUZZLE, my = y + dy * CANNON_MUZZLE;
+        fire_bullet(mx - dy * 3, my + dx * 3, spr_angle[i], FX(2), BULLET_PINK);
+        fire_bullet(mx + dy * 3, my - dx * 3, spr_angle[i], FX(2), BULLET_PINK);
+    }
+}
+
+// The head of a destroyed cannon flies off spinning and shrinking: an effect
+// on the screen, the cannon's sprite drawn with SPRITE_SCALED and spr_scale.
+static void spawn_debris(u32 cannon) {
+    if (fx_count >= MAX_FX)
+        return;
+    // The cannon's 20 x 20 box, which its sprite's origin is set for (it
+    // hits nothing: effects aren't tested for collisions).
+    u32 i = spawn(C_FX | C_VEL, SPR_CANNON, 20, 20, center_x(cannon), center_y(cannon));
+    if (i == MAX_ENT)
+        return;
+    fx_count++;
+    timer[i] = DEBRIS_FRAMES;
+    spr_depth[i] = DEPTH_FX;
+    spr_angle[i] = spr_angle[cannon];
+    spr_flags[i] |= SPRITE_SCALED;
+    spr_scale[i] = FX_ONE;
+    vel_x[i] = random_range(-FX(1), FX(1));
+    vel_y[i] = FX(1) / 2;
+}
+
+// Spins, and shrinks to nothing in steps of 1/16 of its size, so sizes
+// repeat from frame to frame rather than each needing a new matrix.
+static void debris_update(u32 i) {
+    spr_angle[i] = (u16)(spr_angle[i] + ANGLE_DEG(14));
+    spr_scale[i] = (s16)((timer[i] * 16 / DEBRIS_FRAMES + 1) * (FX_ONE / 16));
+}
+
 // --- Bullets ---------------------------------------------------------------------
 
 u16 aim_at_player(FIXED x, FIXED y) {
@@ -316,7 +403,7 @@ static void enemy_killed(u32 i) {
     }
     add_score(kinds[k].points);
     FIXED x = center_x(i), y = center_y(i);
-    if (k == ENEMY_GUNSHIP) {
+    if (k == ENEMY_GUNSHIP || k == ENEMY_CANNON) {
         explode(x, y, 4, 8);
         psg_play(SND_BOOM);
     } else {
@@ -325,6 +412,10 @@ static void enemy_killed(u32 i) {
     }
     if (k == ENEMY_TURRET)
         stage_destroy_pad(fx_to_int(x), fx_to_int(y) + cam_y); // on the map: world pixels
+    if (k == ENEMY_CANNON) {
+        stage_destroy_gun(fx_to_int(x), fx_to_int(y) + cam_y);
+        spawn_debris(i);
+    }
     if (drops[i] != ITEM_NONE)
         spawn_item(x, y, (ItemKind)drops[i]);
     entity_destroy(entity_at(i));
@@ -376,6 +467,9 @@ static void enemy_fire(u32 i) {
             fire_bullet(x, y, aim_at_player(x, y), FX(3) / 2, BULLET_PINK);
         break;
     }
+    case ENEMY_CANNON:
+        cannon_update(i);
+        break;
     default:
         break;
     }
@@ -399,7 +493,7 @@ void enemies_update(void) {
         spr_flags[i] = (u16)((spr_flags[i] & ~SPRITE_PALETTE_MASK) | palette);
         if (ek == ENEMY_SPINNER)
             spr_angle[i] = spin;
-        if (player_alive)
+        if (player_alive || ek == ENEMY_CANNON) // cannons keep turning
             enemy_fire(i);
     }
     for (int k = 0; k < items.count; k++) {
@@ -412,18 +506,9 @@ void enemies_update(void) {
         u32 i = effects.slot[k];
         if (timer[i] == 0 || --timer[i] == 0)
             entity_destroy(entity_at(i));
+        else if (spr_id[i] == SPR_CANNON)
+            debris_update(i);
     }
-}
-
-// Whether shot s touches enemy e. body_overlap compares positions as they
-// are, and a shot's is on the screen while a turret's is on the map, so a
-// turret's hitbox is first moved by the camera.
-static bool shot_hits(u32 s, u32 e) {
-    if (!ent_has(e, C_GROUND))
-        return body_overlap(s, e);
-    FIXED top = pos_y[e] - FX(cam_y);
-    return pos_x[s] < pos_x[e] + FX(body_w[e]) && pos_x[e] < pos_x[s] + FX(body_w[s]) &&
-           pos_y[s] < top + FX(body_h[e]) && top < pos_y[s] + FX(body_h[s]);
 }
 
 // The player's shots against everything they can hit.
@@ -432,7 +517,9 @@ static void collide_shots(void) {
         u32 s = shots.slot[a];
         for (int b = 0; b < enemies.count; b++) {
             u32 e = enemies.slot[b];
-            if (ent_has(e, C_ENEMY) && hp[e] > 0 && shot_hits(s, e)) {
+            // A shot is on the screen (SPRITE_SCREEN) and a turret on the
+            // map: body_overlap adds the camera to compare them.
+            if (ent_has(e, C_ENEMY) && hp[e] > 0 && body_overlap(s, e)) {
                 enemy_damage(e, kind[s]);
                 entity_destroy(entity_at(s));
                 break; // this shot is gone

@@ -5,15 +5,17 @@
 #include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/gba.h"
 #include "serval/map.h"
 #include "serval/math.h"
 #include "serval/sprites.h"
+#include "serval/text.h"
 
 #include <tonc.h>
 
 #include "../../src/gba/internal.h"
 
-enum { SPR_SMALL, SPR_ANIM, SPR_WIDE, SPR_UNLOADED, SPRITE_COUNT };
+enum { SPR_SMALL, SPR_ANIM, SPR_WIDE, SPR_UNLOADED, SPR_META, SPRITE_COUNT };
 
 static const u32 small_tiles[8] = {0x11111111, 0x22222222, 0x33333333, 0x44444444,
                                    0x55555555, 0x66666666, 0x77777777, 0x88888888};
@@ -29,8 +31,21 @@ static const SpriteAsset anim = {.size = SPRITE_8x8,
                                  .palette_slot = 1};
 static const SpriteAsset wide = {.size = SPRITE_16x8, .tiles = wide_tiles}; // 2 tiles
 
-static const SpriteAsset* const table[SPRITE_COUNT] = {
-    [SPR_SMALL] = &small, [SPR_ANIM] = &anim, [SPR_WIDE] = &wide, [SPR_UNLOADED] = &small};
+// A metasprite of two pieces from `first`, in two frames.
+static const SpritePiece meta_pieces[] = {
+    {.x = -10, .y = 0, .sprite = SPR_SMALL},                                   // frame 0
+    {.x = 10, .y = 4, .sprite = SPR_ANIM, .frame = 1, .flags = SPRITE_FLIP_H}, //
+    {.x = 0, .y = 0, .sprite = SPR_SMALL},                                     // frame 1
+    {.x = 0, .y = -20, .sprite = SPR_ANIM, .flags = SPRITE_PALETTE(0)},        //
+};
+static const SpriteAsset meta = {
+    .flags = SPRITE_ASSET_METASPRITE, .pieces = meta_pieces, .piece_count = 2, .frame_count = 2};
+
+static const SpriteAsset* const table[SPRITE_COUNT] = {[SPR_SMALL] = &small,
+                                                       [SPR_ANIM] = &anim,
+                                                       [SPR_WIDE] = &wide,
+                                                       [SPR_UNLOADED] = &small,
+                                                       [SPR_META] = &meta};
 
 static const u16 palettes[32] = {[1] = 0x1111, [17] = 0x2222};
 
@@ -41,6 +56,9 @@ static const SpriteGroup first = {
 static const u16 second_ids[] = {SPR_WIDE};
 static const SpriteGroup second = {
     .sprite_ids = second_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+
+static const u16 meta_ids[] = {SPR_META};
+static const SpriteGroup meta_group = {.sprite_ids = meta_ids, .sprite_count = 1};
 
 // 17 sprites of 64x64 (64 tiles each): 1088 tiles, more than the 1024 there are.
 static const SpriteAsset big = {.size = SPRITE_64x64, .tiles = small_tiles};
@@ -515,6 +533,358 @@ static void entities_draw_with_their_sprite_palette(void) {
     ecs_reset();
 }
 
+// --- Scaling and sprite statistics ---------------------------------------------
+
+#define AFFINE_MODE(k) (oam_mem[k].attr0 & ATTR0_AFF_DBL)
+
+static void scaling_enlarges_in_a_double_size_box(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&second); // SPR_WIDE: 16x8
+    frame_begin();
+    sprite_draw_ex(SPR_WIDE, 0, 100, 50, 0, FX(2), FX(3) / 2, 0);
+    frame_end();
+    CHECK(AFFINE_MODE(0) == ATTR0_AFF_DBL);
+    CHECK(OAM_X(0) == 100 - 8 && OAM_Y(0) == 50 - 4); // centered, as when rotated
+    // The inverse: a pixel on screen is half (two thirds of) a texture pixel.
+    const OBJ_AFFINE* m = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    CHECK(m->pa == 128 && m->pb == 0 && m->pc == 0 && m->pd == 170);
+}
+
+static void shrinking_and_mirroring_use_the_sprites_own_box(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, 0, FX_ONE / 2, FX_ONE, SPRITE_FLIP_V);
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, 0, -FX_ONE, FX_ONE, 0); // a mirror, as in a card flip
+    sprite_draw_ex(SPR_ANIM, 1, 100, 50, ANGLE_DEG(10), FX_ONE / 2, FX_ONE / 2, 0); // rotated
+    frame_end();
+    CHECK(AFFINE_MODE(0) == ATTR0_AFF && AFFINE_MODE(1) == ATTR0_AFF);
+    CHECK(AFFINE_MODE(2) == ATTR0_AFF_DBL);
+    CHECK(OAM_X(0) == 100 - 4 && OAM_Y(0) == 50 - 2); // minus the origin, like sprite_draw
+    CHECK(OAM_X(1) == 100 - 4 && OAM_Y(1) == 50 - 2);
+    CHECK(OAM_X(2) == 100 - 4 - 4 && OAM_Y(2) == 50 - 2 - 4);
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 2); // frame 1 of SPR_ANIM
+    const OBJ_AFFINE* a = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    const OBJ_AFFINE* b = &matrices[MATRIX_INDEX(oam_mem[1].attr1)];
+    CHECK(a->pa == 512 && a->pd == -256); // half as wide, flipped vertically
+    CHECK(b->pa == -256 && b->pd == 256);
+}
+
+static void scales_share_matrices_and_zero_draws_nothing(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    sprite_draw_ex(SPR_SMALL, 0, 10, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE / 2, 0);
+    sprite_draw_ex(SPR_SMALL, 0, 30, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE / 2, 0); // shared
+    sprite_draw_ex(SPR_SMALL, 0, 50, 10, ANGLE_DEG(45), FX_ONE / 2, FX_ONE, 0);     // own
+    sprite_draw_ex(SPR_SMALL, 0, 70, 10, ANGLE_DEG(45), FX_ONE, FX_ONE, 0);         // rotated only
+    sprite_draw_rotated(SPR_SMALL, 0, 90, 10, ANGLE_DEG(45), 0);            // the same matrix
+    sprite_draw_ex(SPR_SMALL, 0, 50, 50, 0, 0, FX_ONE, 0);                  // no width: nothing
+    sprite_draw_ex(SPR_SMALL, 0, 60, 60, 0, FX_ONE, FX_ONE, SPRITE_FLIP_H); // plain
+    CHECK(serval_oam_used == 6 && serval_matrices_used == 3);
+    frame_end();
+    CHECK(MATRIX_INDEX(oam_mem[0].attr1) == MATRIX_INDEX(oam_mem[1].attr1));
+    CHECK(MATRIX_INDEX(oam_mem[3].attr1) == MATRIX_INDEX(oam_mem[4].attr1));
+    CHECK(!(oam_mem[5].attr0 & ATTR0_AFF) && (oam_mem[5].attr1 & ATTR1_HFLIP));
+}
+
+static void entities_scale_with_sprite_scaled(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    ecs_reset();
+    u32 scaled = entity_index(entity_create(C_POS | C_SPR));
+    u32 forgot = entity_index(entity_create(C_POS | C_SPR));
+    u32 gone = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[scaled] = pos_x[forgot] = pos_x[gone] = FX(40);
+    spr_flags[scaled] = SPRITE_SCALED;
+    spr_scale[scaled] = FX(2);
+    spr_scale[forgot] = FX(2);       // no SPRITE_SCALED: normal size, reported in debug builds
+    spr_flags[gone] = SPRITE_SCALED; // spr_scale 0: no size, not drawn
+    u32 warnings = debug_warning_count();
+    for (int by_depth = 0; by_depth < 2; by_depth++) {
+        render(by_depth);
+        // Equal depths: by depth draws them in the same order.
+        CHECK(AFFINE_MODE(0) == ATTR0_AFF_DBL && !(oam_mem[1].attr0 & ATTR0_AFF));
+        CHECK(oam_mem[2].attr0 & ATTR0_HIDE);
+        CHECK(matrices[MATRIX_INDEX(oam_mem[0].attr1)].pa == 128);
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    ecs_reset();
+}
+
+static void sprite_stats_count_the_last_frame(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    frame_begin();
+    for (u32 k = 0; k < 33; k++)
+        sprite_draw_rotated(SPR_SMALL, 0, 10, 10, (u16)(1000 + k * 100), 0);
+    for (u32 k = 0; k < 100; k++)
+        sprite_draw(SPR_SMALL, 0, 10, 10, 0);
+    SpriteStats during = sprite_stats(); // still the frame before
+    frame_end();
+    SpriteStats s = sprite_stats();
+    CHECK(s.drawn == 128 && s.matrices == 32 && s.dropped == 5 && s.untransformed == 1);
+    CHECK(during.drawn != 128 || during.dropped != 5);
+
+    frame_begin(); // counts start over each frame
+    sprite_draw(SPR_SMALL, 0, 10, 10, 0);
+    frame_end();
+    s = sprite_stats();
+    CHECK(s.drawn == 1 && s.matrices == 0 && s.dropped == 0 && s.untransformed == 0);
+}
+
+// sys_render_by_depth puts higher depths in front (earlier in OAM), equal
+// depths in slot order, whichever way it sorts: depths already in order (no
+// sort), within 256 of each other (one pass) or far apart (two passes).
+static void depth_order_holds_for_every_kind_of_sort(void) {
+    static const s16 cases[3][6] = {
+        {9, 9, 5, 5, 2, -1},          // already in order
+        {3, 7, 3, 250, 0, 7},         // a small range
+        {-2000, 300, 7, 7, 1000, -5}, // far apart
+    };
+    static const u8 expected[3][6] = {
+        {0, 1, 2, 3, 4, 5},
+        {3, 1, 5, 0, 2, 4},
+        {4, 1, 2, 3, 5, 0},
+    };
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    for (u32 c = 0; c < 3; c++) {
+        ecs_reset();
+        for (u32 k = 0; k < 6; k++) {
+            u32 i = entity_index(entity_create(C_POS | C_SPR));
+            pos_x[i] = FX((int)(10 + k * 20)); // tells them apart in OAM
+            spr_depth[i] = cases[c][k];
+        }
+        render(true);
+        for (u32 k = 0; k < 6; k++)
+            CHECK(OAM_X(k) == 10 + expected[c][k] * 20u);
+    }
+    ecs_reset();
+}
+
+// --- Metasprites ------------------------------------------------------------------
+
+#define OAM_HFLIP(k) ((oam_mem[k].attr1 & ATTR1_HFLIP) != 0)
+#define OAM_TILE(k) (oam_mem[k].attr2 & ATTR2_ID_MASK)
+
+static void load_with_metasprite(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));      // SMALL (tile 0), ANIM (tiles 1-2)
+    CHECK(sprite_group_load(&meta_group)); // no tiles, no palettes
+}
+
+static void metasprites_draw_their_pieces_around_the_pivot(void) {
+    load_with_metasprite();
+    frame_begin();
+    sprite_draw(SPR_META, 0, 100, 50, 0);
+    sprite_draw(SPR_META, 0, 100, 50, SPRITE_FLIP_H); // mirrored as a whole
+    sprite_draw(SPR_META, 1, 100, 50, SPRITE_PALETTE(1));
+    CHECK(serval_oam_used == 6 && serval_matrices_used == 0);
+    frame_end();
+    // Pieces centered on their offsets (8x8: top-left = center - 4), first
+    // piece first (in front), with its own flips, frame and palette.
+    CHECK(OAM_X(0) == 86 && OAM_Y(0) == 46 && !OAM_HFLIP(0) && OAM_TILE(0) == 0);
+    CHECK(OAM_X(1) == 106 && OAM_Y(1) == 50 && OAM_HFLIP(1) && OAM_TILE(1) == 2);
+    CHECK(OAM_BANK(1) == 1); // ANIM's own palette slot
+    CHECK(OAM_X(2) == 106 && OAM_Y(2) == 46 && OAM_HFLIP(2));
+    CHECK(OAM_X(3) == 86 && OAM_Y(3) == 50 && !OAM_HFLIP(3)); // its flip undone
+    // Frame 1; the whole's palette wins over the piece's.
+    CHECK(OAM_X(4) == 96 && OAM_Y(4) == 46 && OAM_BANK(4) == 1);
+    CHECK(OAM_X(5) == 96 && OAM_Y(5) == 26 && OAM_TILE(5) == 1 && OAM_BANK(5) == 1);
+}
+
+static void metasprites_rotate_and_scale_about_the_pivot(void) {
+    load_with_metasprite();
+    frame_begin();
+    // A quarter turn clockwise: (-10, 0) goes to (0, -10), (10, 4) to (-4, 10).
+    sprite_draw_rotated(SPR_META, 0, 100, 50, ANGLE_DEG(90), 0);
+    // Twice the size: (-10, 0) goes to (-20, 0).
+    sprite_draw_ex(SPR_META, 0, 100, 50, 0, FX(2), FX(2), 0);
+    frame_end();
+    // Double-size boxes (16x16) around the turned centers.
+    CHECK(AFFINE_MODE(0) == ATTR0_AFF_DBL && OAM_X(0) == 100 - 8 && OAM_Y(0) == 40 - 8);
+    CHECK(AFFINE_MODE(1) == ATTR0_AFF_DBL && OAM_X(1) == 96 - 8 && OAM_Y(1) == 60 - 8);
+    // The pieces turn with the whole: the flipped one has its own matrix.
+    const OBJ_AFFINE* a = &matrices[MATRIX_INDEX(oam_mem[0].attr1)];
+    const OBJ_AFFINE* b = &matrices[MATRIX_INDEX(oam_mem[1].attr1)];
+    CHECK(a->pa == 0 && a->pb == 256 && b->pa == 0 && b->pb == -256);
+    CHECK(OAM_X(2) == 80 - 8 && OAM_Y(2) == 50 - 8);
+    CHECK(OAM_X(3) == 120 - 8 && OAM_Y(3) == 58 - 8);
+    CHECK(matrices[MATRIX_INDEX(oam_mem[2].attr1)].pa == 128);
+}
+
+static void metasprite_entities_are_drawn_and_sorted_as_one(void) {
+    load_with_metasprite();
+    ecs_reset();
+    u32 m = entity_index(entity_create(C_POS | C_SPR));
+    u32 dot = entity_index(entity_create(C_POS | C_SPR));
+    pos_x[m] = FX(100);
+    pos_y[m] = FX(50);
+    spr_id[m] = SPR_META;
+    pos_x[dot] = FX(20);
+    spr_depth[dot] = 1; // in front of both pieces
+    render(true);
+    CHECK(OAM_X(0) == 20 && OAM_X(1) == 86 && OAM_X(2) == 106);
+    spr_angle[m] = ANGLE_DEG(90);
+    spr_flags[m] = SPRITE_SCALED;
+    spr_scale[m] = FX(2);
+    render(false);                                    // slot order: the metasprite first
+    CHECK(OAM_X(0) == 100 - 8 && OAM_Y(0) == 30 - 8); // (-10, 0) scaled and turned: (0, -20)
+    CHECK(OAM_X(2) == 20);
+    ecs_reset();
+}
+
+static void metasprites_need_valid_pieces(void) {
+    static const SpritePiece of_meta[] = {{.sprite = SPR_META}};
+    static const SpritePiece bad_frame[] = {{.sprite = SPR_SMALL, .frame = 1}};
+    static const SpriteAsset bad[] = {
+        {.flags = SPRITE_ASSET_METASPRITE, .pieces = of_meta, .piece_count = 1},
+        {.flags = SPRITE_ASSET_METASPRITE, .pieces = bad_frame, .piece_count = 1},
+        {.flags = SPRITE_ASSET_METASPRITE, .pieces = meta_pieces}, // no piece_count
+        {.flags = SPRITE_ASSET_METASPRITE, .piece_count = 1},      // no pieces
+        // Valid: the pivot drawn at (x, y) - origin, 5 to the right, 3 up.
+        {.flags = SPRITE_ASSET_METASPRITE,
+         .pieces = meta_pieces,
+         .piece_count = 2,
+         .origin_x = -5,
+         .origin_y = 3},
+    };
+    static const SpriteAsset* const bad_table[] = {&small,  &anim,   &wide,   &small,  &meta,
+                                                   &bad[0], &bad[1], &bad[2], &bad[3], &bad[4]};
+    static const u16 ids[5][1] = {{5}, {6}, {7}, {8}, {9}};
+    sprite_table_set(bad_table, 10);
+    u32 before = debug_warning_count();
+    for (u32 k = 0; k < 4; k++) {
+        SpriteGroup g = {.sprite_ids = ids[k], .sprite_count = 1};
+        CHECK(!sprite_group_load(&g));
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 4);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+    SpriteGroup shifted = {.sprite_ids = ids[4], .sprite_count = 1};
+    CHECK(sprite_group_load(&first) && sprite_group_load(&shifted));
+    frame_begin();
+    sprite_draw(9, 0, 100, 50, 0);
+    frame_end();
+    CHECK(OAM_X(0) == 86 + 5 && OAM_Y(0) == 46 - 3);
+    CHECK(OAM_X(1) == 106 + 5 && OAM_Y(1) == 50 - 3);
+    sprite_groups_reset();
+    // Pieces whose sprites aren't loaded aren't drawn (and are reported).
+    CHECK(sprite_group_load(&meta_group));
+    frame_begin();
+    sprite_draw(SPR_META, 0, 100, 50, 0);
+    CHECK(serval_oam_used == 0);
+    sprite_draw(SPR_META, 2, 100, 50, 0); // no frame 2
+    CHECK(serval_oam_used == 0);
+    frame_end();
+    sprite_table_set(table, SPRITE_COUNT);
+}
+
+// sprite_stats_scanlines(true): the per-scanline budget, by GBATEK's rules
+// (1,210 cycles; 10 + 2 x the box's width for an affine sprite).
+static void scanline_budget_is_counted_when_asked(void) {
+    static const u16 big_ids[] = {0};
+    static const SpriteGroup one_big = {
+        .sprite_ids = big_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+    sprite_table_set(big_table, BIG_COUNT);
+    CHECK(sprite_group_load(&one_big)); // 64x64
+    for (int on = 0; on < 2; on++) {
+        sprite_stats_scanlines(on);
+        frame_begin();
+        // Four rotated (double-size 128 box: 266 each) fit: 1,064 cycles.
+        // The fifth (1,330) and an unrotated one after it (+64) don't.
+        for (int k = 0; k < 5; k++)
+            sprite_draw_rotated(0, 0, 40 * k, 60, ANGLE_DEG(30), 0);
+        sprite_draw(0, 0, 100, 60, 0);
+        // Off screen: no cycles.
+        gba_oam_submit((u16)(ATTR0_SQUARE | 170), (u16)(ATTR1_SIZE_64 | 250), 0);
+        frame_end();
+        SpriteStats st = sprite_stats();
+        CHECK(st.drawn == 7);
+        CHECK(st.cut_short == (on ? 2 : 0));
+        CHECK(st.busiest_line == (on ? 1394 : 0));
+    }
+    // Spread over different lines, nothing is lost.
+    frame_begin();
+    for (int k = 0; k < 5; k++)
+        sprite_draw_rotated(0, 0, 40 * k, k ? 150 : 10, ANGLE_DEG(30), 0);
+    frame_end();
+    CHECK(sprite_stats().cut_short == 0 && sprite_stats().busiest_line == 4 * 266);
+    sprite_stats_scanlines(false);
+    sprite_table_set(table, SPRITE_COUNT);
+}
+
+// --- Costs of the render systems ------------------------------------------------
+
+static u32 cycles_now(void) {
+    u32 hi, lo;
+    do {
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+}
+
+// Cycles of one sys_render or sys_render_by_depth call.
+static u32 render_cycles(bool by_depth) {
+    frame_begin();
+    u32 t0 = cycles_now();
+    if (by_depth)
+        sys_render_by_depth();
+    else
+        sys_render();
+    u32 t = cycles_now() - t0;
+    frame_end();
+    return t;
+}
+
+// `count` 8x8 sprites on screen; depth(k) gives entity k's depth.
+static void make_sprites(u32 count, s16 (*depth)(u32 k)) {
+    ecs_reset();
+    for (u32 k = 0; k < count; k++) {
+        u32 i = entity_index(entity_create(C_POS | C_SPR));
+        pos_x[i] = FX((int)(k * 37 % 232));
+        pos_y[i] = FX((int)(k * 53 % 152));
+        spr_depth[i] = depth(k);
+    }
+}
+
+static s16 two_depths(u32 k) { // Breakout: 84 bricks, then balls in front
+    return k < 84 ? 0 : 1;
+}
+static s16 depth_is_y(u32 k) { // bunnymark: lower on screen in front
+    return (s16)(k * 53 % 152);
+}
+static s16 one_depth(u32 k) {
+    (void)k;
+    return 0;
+}
+
+static void render_costs_are_logged(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    sprite_group_load(&first);
+    make_sprites(88, two_depths);
+    u32 plain = render_cycles(false), two = render_cycles(true);
+    // The balls (slots 84-87) come first in OAM, so in front of the bricks.
+    CHECK(oam_mem[0].attr0 != oam_mem[4].attr0 || oam_mem[0].attr1 != oam_mem[4].attr1);
+    make_sprites(128, depth_is_y);
+    u32 plain128 = render_cycles(false), by_y = render_cycles(true);
+    make_sprites(128, one_depth);
+    u32 same = render_cycles(true);
+    debug_log(text_format("render: 88 sprites: sys_render %u cycles, by depth (two depths) %u",
+                          plain, two));
+    debug_log(text_format("render: 128 sprites: sys_render %u, by depth (y) %u, (one depth) %u",
+                          plain128, by_y, same));
+    ecs_reset();
+}
+
 TEST_SUITE(
     sprite_tests, "sprites", {"load_copies_tiles_and_palettes", load_copies_tiles_and_palettes},
     {"draw_writes_position_shape_and_tile", draw_writes_position_shape_and_tile},
@@ -543,4 +913,19 @@ TEST_SUITE(
     {"screen_space_entities_ignore_the_camera", screen_space_entities_ignore_the_camera},
     {"sprite_palette_selects_a_palette_of_the_group",
      sprite_palette_selects_a_palette_of_the_group},
-    {"entities_draw_with_their_sprite_palette", entities_draw_with_their_sprite_palette});
+    {"entities_draw_with_their_sprite_palette", entities_draw_with_their_sprite_palette},
+    {"scaling_enlarges_in_a_double_size_box", scaling_enlarges_in_a_double_size_box},
+    {"shrinking_and_mirroring_use_the_sprites_own_box",
+     shrinking_and_mirroring_use_the_sprites_own_box},
+    {"scales_share_matrices_and_zero_draws_nothing", scales_share_matrices_and_zero_draws_nothing},
+    {"entities_scale_with_sprite_scaled", entities_scale_with_sprite_scaled},
+    {"sprite_stats_count_the_last_frame", sprite_stats_count_the_last_frame},
+    {"depth_order_holds_for_every_kind_of_sort", depth_order_holds_for_every_kind_of_sort},
+    {"metasprites_draw_their_pieces_around_the_pivot",
+     metasprites_draw_their_pieces_around_the_pivot},
+    {"metasprites_rotate_and_scale_about_the_pivot", metasprites_rotate_and_scale_about_the_pivot},
+    {"metasprite_entities_are_drawn_and_sorted_as_one",
+     metasprite_entities_are_drawn_and_sorted_as_one},
+    {"metasprites_need_valid_pieces", metasprites_need_valid_pieces},
+    {"scanline_budget_is_counted_when_asked", scanline_budget_is_counted_when_asked},
+    {"render_costs_are_logged", render_costs_are_logged});

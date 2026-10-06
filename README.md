@@ -17,7 +17,7 @@ It is designed as three layers:
 Implemented:
 
 - Frame loop with CPU-cycle timing; buttons with held-button repeat for menus; 24.8 fixed point, integer helpers, trig with `angle_of` (atan2) and `fx_length`, all without division; deterministic random numbers seeded from the player's input.
-- Sprites: resident sprite groups, 12 hardware sizes, flips, layers, rotation (32 shared matrices per frame), depth sorting, any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; 128 on screen.
+- Sprites: resident sprite groups, 12 hardware sizes, flips, layers, rotation and scaling (32 shared matrices per frame; per-frame counts of what the hardware limits drop), metasprites (pieces drawn, rotated and depth-sorted as one, about any pivot), depth sorting (cheap with few depths), any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; 128 on screen.
 - Tilemaps: one tileset per room, up to three layers of 16x16 metatiles on BG1-BG3, streamed around a camera (any map size); parallax, wrapping, fixed and self-scrolling layers; runtime cell changes; animated tiles.
 - ECS: 128 entities with generational handles; engine components for position, velocity, sprite, animation, body, map body and path; movement, physics, map movement, animation, path and render systems; game-defined components and systems; `ecs_count` and `ecs_gather` for cheap per-kind loops.
 - Physics: bouncing bodies (gravity in any direction and per body, bounce, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; rectangle overlap and hit-side tests.
@@ -29,7 +29,7 @@ Implemented:
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, metasprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, the bytecode VM, and the editor debug link.
+Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, the bytecode VM, and the editor debug link.
 
 ## Documentation
 
