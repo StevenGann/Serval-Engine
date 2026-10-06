@@ -9,7 +9,7 @@ Design documents and reference for the runtime. They are the source of truth for
 | --- | --- | --- |
 | [getting-started.md](getting-started.md) | Build the examples (with a reading order), create a game, sprites, entities, sound, text, web builds | Implemented features only |
 | [api-reference.md](api-reference.md) | Every public function and type, by header: units, limits, misuse behaviour | Implemented |
-| [examples-roadmap.md](examples-roadmap.md) | Implemented and candidate examples, what each exposed or would expose, and the open gaps | Four implemented with findings; the rest candidates |
+| [examples-roadmap.md](examples-roadmap.md) | Implemented and candidate examples, what each exposed or would expose, and the open gaps | Five implemented with findings; the rest candidates |
 | [development.md](development.md) | Building, testing, source layout, benchmark, memory use, code style, CI/CD and releases | Current |
 | [overview.md](overview.md) | Goals, scope, layers, relationship to Studio Advance | Design; core API, ECS and the VM's runtime implemented |
 | [core-api.md](core-api.md) | raylib-style C API by header, debug warnings, hardware the engine uses, the sprite submission model | Implemented; Maxmod and palette management planned |
@@ -19,7 +19,7 @@ Design documents and reference for the runtime. They are the source of truth for
 | [audio.md](audio.md) | PSG sound effects and music; Maxmod music and SFX API | PSG implemented; Maxmod planned |
 | [frame-loop.md](frame-loop.md) | What `frame_begin`/`frame_end` do, the VBlank flush, the update order with scripts | Implemented, order with scripts confirmed; parts of the VBlank flush planned |
 | [runtime-systems.md](runtime-systems.md) | Save data, text, effects, math, paths, physics, entity collision, camera | Mostly implemented, per section; dialogue, blending, broad phase planned |
-| [vm.md](vm.md) | Object/event model and the bytecode VM: blob format, opcode set, scheduling, test plan and milestones | Format v1, interpreter, scheduler and engine bridge implemented; proof example and debug link planned |
+| [vm.md](vm.md) | Object/event model and the bytecode VM: blob format, opcode set, scheduling, test plan and milestones | Format v1, interpreter, scheduler, engine bridge and proof example (`fireflies`) implemented; debug link planned |
 | [debug-link.md](debug-link.md) | Runtime side of the editor/emulator debug protocol | Planned |
 | [platforms.md](platforms.md) | Portability rules, the web target, future targets (GB/GBC, DS) | GBA and web implemented; GB/GBC, DS planned |
 | [releases.md](releases.md) | Versioning, the `serval.json` manifest, release contents | Workflow ready, no release yet |

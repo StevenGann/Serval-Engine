@@ -63,7 +63,7 @@ source ~/opt/emsdk/emsdk_env.sh
 cmake --preset web-release
 cmake --build --preset web-release
 # -> build/web-release/examples/hello.html, bunnymark.html, pong.html, asteroids.html,
-#    breakout.html, platformer.html, shmup.html, blackjack.html
+#    breakout.html, platformer.html, shmup.html, blackjack.html, fireflies.html
 ```
 
 Open a page from disk, or upload it to any static host. A page waits for a click or key press before starting the game, because browsers only allow sound after one.
@@ -90,7 +90,7 @@ Frame numbers don't line up exactly with an emulator's. The page counts `frame_e
 | `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; and `consumer/` (a minimal game project built against the release archive, plus a game that saves) |
-| `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`; `build-all.sh` builds them all into `roms/` and `html/` |
+| `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`, `fireflies`; `build-all.sh` builds them all into `roms/` and `html/` |
 | `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` (`Serval.cmake`, with its web variant in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
 | `tools/` | ROM header fixer (`gbafix.py`), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`) |
 
@@ -168,7 +168,7 @@ The result is deterministic for a given build, so any change in the number comes
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `01fd31b`:
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `01fd31b` (`fireflies` when it was added; the others hadn't changed):
 
 | Example | IWRAM used |
 | --- | --- |
@@ -178,6 +178,7 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | `pong` | 18,272 bytes |
 | `bunnymark` | 18,408 bytes |
 | `asteroids` | 19,056 bytes |
+| `fireflies` | 21,060 bytes |
 | `platformer` | 21,380 bytes |
 | `breakout` | 21,852 bytes |
 
