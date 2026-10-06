@@ -32,6 +32,10 @@ serval_add_rom(blackjack SOURCES blackjack/main.c blackjack/game.c blackjack/rul
                TITLE "BLACKJACK" GAME_CODE "SVBJ")
 target_link_libraries(blackjack PRIVATE serval_warnings)
 
+serval_add_rom(fireflies SOURCES fireflies/main.c fireflies/script.c fireflies/asm.c
+               fireflies/art.c fireflies/sound.c TITLE "FIREFLIES" GAME_CODE "SVFF")
+target_link_libraries(fireflies PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -40,5 +44,5 @@ target_link_libraries(bunnymark_bench PRIVATE serval_warnings)
 # Padding and header, no libc.a in the map, no BLX (cmake/ServalRomChecks.cmake).
 if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(hello bunnymark pong asteroids platformer breakout shmup blackjack
-                          bunnymark_bench)
+                          fireflies bunnymark_bench)
 endif()
