@@ -21,7 +21,8 @@ function(serval_add_header_check target)
 endfunction()
 
 add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c
-    physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c save_tests.c input_tests.c path_tests.c)
+    physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c save_tests.c input_tests.c path_tests.c
+    vm_tests.c)
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
