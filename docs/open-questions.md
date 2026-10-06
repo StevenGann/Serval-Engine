@@ -5,7 +5,7 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 **Status:** living list: open items are unchecked; checked items record decisions already made (and implemented).
 
 - [ ] Confirm the frame loop order ([frame-loop.md](frame-loop.md)).
-- [ ] Define the bytecode VM opcode set and encoding ([vm.md](vm.md)).
+- [ ] Implement the bytecode VM. Format v1, the opcode set and the milestones are specified in [vm.md](vm.md) (proposed 2026-10-05; changeable until a release ships it, then breaking changes bump the major version).
 - [ ] Define the debug link protocol: transport and message format ([debug-link.md](debug-link.md)).
 - [x] Choose the engine license: MIT ([licensing.md](licensing.md)).
 - [x] Verify licenses: libtonc (MIT), Maxmod (ISC), `mmutil` (BSD-3-Clause) ([licensing.md](licensing.md)).

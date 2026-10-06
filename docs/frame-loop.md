@@ -10,12 +10,14 @@
 
 ## Planned order
 
-**Status:** planned. Proposed per-frame order once scripts and events exist. This is **not yet confirmed** and should be settled early, since it shapes how games feel.
+**Status:** proposed in detail with the VM design ([vm.md](vm.md#scheduling-two-phases-per-frame)); confirmed when the VM's engine bridge lands. The VM runs in two phases, so collision handlers run the same frame as the collision, after movement (GameMaker's feel):
 
 ```mermaid
 flowchart LR
-    A[Input] --> B[Scripts<br/>Step events] --> C[Movement] --> D[Collision] --> E[Event dispatch] --> F[Render<br/>shadow OAM] --> G[VBlank flush]
+    A[Input] --> B[vm_step<br/>waits, Step, queued events] --> C[Movement<br/>+ physics] --> D[vm_events<br/>collision handlers] --> E[sys_animate] --> F[Render<br/>shadow OAM] --> G[VBlank flush]
 ```
+
+Animation End events queued by `sys_animate` dispatch in the next frame's `vm_step`.
 
 ## VBlank flush
 

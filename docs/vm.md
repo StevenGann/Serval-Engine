@@ -1,32 +1,284 @@
 # Object/event model and bytecode VM
 
-Game logic uses GameMaker's mental model, compiled to a compact custom bytecode VM in the style of GB Studio's GBVM.
+Game logic uses GameMaker's mental model — objects with event handlers — compiled to a compact custom bytecode VM in the style of GB Studio's GBVM.
 
-**Status:** planned; nothing here is implemented. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today.
+**Status:** format v1 and interpreter behaviour specified below (proposed); nothing is implemented. Until the first engine release ships it, everything here may change without a version bump. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today, and C stays a first-class escape hatch forever.
 
-**Why not Lua:** its RAM footprint, interpretive overhead and garbage collection pauses are too costly at 16.78 MHz.
+## Why a custom VM
+
+"Scripting" covers two different needs, and the VM serves only the first:
+
+1. **What the event editor emits.** Objects with Create/Step/Collision handlers, written in a block editor by non-programmers. Needs per-entity cooperative execution, waits ("move here, wait 20 frames, play a sound"), hot patching over the debug link, determinism, zero allocation — and none of closures, tables, dynamic typing or garbage collection. Scripts decide *what* happens; the C systems do the per-frame work.
+2. **A real language for power users.** Already answered twice: plain C modules today, and post-1.0 a Lua-like language transpiled to C (e.g. Nelua) for native speed. An interpreted dynamic language on a 16.78 MHz ARM7TDMI with no cache loses to both.
+
+### Off-the-shelf options considered
+
+The hard constraints filter hard: no malloc and no GC at runtime, fixed pools, 32 KB IWRAM shared with the game, MIT-compatible ROM-linked licensing, platform-neutral bytecode (GB/DS targets later), ~a hundred tiny per-entity contexts, deterministic across the GBA and web builds.
+
+| Candidate | Why not |
+| --- | --- |
+| **Lua** (MIT) | Heap + incremental GC + a footprint in the hundreds of KB; GC pauses at 16.78 MHz. Out on the no-malloc/no-GC constraint alone. |
+| **Wren, Squirrel, Berry, MicroPython, JerryScript, Duktape, QuickJS** | All GC'd heaps, 10-100x the budget. Same reason. |
+| **wasm3** (MIT) | The strongest small interpreter (~64 KB code, ~10 KB RAM, ~11.5x slower than native per its own figures), but that RAM is per module with one linear memory — not 128 contexts of ~100 bytes — and shipping clang→wasm inside the editor dwarfs the problem it solves. |
+| **Pawn / AMX** (Apache-2.0) | The closest fit: no GC, integer cells, bytecode, `sleep` yields, embeddable compiler. Still loses: each AMX instance carries its own header + data + stack block (KBs each), 32-bit cell semantics are baked in (the GB target forbids a hard 32-bit dependency), Apache-2.0's NOTICE and patent terms sit heavier on ROM-linked code than this project's "light attribution" bar, and hot reload, breakpoints and the editor's event-block debug maps all want a format we control. It would be forked beyond recognition. |
+| **GBVM** (MIT, GB Studio) | The existence proof and design blueprint — a command-style VM driving a fixed engine on a weaker CPU, shipping real games — but it is SM83 assembly + GBDK C. Study it; don't port it. |
+
+The deciding economics: the expensive half of scripting is the event-script **compiler**, which lives in Studio Advance and must be written no matter what it emits. The half an off-the-shelf VM saves — a GBVM-class interpreter — is a few KB of C. Owning the format buys hot reload, debugger integration, GB portability and determinism; the saving would have been the cheap half. Commercial GBA-era games (Pokémon's event scripts, Fire Emblem's event engine) all shipped exactly this kind of tiny custom event VM; none shipped a language runtime.
+
+**Why not transpile events to C and skip the VM?** The editor bundles GCC anyway, but that path loses: the edit-and-continue loop (patching bytes in EWRAM over the debug link versus recompile + relink + reboot, losing game state), event-block-level breakpoints (C needs DWARF→block mapping through the emulator), bytecode density for branchy event logic, and platform neutrality (a GB target would mean SDCC and per-platform codegen).
 
 ## Mapping GameMaker concepts
 
-- **Object:** a prefab = default component set + a table of event → bytecode script.
-- **Events:** Create, Step, Collision with X, Animation End, Destroy, Room Start.
-- **Room:** tilemap layers + placed instances + required asset groups + camera spec.
-- **Event generation:** engine systems push events into a queue, e.g. the collision system emits `(entity, other, EV_COLLISION)`. The VM runs matching handlers. See [frame-loop.md](frame-loop.md) for when dispatch happens.
+- **Object:** a prefab = default component set + sprite + a table of event → bytecode handler.
+- **Events (v1):** Create, Step, Destroy, Collision, Animation End, Room Start.
+- **Room:** tilemap layers + placed instances + required asset groups + camera spec (generated by the editor as C data + `vm_attach` calls; rooms are not a VM concept).
+- **Instance:** an ECS entity bound to an object with `vm_attach()`.
 
-## VM requirements
+## Execution model
 
-- Cooperative threads: scripts yield per frame, like coroutines.
-- Fixed cost per opcode and no garbage collection.
-- Scripts live in memory as bytecode so the emulator can hot-patch them ([debug-link.md](debug-link.md)).
-- Heavy per-frame math stays in C systems; scripts decide *what* happens, not *how*.
-- Opcodes are platform-neutral: no hardware addresses, and no hard dependency on 32-bit values, so the same bytecode can later target GB's 8-bit CPU ([platforms.md](platforms.md)).
-- Sounds are ordinary script ops ([audio.md](audio.md)).
+### Cells
 
-## Opcode set and encoding
+The unit of data is the **cell**: a signed two's-complement integer, 32 bits in v1. The blob header declares the cell width, and opcode semantics are defined width-agnostically (arithmetic wraps modulo 2^width, shift counts mask to width−1), so a future 16-bit-cell target (GB) stays legal without new opcodes. Positions and velocities are the engine's 24.8 `FIXED` in a cell; `FXMUL`/`FXDIV` provide fixed-point multiply and divide. There are no runtime strings: scripts pass indices into the blob's string table.
 
-Not yet defined. See [open-questions.md](open-questions.md). The script compiler that produces bytecode lives in the editor; the bytecode format itself is specified here so that the engine, the compiler and the debugger agree on it.
+### Contexts
 
-## Escape hatches for advanced users
+Scripts run in fixed-size **contexts** from a static pool — no allocation, ever.
 
-- Plain C modules written against the engine API.
-- Optional: a Lua-like language transpiled to C (e.g. Nelua) for native-speed scripting. Not required for 1.0.
+```c
+typedef struct {
+    const u8* pc;              // NULL: this context is free
+    Entity self;               // bound entity, or ENTITY_NONE for detached threads
+    Entity other;              // the event's other entity (collision), else ENTITY_NONE
+    u8 event;                  // EV_* this context is running
+    u8 wait_kind;              // WAIT_NONE / FRAMES / ANIM / MOVE
+    u16 wait_frames;           // for WAIT_KIND_FRAMES
+    u8 sp, cp;                 // value and call stack tops
+    s32 stack[VM_STACK];       // value stack
+    const u8* calls[VM_CALLS]; // return addresses
+    s32 loc[VM_LOCALS];        // per-context locals, zeroed when the context starts
+} VmContext;
+```
+
+Constants (in `vm.h`, compile-time): `VM_CONTEXTS 32`, `VM_STACK 8`, `VM_CALLS 4`, `VM_LOCALS 8`, `VM_GLOBALS 256`, `VM_EVENT_QUEUE 32`, `VM_OPS_PER_SLICE 256`. Pool cost ≈ 3.5 KB of EWRAM for contexts + 1 KB globals + ~0.3 KB queue (`SERVAL_EWRAM_BSS`).
+
+**One script per entity:** an entity has at most one live context. An event arriving while the entity's context is live is **dropped with a debug warning** (so a waiting script isn't torn up mid-wait), with one exception: Destroy force-halts the live context first. Step handlers are likewise skipped while the entity's context is live. Detached threads (`vm_start`) have `self == ENTITY_NONE` and no such rule.
+
+### Scheduling: two phases per frame
+
+The VM runs in two phases, fixing the [frame loop order](frame-loop.md) question:
+
+1. `frame_begin()` — input.
+2. **`vm_step()`** — phase 1: resume waiting contexts (pool index order); run Step handlers for every attached entity whose object has one and whose context is free (entity index order); drain the event queue (FIFO; spawns queued here run their Create this phase).
+3. C systems: `sys_path`, `sys_movement`, `sys_map_movement`, `sys_physics`.
+4. **`vm_events()`** — phase 2: drain the event queue again — chiefly Collision events the physics glue queued this frame, so collision handlers run the same frame, after movement, GameMaker-style.
+5. Game C code, `camera_set`, `sys_animate` (Animation End events it queues dispatch next frame in phase 1), `sys_render*`, HUD.
+6. `frame_end()`.
+
+Draining runs handlers to completion or to their first wait; events queued during a drain (e.g. by `SPAWN`) are drained in the same phase. A full queue drops the event with a debug warning.
+
+**Budget:** a context that executes more than `VM_OPS_PER_SLICE` opcodes in one phase is forced into a one-frame wait with a debug warning (once per context) — an endless loop warns and throttles instead of hanging the game. The engine never fails silently: every misuse case below warns via `SERVAL_WARN` (debug builds) and fails safe.
+
+### Determinism
+
+No opcode reads anything but cells, entity properties and engine calls; the engine's RNG is already deterministic from input history and frame count. All iteration orders are fixed (context pool order, entity index order, FIFO events). The same inputs produce the same run on GBA and web, like everything else in the engine.
+
+## Blob format
+
+One **script blob** holds every object, handler and string for a game (or room set). It is `const` data in ROM, or a buffer in EWRAM when the debug link hot-swaps it. All multi-byte fields are little-endian; nothing requires alignment (the interpreter reads bytes), so the same blob bytes serve a future 8-bit target.
+
+### Header (16 bytes)
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | Magic `"SVMB"` |
+| 4 | 1 | Format version = 1 |
+| 5 | 1 | Cell width in bytes = 4 |
+| 6 | 2 | Flags = 0 (reserved) |
+| 8 | 2 | Object count |
+| 10 | 2 | String count |
+| 12 | 2 | Global count used (≤ `VM_GLOBALS`) |
+| 14 | 2 | Reserved = 0 |
+
+### Object table
+
+Immediately after the header: one 32-byte record per object.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | Default component mask (`C_*` bits, as `entity_create` takes) |
+| 4 | 2 | Default sprite ID |
+| 6 | 2 | Reserved = 0 |
+| 8 | 4 × 6 | Handler offsets for `EV_CREATE, EV_STEP, EV_DESTROY, EV_COLLISION, EV_ANIM_END, EV_ROOM_START` (blob-relative; 0 = no handler) |
+
+### String table and code
+
+After the object table: string count × u32 blob-relative offsets, each to NUL-terminated bytes (the text engine's character set). Code fills the rest.
+
+**Load-time validation** (`vm_load` returns false and warns on the first failure): magic, version, cell width, counts within limits, every handler and string offset inside the blob and past the tables. **Runtime bound:** the dispatcher checks `pc` stays inside the blob; escaping it (a bad jump, or falling off the end) warns and halts the context — so a handler must end in `HALT` or `RET`-to-empty, which the compiler guarantees and the interpreter doesn't trust.
+
+## Opcode reference
+
+One opcode byte, then operands as listed. `rel16` is a signed 16-bit offset from the address immediately after the operand. Stack effects are written `pop → push`. Unknown opcode: warn, halt context. Stack or call-stack over/underflow, on any op: warn, halt context.
+
+### Stack and variables
+
+| Op | Mnemonic | Operands | Effect |
+| --- | --- | --- | --- |
+| 0x00 | `NOP` | | |
+| 0x01 | `HALT` | | End the handler; free the context |
+| 0x02 | `PUSH8` | s8 | → value (sign-extended) |
+| 0x03 | `PUSH16` | s16 | → value (sign-extended) |
+| 0x04 | `PUSH32` | s32 | → value |
+| 0x05 | `DUP` | | a → a, a |
+| 0x06 | `DROP` | | a → |
+| 0x07 | `SWAP` | | a, b → b, a |
+| 0x08 | `LDG` | u8 | → `glob[n]` |
+| 0x09 | `STG` | u8 | a → (`glob[n] = a`) |
+| 0x0A | `LDL` | u8 | → `loc[n]` (n ≥ `VM_LOCALS`: warn, push 0) |
+| 0x0B | `STL` | u8 | a → (n ≥ `VM_LOCALS`: warn, dropped) |
+
+### Arithmetic, logic, comparison
+
+All binary ops: `a, b → a ∘ b`. Arithmetic wraps; `DIV`/`MOD`/`FXDIV` by zero warn once and produce 0; `DIV` rounds toward zero. Shifts mask the count to width−1; `SHR` is arithmetic. Comparisons push 1 or 0.
+
+| Range | Ops |
+| --- | --- |
+| 0x10–0x15 | `ADD SUB MUL DIV MOD NEG` |
+| 0x16–0x17 | `FXMUL` (`(a×b)>>8`, double-width intermediate) · `FXDIV` (`(a<<8)/b`) |
+| 0x18–0x1D | `AND OR XOR BNOT SHL SHR` |
+| 0x1E | `LNOT` (0 → 1, else 0) |
+| 0x20–0x25 | `EQ NE LT LE GT GE` |
+
+### Control flow
+
+| Op | Mnemonic | Operands | Effect |
+| --- | --- | --- | --- |
+| 0x28 | `JMP` | rel16 | |
+| 0x29 | `JZ` | rel16 | a → (jump if a == 0) |
+| 0x2A | `JNZ` | rel16 | a → (jump if a != 0) |
+| 0x2B | `CALL` | u32 | Push return address; jump to blob offset |
+| 0x2C | `RET` | | Pop return address; empty call stack: as `HALT` |
+
+### Waits
+
+A waiting context sleeps until its condition holds, checked at the start of each `vm_step()`.
+
+| Op | Mnemonic | Effect |
+| --- | --- | --- |
+| 0x30 | `WAIT` | n → ; resume after n frames (n ≤ 0: continue immediately; n = 1: next frame) |
+| 0x31 | `WAIT_ANIM` | Resume when `self`'s one-shot animation has finished. No `C_ANIM`, or a looping sprite: warn, continue immediately. Needs a small `anim_finished(Entity)` query added to the ECS |
+| 0x32 | `WAIT_MOVE` | Resume when `self` has no `C_PATH` (`sys_path` removes it when a path ends). Already pathless: continue immediately |
+
+### Entities
+
+Entity handles travel in cells (`Entity` is a u16; `ENTITY_NONE` is 0).
+
+| Op | Mnemonic | Operands | Effect |
+| --- | --- | --- | --- |
+| 0x38 | `SELF` | | → bound entity (detached thread: warn, push 0) |
+| 0x39 | `OTHER` | | → the event's other entity, else 0 |
+| 0x3A | `GETP` | u8 prop | e → value |
+| 0x3B | `SETP` | u8 prop | e, value → |
+| 0x3C | `SPAWN` | u16 object | x, y → entity. `entity_create` with the object's component mask, sprite and position set; Create queued (runs this phase) |
+| 0x3D | `KILL` | | e → ; queues Destroy: dispatcher halts e's context, runs the handler to completion (a wait in Destroy warns and halts), then `entity_destroy` |
+
+Properties (`GETP`/`SETP` page, v1): `P_X 0, P_Y 1` (FIXED, world), `P_VX 2, P_VY 3` (FIXED), `P_SPR 4, P_FRAME 5, P_FLAGS 6, P_ANGLE 7, P_DEPTH 8, P_SCALE 9` — the ECS arrays of the same names. Dead or `ENTITY_NONE` entity: warn; `GETP` pushes 0, `SETP` is dropped. A property whose component bit the entity lacks warns in debug builds but still reads/writes the (zeroed-at-create) array. Unknown property: warn, 0/dropped. The page is append-only.
+
+### Engine calls
+
+| Op | Mnemonic | Operands | Effect |
+| --- | --- | --- | --- |
+| 0x40 | `SYS` | u8 fn | Pops the function's arguments (pushed left to right, so the last argument is on top), pushes its result if it has one |
+
+SYS page v1 (append-only; the interpreter holds a static table of `{arity, returns, fn}`):
+
+| # | Call | Args (top of stack last) | Returns |
+| --- | --- | --- | --- |
+| 0 | `psg_play` | sound id | |
+| 1 | `music_play` | song index (bindings) | |
+| 2 | `music_stop` | | |
+| 3 | `music_pause` | | |
+| 4 | `music_resume` | | |
+| 5 | `camera_set` | x, y (whole pixels) | |
+| 6 | `text_print` | col, row, string index | |
+| 7 | `random_range` | lo, hi | cell |
+| 8 | `button_held` | button mask | 0/1 |
+| 9 | `button_pressed` | button mask | 0/1 |
+| 10 | `screen_brightness` | value | |
+| 11 | `path_start` | entity, path index (bindings), flags | |
+
+Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.songs = ..., .song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0).
+
+### Debug
+
+| Op | Mnemonic | Operands | Effect |
+| --- | --- | --- | --- |
+| 0x50 | `BRK` | | v1: logs and continues (debug builds). Reserved for the debug link: will suspend the context until resumed ([debug-link.md](debug-link.md)) |
+| 0x51 | `TRACE` | u16 string | Debug builds: logs the string and the top of stack. Release: skips the operand, no output |
+
+## Hot reload
+
+- `vm_load(blob, size)`: validate, reset all contexts, zero globals, bind the object table.
+- `vm_reload(blob, size)`: the same, but keeps global values when the global count matches (else zeroes and warns) — so the debug link can swap scripts mid-game without losing story flags. Swaps happen between frames (outside `vm_step`/`vm_events`).
+- Scripts execute from the blob in place; the editor's debugger owns the PC → event-block mapping (emitted by its compiler, never shipped in the blob).
+
+## Public API (`include/serval/vm.h`)
+
+```c
+bool vm_load(const u8* blob, u32 size);
+bool vm_reload(const u8* blob, u32 size);     // keeps globals when layouts match
+void vm_unload(void);
+void vm_bind(const VmBindings* bindings);
+
+void vm_attach(Entity e, u16 object);         // bind + queue Create
+void vm_detach(Entity e);                     // halt its script; no Destroy event
+void vm_kill(Entity e);                       // Destroy handler, then entity_destroy
+int  vm_start(u16 object, u8 event);          // detached thread; context index or -1
+void vm_event(Entity e, Entity other, u8 ev); // queue an event (engine glue, C code)
+
+void vm_step(void);                           // phase 1 (after input)
+void vm_events(void);                         // phase 2 (after physics)
+
+s32  vm_global(u16 index);                    // C code and tests
+void vm_set_global(u16 index, s32 value);
+u32  vm_ops_last_frame(void);                 // perf counter
+bool vm_idle(void);                           // nothing running or waiting (tests)
+```
+
+C code that destroys scripted entities directly must use `vm_kill`/`vm_detach` so the VM's entity→context map stays honest.
+
+## Implementation notes
+
+- **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `SVM_OP_*`, `EV_*`, `P_*` and SYS enums public (tests and the editor's compiler both need the numbers; the blob format is MIT, the compiler is not part of this repo).
+- **Placement:** the dispatch loop starts as Thumb in ROM (~3-4 KB expected). It moves to IWRAM as ARM only if a script-heavy benchmark shows it pays, per the house rule; contexts, globals and the queue are `SERVAL_EWRAM_BSS`.
+- **Dispatch:** a `switch` on the opcode byte is fine for v1; measure before anything cleverer.
+- **Cost intuition:** ~280,000 CPU cycles per frame at 60 fps; budget scripts at well under 40,000. A ROM Thumb switch dispatch lands near 50-100 cycles per simple op, so the practical ceiling is a few hundred ops per frame across all scripts — consistent with "scripts decide what happens": a Step handler should be a handful of ops, and anything per-frame-heavy belongs in a C system.
+
+## Test plan
+
+Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UBSan) and `tests/rom/main.c`, with programs hand-assembled as commented `u8` arrays (helper macros in the test file; the engine ships no assembler — the compiler lives in the editor). Required coverage:
+
+- Every opcode at least once; arithmetic edge cases (wrap, `DIV`/`MOD`/`FXDIV` by zero → 0 + warn, shift masking, `FXMUL` precision).
+- Loader rejection: bad magic, version, cell width, counts, out-of-range handler and string offsets.
+- Runtime safety: stack overflow/underflow, call depth, unknown opcode, unknown property/SYS id, `pc` escaping the blob — each warns and halts only the offending context.
+- Scheduling across simulated frames: `WAIT` counts, `WAIT_ANIM`, `WAIT_MOVE` (with a real path), Step skipped while a context is live, the one-per-entity drop rule, Destroy force-halt, `SPAWN` running Create in-phase, queue overflow, budget throttling.
+- Determinism: two identical runs leave identical globals.
+- Per the house rule, verify each new test can fail.
+
+## Milestones
+
+1. ~~Specify the format and opcode set~~ (this document).
+2. **Core interpreter:** loader + stack/variable/arithmetic/control ops, budget, validation; `vm_tests.c` for all of it, green on host and in the test ROM.
+3. **Scheduler:** contexts, waits, the two phases, event queue, `vm_attach`/`vm_detach`/`vm_kill`/`SPAWN`/`KILL`, Step dispatch, one-per-entity rule; frame-simulation tests.
+4. **Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; collision glue queueing `EV_COLLISION` from physics contacts; update [frame-loop.md](frame-loop.md) from proposed to confirmed.
+5. **Proof example:** a small `examples/` game whose logic is entirely hand-assembled bytecode (objects, Step movement, a collision, waits, a spawn, sound) — the usual example rules apply (header comment, `serval_add_rom`, ROM checks, web build, screenshots).
+6. **Debug and performance:** `BRK` semantics finalized with [debug-link.md](debug-link.md), `vm_reload`, a script benchmark, and the IWRAM decision from its numbers. Freeze format v1 alongside the first release that ships it.
+
+Milestones 2 and 3 are pure `src/core` work with no hardware dependencies — buildable and testable entirely on the host.
+
+## Open items
+
+- The event set will grow (buttons, timers, script-to-script messages); `EV_*`, the property page and the SYS page are all append-only by design.
+- 16-bit cells for a GB target: the header field and width-agnostic semantics keep the door open; nothing else is done for it in v1.
+- Whether rooms bring per-room global banks or the compiler just partitions the global space (compiler-side concern for now).
+- Everything type-shaped (checking, constant folding, dead handler elimination) is the editor compiler's job and stays out of the engine.
