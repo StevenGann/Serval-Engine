@@ -68,6 +68,8 @@
 #define MAX_POWERS 2               // ...while fewer than this many are falling
 #define POWER_MAX_FALL (FX(3) / 2) // pixels per frame (the game's gravity is in game.c)
 #define POWER_POINTS 100
+// Draw order (spr_depth, sys_render_by_depth): higher in front.
+enum { DEPTH_BRICK, DEPTH_POWER, DEPTH_PADDLE, DEPTH_BALL };
 // Effects (dust) are only created while this many entity slots are free, so
 // bricks, balls and capsules always fit.
 #define FREE_SLOTS_FOR_EFFECTS 8
@@ -180,9 +182,7 @@ static u32 create_ball(FIXED x, FIXED y) {
     pos_x[b] = x;
     pos_y[b] = y;
     spr_id[b] = SPR_BALL;
-    // In front of the bricks: among sprites on one layer, lower slots are in
-    // front, and balls are created after the bricks.
-    spr_flags[b] = SPRITE_ABOVE_FOREGROUND;
+    spr_depth[b] = DEPTH_BALL;
     body_w[b] = body_h[b] = BALL_SIZE;
     body_gravity[b] = BODY_GRAVITY(0); // flies straight while capsules fall
     ball_dull[b] = 0;
@@ -221,6 +221,7 @@ static void spawn_burst(u32 brick) {
     pos_x[i] = pos_x[brick];
     pos_y[i] = pos_y[brick];
     spr_id[i] = SPR_BURST;
+    spr_depth[i] = DEPTH_BRICK;
 }
 
 static void spawn_power(u32 brick) {
@@ -241,7 +242,7 @@ static void spawn_power(u32 brick) {
     pos_y[i] = pos_y[brick];
     vel_y[i] = -FX(1); // a little hop out of the brick, then it falls
     spr_id[i] = (u16)(SPR_CAPSULE_WIDE + kind);
-    spr_flags[i] = SPRITE_ABOVE_FOREGROUND; // in front of the bricks, like the balls
+    spr_depth[i] = DEPTH_POWER;
     body_w[i] = BRICK_W;
     body_h[i] = BRICK_H;
     body_max_fall[i] = POWER_MAX_FALL;
@@ -279,8 +280,10 @@ void play_start_level(int level) {
     }
     // The paddle has a velocity (set from the buttons each frame and applied
     // by sys_movement) so body_hit_side() sees it move. It is no C_BODY:
-    // sys_physics leaves it alone, and play.c keeps it inside the walls.
-    paddle = entity_index(entity_create(C_POS | C_VEL));
+    // sys_physics leaves it alone, and play.c keeps it inside the walls. Its
+    // sprite is a metasprite of three or two pieces, drawn as one.
+    paddle = entity_index(entity_create(C_POS | C_VEL | C_SPR));
+    spr_depth[paddle] = DEPTH_PADDLE;
     bricks_broken = 0;
     play_serve();
 }
@@ -288,6 +291,7 @@ void play_start_level(int level) {
 void play_serve(void) {
     remove_flying();
     paddle_w = PADDLE_W_NORMAL;
+    spr_id[paddle] = SPR_PADDLE;
     catching = false;
     pos_x[paddle] = FX((SCREEN_W - paddle_w) / 2);
     pos_y[paddle] = FX(PADDLE_Y);
@@ -327,6 +331,7 @@ static void launch(void) {
 static void set_paddle_width(int w) {
     int grow = w - paddle_w;
     paddle_w = w;
+    spr_id[paddle] = w == PADDLE_W_WIDE ? SPR_PADDLE_WIDE : SPR_PADDLE;
     body_w[paddle] = (u8)w;
     int x = int_clamp(paddle_x() - grow / 2, FIELD_LEFT, FIELD_RIGHT - w);
     pos_x[paddle] = FX(x);
@@ -650,14 +655,12 @@ PlayResult play_update(void) {
 }
 
 void play_draw(void) {
-    sys_render(); // bricks, balls, capsules, dust
-    // The paddle, in pieces drawn by hand: two ends, and a middle when wide.
-    // Drawn after sys_render, so balls are in front of it. It glows (cyan
-    // spots) while it catches balls.
-    u16 glow = catching ? SPRITE_PALETTE(PAL_CATCH) : 0;
-    int x = paddle_x();
-    sprite_draw(SPR_PADDLE_LEFT, 0, x, PADDLE_Y, glow);
-    if (paddle_w == PADDLE_W_WIDE)
-        sprite_draw(SPR_PADDLE_MIDDLE, 0, x + 16, PADDLE_Y, glow);
-    sprite_draw(SPR_PADDLE_RIGHT, 0, x + paddle_w - 16, PADDLE_Y, glow);
+    // The paddle glows (cyan spots) while it catches balls: every piece of
+    // its metasprite drawn with PAL_CATCH.
+    spr_flags[paddle] = catching ? SPRITE_PALETTE(PAL_CATCH) : 0;
+    // Bricks, dust, capsules, the paddle and balls, higher depths in front.
+    // With four depths the sort is one pass over a few buckets (about 4,500
+    // cycles for 90 sprites over sys_render's slot order, which would put the
+    // balls, created after the bricks, behind them).
+    sys_render_by_depth();
 }

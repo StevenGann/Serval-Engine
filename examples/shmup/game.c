@@ -174,18 +174,19 @@ static void draw_panel(void) {
     cpu_peak = p > cpu_peak ? p : cpu_peak;
     if (button_pressed(BUTTON_SELECT)) {
         show_cpu = !show_cpu;
+        sprite_stats_scanlines(show_cpu); // its cost shows in the CPU load
         text_clear_area(PANEL_COL, 16, 8, 4);
     }
     if (show_cpu) {
         // Hardware sprites last frame, and draws lost to the limits (OAM full,
-        // out of rotation matrices; sprite_stats). The second number should
-        // stay 0.
+        // out of rotation matrices, a scanline out of sprite time;
+        // sprite_stats). The second number should stay 0.
         SpriteStats st = sprite_stats();
         text_print(PANEL_COL, 16, text_format("C %3u.%u", p / 10, p % 10));
         text_print(PANEL_COL, 17, text_format("P %3u.%u", cpu_peak / 10, cpu_peak % 10));
         text_print(PANEL_COL, 18, text_format("E %3u", ecs_count(0)));
-        text_print(PANEL_COL, 19,
-                   text_format("S %3u %u ", st.drawn, st.dropped + st.untransformed));
+        u32 lost = st.dropped + st.untransformed + st.cut_short;
+        text_print(PANEL_COL, 19, text_format("S %3u %u ", st.drawn, lost));
     }
 #endif
 }

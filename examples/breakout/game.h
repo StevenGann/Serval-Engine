@@ -31,9 +31,11 @@
 enum {
     SPR_BRICK, // frames BRICK_FRAME_*; each color is a palette (SPRITE_PALETTE(PAL_*))
     SPR_BALL,
-    SPR_PADDLE_LEFT, // the paddle in 16x8 pieces: left end, middle (wide paddle only), right end
+    SPR_PADDLE_LEFT, // the paddle's 16x8 pieces: left end, middle (wide paddle only), right end
     SPR_PADDLE_MIDDLE,
     SPR_PADDLE_RIGHT,
+    SPR_PADDLE,       // metasprites of those pieces, drawn as one from the paddle's top-left:
+    SPR_PADDLE_WIDE,  // two ends (32 pixels), and with the middle between them (48)
     SPR_CAPSULE_WIDE, // falling power-ups: one per PowerKind, in order
     SPR_CAPSULE_MULTI,
     SPR_CAPSULE_SLOW,

@@ -28,7 +28,7 @@
 
 // SpriteAsset.flags
 #define SPRITE_ASSET_STREAMED (1 << 0)   // not supported yet
-#define SPRITE_ASSET_METASPRITE (1 << 1) // not supported yet
+#define SPRITE_ASSET_METASPRITE (1 << 1) // made of other sprites: .pieces (SpritePiece below)
 #define SPRITE_ASSET_ANIM_ONCE                                                                     \
     (1 << 2) // sys_animate stops on the last frame (or
              // frame_order step) instead of looping
@@ -38,18 +38,47 @@
 #define SPRITE_FRAME_FLIP_H (1 << 6)
 #define SPRITE_FRAME_FLIP_V (1 << 7)
 
+// One piece of a metasprite: a frame of another sprite, placed by its center
+// relative to the metasprite's pivot, the point drawn at (x, y) - origin. Rotating or
+// scaling the metasprite turns and scales the pieces' positions about the
+// pivot, and each piece with them, so the pivot can be anywhere: a gun's
+// mount, a door's hinge, a card's center. The pieces' own origins are
+// ignored. Pieces are drawn in order, the first in front.
+typedef struct {
+    s16 x, y;   // the piece's center, relative to the pivot (unflipped, unrotated)
+    u16 sprite; // sprite ID of an ordinary sprite (not a metasprite)
+    u16 flags;  // SPRITE_FLIP_H, SPRITE_FLIP_V and SPRITE_PALETTE(n) for this piece
+    u8 frame;   // the frame of that sprite
+} SpritePiece;
+
 // A sprite: its pixels and how to draw them. Fields left out of an
 // initializer take sensible defaults; only .size and .tiles are required.
+//
+// A metasprite (flags SPRITE_ASSET_METASPRITE) is drawn, rotated, scaled,
+// flipped, animated and depth-sorted as one sprite, but made of others: its
+// .pieces take the place of .tiles, .piece_count that of .tiles_per_frame,
+// and .size is not used. Frame f is pieces[f * piece_count] to
+// pieces[f * piece_count + piece_count - 1]. Its group needs no VRAM for it;
+// the sprites its pieces use must be loaded (in its group or another) to be
+// drawn. Each piece takes a hardware sprite; pieces sharing flips share a
+// rotation matrix.
 typedef struct {
-    const u32* tiles;      // pixel data: 8x8 tiles of 4 bits per pixel, 8 words each,
-                           // frame after frame (each frame row by row, tile by tile)
-    u8 size;               // SPRITE_16x16 etc. (required)
-    u8 tiles_per_frame;    // 0: computed from size (the usual case); if set, at least
-                           // what the size needs (more leaves padding between frames)
+    union {
+        const u32* tiles;          // pixel data: 8x8 tiles of 4 bits per pixel, 8 words each,
+                                   // frame after frame (each frame row by row, tile by tile)
+        const SpritePiece* pieces; // metasprites: piece_count pieces per frame
+    };
+    u8 size; // SPRITE_16x16 etc. (required, except for metasprites)
+    union {
+        u8 tiles_per_frame; // 0: computed from size (the usual case); if set, at least
+                            // what the size needs (more leaves padding between frames)
+        u8 piece_count;     // metasprites: pieces per frame (at least 1)
+    };
     u8 frame_count;        // animation frames; 0 means 1
     u8 order_length;       // frame_order entries (steps); at least 1 if frame_order is set
     u8 palette_slot;       // which of its group's palettes it uses
-    s8 origin_x, origin_y; // drawn position = (x, y) - origin
+    s8 origin_x, origin_y; // drawn position = (x, y) - origin (metasprites: where the
+                           // pivot is drawn; negative puts it right of / below (x, y))
     u8 flags;              // SPRITE_ASSET_*
     const u8* frame_times; // animation timing for sys_animate (ecs.h): how many frames
                            // (1/60 s) each animation frame shows, frame_count entries
@@ -144,7 +173,12 @@ void sprite_groups_reset(void);
 
 // Draws a frame of a sprite this frame. Does nothing if the sprite is not
 // loaded, the frame does not exist, it is fully off screen, or all hardware
-// sprites are used.
+// sprites are used. A metasprite draws its pieces around its pivot ((x, y)
+// minus its origin), flipped as a
+// whole by SPRITE_FLIP_H/V (positions and pieces), each piece with the
+// flags' layer and SPRITE_PALETTE (or its own palette if the flags have
+// none); pieces off screen or past the 128th hardware sprite are skipped one
+// by one.
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
 
 // Like sprite_draw, rotated around the sprite's center by `angle` (math.h
@@ -181,14 +215,28 @@ typedef struct {
     u16 matrices;      // rotation/scale matrices used, of 32
     u16 dropped;       // draws not shown because all 128 hardware sprites were used
     u16 untransformed; // rotated or scaled draws shown plain: all 32 matrices were used
+    // With sprite_stats_scanlines(true), else 0:
+    u16 cut_short;    // sprites missing from a scanline whose sprite time ran out
+    u16 busiest_line; // sprite time the busiest scanline asked for, in cycles (of 1,210)
 } SpriteStats;
 
 // The last frame's sprite counts: how close a game runs to the hardware's
 // limits, and what it lost past them, in release builds too (debug builds
-// also warn once per problem). Not counted: sprites the hardware itself skips
-// on a scanline that runs out of time (about 1,210 cycles a line: an
-// unrotated sprite costs its width, a rotated or enlarged one 2 x its doubled
-// width + 10), since only the screen shows those.
+// also warn once per problem).
 SpriteStats sprite_stats(void);
+
+// Makes frame_end() also work out the per-scanline sprite budget (off by
+// default): the hardware has about 1,210 cycles a scanline to draw sprites,
+// takes them in OAM order (the order they were drawn: the first in front)
+// and skips what doesn't fit, so too many sprites on one line make the last
+// ones vanish or cut off there. An ordinary sprite costs its width, a rotated
+// or scaled one 10 + 2 x its box's width (the double-size box: 74 for a
+// 16x16 rotated sprite, 266 for a 64x64 one); sprites entirely off screen
+// cost nothing. sprite_stats() then reports the sprites that lost a line
+// (cut_short) and the demand of the busiest line. It walks every scanline of
+// every sprite drawn, a few thousand cycles a frame for a busy screen,
+// counted in frame_cpu_cycles(): a tool for finding the problem, e.g. in a
+// debug readout, not for every frame of a finished game.
+void sprite_stats_scanlines(bool on);
 
 #endif // SERVAL_SPRITES_H

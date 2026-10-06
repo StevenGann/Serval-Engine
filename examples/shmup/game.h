@@ -37,7 +37,9 @@
 // Entity budget. The engine has 128 entities and 128 hardware sprites, and
 // every entity here has a sprite, so the caps below add up to at most 120
 // sprites, leaving room for the 3 drawn by hand (the focus hitbox and two HUD
-// icons): 120 + 3 = 123 of 128.
+// icons): 120 + 3 = 123 of 128. A cannon's head is a metasprite of two
+// pieces, one more hardware sprite each: with the four a fort shows at once,
+// 127.
 //   player 1 + shots 20 + enemies 14 + boss parts 3 + enemy bullets 48
 //   + explosions and sparks 32 + items 2 = 120
 // Each spawn checks its cap (counted once per frame with ecs_count), so the
@@ -55,11 +57,12 @@
 // and a rotated one 2 x its doubled width + 10 (74 for a 16x16 spinner). All
 // 48 enemy bullets on one line cost 384, so bullets bunching up don't reach
 // it; what could is many rotated spinners on one line (waves have at most 4)
-// next to the 64-pixel boss. The forts' cannons are rotated 32 x 32 sprites
-// (138 cycles a line each), at most two on a line. Should a line run out, the
-// hardware drops the sprites with the highest OAM numbers, which
-// sys_render_by_depth gives to the lowest depth: the player's own shots go
-// first, enemy bullets last.
+// next to the 64-pixel boss. The forts' cannons are two rotated pieces each
+// (a 32 x 32 dome and 32 x 16 barrels: 276 cycles a line), at most two on a
+// line. Should a line run out, the hardware drops the sprites with the
+// highest OAM numbers, which sys_render_by_depth gives to the lowest depth:
+// the player's own shots go first, enemy bullets last. In debug builds the
+// SELECT readout counts what a line lost (sprite_stats_scanlines).
 enum {
     DEPTH_BOSS = 0,
     DEPTH_GROUND,
@@ -222,7 +225,9 @@ enum {
     SPR_ITEM_BOMB,
     SPR_BOSS,
     SPR_POD,
-    SPR_CANNON, // closed, firing; drawn rotated toward the ship
+    SPR_DOME,    // the cannon's pieces...
+    SPR_BARRELS, // ...closed, firing
+    SPR_CANNON,  // the cannon's head: a metasprite of the two, frames closed and firing
     SPRITE_COUNT
 };
 

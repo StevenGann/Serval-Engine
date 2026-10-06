@@ -4,7 +4,7 @@ Serval Engine: the open-source GBA game runtime (C on libtonc) that every Studio
 
 ## Status
 
-Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (animation, rotation, scaling, depth, layers, per-draw palettes, screen-space), tilemaps with a camera and map collision, ECS with movement/physics/animation/path/render systems, PSG sound effects and music, text, fades, math, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen, a web target; eight examples (hello, bunnymark, pong, asteroids, breakout, platformer, shmup, blackjack); tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
+Pre-alpha, no release yet: build system, startup code, frame loop, input, sprites (animation, rotation, scaling, metasprites, depth, layers, per-draw palettes, screen-space), tilemaps with a camera and map collision, ECS with movement/physics/animation/path/render systems, PSG sound effects and music, text, fades, math, save data (SRAM, Flash or EEPROM per game; localStorage on the web), splash screen, a web target; eight examples (hello, bunnymark, pong, asteroids, breakout, platformer, shmup, blackjack); tests, benchmark and CI/CD. See README.md for the feature summary. `docs/` is the source of truth for design; start with `docs/README.md` and `docs/development.md`. When a design decision is made, update the relevant doc and tick it off in `docs/open-questions.md`.
 
 ## Commands
 

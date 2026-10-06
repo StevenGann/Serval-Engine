@@ -33,6 +33,10 @@ extern u32 serval_matrices_used;
 extern u32 serval_sprites_dropped;
 extern u32 serval_sprites_untransformed;
 extern SpriteStats serval_sprite_stats;
+// sprite_stats_scanlines(): whether frame_end() fills in cut_short and
+// busiest_line, and the function that does it, from the shadow OAM.
+extern bool serval_scanline_stats;
+void serval_count_scanlines(SpriteStats* stats);
 
 // PSG sound effects (psg.c): set up by serval_init(), advanced once per frame
 // by frame_end().

@@ -147,8 +147,13 @@ void sys_render(void);
 // sys_render_by_depth: like sys_render, but sprites with a higher spr_depth
 // are drawn in front of lower ones (equal depths: lower index in front). For
 // a top-down look, set spr_depth to the entity's y each frame so sprites lower
-// on screen overlap those above. Costs more than sys_render (about 10,000
-// cycles for 128 sprites); use it only when draw order matters.
+// on screen overlap those above, or give each kind of entity its own depth
+// (bricks behind balls). The extra cost depends on the depths: about 400
+// cycles over sys_render for 128 sprites whose depths never decrease from one
+// slot to the next (all equal, or each kind created in front of the ones
+// before: no sort), one counting pass for depths within 256 of each other
+// (two depths, 88 sprites: about 4,100; depth = y, 128 sprites: about
+// 8,200), two passes for wider ranges.
 void sys_render_by_depth(void);
 // sys_animate: plays the animation of entities with C_SPR and C_ANIM: each
 // call counts one frame in spr_anim_time, and once spr_frame has shown for

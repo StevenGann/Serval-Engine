@@ -437,70 +437,59 @@ static const char* const turret_art[] = {
 };
 
 // The cannon's head, which turns to track the ship (drawn rotated, facing
-// right like every rotated sprite): a steel dome with a red eye and twin
-// barrels; the second frame has muzzle flashes. It sits on its emplacement
-// (gun_art) on the map. PAL_HEAVY.
-static const char* const cannon_art[] = {
+// right like every rotated sprite), in two pieces of a metasprite turning
+// about the dome's center: a steel dome with a red eye, and twin barrels
+// reaching well beyond it (one 32x32 sprite turning about its own center
+// could only reach 16 pixels). The second frame of the barrels has muzzle
+// flashes. It sits on its emplacement (gun_art) on the map. PAL_HEAVY.
+static const char* const dome_art[] = {
+    "................................", "................................",
+    "................................", "................................",
+    "................................", "................................",
+    "................................", "...............11...............",
+    "............11155111............", "..........115555554411..........",
+    ".........11555777744411.........", ".........15555755744331.........",
+    "........1555541111433331........", "......121555419999133331........",
+    "......121555199AA9913221........", "......12555519AAAA9122221.......",
+    "......12555519AAAA9122221.......", "......121554199AA9912221........",
+    "......121444419999122221........", "........1444331111222221........",
+    ".........14333622622221.........", ".........11333666622211.........",
+    "..........113322222211..........", "............11122111............",
+    "...............11...............", "................................",
+    "................................", "................................",
+    "................................", "................................",
+    "................................", "................................",
+};
+
+static const char* const barrels_art[] = {
     "................................"
     "................................",
     "................................"
     "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "...............11..............."
-    "...............11...............",
-    "............11155111............"
-    "............11155111............",
-    "..........115555554411.........."
-    "..........115555554411..........",
-    ".........11555777744411....1111."
-    ".........11555777744411....1111.",
-    ".........1555575574433111114441."
-    ".........1555575574433111114441.",
-    "........15555411114333315555551."
-    "........15555411114333315555555A",
-    "......1215554199991333314444441."
-    "......121555419999133331444444AA",
-    "......121555199AA99132211112221."
-    "......121555199AA99132211112221.",
-    "......12555519AAAA9122221..1111."
-    "......12555519AAAA9122221..1111.",
-    "......12555519AAAA9122221..1111."
-    "......12555519AAAA9122221..1111.",
-    "......121554199AA99122211114441."
-    "......121554199AA99122211114441.",
-    "......1214444199991222215555551."
-    "......1214444199991222215555555A",
-    "........14443311112222214444441."
-    "........1444331111222221444444AA",
-    ".........1433362262222111112221."
-    ".........1433362262222111112221.",
-    ".........11333666622211....1111."
-    ".........11333666622211....1111.",
-    "..........113322222211.........."
-    "..........113322222211..........",
-    "............11122111............"
-    "............11122111............",
-    "...............11..............."
-    "...............11...............",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
-    "................................"
-    "................................",
+    ".........111..............11111."
+    ".........111..............11111.",
+    "1111111113331111111111111144441."
+    "1111111113331111111111111144441.",
+    "5555555555555555555555555555551."
+    "5555555555555555555555555555555A",
+    "4444444444444444444444444444441."
+    "444444444444444444444444444444AA",
+    "1111111112221111111111111122221."
+    "1111111112221111111111111122221.",
+    "22222222.111..............11111."
+    "22222222.111..............11111.",
+    "22222222.111..............11111."
+    "22222222.111..............11111.",
+    "1111111113331111111111111144441."
+    "1111111113331111111111111144441.",
+    "5555555555555555555555555555551."
+    "5555555555555555555555555555555A",
+    "4444444444444444444444444444441."
+    "444444444444444444444444444444AA",
+    "1111111112221111111111111122221."
+    "1111111112221111111111111122221.",
+    ".........111..............11111."
+    ".........111..............11111.",
     "................................"
     "................................",
     "................................"
@@ -587,21 +576,22 @@ static const char* const nebula_art[] = {
 // --- Conversion ----------------------------------------------------------------
 
 // Where each picture's tiles go in the sprite tile buffer (in tiles).
-#define T_SHIP 0     // 4 frames of 16x16
-#define T_SHOT 16    // 3 frames of 8x8
-#define T_HITBOX 19  // 8x8
-#define T_ICONS 20   // 2 of 8x8
-#define T_DART 22    // 2 frames of 16x16
-#define T_SPINNER 30 // 16x16
-#define T_GUNSHIP 34 // 32x32
-#define T_TURRET 50  // 2 frames of 16x16
-#define T_BULLET 58  // 2 frames of 8x8
-#define T_SPARK 60   // 3 frames of 8x8
-#define T_BOOM 63    // 5 frames of 16x16
-#define T_ITEMS 83   // 4 frames of 16x16: power (2), bomb (2)
-#define T_BOSS 99    // 64x64
-#define T_POD 163    // 32x32
-#define T_CANNON 179 // 2 frames of 32x32
+#define T_SHIP 0      // 4 frames of 16x16
+#define T_SHOT 16     // 3 frames of 8x8
+#define T_HITBOX 19   // 8x8
+#define T_ICONS 20    // 2 of 8x8
+#define T_DART 22     // 2 frames of 16x16
+#define T_SPINNER 30  // 16x16
+#define T_GUNSHIP 34  // 32x32
+#define T_TURRET 50   // 2 frames of 16x16
+#define T_BULLET 58   // 2 frames of 8x8
+#define T_SPARK 60    // 3 frames of 8x8
+#define T_BOOM 63     // 5 frames of 16x16
+#define T_ITEMS 83    // 4 frames of 16x16: power (2), bomb (2)
+#define T_BOSS 99     // 64x64
+#define T_POD 163     // 32x32
+#define T_DOME 179    // 32x32
+#define T_BARRELS 195 // 2 frames of 32x16
 #define SPRITE_TILES 211
 
 // Background tiles, in tileset order.
@@ -671,6 +661,16 @@ static void convert(u32* out, const char* const* rows, int w, int h, int first, 
 }
 
 // --- Sprites -------------------------------------------------------------------
+
+// The cannon's head: the dome in front, centered on the pivot, and the
+// barrels' center 24 pixels ahead of it, so the muzzles are 39 pixels from
+// the pivot. Frame 1: the barrels' muzzle flash.
+static const SpritePiece cannon_pieces[] = {
+    {.sprite = SPR_DOME},
+    {.x = 24, .sprite = SPR_BARRELS},
+    {.sprite = SPR_DOME},
+    {.x = 24, .sprite = SPR_BARRELS, .frame = 1},
+};
 
 static const u8 dart_times[] = {6, 6};
 static const u8 spark_times[] = {4, 4, 4};      // SPARK_FRAMES in all
@@ -773,12 +773,22 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                  .palette_slot = PAL_BOSS,
                  .origin_x = 6,
                  .origin_y = 4}, // hitbox 20 x 20
-    [SPR_CANNON] = {.size = SPRITE_32x32,
-                    .tiles = sprite_tiles + T_CANNON * 8,
+    [SPR_DOME] = {.size = SPRITE_32x32,
+                  .tiles = sprite_tiles + T_DOME * 8,
+                  .palette_slot = PAL_HEAVY},
+    [SPR_BARRELS] = {.size = SPRITE_32x16,
+                     .tiles = sprite_tiles + T_BARRELS * 8,
+                     .frame_count = 2,
+                     .palette_slot = PAL_HEAVY},
+    // The pivot is the dome's center: with the 20 x 20 hitbox centered on
+    // it, the origin puts the pivot 10 pixels right of and below the
+    // entity's position (its hitbox's top-left).
+    [SPR_CANNON] = {.flags = SPRITE_ASSET_METASPRITE,
+                    .pieces = cannon_pieces,
+                    .piece_count = 2,
                     .frame_count = 2,
-                    .palette_slot = PAL_HEAVY,
-                    .origin_x = 6,
-                    .origin_y = 6}, // hitbox 20 x 20 around the dome; rotates about its center
+                    .origin_x = -10,
+                    .origin_y = -10},
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
@@ -798,6 +808,8 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_ITEM_BOMB] = &sprites[SPR_ITEM_BOMB],
     [SPR_BOSS] = &sprites[SPR_BOSS],
     [SPR_POD] = &sprites[SPR_POD],
+    [SPR_DOME] = &sprites[SPR_DOME],
+    [SPR_BARRELS] = &sprites[SPR_BARRELS],
     [SPR_CANNON] = &sprites[SPR_CANNON],
 };
 
@@ -962,7 +974,8 @@ void art_build(void) {
     convert(s + T_ITEMS * 8, item_art, 16, 16, 0, 4, false, 64);
     convert(s + T_BOSS * 8, boss_art, 64, 64, 0, 1, false, 64);
     convert(s + T_POD * 8, pod_art, 32, 32, 0, 1, false, 32);
-    convert(s + T_CANNON * 8, cannon_art, 32, 32, 0, 2, false, 64);
+    convert(s + T_DOME * 8, dome_art, 32, 32, 0, 1, false, 32);
+    convert(s + T_BARRELS * 8, barrels_art, 32, 16, 0, 2, false, 64);
 
     u32* b = bg_tiles; // tile 0 stays blank
     convert(b + BT_STARS * 8, stars_art, 8, 8, 0, 6, false, 48);

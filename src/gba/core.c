@@ -108,6 +108,8 @@ void frame_end(void) {
                                         .matrices = (u16)serval_matrices_used,
                                         .dropped = (u16)serval_sprites_dropped,
                                         .untransformed = (u16)serval_sprites_untransformed};
+    if (serval_scanline_stats)
+        serval_count_scanlines(&serval_sprite_stats);
     for (u32 i = serval_oam_used; i < 128; i++)
         serval_shadow_oam[i].attr0 = ATTR0_HIDE;
     if (serval_map_prepare_hook)
