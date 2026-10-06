@@ -144,8 +144,7 @@ static void draw_title_art(void) {
     int bob = (int)(frame_count() % 16);
     int y = PADDLE_Y - BALL_SIZE - (bob < 8 ? bob : 16 - bob);
     sprite_draw(SPR_BALL, 0, 117, y, 0);
-    sprite_draw(SPR_PADDLE_LEFT, 0, 104, PADDLE_Y, 0);
-    sprite_draw(SPR_PADDLE_RIGHT, 0, 120, PADDLE_Y, 0);
+    sprite_draw(SPR_PADDLE, 0, 104, PADDLE_Y, 0);
 }
 
 static void show_level(void) {

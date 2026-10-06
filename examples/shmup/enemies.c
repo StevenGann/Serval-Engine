@@ -230,7 +230,7 @@ void spawn_turret(int x, int y) {
 #define CANNON_TURN (ANGLE_DEG(3) / 2)
 #define CANNON_AIM ANGLE_DEG(8)
 #define CANNON_RELOAD 110 // frames from one burst to the next
-#define CANNON_MUZZLE 15  // pixels from the cannon's center to its muzzles
+#define CANNON_MUZZLE 39  // pixels from the cannon's center to its muzzles
 #define DEBRIS_FRAMES 48  // a destroyed cannon's head spinning away
 
 void spawn_cannon(int x, int y) {

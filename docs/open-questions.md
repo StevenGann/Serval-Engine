@@ -15,9 +15,10 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Define the sprite asset format and implement `sprite_draw` for resident groups ([sprites.md](sprites.md#api)).
 - [x] Per-draw palettes (`SPRITE_PALETTE`), hidden and screen-space sprites (`SPRITE_HIDDEN`, `SPRITE_SCREEN`), frame sequences with per-step flips (`frame_order`) ([sprites.md](sprites.md#api)).
 - [x] Sprite scaling (`sprite_draw_ex`, `SPRITE_SCALED` with `spr_scale`) and sprite statistics (`sprite_stats()`: hardware sprites and matrices used, draws dropped) ([sprites.md](sprites.md#api)).
-- [ ] Remaining sprite features: streamed sprites, LZ77 groups, metasprites, runtime tile composition, palette sharing, shadow palette and palette writes, global/room watermark ([sprites.md](sprites.md#api)).
+- [x] Metasprites (`SPRITE_ASSET_METASPRITE`, `SpritePiece`: drawn, rotated and scaled about a pivot, depth-sorted as one), the per-scanline sprite budget in `sprite_stats()` (`sprite_stats_scanlines`), and depth sorting whose cost follows the depths ([sprites.md](sprites.md#api)).
+- [ ] Remaining sprite features: streamed sprites, LZ77 groups, runtime tile composition, palette sharing, shadow palette and palette writes, global/room watermark ([sprites.md](sprites.md#api)).
 - [x] Optimize the per-frame path measured by bunnymark: sprite drawing, render, movement and physics systems in IWRAM as ARM code, cartridge wait states, division-free text formatting ([development.md](development.md#benchmark)).
-- [ ] Further optimization: `text_format` stays in ROM (2.5 KB; IWRAM is shared with games), depth sorting costs ~10,000 cycles for 128 sprites.
+- [ ] Further optimization: `text_format` stays in ROM (2.5 KB; IWRAM is shared with games), depth sorting by y costs ~8,200 cycles for 128 sprites (a few depths: ~4,100 for 88; already in order: ~400).
 - [x] Background and tilemap API (BG1-BG3, metatiles, streaming, camera, map collision) ([tilemaps.md](tilemaps.md)).
 - [x] Animated tiles (`tileset_set_tiles`), sprite animation (`sys_animate`), screen brightness fades, text styles, color and shadow ([tilemaps.md](tilemaps.md), [sprites.md](sprites.md#animation)).
 - [x] Fixed and self-scrolling map layers (`MAP_LAYER_FIXED`, `map_set_scroll`) ([tilemaps.md](tilemaps.md#fixed-and-self-scrolling-layers)).

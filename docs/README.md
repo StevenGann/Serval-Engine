@@ -14,7 +14,7 @@ Design documents and reference for the runtime. They are the source of truth for
 | [overview.md](overview.md) | Goals, scope, layers, relationship to Studio Advance | Design; core API and ECS implemented, VM planned |
 | [core-api.md](core-api.md) | raylib-style C API by header, debug warnings, hardware the engine uses, the sprite submission model | Implemented; Maxmod and palette management planned |
 | [ecs.md](ecs.md) | Entity storage, components, systems, handles, cheap iteration | Implemented; collision events planned |
-| [sprites.md](sprites.md) | Sprite groups, VRAM residency, palettes, ROM data, animation | Resident groups, animation, per-draw palettes implemented; streaming, metasprites, palette sharing planned |
+| [sprites.md](sprites.md) | Sprite groups, VRAM residency, palettes, ROM data, animation | Resident groups, metasprites, animation, per-draw palettes implemented; streaming, palette sharing planned |
 | [tilemaps.md](tilemaps.md) | Tilesets, metatile layers, streaming, fixed and self-scrolling layers, map collision | Implemented; tileset groups, LZ77, slopes and ladders, raster effects planned |
 | [audio.md](audio.md) | PSG sound effects and music; Maxmod music and SFX API | PSG implemented; Maxmod planned |
 | [frame-loop.md](frame-loop.md) | What `frame_begin`/`frame_end` do, the VBlank flush, the planned update order | Implemented; order with scripts planned |

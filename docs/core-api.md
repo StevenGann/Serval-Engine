@@ -88,7 +88,7 @@ Sprites are retained by the hardware (the PPU reads OAM every scanline), but the
 
 - Priority among same-priority sprites is OAM order, so depth sorting is just sorting the draw list.
 - Anything not submitted disappears, so there are no stale sprites.
-- Flicker multiplexing and (planned) metasprites need no slot management.
+- Flicker multiplexing and metasprites need no slot management.
 - Cost: rebuilding 1 KB of OAM in ARM-mode IWRAM code is a few thousand cycles out of about 280,000 per frame.
 
 ## Persistently managed resources

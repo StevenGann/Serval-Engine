@@ -27,11 +27,12 @@
 //     and turrets fixed to the map that scroll with it, leaving a crater
 //     (map_set_cell) when destroyed; lamps on the hulls blink
 //     (tileset_set_tiles)
-//   - Rotating turrets: big cannons on the station forts, each a 32 x 32
-//     sprite with its own angle (spr_angle, its own rotation matrix) that
-//     turns toward the ship at a limited rate and fires along its barrels
-//     from the muzzles; destroyed, the head spins away shrinking (sprite
-//     scaling: SPRITE_SCALED and spr_scale). Their 32 x 32 emplacements and
+//   - Rotating turrets: big cannons on the station forts, each a metasprite
+//     (a dome and long twin barrels, turning about the dome's center: the
+//     pivot, set by its origin) with its own angle (spr_angle, a rotation
+//     matrix per cannon) that turns toward the ship at a limited rate and
+//     fires along its barrels from the muzzles; destroyed, the head spins
+//     away shrinking (sprite scaling: SPRITE_SCALED and spr_scale). Their 32 x 32 emplacements and
 //     craters are four metatiles each, one quarter of art flipped four ways
 //   - Collisions between screen-space shots and world-space turrets with
 //     body_overlap, which adds the camera for such pairs
@@ -62,8 +63,9 @@
 //   - In debug builds, SELECT shows the CPU load (frame_cpu_permille: this
 //     frame and the highest since the stage or the boss fight began), the
 //     live entities (ecs_count) and the hardware sprites used last frame with
-//     the draws lost to the limits (sprite_stats; should stay 0) at the bottom
-//     of the panel
+//     the draws lost to the limits, including scanlines that ran out of
+//     sprite time (sprite_stats, sprite_stats_scanlines; should stay 0) at
+//     the bottom of the panel
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash (about 3 seconds; any button skips it
@@ -95,12 +97,13 @@
 //     hulls open their red eye before firing pairs of shots; destroyed, they
 //     leave a glowing crater. Lamps on the hulls blink. Twice (after about 50
 //     and 90 seconds) a fort comes by with two big cannons in round
-//     emplacements: steel domes with a red eye and twin barrels that swing
-//     smoothly to follow the ship (a ship that keeps moving stays ahead of
-//     them) and, once aimed, fire three pairs of pink shots with muzzle
-//     flashes. They take many hits (3,000 points); destroyed, the head spins
-//     away shrinking to nothing and a big glowing crater is left. Shot enemies flash
-//     white and burst into fireballs and sparks (100 to 2,000 points).
+//     emplacements: steel domes with a red eye and long twin barrels (well
+//     past the dome) that swing smoothly about the dome to follow the ship
+//     (a ship that keeps moving stays ahead of them) and, once aimed, fire
+//     three pairs of pink shots with muzzle flashes. They take many hits
+//     (3,000 points); destroyed, the head spins away shrinking to nothing and
+//     a big glowing crater is left. Shot enemies flash white and burst into
+//     fireballs and sparks (100 to 2,000 points).
 //   - A blue P capsule raises the power (a chime): side needles at level 2,
 //     two more at 3, heavier bolts at MAX (then P gives 2,000 points). A pink
 //     B capsule adds a bomb (up to 5).

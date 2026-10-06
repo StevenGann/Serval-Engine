@@ -24,8 +24,13 @@
 //   - Animated sprites (sys_animate with frame_times): capsules glint, broken
 //     bricks leave dust that plays once (SPRITE_ASSET_ANIM_ONCE)
 //   - One sprite drawn with different palettes (SPRITE_PALETTE: eight brick
-//     colors and a white hit flash, the paddle's glow); a paddle drawn in
-//     pieces with sprite_draw, wider after a power-up
+//     colors and a white hit flash, the paddle's glow)
+//   - A paddle wider than any hardware sprite: a metasprite of 16x8 pieces,
+//     drawn, recolored and depth-sorted as one entity, with a wider
+//     metasprite after a power-up
+//   - Draw order by depth (sys_render_by_depth with spr_depth): balls in
+//     front of the paddle, the paddle in front of capsules, capsules in front
+//     of the bricks
 //   - Map layers as backgrounds (map.h): a pipe frame on background 2 and a
 //     wrapping pattern of serval spots on background 3, in each level's colors
 //   - Screen fades between title, levels and the score table
