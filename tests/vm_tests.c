@@ -2484,6 +2484,93 @@ static void wait_move_resumes_when_the_path_ends(void) {
     CHECK_WARNED(before, 0);
 }
 
+// vm.md "Waits" (INTERRUPTIBLE), "Exact semantics: Draining": once a script
+// has run INTERRUPTIBLE with a nonzero value, an event for its entity that
+// arrives while it waits (WAIT, WAIT_MOVE, ...) halts it for good and runs
+// instead of being dropped. An event the object has no handler for leaves
+// the wait alone; INTERRUPTIBLE 0 makes events drop again (with the usual
+// warning); in a thread, which no event reaches, it does nothing.
+static void interruptible_waits_let_events_in(void) {
+    reset();
+    blob_begin(4, 0, GLOBALS);
+    handler(0, VM_EV_CREATE); // interruptible WAIT
+    push8(1);                 // 1
+    op(VM_OP_INTERRUPTIBLE);  //
+    count(0);                 // glob[0]: Creates of object 0
+    wait_frames(3);           //
+    count(6);                 // glob[6]: waits that ran to their end
+    op(VM_OP_HALT);           //
+    handler(0, VM_EV_COLLISION);
+    op(VM_OP_OTHER);          // other
+    stg(1);                   // glob[1] = other
+    count(2);                 // glob[2]: object 0's Collisions
+    op(VM_OP_HALT);           //
+    handler(1, VM_EV_CREATE); // interruptible, then not again
+    push8(5);                 // 5: any nonzero value
+    op(VM_OP_INTERRUPTIBLE);  //
+    push8(0);                 // 0
+    op(VM_OP_INTERRUPTIBLE);  //
+    wait_frames(3);           //
+    count(7);                 // glob[7]: object 1's wait ran to its end
+    op(VM_OP_HALT);           //
+    handler(1, VM_EV_COLLISION);
+    count(3);                 // glob[3]: never (dropped)
+    op(VM_OP_HALT);           //
+    handler(2, VM_EV_CREATE); // interruptible WAIT_MOVE
+    push8(1);                 // 1
+    op(VM_OP_INTERRUPTIBLE);  //
+    op(VM_OP_WAIT_MOVE);      //
+    count(4);                 // glob[4]: never (interrupted)
+    op(VM_OP_HALT);           //
+    handler(2, VM_EV_COLLISION);
+    count(5);                 // glob[5]: object 2's Collisions
+    op(VM_OP_HALT);           //
+    handler(3, VM_EV_CREATE); // a thread
+    push8(1);                 // 1
+    op(VM_OP_INTERRUPTIBLE);  // nothing to interrupt: no effect, no warning
+    store(8, 1);              //
+    op(VM_OP_HALT);           //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity d = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity c = entity_create(C_POS | C_VEL);
+    Entity o = entity_create(C_POS);
+    path_start(c, &move_path, 0);
+    vm_attach(a, 0);
+    vm_attach(d, 0);
+    vm_attach(b, 1);
+    vm_attach(c, 2);
+    u32 before = debug_warning_count();
+    vm_events(); // every Create runs and waits
+    CHECK(vm_global(0) == 2);
+    CHECK_WARNED(before, 0);
+    vm_event(a, o, VM_EV_COLLISION); // cuts into a's WAIT
+    vm_event(d, o, VM_EV_ANIM_END);  // no handler: d waits on
+    vm_event(b, o, VM_EV_COLLISION); // b isn't interruptible any more: dropped
+    vm_event(c, o, VM_EV_COLLISION); // cuts into c's WAIT_MOVE
+    vm_events();
+    CHECK(vm_global(1) == o && vm_global(2) == 1);
+    CHECK(vm_global(3) == 0 && vm_global(5) == 1);
+    CHECK_WARNED(before, 1);
+    for (u32 f = 0; f < 4; f++) { // the waits end; c's path ends in frame 3
+        vm_step();
+        sys_path();
+        sys_movement();
+        vm_events();
+    }
+    CHECK(!path_active(c));
+    CHECK(vm_global(6) == 1); // d's wait ran to its end, a's never resumed
+    CHECK(vm_global(7) == 1); // b's too
+    CHECK(vm_global(4) == 0); // c's WAIT_MOVE never resumed
+    CHECK(vm_idle());
+    start(3);
+    vm_step();
+    CHECK(vm_global(8) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
 static const u32 anim_tiles[8 * 3];
 static const SpriteAsset anim_once = {
     .size = SPRITE_8x8, .tiles = anim_tiles, .frame_count = 3, .flags = SPRITE_ASSET_ANIM_ONCE};
@@ -3430,6 +3517,7 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"property_without_its_component_warns", property_without_its_component_warns},
            {"body_size_properties", body_size_properties},
            {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
+           {"interruptible_waits_let_events_in", interruptible_waits_let_events_in},
            {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
            {"wait_anim_without_a_one_shot_animation_continues",
             wait_anim_without_a_one_shot_animation_continues},

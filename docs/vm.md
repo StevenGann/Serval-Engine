@@ -53,6 +53,7 @@ typedef struct {
     u8 wait_kind;              // WAIT_NONE / FRAMES / ANIM / MOVE
     u16 wait_frames;           // for WAIT_KIND_FRAMES
     u8 sp, cp;                 // value and call stack tops
+    u8 interruptible;          // INTERRUPTIBLE: events may cut into its waits
     s32 stack[VM_STACK];       // value stack
     const u8* calls[VM_CALLS]; // return addresses
     s32 loc[VM_LOCALS];        // per-context locals, zeroed when the context starts
@@ -61,7 +62,7 @@ typedef struct {
 
 Constants (in `vm.h`, compile-time): `VM_CONTEXTS 32`, `VM_STACK 8`, `VM_CALLS 4`, `VM_LOCALS 8`, `VM_GLOBALS 256`, `VM_EVENT_QUEUE 32`, `VM_OPS_PER_SLICE 256`. Pool cost about 5 KB of EWRAM (`SERVAL_EWRAM_BSS`): 3 KB of contexts, 1 KB of globals, 192 bytes of queue and 768 bytes of per-entity bindings.
 
-**One script per entity:** an entity has at most one live context. An event arriving while the entity's context is live is **dropped with a debug warning** (so a waiting script isn't torn up mid-wait), with one exception: Destroy force-halts the live context first. Step handlers are likewise skipped while the entity's context is live. Detached threads (`vm_start`) have `self == ENTITY_NONE` and no such rule.
+**One script per entity:** an entity has at most one live context. An event arriving while the entity's context is live is **dropped with a debug warning** (so a waiting script isn't torn up mid-wait), with two exceptions: Destroy force-halts the live context first, and a script that has made itself `INTERRUPTIBLE` gives way to an event that arrives while it waits (halted, not resumed; the event's handler runs instead). Step handlers are likewise skipped while the entity's context is live. Detached threads (`vm_start`) have `self == ENTITY_NONE` and no such rule.
 
 ### Scheduling: two phases per frame
 
@@ -168,6 +169,9 @@ No operands (`WAIT` pops its frame count). A waiting context sleeps until its co
 | 0x30 | `WAIT` | n → ; resume after n frames (n ≤ 0: continue immediately; n = 1: next frame) |
 | 0x31 | `WAIT_ANIM` | Resume when `anim_finished(self)`. No one-shot animation (no `C_SPR` or `C_ANIM`, or a sprite without `SPRITE_ASSET_ANIM_ONCE`), checked when the op runs **and on every resume pass while waiting** (the game may switch sprites mid-wait): warn, continue. Already finished: continue immediately. In a thread with no entity: warn, continue |
 | 0x32 | `WAIT_MOVE` | Resume when `self` has no `C_PATH` (`sys_path` removes it when a path ends). Already pathless: continue immediately |
+| 0x33 | `INTERRUPTIBLE` | a → ; a ≠ 0: from now on, while this context waits (any wait, including the one the budget forces), an event for `self` that its object has a handler for halts it and runs, instead of being dropped; the halted script never resumes. a = 0: back to the default (dropped, warning). Every context starts with it off. In a thread (no entity, so no events): no effect |
+
+`INTERRUPTIBLE` is for an entity whose behaviour is one long script that waits (patrol, wait, patrol) but must still react to events: a firefly that wanders until it is caught. The event's handler takes over the entity; to carry on afterwards, it jumps or calls back into the behaviour's code (its locals start from zero).
 
 ### Entities
 
@@ -255,7 +259,7 @@ The rules an implementation must follow where the sections above leave room. Tes
 
 **Draining** (both of `vm_step()`'s drains, and `vm_events()`): FIFO until the queue is empty, including events queued during the drain. Per entry:
 - `VM_EV_DESTROY` (from `KILL`): if the entity is dead, skip. If attached: halt its live context, run its Destroy handler (if any) to completion — a wait inside it warns and halts it — then unbind. Then `entity_destroy`. Unattached live entities are just destroyed.
-- Any other event: skip silently if the entity is dead or unattached, or its object has no handler for the event. If the entity has a live context: warn and drop. Otherwise allocate a context (`self = e`, `other` as queued) and run it. No free context: warn, drop.
+- Any other event: skip silently if the entity is dead or unattached, or its object has no handler for the event. If the entity has a live context: if that context waits and is interruptible (`INTERRUPTIBLE`), halt it and go on; otherwise warn and drop. Then allocate a context (`self = e`, `other` as queued) and run it. No free context: warn, drop.
 
 **Stale bindings.** The VM stores each binding's `Entity` handle. Wherever it looks a binding up, a handle that no longer matches a live entity (destroyed behind the VM's back) counts as unbound: the binding is cleared, its context halted, and it warns once.
 
@@ -329,7 +333,7 @@ Beyond the byte layout, these are part of format v1, and a compiler may rely on 
 
 ## Open items
 
-- **Known v1 caveats** (consequences of one script per entity, kept for now): an Animation End that fires while the entity's script is live (Create or a `WAIT` still running) is dropped with a warning, and since the trigger is an edge it does not come back; `vm_attach` twice before a drain queues two Create events (the second runs, or is dropped if the first waits). A per-binding "pending event" flag would fix both if games hit them.
+- **Known v1 caveats** (consequences of one script per entity, kept for now): an Animation End that fires while the entity's script is live (Create or a `WAIT` still running) is dropped with a warning, and since the trigger is an edge it does not come back; `vm_attach` twice before a drain queues two Create events (the second runs, or is dropped if the first waits). A per-binding "pending event" flag would fix both if games hit them. (A script that is `INTERRUPTIBLE` while it waits lets Animation End in; the `fireflies` example (milestone 5) hit the general case, a Collision for an entity whose behaviour script is always waiting, and `INTERRUPTIBLE` is the answer to it.)
 
 - The event set will grow (buttons, timers, script-to-script messages); `VM_EV_*`, the property page and the SYS page are all append-only by design.
 - 16-bit cells for a GB target: the header field and width-agnostic semantics keep the door open; nothing else is done for it in v1.

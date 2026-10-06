@@ -396,7 +396,7 @@ save_write(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION); // after a game
 
 ## vm.h
 
-The bytecode VM: objects with event handlers (GameMaker's model), run as cooperative scripts with no allocation. The editor's script compiler emits one **script blob** holding every object, handler and string; its format, the opcodes, the property and engine-call pages and every scheduling rule are specified in [vm.md](vm.md), and `vm.h` names all their numbers (`VM_OP_*`, `VM_EV_*`, `VM_P_*`, `VM_SYS_*`, `VM_FORMAT_VERSION`, `VM_CELL_BYTES`, `VM_HEADER_SIZE`, `VM_OBJECT_SIZE`). An *instance* is an entity attached to an object; scripts can also run as *threads* with no entity (`vm_start`). Each entity runs at most one script at a time.
+The bytecode VM: objects with event handlers (GameMaker's model), run as cooperative scripts with no allocation. The editor's script compiler emits one **script blob** holding every object, handler and string; its format, the opcodes, the property and engine-call pages and every scheduling rule are specified in [vm.md](vm.md), and `vm.h` names all their numbers (`VM_OP_*`, `VM_EV_*`, `VM_P_*`, `VM_SYS_*`, `VM_FORMAT_VERSION`, `VM_CELL_BYTES`, `VM_HEADER_SIZE`, `VM_OBJECT_SIZE`). An *instance* is an entity attached to an object; scripts can also run as *threads* with no entity (`vm_start`). Each entity runs at most one script at a time: an event for an entity whose script is still running or waiting is dropped (*warns*), unless that script waits after the `INTERRUPTIBLE` opcode, which lets the event's handler replace it.
 
 ```c
 vm_load(game_scripts, sizeof game_scripts);
@@ -438,7 +438,7 @@ for (;;) {
 | `void vm_detach(Entity e)` | Halts `e`'s script and detaches it, without a Destroy event. Nothing for an entity that isn't attached. |
 | `void vm_kill(Entity e)` | Destroys an attached entity the script way: halts its script, runs its Destroy handler (if any) to completion, detaches it, then `entity_destroy(e)`. A wait in the Destroy handler halts it (*warns*). Unattached live entities are just destroyed; dead handles are ignored; `ENTITY_NONE` *warns*. Called during `vm_step()` or `vm_events()`, it is queued like the `KILL` opcode. Use it, or `vm_detach`, instead of `entity_destroy` for attached entities. |
 | `int vm_start(u16 object, u8 event)` | Starts the object's handler for `event` as a thread with no entity (`SELF` warns and pushes 0); it first runs in the next `vm_step()`. Returns the context index, or −1 if there is no blob, no such object or handler, or no free context (*warns*). |
-| `void vm_event(Entity e, Entity other, u8 event)` | Queues an event for `e`, e.g. `vm_event(a, b, VM_EV_COLLISION)` after `body_overlap`; `OTHER` gives `other` to the handler. When drained, it runs if `e` is alive and attached and its object has a handler for the event, and is dropped (*warns*) if `e`'s script is still running or waiting. `VM_EV_DESTROY` behaves exactly like `KILL`: queued, then what `vm_kill` does when drained, with `OTHER` 0 in the Destroy handler; for `ENTITY_NONE` it is ignored (*warns*). An event number of `VM_EV_COUNT` or more is ignored (*warns*). |
+| `void vm_event(Entity e, Entity other, u8 event)` | Queues an event for `e`, e.g. `vm_event(a, b, VM_EV_COLLISION)` after `body_overlap`; `OTHER` gives `other` to the handler. When drained, it runs if `e` is alive and attached and its object has a handler for the event, and is dropped (*warns*) if `e`'s script is still running or waiting, unless it waits after `INTERRUPTIBLE` (then it is halted and the event's handler runs). `VM_EV_DESTROY` behaves exactly like `KILL`: queued, then what `vm_kill` does when drained, with `OTHER` 0 in the Destroy handler; for `ENTITY_NONE` it is ignored (*warns*). An event number of `VM_EV_COUNT` or more is ignored (*warns*). |
 | `void vm_step(void)` | Phase 1, after `frame_begin()` and before movement: resumes waiting scripts (in context order; `WAIT n` counts down one frame per call), queues Animation End events, runs queued events (oldest first, including events queued meanwhile, such as Creates), runs the Step handler of every attached entity with no running script whose Create has been dispatched (in entity order), then runs the events the Step handlers queued (an entity a Step handler `SPAWN`s runs Create here and its first Step next frame). |
 | `void vm_events(void)` | Phase 2, after movement and physics: runs queued events, e.g. the collisions game code reported this frame. Never resumes waiting scripts. |
 | `s32 vm_global(u16 index)` | Global `index` (0-255). Others return 0 (*warns*). |
@@ -450,7 +450,7 @@ for (;;) {
 
 **Caveats**
 
-- An Animation End event arriving while the entity's script is still running or waiting is dropped (*warns*) like any other event, and the same finish doesn't raise it again.
+- An Animation End event arriving while the entity's script is still running or waiting (and not `INTERRUPTIBLE`) is dropped (*warns*) like any other event, and the same finish doesn't raise it again.
 - An entity attached to an object and then destroyed with `entity_destroy` leaves a stale binding: the VM notices, halts its script and *warns*. Use `vm_kill` or `vm_detach`.
 
 ## debug.h

@@ -99,6 +99,7 @@ enum {
     VM_OP_WAIT = 0x30,
     VM_OP_WAIT_ANIM = 0x31,
     VM_OP_WAIT_MOVE = 0x32,
+    VM_OP_INTERRUPTIBLE = 0x33,
 
     VM_OP_SELF = 0x38,
     VM_OP_OTHER = 0x39,

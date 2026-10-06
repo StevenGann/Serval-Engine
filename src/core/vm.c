@@ -29,7 +29,8 @@ enum {
     CTX_FREE,        // not in use
     CTX_READY,       // started by vm_start(): runs in the next resume pass
     CTX_RUNNING,     // executing
-    CTX_WAIT_FRAMES, // WAIT: resumes when wait_frames counts down to 0
+    CTX_WAIT_FRAMES, // WAIT: resumes when wait_frames counts down to 0 (the waiting
+                     // states come last: dispatch tests state >= CTX_WAIT_FRAMES)
     CTX_WAIT_ANIM,   // WAIT_ANIM: resumes once anim_finished(self)
     CTX_WAIT_MOVE,   // WAIT_MOVE: resumes once self has no C_PATH
 };
@@ -42,6 +43,7 @@ typedef struct {
     u8 event;            // the VM_EV_* handler it runs
     u16 wait_frames;     // CTX_WAIT_FRAMES: resume passes left
     u8 sp, cp;           // value and call stack depths
+    u8 interruptible;    // INTERRUPTIBLE: an event for self may cut into its waits
     s32 stack[VM_STACK]; // value stack
     u32 calls[VM_CALLS]; // return offsets
     s32 loc[VM_LOCALS];  // zeroed when the context starts
@@ -247,6 +249,7 @@ static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 
         c->event = (u8)event;
         c->wait_frames = 0;
         c->sp = c->cp = 0;
+        c->interruptible = 0;
         for (u32 n = 0; n < VM_LOCALS; n++)
             c->loc[n] = 0;
         if (self != ENTITY_NONE)
@@ -757,6 +760,10 @@ static u32 execute(Context* c, bool must_finish) {
                 goto destroy_wait;
             c->state = CTX_WAIT_MOVE;
             goto suspend;
+        case VM_OP_INTERRUPTIBLE: // no effect in a thread: no event reaches one
+            NEED(1);
+            c->interruptible = st[--sp] != 0;
+            break;
 
         case VM_OP_SELF:
             ROOM(1);
@@ -957,13 +964,20 @@ static void dispatch(Entity e, Entity other, u32 event) {
     if (!handler)
         return;
     if (bound_context[slot]) {
+        Context* live = &contexts[bound_context[slot] - 1];
+        // One script per entity: the event is dropped, unless the script
+        // waits and has made itself INTERRUPTIBLE; then the event replaces it.
+        if (!live->interruptible || live->state < CTX_WAIT_FRAMES) {
 #ifdef SERVAL_DEBUG
-        WARN_ONCE(WARN_DROPPED,
-                  "vm: entity %u's script is still running (or waiting), so its %s event is "
-                  "dropped (one script per entity)",
-                  slot, event_names[event]);
+            WARN_ONCE(WARN_DROPPED,
+                      "vm: entity %u's script is still running (or waiting), so its %s event "
+                      "is dropped (one script per entity; INTERRUPTIBLE lets events cut into "
+                      "its waits)",
+                      slot, event_names[event]);
 #endif
-        return;
+            return;
+        }
+        halt(live);
     }
     Context* c = start_context(handler, e, other, event, CTX_RUNNING);
     if (c)
