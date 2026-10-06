@@ -66,6 +66,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/sprite_table.c
     src/core/text_format.c
     src/core/trig.c
+    src/core/vm.c
     src/ecs/animate.c
     src/ecs/ecs.c
     src/ecs/map_movement.c
