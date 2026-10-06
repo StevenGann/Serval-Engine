@@ -3,9 +3,9 @@
 // assembler, so programs are built here by a small blob builder, one op per
 // line. Run natively (ASan/UBSan) and in the test ROM.
 //
-// Where vm.md says only "warn", a test expects exactly one warning per
-// occurrence; "warn once" rules are checked to warn at least once and not
-// again for a repeat.
+// Warnings follow vm.md "Exact semantics: Warnings repeat once per problem,
+// per loaded blob": a test expects exactly one warning the first time a kind
+// of problem happens after a load, and none for repeats until the next load.
 
 #include "serval/core.h"
 #include "serval/debug.h"
@@ -360,10 +360,12 @@ static void frames(u32 n) {
         frame();
 }
 
-// Starts objects 1..faulty as threads, each running into a fault, then the
-// witness (object 0), and checks vm.md "Exact semantics: Halting a context":
-// each fault warns and halts only its own context; the phase goes on (the
-// witness runs in it) and so do later frames.
+// Starts objects 1..faulty as threads, each running into a fault of the same
+// kind, then the witness (object 0), and checks vm.md "Exact semantics:
+// Halting a context": each fault halts only its own context; the phase goes
+// on (the witness runs in it) and so do later frames. One kind of problem in
+// one loaded blob warns once ("Warnings repeat once per problem, per loaded
+// blob"), however many contexts run into it.
 static void expect_faults_halt_only_themselves(u16 faulty) {
     for (u16 obj = 1; obj <= faulty; obj++)
         start(obj);
@@ -371,12 +373,12 @@ static void expect_faults_halt_only_themselves(u16 faulty) {
     u32 before = debug_warning_count();
     vm_step();
     CHECK(vm_global(W) == 1);
-    CHECK_WARNED(before, faulty);
+    CHECK_WARNED(before, 1);
     vm_events();
     vm_step();
     CHECK(vm_global(W) == 2);
     CHECK(vm_idle()); // the faulty contexts are free
-    CHECK_WARNED(before, faulty);
+    CHECK_WARNED(before, 1);
 }
 
 // --- Golden example ----------------------------------------------------------
@@ -698,8 +700,8 @@ static void comparison_ops(void) {
 }
 
 // vm.md "Arithmetic, logic, comparison": DIV, MOD and FXDIV by zero give 0
-// and "warn once"; the context goes on. Whatever "once" covers (each op, or
-// all three), there is at least one warning and a repeat adds none.
+// and warn once (one kind of problem: "Warnings repeat once per problem, per
+// loaded blob"); the context goes on.
 static void division_by_zero(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -732,12 +734,7 @@ static void division_by_zero(void) {
     CHECK(wrong == 0);
     CHECK(vm_global(6) == 1);
     CHECK(vm_idle());
-#ifdef SERVAL_DEBUG
-    u32 warned = debug_warning_count() - before;
-    CHECK(warned >= 1 && warned <= 3);
-#else
-    CHECK(debug_warning_count() == before);
-#endif
+    CHECK_WARNED(before, 1);
 }
 
 // --- Control flow ------------------------------------------------------------
@@ -943,7 +940,8 @@ static void unknown_opcode_halts_only_its_context(void) {
 }
 
 // vm.md "Stack and variables": LDL n >= VM_LOCALS warns and pushes 0, STL
-// warns and drops the value. Neither halts: the context goes on.
+// warns and drops the value. Neither halts: the context goes on. Both are one
+// kind of problem (no such local): one warning.
 static void locals_out_of_range(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -970,7 +968,7 @@ static void locals_out_of_range(void) {
     CHECK(vm_global(0) == 0 && vm_global(1) == 5 && vm_global(2) == 7);
     CHECK(vm_global(3) == 42 && vm_global(4) == 1);
     CHECK(vm_idle());
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Load-time validation": pc leaving the blob (a bad jump or CALL, or
@@ -1031,8 +1029,9 @@ static void truncated_operand_halts_its_context(void) {
     }
 }
 
-// vm.md "Entities": an unknown property warns; GETP pushes 0 and SETP drops
-// the value (both pop as usual) and the context goes on.
+// vm.md "Entities": an unknown property warns (once, for GETP and SETP
+// alike); GETP pushes 0 and SETP drops the value (both pop as usual) and the
+// context goes on.
 static void unknown_property_warns(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -1060,7 +1059,7 @@ static void unknown_property_warns(void) {
     CHECK(pos_x[i] == 0 && pos_y[i] == 0 && vel_x[i] == 0 && vel_y[i] == 0);
     CHECK(spr_id[i] == 0 && spr_frame[i] == 0 && spr_flags[i] == 0);
     CHECK(spr_angle[i] == 0 && spr_depth[i] == 0 && spr_scale[i] == 0);
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Test plan" (runtime safety): an unknown SYS number warns and halts
@@ -1173,7 +1172,8 @@ static void vm_start_first_runs_in_the_next_vm_step(void) {
     CHECK(vm_idle());
 }
 
-// vm.h: vm_start returns -1 and warns if there is no such handler (or blob).
+// vm.h: vm_start returns -1 and warns if there is no such handler (or blob):
+// once per kind of problem (no handler, no object, no blob).
 static void vm_start_without_a_handler_fails(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -1183,9 +1183,9 @@ static void vm_start_without_a_handler_fails(void) {
     u32 before = debug_warning_count();
     CHECK(vm_start(0, VM_EV_STEP) == -1);   // object 0 has no Step handler
     CHECK(vm_start(1, VM_EV_CREATE) == -1); // no object 1
-    CHECK(vm_start(0, VM_EV_COUNT) == -1);  // no such event
+    CHECK(vm_start(0, VM_EV_COUNT) == -1);  // no such event: no handler either
     CHECK(vm_idle());
-    CHECK_WARNED(before, 3);
+    CHECK_WARNED(before, 2);
     vm_unload();
     before = debug_warning_count();
     CHECK(vm_start(0, VM_EV_CREATE) == -1); // no blob
@@ -1753,7 +1753,8 @@ static void full_event_queue_drops_with_a_warning(void) {
 }
 
 // vm.h, vm.md "Exact semantics: Draining": with every context in use,
-// vm_start returns -1 and a drained event is dropped, each with a warning.
+// vm_start returns -1 and a drained event is dropped: one kind of problem (no
+// free context), so one warning.
 static void context_pool_exhaustion_warns(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -1773,13 +1774,13 @@ static void context_pool_exhaustion_warns(void) {
     vm_attach(e, 1);
     vm_events(); // no context for its Create: dropped
     CHECK(vm_global(1) == 0);
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
     frames(3); // the 32 threads end
     CHECK(vm_idle());
     start(1); // room again
     vm_step();
     CHECK(vm_global(1) == 1);
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Exact semantics: Budget": a context's op that would exceed
@@ -1998,8 +1999,9 @@ static void properties_read_and_write_the_ecs(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Entities": a dead (stale, destroyed) or ENTITY_NONE entity warns:
-// GETP pushes 0, SETP is dropped - even when a live entity has the slot.
+// vm.md "Entities": a dead (stale, destroyed) or ENTITY_NONE entity warns
+// (once: one kind of problem): GETP pushes 0, SETP is dropped - even when a
+// live entity has the slot.
 static void properties_of_dead_entities(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -2042,11 +2044,11 @@ static void properties_of_dead_entities(void) {
     CHECK(vm_global(5) == 1);
     CHECK(pos_x[i] == FX(9) && pos_y[i] == 0); // the live entity is untouched
     CHECK(vm_idle());
-    CHECK_WARNED(before, 5);
+    CHECK_WARNED(before, 1);
 }
 
-// vm.md "Entities": a property whose component the entity lacks warns, but
-// still reads and writes the array.
+// vm.md "Entities": a property whose component the entity lacks warns (once,
+// for SETP and GETP alike), but still reads and writes the array.
 static void property_without_its_component_warns(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -2066,7 +2068,7 @@ static void property_without_its_component_warns(void) {
     vm_step();
     CHECK(vel_x[entity_index(e)] == 5);
     CHECK(vm_global(1) == 5);
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
 }
 
 // --- Waits on the engine -----------------------------------------------------
@@ -2160,8 +2162,8 @@ static void wait_anim_resumes_on_the_last_frame(void) {
     restore_sprites();
 }
 
-// vm.md "Waits": WAIT_ANIM without C_ANIM, or on a looping sprite, warns and
-// goes on at once.
+// vm.md "Waits": WAIT_ANIM without C_ANIM, or on a looping sprite, warns
+// (once: one kind of problem) and goes on at once.
 static void wait_anim_without_a_one_shot_animation_continues(void) {
     reset();
     use_anim_sprites();
@@ -2183,7 +2185,7 @@ static void wait_anim_without_a_one_shot_animation_continues(void) {
     vm_events();
     CHECK(vm_global(0) == 1 && vm_global(1) == 1);
     CHECK(vm_idle());
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
     restore_sprites();
 }
 
@@ -2255,8 +2257,8 @@ static const Path sys_path_right = {PATH_STEPS(sys_path_steps)};
 static const Path* const sys_paths[] = {&sys_path_down, &sys_path_right};
 
 // vm.md "Engine calls": SYS path_start(entity, path index, flags) starts
-// VmBindings.paths[index]; a bad index or no paths bound warns and does
-// nothing. Pops three, pushes nothing.
+// VmBindings.paths[index]; a bad index or no paths bound warns (once: one
+// kind of problem) and does nothing. Pops three, pushes nothing.
 static void sys_path_start_uses_bindings(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -2296,7 +2298,7 @@ static void sys_path_start_uses_bindings(void) {
     start(0);
     vm_step();
     CHECK(!path_active(f) && vm_global(2) == 55);
-    CHECK_WARNED(before, 2);
+    CHECK_WARNED(before, 1);
 }
 
 static const PsgSong song_a = {.tempo = 120};
@@ -2305,7 +2307,8 @@ static const PsgSong* const songs[] = {&song_a, &song_b};
 
 // vm.md "Engine calls", vm_internal.h: a bad string or song index, or no
 // songs bound, warns and makes no call (none reaches the platform); the
-// arguments are popped as usual.
+// arguments are popped as usual. A bad string and a song that isn't bound are
+// two kinds of problem: one warning each, none for the repeats.
 static void sys_bad_string_or_song_index(void) {
     reset();
     blob_begin(1, 2, GLOBALS);
@@ -2344,7 +2347,7 @@ static void sys_bad_string_or_song_index(void) {
     start(0);
     vm_step();
     CHECK(vm_global(1) == 55 && vm_global(3) == 56);
-    CHECK_WARNED(before, 4);
+    CHECK_WARNED(before, 2);
 #ifndef SERVAL_GBA
     CHECK(serval_host_vm_calls.calls == 0);
 #endif
