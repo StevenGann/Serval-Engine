@@ -120,6 +120,7 @@ enum {
     WARN_EVENT_DESTROY_NONE,
     WARN_LOAD_IN_PHASE,
     WARN_GLOBAL,
+    WARN_VM_KILL_NONE,
     WARN_COUNT
 };
 static bool warned[WARN_COUNT];
@@ -1090,6 +1091,10 @@ void vm_detach(Entity e) {
 }
 
 void vm_kill(Entity e) {
+    if (e == ENTITY_NONE) { // as KILL: misuse; a dead entity is just skipped
+        WARN_ONCE(WARN_VM_KILL_NONE, "vm_kill: ENTITY_NONE; ignored");
+        return;
+    }
     if (in_phase)
         enqueue(e, ENTITY_NONE, VM_EV_DESTROY);
     else

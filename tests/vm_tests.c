@@ -1791,6 +1791,13 @@ static void vm_kill_runs_destroy_at_once(void) {
     frames(6);
     CHECK(vm_global(0) == 1);
     CHECK_WARNED(before, 0);
+    // vm.md "Destroy details": like KILL, ENTITY_NONE is misuse and warns
+    // (once per loaded blob); an entity that is already dead is silent.
+    vm_kill(ENTITY_NONE);
+    vm_kill(ENTITY_NONE);
+    CHECK_WARNED(before, 1);
+    vm_kill(e0);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.h: vm_detach halts the entity's script and unbinds it, without Destroy;

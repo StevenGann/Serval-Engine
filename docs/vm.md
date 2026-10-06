@@ -59,7 +59,7 @@ typedef struct {
 } VmContext;
 ```
 
-Constants (in `vm.h`, compile-time): `VM_CONTEXTS 32`, `VM_STACK 8`, `VM_CALLS 4`, `VM_LOCALS 8`, `VM_GLOBALS 256`, `VM_EVENT_QUEUE 32`, `VM_OPS_PER_SLICE 256`. Pool cost ≈ 3.5 KB of EWRAM for contexts + 1 KB globals + ~0.3 KB queue (`SERVAL_EWRAM_BSS`).
+Constants (in `vm.h`, compile-time): `VM_CONTEXTS 32`, `VM_STACK 8`, `VM_CALLS 4`, `VM_LOCALS 8`, `VM_GLOBALS 256`, `VM_EVENT_QUEUE 32`, `VM_OPS_PER_SLICE 256`. Pool cost about 5 KB of EWRAM (`SERVAL_EWRAM_BSS`): 3 KB of contexts, 1 KB of globals, 192 bytes of queue and 768 bytes of per-entity bindings.
 
 **One script per entity:** an entity has at most one live context. An event arriving while the entity's context is live is **dropped with a debug warning** (so a waiting script isn't torn up mid-wait), with one exception: Destroy force-halts the live context first. Step handlers are likewise skipped while the entity's context is live. Detached threads (`vm_start`) have `self == ENTITY_NONE` and no such rule.
 
@@ -246,11 +246,11 @@ The rules an implementation must follow where the sections above leave room. Tes
 
 **The resume pass** (start of `vm_step()`): visits each context once, in pool index order. A ready context runs. A `WAIT n` context decrements its counter and runs when it reaches 0 (so `WAIT 1` resumes in the next frame's pass; counters are clamped to 65535). `WAIT_ANIM`/`WAIT_MOVE` contexts run when their condition holds. A context that waits again during the pass is not visited again in the same pass.
 
-**Step handlers** run after the first drain of `vm_step()`, in entity index order, for attached entities whose object has a Step handler, that have no live context, and whose Create event has been dispatched. Each binding carries a *Create pending* flag, set by `vm_attach` and cleared when its Create event is drained (whether or not the object has a Create handler, and also if the event is dropped). So an entity never runs Step before Create: one attached before `vm_step()` runs Create in the first drain and, if Create finishes without waiting, its first Step the same frame; one spawned by a Step handler runs Create in the second drain and its first Step next frame.
+**Step handlers** run after the first drain of `vm_step()`, in entity index order, for attached entities whose object has a Step handler, that have no live context, and whose Create event has been dispatched. Each binding carries a *Create pending* flag, set by `vm_attach` and cleared when its Create event is drained (whether or not the object has a Create handler, and also if the event is dropped). It is never set if the Create event can't be queued (queue full: the attach warns), and `vm_reload` clears it, since it empties the queue. So an entity never runs Step before Create: one attached before `vm_step()` runs Create in the first drain and, if Create finishes without waiting, its first Step the same frame; one spawned by a Step handler runs Create in the second drain and its first Step next frame.
 
 **Animation End** is raised by the VM itself, not by `sys_animate` (the ECS has no VM hook): after the resume pass, for each attached entity whose object has an Animation End handler, the VM checks `anim_finished(e)` and queues `VM_EV_ANIM_END` when it is true and was false at the previous check (each binding keeps that last value, false at attach). Edge-triggered: an animation restarted by the game (`spr_frame = 0`) can raise it again when it next finishes.
 
-**Draining** (`vm_step()` after Step handlers, and `vm_events()`): FIFO until the queue is empty, including events queued during the drain. Per entry:
+**Draining** (both of `vm_step()`'s drains, and `vm_events()`): FIFO until the queue is empty, including events queued during the drain. Per entry:
 - `VM_EV_DESTROY` (from `KILL`): if the entity is dead, skip. If attached: halt its live context, run its Destroy handler (if any) to completion — a wait inside it warns and halts it — then unbind. Then `entity_destroy`. Unattached live entities are just destroyed.
 - Any other event: skip silently if the entity is dead or unattached, or its object has no handler for the event. If the entity has a live context: warn and drop. Otherwise allocate a context (`self = e`, `other` as queued) and run it. No free context: warn, drop.
 
@@ -266,11 +266,11 @@ The rules an implementation must follow where the sections above leave room. Tes
 
 **Halting a context** frees it: `pc = NULL`, and the entity's context link (if any) is cleared. Every "warn, halt context" in this document halts only the offending context; the phase continues with the next one.
 
-**Warnings repeat once per problem, per loaded blob** (this replaces any "warn once" or per-occurrence reading elsewhere in this document; tests should expect exactly one warning the first time a kind of problem happens and none for repeats until the next load): each kind of problem warns the first time it happens after `vm_load`, `vm_reload` or `vm_unload`, then stays quiet, so a problem that recurs every frame (a Step handler over budget, say) does not flood the log; the text names the object and event (or entity, or offset) involved so the first report is actionable.
+**Warnings repeat once per problem, per loaded blob** (this replaces any "warn once" or per-occurrence reading elsewhere in this document; tests should expect exactly one warning the first time a kind of problem happens and none for repeats until the next load): a *kind* is one distinct warning message of the implementation (which problems share one is an implementation detail; the engine's own tests follow its grouping). Each kind warns the first time it happens after `vm_load`, `vm_reload` or `vm_unload`, then stays quiet, so a problem that recurs every frame (a Step handler over budget, say) does not flood the log; the text names the object and event (or entity, or offset) involved so the first report is actionable.
 
-**Loading during a phase.** `vm_load`, `vm_reload` and `vm_unload` called from inside `vm_step`/`vm_events` (impossible from scripts in v1, but guarded): warn, do nothing, return false. A failed `vm_load`/`vm_reload` leaves the VM unloaded.
+**Loading during a phase.** `vm_load`, `vm_reload` and `vm_unload` called from inside `vm_step`/`vm_events` (impossible from scripts in v1, but guarded): warn and do nothing (`vm_load` and `vm_reload` return false). A failed `vm_load`/`vm_reload` leaves the VM unloaded.
 
-**Destroy details.** A Destroy handler sees `OTHER` = 0. `vm_event(e, x, VM_EV_DESTROY)` behaves exactly like `KILL`. `KILL` of `ENTITY_NONE` warns (a script bug); `KILL` of an entity that is already dead is skipped silently (two scripts killing the same thing is normal). `vm_event` with an event number of `VM_EV_COUNT` or more warns and queues nothing. Room Start has no automatic source in v1: a game runs it with `vm_start(obj, VM_EV_ROOM_START)` or `vm_event(e, ENTITY_NONE, VM_EV_ROOM_START)` when it builds a room.
+**Destroy details.** A Destroy handler sees `OTHER` = 0. `vm_event(e, x, VM_EV_DESTROY)` behaves exactly like `KILL`. `KILL`, `vm_kill` or a Destroy `vm_event` of `ENTITY_NONE` warns (a bug); one of an entity that is already dead is skipped silently (two scripts killing the same thing is normal). `vm_event` with an event number of `VM_EV_COUNT` or more warns and queues nothing. Room Start has no automatic source in v1: a game runs it with `vm_start(obj, VM_EV_ROOM_START)` or `vm_event(e, ENTITY_NONE, VM_EV_ROOM_START)` when it builds a room.
 
 **Entity cells.** A cell used as an entity handle is valid only within 0..0xFFFF; other values count as `ENTITY_NONE` (never truncated into a real handle).
 
@@ -325,6 +325,8 @@ Milestones 2 and 3 are pure `src/core` work with no hardware dependencies — bu
 Beyond the byte layout, these are part of format v1, and a compiler may rely on them: the limits `VM_STACK` (8), `VM_CALLS` (4), `VM_LOCALS` (8) and `VM_GLOBALS` (256); the SYS table's argument and result counts; the property page. `LDG`/`STG` may use any index below `VM_GLOBALS`; the header's global count only tells `vm_reload` whether the old values still fit. The opcode space is append-only like the pages: new opcodes take unassigned bytes and never change an existing one's meaning, so an older engine meets a newer opcode only as an unknown opcode (warn, halt context). After the first release that ships the VM, a change to the layout, an existing opcode or a limit is a new format version and a major engine version.
 
 ## Open items
+
+- **Known v1 caveats** (consequences of one script per entity, kept for now): an Animation End that fires while the entity's script is live (Create or a `WAIT` still running) is dropped with a warning, and since the trigger is an edge it does not come back; `vm_attach` twice before a drain queues two Create events (the second runs, or is dropped if the first waits). A per-binding "pending event" flag would fix both if games hit them.
 
 - The event set will grow (buttons, timers, script-to-script messages); `VM_EV_*`, the property page and the SYS page are all append-only by design.
 - 16-bit cells for a GB target: the header field and width-agnostic semantics keep the door open; nothing else is done for it in v1.
