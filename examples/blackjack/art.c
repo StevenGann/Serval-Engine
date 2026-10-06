@@ -33,9 +33,15 @@
 // tilt or overlap freely), or composing each dealt card's face into its own
 // VRAM tiles at runtime (one sprite per card, 24 tiles each: about 40 cards on
 // screen; the engine has no API to write sprite tiles after loading a group).
-// Rotating a composed card means rotating each piece about the card's center
-// (table.c); a metasprite asset type that the engine rotates as a whole would
-// make that, and the per-card bookkeeping, unnecessary.
+//
+// The pieces are wrapped in metasprites (SPRITE_ASSET_METASPRITE), so the
+// engine places, rotates and draws a card as one sprite. Which pieces a face
+// shows depends on its rank and suit, so the 52 faces are built at boot, as
+// frames of SPR_FACE (and of SPR_FACE_GLOW, whose base piece is drawn in
+// PAL_GLOW: a whole-draw SPRITE_PALETTE would recolor every piece, and the
+// black suits and emblems use the outline color as their dark shade): about
+// 4 KB of pieces in EWRAM. Metasprite frames share their pieces' tiles, so
+// none of this costs VRAM.
 
 #include "game.h"
 
@@ -790,6 +796,56 @@ static void build_fx(void) {
 
 // --- Sprites -----------------------------------------------------------------
 
+// Whole cards as metasprites, placed by their centers about the card's
+// center (the pivot): the index top-left, the same flipped bottom-right,
+// the middle (pip, ace or emblem) and the base behind them (pieces are
+// drawn in order, the first in front). The narrow flip steps are two
+// pieces, the same for every card; the faces depend on rank and suit and
+// are built at boot by build_face_pieces().
+
+static SpritePiece face_pieces[2][52 * 4] SERVAL_EWRAM_BSS; // [1]: the base in PAL_GLOW
+
+static const SpritePiece flip_pieces[] = {
+    // FLIP_NARROW_FACE: the 14-pixel-wide face, a 16x32 top over a 16x16 bottom.
+    {.y = -8, .sprite = SPR_NARROW_TOP, .frame = NF_FACE_14},
+    {.y = 16, .sprite = SPR_NARROW_BOTTOM, .frame = NF_FACE_14},
+    // FLIP_NARROW_BACK: the back at the same width.
+    {.y = -8, .sprite = SPR_NARROW_TOP, .frame = NF_BACK_14},
+    {.y = 16, .sprite = SPR_NARROW_BOTTOM, .frame = NF_BACK_14},
+    // FLIP_EDGE: the card edge-on.
+    {.y = -8, .sprite = SPR_EDGE_TOP},
+    {.y = 16, .sprite = SPR_EDGE_BOTTOM},
+};
+
+static void build_face_pieces(void) {
+    for (int rank = 1; rank <= 13; rank++) {
+        for (int suit = 0; suit < 4; suit++) {
+            int i = (rank - 1) * 4 + suit;
+            SpritePiece* p = &face_pieces[0][i * 4];
+            p[0] = (SpritePiece){.x = -10, .y = -13, .sprite = SPR_INDEX, .frame = (u8)i};
+            p[1] = (SpritePiece){.x = 10,
+                                 .y = 13,
+                                 .sprite = SPR_INDEX,
+                                 .frame = (u8)i,
+                                 .flags = SPRITE_FLIP_H | SPRITE_FLIP_V};
+            if (rank == RANK_ACE) {
+                p[2] = (SpritePiece){.sprite = SPR_ACE, .frame = (u8)suit};
+            } else if (rank >= RANK_JACK) {
+                bool black = suit == SUIT_SPADES || suit == SUIT_CLUBS;
+                p[2] = (SpritePiece){.sprite = SPR_COURT,
+                                     .frame = (u8)(RANK_KING - rank + (black ? 3 : 0))};
+            } else {
+                p[2] = (SpritePiece){.sprite = SPR_PIP, .frame = (u8)suit};
+            }
+            p[3] =
+                (SpritePiece){.sprite = SPR_CARD, .frame = rank >= RANK_JACK ? CF_COURT : CF_FACE};
+            for (int k = 0; k < 4; k++)
+                face_pieces[1][i * 4 + k] = p[k];
+            face_pieces[1][i * 4 + 3].flags |= SPRITE_PALETTE(PAL_GLOW);
+        }
+    }
+}
+
 static const u8 spark_times[SPARK_FRAMES] = {4, 4, 5, 6};
 
 static const SpriteAsset sprites[SPRITE_COUNT] = {
@@ -857,6 +913,18 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                       .palette_slot = PAL_FX,
                       .origin_x = 4,
                       .origin_y = 4},
+    [SPR_FACE] = {.pieces = face_pieces[0],
+                  .piece_count = 4,
+                  .frame_count = 52,
+                  .flags = SPRITE_ASSET_METASPRITE},
+    [SPR_FACE_GLOW] = {.pieces = face_pieces[1],
+                       .piece_count = 4,
+                       .frame_count = 52,
+                       .flags = SPRITE_ASSET_METASPRITE},
+    [SPR_FLIP] = {.pieces = flip_pieces,
+                  .piece_count = 2,
+                  .frame_count = 3,
+                  .flags = SPRITE_ASSET_METASPRITE},
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
@@ -875,6 +943,9 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_BUTTON] = &sprites[SPR_BUTTON],
     [SPR_SPARK] = &sprites[SPR_SPARK],
     [SPR_CONFETTI] = &sprites[SPR_CONFETTI],
+    [SPR_FACE] = &sprites[SPR_FACE],
+    [SPR_FACE_GLOW] = &sprites[SPR_FACE_GLOW],
+    [SPR_FLIP] = &sprites[SPR_FLIP],
 };
 
 const SpriteGroup sprite_group = {
@@ -1012,6 +1083,7 @@ const MapLayer ribbon_layer = {
 
 void art_build(void) {
     build_cards();
+    build_face_pieces();
     build_chips();
     build_digits();
     build_letters();

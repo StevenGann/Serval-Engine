@@ -12,17 +12,19 @@
 // surrender. A broke player is staked 1000 chips again by the house.
 //
 // Demonstrates:
-//   - Cards composed of hardware sprites that every card shares: a base
-//     (face, golden court face, back), a rank-and-suit index top-left and
-//     upside down bottom-right, and a big suit, ace or court emblem in the
-//     middle. 52 whole faces wouldn't fit sprite VRAM; art.c explains the
-//     design and its costs
-//   - Rotation (sprite_draw_rotated) on composed cards: every piece turned
-//     about the card's center by one shared angle, so a card takes one or
-//     two of the 32 rotation matrices; cards tilt as they fly, wobble on a
-//     spring when they land, the selected button sways, banner letters
-//     wobble in. table.c limits how many cards tilt at once (rotated sprites
-//     cost four times as much of the per-scanline sprite budget)
+//   - Cards as metasprites built at boot: a face is one sprite whose pieces
+//     every card shares: a base (face, golden court face, back), a
+//     rank-and-suit index top-left and upside down bottom-right, and a big
+//     suit, ace or court emblem in the middle. 52 whole faces wouldn't fit
+//     sprite VRAM, and which pieces a face shows depends on its rank and
+//     suit, so the 52 faces (and glowing variants) are built into SpritePiece
+//     frames at boot; art.c explains the design and its costs
+//   - Rotation (sprite_draw_rotated) on metasprite cards: the engine turns
+//     the pieces about the card's center by one shared angle, so a card
+//     takes one or two of the 32 rotation matrices; cards tilt as they fly,
+//     wobble on a spring when they land, the selected button sways, banner
+//     letters wobble in. table.c limits how many cards tilt at once (rotated
+//     sprites cost four times as much of the per-scanline sprite budget)
 //   - A card flip without a scaling API: the base squashed to 24, 14 and 4
 //     pixels and back, as animation frames built at boot
 //   - Tweens with easing (an overshooting slide for a deal, ease-in for a

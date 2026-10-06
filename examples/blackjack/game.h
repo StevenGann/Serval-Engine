@@ -74,16 +74,19 @@ enum {
     SPR_NARROW_BOTTOM, //   (flip); no hardware sprite is 16x64
     SPR_EDGE_TOP,      // 8x32 over 8x16: the card edge-on (flip)
     SPR_EDGE_BOTTOM,
-    SPR_INDEX,    // 8x16: rank over a small suit, frame = (rank - 1) * 4 + suit
-    SPR_PIP,      // 16x16: the big suit in the middle of number cards
-    SPR_ACE,      // 32x32: the ace's bigger, chunkier suit
-    SPR_COURT,    // 16x16: crown, tiara, plumed cap; frames COURT_*
-    SPR_CHIP,     // 16x16: a chip seen from the side, frames CHIP_* (denominations)
-    SPR_DIGIT,    // 8x16: outlined digits and signs, frames DIGIT_*; colors DIGITS_*
-    SPR_LETTER,   // 16x16: banner letters, frames from letter_frame(); colors LETTERS_*
-    SPR_BUTTON,   // 32x16: action buttons, frames BTN_*; greyed with PAL_BUTTON_OFF
-    SPR_SPARK,    // 8x8: a twinkling star (plays once)
-    SPR_CONFETTI, // 8x8: a tumbling paper chip, frames per color
+    SPR_INDEX,     // 8x16: rank over a small suit, frame = (rank - 1) * 4 + suit
+    SPR_PIP,       // 16x16: the big suit in the middle of number cards
+    SPR_ACE,       // 32x32: the ace's bigger, chunkier suit
+    SPR_COURT,     // 16x16: crown, tiara, plumed cap; frames COURT_*
+    SPR_CHIP,      // 16x16: a chip seen from the side, frames CHIP_* (denominations)
+    SPR_DIGIT,     // 8x16: outlined digits and signs, frames DIGIT_*; colors DIGITS_*
+    SPR_LETTER,    // 16x16: banner letters, frames from letter_frame(); colors LETTERS_*
+    SPR_BUTTON,    // 32x16: action buttons, frames BTN_*; greyed with PAL_BUTTON_OFF
+    SPR_SPARK,     // 8x8: a twinkling star (plays once)
+    SPR_CONFETTI,  // 8x8: a tumbling paper chip, frames per color
+    SPR_FACE,      // metasprite: a face-up card, frame = (rank - 1) * 4 + suit; built at boot
+    SPR_FACE_GLOW, //   the same with its base in PAL_GLOW (a winning hand)
+    SPR_FLIP,      // metasprite: the two-piece narrow flip steps, frames FLIP_*
     SPRITE_COUNT
 };
 
@@ -99,8 +102,9 @@ enum {
     CF_BACK,
     CF_COUNT
 };
-enum { NF_FACE_14, NF_BACK_14 };              // SPR_NARROW_* frames
-enum { COURT_KING, COURT_QUEEN, COURT_JACK }; // + 3 for black suits
+enum { NF_FACE_14, NF_BACK_14 };                        // SPR_NARROW_* frames
+enum { FLIP_NARROW_FACE, FLIP_NARROW_BACK, FLIP_EDGE }; // SPR_FLIP frames
+enum { COURT_KING, COURT_QUEEN, COURT_JACK };           // + 3 for black suits
 enum { CHIP_10, CHIP_50, CHIP_100, CHIP_500, CHIP_KINDS };
 enum { DIGIT_PLUS = 10, DIGIT_MINUS, DIGIT_SLASH, DIGIT_CHIP, DIGIT_COUNT };
 enum { BTN_HIT, BTN_STAND, BTN_DOUBLE, BTN_SPLIT, BTN_DEAL, BTN_COUNT };

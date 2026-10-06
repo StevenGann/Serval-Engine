@@ -8,15 +8,14 @@
 // (each card game would want the same few: ease-out-back for a deal,
 // ease-in for a discard, a spring for wobble).
 //
-// Rotation: a card is several hardware sprites (art.c), so tilting it means
-// rotating each piece about the card's center: its offset from the center
-// turns by the angle (fx_cos, fx_sin) and the piece is drawn rotated by the
-// same angle, so all pieces of a card share one rotation matrix (two: the
-// bottom-right index is flipped, and flips are part of a matrix). The
-// hardware has 32 matrices, so angles are rounded to 2 degrees, and a
-// rotated sprite costs its double-size box in the per-scanline sprite budget
-// (about 4 times an unrotated one): at most MAX_TILTED cards are drawn
-// tilted at once, the rest straight.
+// Rotation: a card is one metasprite of several hardware sprites (art.c);
+// the engine turns the pieces about the card's center and draws each
+// rotated by the same angle, so all pieces of a card share one rotation
+// matrix (two: the bottom-right index is flipped, and flips are part of a
+// matrix). The hardware has 32 matrices, so angles are rounded to 2
+// degrees, and a rotated sprite costs its double-size box in the
+// per-scanline sprite budget (about 4 times an unrotated one): at most
+// MAX_TILTED cards are drawn tilted at once, the rest straight.
 
 #include "game.h"
 
@@ -26,21 +25,19 @@
 #define SHADOW_DX 3
 #define SHADOW_DY 4
 
-// What a card's base is drawn with: one 32x64 sprite, or for the narrow
-// flip steps a top piece (card rows 0-31) over a bottom one (rows 32-47).
+// What the card shows right now: its face (the SPR_FACE metasprite), the
+// back or a flip step, with the width the shadow uses. SPR_CARD frames are
+// plain 32x64 sprites; the narrow flip steps are the SPR_FLIP metasprite.
 typedef struct {
-    u8 sprite, bottom, frame, width; // bottom: 0 for a one-piece base
-    bool face;
+    u16 sprite;
+    u8 frame, width;
 } Base;
 
 // The flip, back to face: the squashed steps between them, each as wide as
 // it needs.
 static const Base flip_frames[] = {
-    {SPR_CARD, 0, CF_BACK_24, 32, false},
-    {SPR_NARROW_TOP, SPR_NARROW_BOTTOM, NF_BACK_14, 16, false},
-    {SPR_EDGE_TOP, SPR_EDGE_BOTTOM, 0, 8, false},
-    {SPR_NARROW_TOP, SPR_NARROW_BOTTOM, NF_FACE_14, 16, false},
-    {SPR_CARD, 0, CF_FACE_24, 32, false},
+    {SPR_CARD, CF_BACK_24, 32},       {SPR_FLIP, FLIP_NARROW_BACK, 16}, {SPR_FLIP, FLIP_EDGE, 8},
+    {SPR_FLIP, FLIP_NARROW_FACE, 16}, {SPR_CARD, CF_FACE_24, 32},
 };
 #define FLIP_STEPS ((int)(sizeof flip_frames / sizeof flip_frames[0]))
 #define FLIP_LENGTH (FLIP_STEPS * FLIP_STEP)
@@ -559,24 +556,8 @@ void buttons_draw(const u8* buttons, int count, int selected, u16 enabled_mask, 
 
 // --- Drawing the cards -------------------------------------------------------
 
-// Draws a piece of a card: (px, py) is its top-left on the unrotated card
-// (relative to the card's top-left), (cx, cy) the card's center on screen.
-static void draw_piece(u16 id, u8 frame, int px, int py, int w, int h, int cx, int cy, u16 angle,
-                       u16 flags) {
-    if (!angle) {
-        sprite_draw(id, frame, cx - CARD_W / 2 + px, cy - CARD_H / 2 + py, flags);
-        return;
-    }
-    // The piece's center, turned about the card's center.
-    int dx = px + w / 2 - CARD_W / 2, dy = py + h / 2 - CARD_H / 2;
-    FIXED c = fx_cos(angle), s = fx_sin(angle);
-    int rx = (dx * c - dy * s + 128) >> 8;
-    int ry = (dx * s + dy * c + 128) >> 8;
-    sprite_draw_rotated(id, frame, cx + rx - w / 2, cy + ry - h / 2, angle, flags);
-}
-
-// What the card's base shows right now (mid-flip, a squashed step), and
-// whether that is the face.
+// What the card shows right now (its face, the back, or mid-flip a
+// squashed step).
 static Base card_base(const TableCard* c) {
     if (c->flip > 0) {
         int step = (FLIP_LENGTH - c->flip) / FLIP_STEP; // 0 .. FLIP_STEPS - 1
@@ -585,39 +566,28 @@ static Base card_base(const TableCard* c) {
         return flip_frames[step];
     }
     if (!c->face_up)
-        return (Base){SPR_CARD, 0, CF_BACK, 32, false};
-    return (Base){SPR_CARD, 0, CARD_RANK(c->card) >= RANK_JACK ? CF_COURT : CF_FACE, 32, true};
+        return (Base){SPR_CARD, CF_BACK, 32};
+    u8 face = (u8)((CARD_RANK(c->card) - 1) * 4 + CARD_SUIT(c->card));
+    return (Base){SPR_FACE, face, 32};
 }
 
+// Draws the card as one sprite. SPR_FACE and SPR_FLIP are metasprites: the
+// engine places their pieces about the card's center (the pivot, at the
+// draw position) and rotates them with it. SPR_CARD (the back and the
+// widest flip steps) is a plain 32x64 sprite whose center is the card's. A
+// winning hand's face swaps in SPR_FACE_GLOW, whose base piece is drawn in
+// PAL_GLOW (a gold outline).
 static void draw_card(const TableCard* c, u16 angle) {
     Base base = card_base(c);
+    u16 id = base.sprite == SPR_FACE && c->glow ? SPR_FACE_GLOW : base.sprite;
     int cx = fx_to_int(c->x) + CARD_W / 2;
     int cy = fx_to_int(c->y) + CARD_H / 2 - c->lift;
-    if (base.face) {
-        int rank = CARD_RANK(c->card), suit = CARD_SUIT(c->card);
-        u8 index = (u8)((rank - 1) * 4 + suit);
-        draw_piece(SPR_INDEX, index, 2, 3, 8, 16, cx, cy, angle, 0);
-        draw_piece(SPR_INDEX, index, CARD_W - 10, CARD_H - 19, 8, 16, cx, cy, angle,
-                   SPRITE_FLIP_H | SPRITE_FLIP_V);
-        if (rank == RANK_ACE) {
-            draw_piece(SPR_ACE, (u8)suit, 0, 8, 32, 32, cx, cy, angle, 0);
-        } else if (rank >= RANK_JACK) {
-            bool black = suit == SUIT_SPADES || suit == SUIT_CLUBS;
-            draw_piece(SPR_COURT, (u8)(RANK_KING - rank + (black ? 3 : 0)), 8, 16, 16, 16, cx, cy,
-                       angle, 0);
-        } else {
-            draw_piece(SPR_PIP, (u8)suit, 8, 16, 16, 16, cx, cy, angle, 0);
-        }
-    }
-    // A winning hand's faces get a gold outline: PAL_GLOW.
-    u16 glow = c->glow && base.face ? SPRITE_PALETTE(PAL_GLOW) : 0;
-    int left = (CARD_W - base.width) / 2;
-    if (base.bottom) {
-        draw_piece(base.sprite, base.frame, left, 0, base.width, 32, cx, cy, angle, 0);
-        draw_piece(base.bottom, base.frame, left, 32, base.width, 16, cx, cy, angle, 0);
-    } else {
-        draw_piece(base.sprite, base.frame, left, -8, base.width, 64, cx, cy, angle, glow);
-    }
+    int x = id == SPR_CARD ? cx - 16 : cx;
+    int y = id == SPR_CARD ? cy - 32 : cy;
+    if (angle)
+        sprite_draw_rotated(id, base.frame, x, y, angle, 0);
+    else
+        sprite_draw(id, base.frame, x, y, 0);
 }
 
 // The shadow: full width, or 24 pixels early and late in a flip (none
@@ -655,8 +625,8 @@ void table_update(void) {
 }
 
 // Front to back: banners and pops (above the text layer), sparks, flying
-// chips, cards newest first (each piece before its base), the chip stack,
-// then the cards' shadows behind them all.
+// chips, cards newest first (each one metasprite), the chip stack, then the
+// cards' shadows behind them all.
 void table_draw(void) {
     draw_banners();
     draw_pops();
