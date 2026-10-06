@@ -92,6 +92,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/splash.c
         src/gba/sprites.c
         src/gba/text.c
+        src/gba/vm_platform.c
     )
     target_compile_definitions(serval PUBLIC SERVAL_GBA)
     # libtonc stays available to games that want it, but public engine headers
@@ -119,6 +120,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/splash.c
         src/gba/sprites.c
         src/gba/text.c
+        src/gba/vm_platform.c
         src/web/apu.c
         src/web/platform.c
         src/web/ppu.c
