@@ -4,6 +4,11 @@
 // Portable: the engine calls only the GBA build has (sound, music, text,
 // buttons, brightness) go through serval_vm_platform_call (vm_internal.h).
 //
+// vm_step() runs, in this order: the resume pass, Animation End (queued for
+// animations finished since the last check), a drain of the event queue, the
+// Step handlers, and a second drain. A binding's Create-pending flag keeps an
+// entity's Step handler from running before its Create was drained.
+//
 // The blob is read in place, byte by byte (little-endian, no alignment), and
 // every read is checked against its size first: a bad jump or a handler that
 // runs off the end warns and halts that script, never reads past the blob.
@@ -51,10 +56,16 @@ SERVAL_EWRAM_BSS static Context contexts[VM_CONTEXTS];
 SERVAL_EWRAM_BSS static s32 globals[VM_GLOBALS];
 SERVAL_EWRAM_BSS static QueuedEvent queue[VM_EVENT_QUEUE];
 // Bindings, by entity slot: the attached entity's handle (ENTITY_NONE: none),
-// its object, and its live context + 1 (0: none).
+// its object, its live context + 1 (0: none) and its BIND_* flags.
 SERVAL_EWRAM_BSS static Entity bound[MAX_ENT];
 SERVAL_EWRAM_BSS static u16 bound_object[MAX_ENT];
 SERVAL_EWRAM_BSS static u8 bound_context[MAX_ENT];
+SERVAL_EWRAM_BSS static u8 bound_flags[MAX_ENT];
+
+enum {
+    BIND_CREATE_PENDING = 1, // its Create is queued: no Step handler yet
+    BIND_ANIM_DONE = 2,      // anim_finished() at the latest Animation End check
+};
 
 static const u8* blob; // the loaded blob; NULL: none
 static u32 blob_size;
@@ -247,23 +258,27 @@ static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 
     return NULL;
 }
 
-static void enqueue(Entity e, Entity other, u32 event) {
+// Queues an event; false (warning) if the queue is full and it is dropped.
+static bool enqueue(Entity e, Entity other, u32 event) {
     if (queue_count == VM_EVENT_QUEUE) {
 #ifdef SERVAL_DEBUG
         WARN_ONCE(WARN_QUEUE_FULL,
                   "vm: the event queue is full (%d events); a %s event for entity %u is dropped",
                   VM_EVENT_QUEUE, event_names[event], (u32)entity_index(e));
 #endif
-        return;
+        return false;
     }
     QueuedEvent* q = &queue[(queue_head + queue_count) % VM_EVENT_QUEUE];
     q->e = e;
     q->other = other;
     q->event = (u8)event;
     queue_count++;
+    return true;
 }
 
-// Attaches a live entity to a valid object and queues its Create.
+// Attaches a live entity to a valid object and queues its Create. Its Step
+// handler waits until that Create is drained; a Create the full queue drops
+// is never drained, so it doesn't hold Step back.
 static void bind(Entity e, u32 object) {
     u32 slot = entity_index(e);
     if (attached(slot))
@@ -271,7 +286,7 @@ static void bind(Entity e, u32 object) {
     bound[slot] = e;
     bound_object[slot] = (u16)object;
     bound_context[slot] = 0;
-    enqueue(e, ENTITY_NONE, VM_EV_CREATE);
+    bound_flags[slot] = enqueue(e, ENTITY_NONE, VM_EV_CREATE) ? BIND_CREATE_PENDING : 0;
 }
 
 // --- Entities ----------------------------------------------------------------
@@ -918,6 +933,10 @@ static void dispatch(Entity e, Entity other, u32 event) {
     u32 slot = entity_index(e);
     if (!attached(slot))
         return;
+    // Drained, whether it runs, has no handler or is dropped below: the
+    // entity's Step handler may run from now on.
+    if (event == VM_EV_CREATE)
+        bound_flags[slot] &= (u8)~BIND_CREATE_PENDING;
     u32 handler = handler_of(bound_object[slot], event);
     if (!handler)
         return;
@@ -946,6 +965,25 @@ static void drain(void) {
             destroy(q.e);
         else
             dispatch(q.e, q.other, q.event);
+    }
+}
+
+// Queues Animation End for each attached entity whose object has a handler
+// for it and whose animation finished since the previous check (an edge, so
+// an animation the game restarts can raise it again).
+static void queue_anim_ends(void) {
+    for (u32 slot = 0; slot < MAX_ENT; slot++) {
+        if (!attached(slot) || !handler_of(bound_object[slot], VM_EV_ANIM_END))
+            continue;
+        u32 flags = bound_flags[slot];
+        if (anim_finished(bound[slot])) {
+            if (!(flags & BIND_ANIM_DONE))
+                enqueue(bound[slot], ENTITY_NONE, VM_EV_ANIM_END);
+            flags |= BIND_ANIM_DONE;
+        } else {
+            flags &= ~(u32)BIND_ANIM_DONE;
+        }
+        bound_flags[slot] = (u8)flags;
     }
 }
 
@@ -985,10 +1023,12 @@ void vm_step(void) {
         if (resume)
             run(c, false);
     }
+    queue_anim_ends();
+    drain(); // Creates queued since the last phase run before their first Step
     // Step handlers, in entity order, for attached entities with no live
-    // context.
+    // context whose Create has been drained.
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
-        if (!attached(slot) || bound_context[slot])
+        if (!attached(slot) || bound_context[slot] || (bound_flags[slot] & BIND_CREATE_PENDING))
             continue;
         u32 handler = handler_of(bound_object[slot], VM_EV_STEP);
         if (!handler)
@@ -997,7 +1037,7 @@ void vm_step(void) {
         if (c)
             run(c, false);
     }
-    drain();
+    drain(); // events the Step handlers queued, e.g. the Create of an entity they spawned
     in_phase = false;
 }
 
@@ -1145,6 +1185,9 @@ static void install(const u8* b, u32 size, bool keep) {
     queue_head = queue_count = 0;
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
         bound_context[slot] = 0;
+        // A binding kept by a hot reload lost its queued Create with the queue:
+        // its Step handler must not wait for it.
+        bound_flags[slot] &= (u8)~BIND_CREATE_PENDING;
         if (!(keep && attached(slot) && bound_object[slot] < objects))
             bound[slot] = ENTITY_NONE;
     }

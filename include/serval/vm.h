@@ -11,7 +11,7 @@
 //     vm_attach(e, OBJ_PLAYER); // its Create handler runs in the next phase
 //     for (;;) {
 //         frame_begin();
-//         vm_step();            // waits, Step handlers, queued events
+//         vm_step();            // waits, queued events, Step handlers
 //         sys_movement();
 //         sys_physics();
 //         vm_events();          // collision handlers (vm_event from game code)
@@ -175,7 +175,8 @@ void vm_bind(const VmBindings* bindings);
 
 // --- Entities and events -----------------------------------------------------
 
-// Binds an entity to an object and queues its Create event.
+// Binds an entity to an object and queues its Create event. Its Step handler
+// first runs once that Create has been dispatched.
 void vm_attach(Entity e, u16 object);
 // Halts the entity's script and unbinds it; no Destroy event.
 void vm_detach(Entity e);

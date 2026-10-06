@@ -1280,6 +1280,138 @@ static void step_handlers_run_every_frame_unless_live(void) {
     CHECK_WARNED(before, 0);
 }
 
+// vm.md "Scheduling", "Exact semantics: Step handlers": an entity attached
+// before vm_step() runs its Create in the first drain and, if Create doesn't
+// wait, its first Step in the same vm_step(). A Create that waits holds Step
+// back until it ends (one script per entity).
+static void create_runs_before_the_first_step(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    append(0, 1);   // glob[0]: Create
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_STEP);
+    append(0, 2);   // glob[0]: Step
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    append(1, 1);   // glob[1]: Create...
+    wait_frames(1); //
+    append(1, 2);   // ...ending next frame
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_STEP);
+    append(1, 3);   // glob[1]: Step
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 12); // Create, then Step, in the same vm_step()
+    CHECK(vm_global(1) == 1);  // Create waits: no Step
+    vm_events();
+    vm_step();
+    CHECK(vm_global(0) == 122);
+    CHECK(vm_global(1) == 123); // Create ends in the resume pass, then Step
+    vm_events();
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Exact semantics: Step handlers": an entity a Step handler spawns runs
+// its Create in vm_step()'s second drain and its first Step in the next
+// frame, even from a slot the Step handlers have yet to reach.
+static void entity_spawned_by_step_steps_next_frame(void) {
+    enum { L_DONE };
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    object(1, C_POS, 0);
+    handler(0, VM_EV_STEP);
+    ldg(2);                  // spawned already?
+    jump(VM_OP_JNZ, L_DONE); //
+    store(2, 1);             //
+    push8(0);                // x
+    push8(0);                // x y
+    spawn(1);                // e, in a higher slot than the spawner's
+    stg(3);                  // glob[3] = e
+    label(L_DONE);           //
+    op(VM_OP_HALT);          //
+    handler(1, VM_EV_CREATE);
+    append(0, 1);   // glob[0]: e's Create
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_STEP);
+    append(0, 2);   // glob[0]: e's Step
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity spawner = entity_create(C_POS);
+    vm_attach(spawner, 0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 1); // Create in the second drain, no Step
+    Entity e = (Entity)vm_global(3);
+    CHECK(entity_alive(e) && entity_index(e) > entity_index(spawner));
+    vm_events();
+    vm_step();
+    CHECK(vm_global(0) == 12); // the first Step, next frame
+    vm_events();
+    vm_step();
+    CHECK(vm_global(0) == 122);
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Exact semantics: Step handlers": Step never runs before Create.
+// Spawned and C-attached entities' Step handlers check that their Create has
+// run (it sets their depth to 1). The Create-pending flag clears when the
+// Create is drained even if the object has no Create handler: such an entity
+// attached between the phases runs Step from the next frame.
+static void step_never_runs_before_create(void) {
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    object(1, C_POS | C_SPR, 0);
+    handler(0, VM_EV_STEP); // spawns one entity of object 1 a frame
+    push8(0);               // x
+    push8(0);               // x y
+    spawn(1);               // e
+    op(VM_OP_DROP);         //
+    op(VM_OP_HALT);         //
+    handler(1, VM_EV_CREATE);
+    op(VM_OP_SELF);   // self
+    push8(1);         // self 1
+    setp(VM_P_DEPTH); // depth = 1: Create ran
+    count(1);         // glob[1]: Creates
+    op(VM_OP_HALT);   //
+    handler(1, VM_EV_STEP);
+    op(VM_OP_SELF);         // self
+    getp(VM_P_DEPTH);       // depth
+    op(VM_OP_LNOT);         // 1 if Create hasn't run
+    ldg(0);                 // early g
+    op(VM_OP_ADD);          //
+    stg(0);                 // glob[0]: Steps before Create
+    count(2);               // glob[2]: Steps
+    op(VM_OP_HALT);         //
+    handler(2, VM_EV_STEP); // object 2 has no Create handler
+    count(3);               // glob[3]: its Steps
+    op(VM_OP_HALT);         //
+    CHECK(load());
+    vm_attach(entity_create(C_POS), 0);
+    u32 before = debug_warning_count();
+    for (u32 f = 1; f <= 5; f++) {
+        vm_step();
+        if (f == 1) { // attached between the phases: Create in vm_events()
+            vm_attach(entity_create(C_POS | C_SPR), 1);
+            vm_attach(entity_create(C_POS), 2);
+        }
+        vm_events();
+    }
+    // Spawned in frames 1-5, each Steps from the frame after: 0+1+2+3+4.
+    // The two attached after frame 1's vm_step() Step in frames 2-5.
+    CHECK(vm_global(0) == 0);
+    CHECK(vm_global(1) == 6);
+    CHECK(vm_global(2) == 10 + 4);
+    CHECK(vm_global(3) == 4);
+    CHECK_WARNED(before, 0);
+}
+
 // vm.md "Contexts" (one script per entity), "Exact semantics: Draining": an
 // event for an entity whose context is live is dropped with a warning (not
 // deferred); one its object has no handler for is skipped silently.
@@ -2189,6 +2321,58 @@ static void wait_anim_without_a_one_shot_animation_continues(void) {
     restore_sprites();
 }
 
+// vm.md "Exact semantics: Animation End": vm_step() queues Animation End,
+// after the resume pass, when anim_finished() turns true for an attached
+// entity whose object has a handler: once per finish (an edge), again after
+// the game restarts the animation. The last value starts false at attach, so
+// an entity attached on its last frame raises it at once. A looping sprite
+// never finishes.
+static void animation_end_is_raised_when_an_animation_finishes(void) {
+    reset();
+    use_anim_sprites();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_ANIM_END);
+    count(0);       // glob[0]: the one-shot entity's Animation End runs
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_ANIM_END);
+    count(1);       // glob[1]: the looping entity's
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity once = entity_create(C_SPR | C_ANIM);
+    Entity looping = entity_create(C_SPR | C_ANIM);
+    u32 i = entity_index(once);
+    spr_id[i] = SPR_ONCE;
+    spr_id[entity_index(looping)] = SPR_LOOPING;
+    vm_attach(once, 0);
+    vm_attach(looping, 1);
+    u32 before = debug_warning_count();
+    // glob[0] after each frame's vm_step(): frames 0, 1, 2 are shown from
+    // frames 1, 2, 3, so the animation has finished in frame 3's; the game
+    // restarts it before frame 6, so it finishes again in frame 8's.
+    static const s32 ends[] = {0, 0, 1, 1, 1, 1, 1, 2, 2};
+    for (u32 f = 0; f < sizeof ends / sizeof ends[0]; f++) {
+        if (f == 5) {
+            spr_frame[i] = 0;
+            spr_anim_time[i] = 0;
+        }
+        vm_step();
+        CHECK(vm_global(0) == ends[f]);
+        vm_events();
+        sys_animate();
+    }
+    CHECK(spr_frame[i] == 2);
+    vm_attach(once, 0); // re-attached, still on its last frame
+    vm_step();
+    CHECK(vm_global(0) == 3);
+    vm_events();
+    vm_step();
+    CHECK(vm_global(0) == 3);
+    CHECK(vm_global(1) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    restore_sprites();
+}
+
 // --- SYS ---------------------------------------------------------------------
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -2476,7 +2660,9 @@ static void reload_keeps_globals_if_their_count_matches(void) {
 }
 
 // vm.h: vm_reload keeps entities attached to objects the new blob still has
-// (running its code); others are no longer attached (but stay alive).
+// (running its code); others are no longer attached (but stay alive). The
+// emptied queue loses a kept entity's pending Create, so its Step handler
+// runs without it (vm.md "Exact semantics: Step handlers").
 static void reload_keeps_attachments_to_objects_that_remain(void) {
     reset();
     build_steppers(4, 1, 2);
@@ -2489,12 +2675,14 @@ static void reload_keeps_attachments_to_objects_that_remain(void) {
     vm_step();
     CHECK(vm_global(0) == 1 && vm_global(1) == 2);
     vm_events();
+    Entity e2 = entity_create(C_POS);
+    vm_attach(e2, 0);        // its Create is still queued at the reload
     build_steppers(4, 3, 1); // object 1 is gone; object 0's Step appends 3 now
     CHECK(reload());
     vm_step();
-    CHECK(vm_global(0) == 13);
+    CHECK(vm_global(0) == 133); // e0, then e2: no Create to wait for any more
     CHECK(vm_global(1) == 2);
-    CHECK(entity_alive(e0) && entity_alive(e1));
+    CHECK(entity_alive(e0) && entity_alive(e1) && entity_alive(e2));
 }
 
 // A Collision handler for object 0 (glob[1] = 1) and a thread, object 1,
@@ -2815,6 +3003,9 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"vm_start_without_a_handler_fails", vm_start_without_a_handler_fails},
            {"contexts_resume_in_pool_order", contexts_resume_in_pool_order},
            {"step_handlers_run_every_frame_unless_live", step_handlers_run_every_frame_unless_live},
+           {"create_runs_before_the_first_step", create_runs_before_the_first_step},
+           {"entity_spawned_by_step_steps_next_frame", entity_spawned_by_step_steps_next_frame},
+           {"step_never_runs_before_create", step_never_runs_before_create},
            {"event_for_a_live_entity_is_dropped", event_for_a_live_entity_is_dropped},
            {"events_drain_in_fifo_order", events_drain_in_fifo_order},
            {"events_queued_while_draining_run_in_the_same_phase",
@@ -2842,6 +3033,8 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
            {"wait_anim_without_a_one_shot_animation_continues",
             wait_anim_without_a_one_shot_animation_continues},
+           {"animation_end_is_raised_when_an_animation_finishes",
+            animation_end_is_raised_when_an_animation_finishes},
            {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
            {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
            {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
