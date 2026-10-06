@@ -2717,9 +2717,14 @@ static void run_spawners(s32* out) {
     }
     for (u16 g = 0; g < GLOBALS; g++)
         out[g] = vm_global(g);
+    // glob[1] holds an entity handle, whose generation byte depends on what
+    // earlier cases did with the slot (ecs_reset bumps it); its slot is what
+    // the run decided.
+    out[1] = entity_index((Entity)out[1]);
 }
 
-// vm.md "Determinism": two identical runs leave identical globals.
+// vm.md "Determinism": two identical runs (scripts, inputs, seed) leave
+// identical globals.
 static void runs_are_deterministic(void) {
     static s32 first[GLOBALS], second[GLOBALS];
     run_spawners(first);
