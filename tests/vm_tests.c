@@ -13,6 +13,7 @@
 #include "serval/map.h"
 #include "serval/math.h"
 #include "serval/path.h"
+#include "serval/physics.h"
 #include "serval/random.h"
 #include "serval/sprites.h"
 #include "serval/vm.h"
@@ -2254,7 +2255,14 @@ static const struct {
     [VM_P_ANGLE] = {0x18000, 0x8000, "VM_P_ANGLE truncates to u16, reads unsigned"},
     [VM_P_DEPTH] = {0x18000, -32768, "VM_P_DEPTH truncates to s16, reads sign-extended"},
     [VM_P_SCALE] = {0xFFFF, -1, "VM_P_SCALE truncates to s16, reads sign-extended"},
+    [VM_P_BODY_W] = {0x1FE, 0xFE, "VM_P_BODY_W truncates to u8, reads unsigned"},
+    [VM_P_BODY_H] = {-1, 0xFF, "VM_P_BODY_H truncates to u8, reads unsigned"},
 };
+
+// Where properties_read_and_write_the_ecs stores what it reads: GETP of
+// property p goes to glob[READ_BY_SCRIPT + p], then glob[READ_FROM_C + p].
+enum { READ_BY_SCRIPT = 1, READ_FROM_C = READ_BY_SCRIPT + VM_P_COUNT };
+_Static_assert(READ_FROM_C + VM_P_COUNT <= W, "the property rows fit the globals");
 
 static void properties_read_and_write_the_ecs(void) {
     reset();
@@ -2266,20 +2274,20 @@ static void properties_read_and_write_the_ecs(void) {
         setp(p);                      //
     }
     for (u32 p = 0; p < VM_P_COUNT; p++) {
-        ldg(0);     // e
-        getp(p);    // value
-        stg(1 + p); // glob[1 + p]
+        ldg(0);                  // e
+        getp(p);                 // value
+        stg(READ_BY_SCRIPT + p); // glob[READ_BY_SCRIPT + p]
     }
     op(VM_OP_HALT);
     handler(1, VM_EV_CREATE); // reads what C set
     for (u32 p = 0; p < VM_P_COUNT; p++) {
-        ldg(0);      // e
-        getp(p);     // value
-        stg(11 + p); // glob[11 + p]
+        ldg(0);               // e
+        getp(p);              // value
+        stg(READ_FROM_C + p); // glob[READ_FROM_C + p]
     }
     op(VM_OP_HALT);
     CHECK(load());
-    Entity e = entity_create(C_POS | C_VEL | C_SPR);
+    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BODY);
     u32 i = entity_index(e);
     vm_set_global(0, e);
     u32 before = debug_warning_count();
@@ -2289,8 +2297,9 @@ static void properties_read_and_write_the_ecs(void) {
     CHECK(vel_x[i] == -FX(1) / 2 && vel_y[i] == FX(3));
     CHECK(spr_id[i] == 0x2345 && spr_frame[i] == 0xFF && spr_flags[i] == 0xFFFF);
     CHECK(spr_angle[i] == 0x8000 && spr_depth[i] == -32768 && spr_scale[i] == -1);
+    CHECK(body_w[i] == 0xFE && body_h[i] == 0xFF);
     for (u32 p = 0; p < VM_P_COUNT; p++)
-        if (vm_global((u16)(1 + p)) != prop_rows[p].read)
+        if (vm_global((u16)(READ_BY_SCRIPT + p)) != prop_rows[p].read)
             test_fail(__FILE__, __LINE__, prop_rows[p].what);
 
     pos_x[i] = -FX(7);
@@ -2303,13 +2312,15 @@ static void properties_read_and_write_the_ecs(void) {
     spr_angle[i] = 0xFFFF;
     spr_depth[i] = -2;
     spr_scale[i] = -32768;
-    static const s32 from_c[VM_P_COUNT] = {-FX(7), 3,      1,      -1, 0xFFFF,
-                                           200,    0x8001, 0xFFFF, -2, -32768};
+    body_w[i] = 200;
+    body_h[i] = 7;
+    static const s32 from_c[VM_P_COUNT] = {-FX(7), 3,      1,  -1,     0xFFFF, 200,
+                                           0x8001, 0xFFFF, -2, -32768, 200,    7};
     start(1);
     vm_step();
     u32 wrong = 0;
     for (u32 p = 0; p < VM_P_COUNT; p++)
-        wrong += vm_global((u16)(11 + p)) != from_c[p];
+        wrong += vm_global((u16)(READ_FROM_C + p)) != from_c[p];
     CHECK(wrong == 0);
     CHECK_WARNED(before, 0);
 }
@@ -2383,6 +2394,57 @@ static void property_without_its_component_warns(void) {
     vm_step();
     CHECK(vel_x[entity_index(e)] == 5);
     CHECK(vm_global(1) == 5);
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Entities": the body size, VM_P_BODY_W and VM_P_BODY_H, is what
+// body_overlap() tests, so a script can size an entity it spawned. Its
+// component is C_BODY: without it, GETP and SETP warn (once: the same kind of
+// problem as any other property's missing component) but still use the
+// arrays.
+static void body_size_properties(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE); // sizes self 6 x 300 (a u8: 44), reads it back
+    op(VM_OP_SELF);           // self
+    push8(6);                 // self 6
+    setp(VM_P_BODY_W);        //
+    op(VM_OP_SELF);           // self
+    push16(300);              // self 300
+    setp(VM_P_BODY_H);        // 300 & 0xFF = 44
+    op(VM_OP_SELF);           // self
+    getp(VM_P_BODY_W);        // 6
+    stg(0);                   // glob[0] = 6
+    op(VM_OP_SELF);           // self
+    getp(VM_P_BODY_H);        // 44
+    stg(1);                   // glob[1] = 44
+    op(VM_OP_HALT);           //
+    handler(1, VM_EV_CREATE); // the same on an entity without C_BODY
+    op(VM_OP_SELF);           // self
+    push8(9);                 // self 9
+    setp(VM_P_BODY_W);        // warns, writes
+    op(VM_OP_SELF);           // self
+    getp(VM_P_BODY_W);        // warns (no repeat), reads: 9
+    stg(2);                   // glob[2] = 9
+    op(VM_OP_HALT);           //
+    CHECK(load());
+    Entity a = entity_create(C_POS | C_BODY);
+    Entity b = entity_create(C_POS | C_BODY);
+    Entity c = entity_create(C_POS);
+    u32 ia = entity_index(a), ib = entity_index(b);
+    pos_x[ib] = FX(5); // 1 pixel inside a once a is 6 wide
+    body_w[ib] = body_h[ib] = 4;
+    CHECK(!body_overlap(ia, ib)); // a is 0 x 0 so far
+    vm_attach(a, 0);
+    u32 before = debug_warning_count();
+    vm_events();
+    CHECK(body_w[ia] == 6 && body_h[ia] == 44);
+    CHECK(vm_global(0) == 6 && vm_global(1) == 44);
+    CHECK(body_overlap(ia, ib));
+    CHECK_WARNED(before, 0);
+    vm_attach(c, 1);
+    vm_events();
+    CHECK(body_w[entity_index(c)] == 9 && vm_global(2) == 9);
     CHECK_WARNED(before, 1);
 }
 
@@ -3325,6 +3387,7 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
            {"properties_of_dead_entities", properties_of_dead_entities},
            {"property_without_its_component_warns", property_without_its_component_warns},
+           {"body_size_properties", body_size_properties},
            {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
            {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
            {"wait_anim_without_a_one_shot_animation_continues",

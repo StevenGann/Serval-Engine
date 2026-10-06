@@ -422,6 +422,8 @@ for (;;) {
 
 **Events** (`VM_EV_*`, an object's handler slots): `VM_EV_CREATE`, `VM_EV_STEP`, `VM_EV_DESTROY`, `VM_EV_COLLISION`, `VM_EV_ANIM_END`, `VM_EV_ROOM_START`; `VM_EV_COUNT` is 6. Where they come from: Create is queued by `vm_attach` (and `SPAWN`) and always runs before the entity's first Step; Step runs in every `vm_step()`; Destroy comes from `KILL`, `vm_kill` or `vm_event`; Collision from game code (`vm_event`); Animation End from `vm_step()` itself, when `anim_finished()` turns true for an entity whose object has the handler (once per finish, so an animation the game restarts raises it again; one that `sys_animate` finishes raises it in the next `vm_step()`); Room Start from the game, with `vm_start(obj, VM_EV_ROOM_START)` or `vm_event(e, ENTITY_NONE, VM_EV_ROOM_START)` when it builds a room.
 
+**Properties** (`GETP`/`SETP`, `VM_P_*`) are the ECS arrays of the same names: `pos_x`, `pos_y`, `vel_x`, `vel_y`, the sprite's `spr_id`, `spr_frame`, `spr_flags`, `spr_angle`, `spr_depth` and `spr_scale`, and the body size `body_w` and `body_h` (what `body_overlap` tests, so a script can size an entity it spawns). Writes truncate to the array's type. A property whose component the entity lacks (`C_POS`, `C_VEL`, `C_SPR`, or `C_BODY` for the body size) still reads and writes the array (*warns*).
+
 `VmBindings` holds what the `SYS` engine calls reach by index, since scripts hold no pointers: `const PsgSong* const* songs` and `u16 song_count` (`VM_SYS_MUSIC_PLAY`), `const Path* const* paths` and `u16 path_count` (`VM_SYS_PATH_START`). The arrays must stay valid while scripts run.
 
 | Function | Description |

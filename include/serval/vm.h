@@ -116,16 +116,18 @@ enum {
 // Entity properties for GETP and SETP: the ECS arrays of the same names.
 // Append-only.
 enum {
-    VM_P_X,     // pos_x (FIXED)
-    VM_P_Y,     // pos_y (FIXED)
-    VM_P_VX,    // vel_x (FIXED)
-    VM_P_VY,    // vel_y (FIXED)
-    VM_P_SPR,   // spr_id
-    VM_P_FRAME, // spr_frame
-    VM_P_FLAGS, // spr_flags
-    VM_P_ANGLE, // spr_angle
-    VM_P_DEPTH, // spr_depth
-    VM_P_SCALE, // spr_scale
+    VM_P_X,      // pos_x (FIXED)
+    VM_P_Y,      // pos_y (FIXED)
+    VM_P_VX,     // vel_x (FIXED)
+    VM_P_VY,     // vel_y (FIXED)
+    VM_P_SPR,    // spr_id
+    VM_P_FRAME,  // spr_frame
+    VM_P_FLAGS,  // spr_flags
+    VM_P_ANGLE,  // spr_angle
+    VM_P_DEPTH,  // spr_depth
+    VM_P_SCALE,  // spr_scale
+    VM_P_BODY_W, // body_w (C_BODY; physics.h)
+    VM_P_BODY_H, // body_h (C_BODY)
     VM_P_COUNT
 };
 

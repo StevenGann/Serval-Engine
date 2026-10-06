@@ -17,6 +17,7 @@
 
 #include "serval/debug.h"
 #include "serval/map.h"
+#include "serval/physics.h"
 #include "serval/random.h"
 #include "sprite_internal.h"
 #include "vm_internal.h"
@@ -294,8 +295,8 @@ static void bind(Entity e, u32 object) {
 
 // --- Entities ----------------------------------------------------------------
 
-static const u32 prop_component[VM_P_COUNT] = {C_POS, C_POS, C_VEL, C_VEL, C_SPR,
-                                               C_SPR, C_SPR, C_SPR, C_SPR, C_SPR};
+static const u32 prop_component[VM_P_COUNT] = {C_POS, C_POS, C_VEL, C_VEL, C_SPR,  C_SPR,
+                                               C_SPR, C_SPR, C_SPR, C_SPR, C_BODY, C_BODY};
 
 // The slot of the entity in `cell` for GETP or SETP of `prop`, or -1 (warning)
 // for an unknown property or a dead entity.
@@ -303,7 +304,7 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
     (void)at; // only for warnings
     if (prop >= VM_P_COUNT) {
         WARN_ONCE(WARN_PROPERTY,
-                  "vm: GETP/SETP at 0x%x: no property %u (VM_P_X to VM_P_SCALE, 0 to %d); "
+                  "vm: GETP/SETP at 0x%x: no property %u (VM_P_X to VM_P_BODY_H, 0 to %d); "
                   "reads 0, writes nothing",
                   at, prop, VM_P_COUNT - 1);
         return -1;
@@ -320,7 +321,8 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
     if (!ent_has(i, prop_component[prop]))
         WARN_ONCE(WARN_PROP_COMPONENT,
                   "vm: GETP/SETP at 0x%x: entity %u lacks the component of property %u "
-                  "(C_POS for X/Y, C_VEL for VX/VY, else C_SPR); its array is used anyway",
+                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_W/H, else C_SPR); its "
+                  "array is used anyway",
                   at, i, prop);
     return (int)i;
 }
@@ -345,8 +347,12 @@ static s32 get_prop(u32 i, u32 prop) {
         return spr_angle[i];
     case VM_P_DEPTH:
         return spr_depth[i];
-    default: // VM_P_SCALE
+    case VM_P_SCALE:
         return spr_scale[i];
+    case VM_P_BODY_W:
+        return body_w[i];
+    default: // VM_P_BODY_H
+        return body_h[i];
     }
 }
 
@@ -380,8 +386,14 @@ static void set_prop(u32 i, u32 prop, s32 value) {
     case VM_P_DEPTH:
         spr_depth[i] = (s16)value;
         break;
-    default: // VM_P_SCALE
+    case VM_P_SCALE:
         spr_scale[i] = (s16)value;
+        break;
+    case VM_P_BODY_W:
+        body_w[i] = (u8)value;
+        break;
+    default: // VM_P_BODY_H
+        body_h[i] = (u8)value;
         break;
     }
 }

@@ -182,7 +182,7 @@ Entity handles travel in cells (`Entity` is a u16; `ENTITY_NONE` is 0).
 | 0x3C | `SPAWN` | u16 object | x, y → entity. `entity_create` with the object's component mask, sprite and position set; Create queued (runs this phase) |
 | 0x3D | `KILL` | | e → ; queues Destroy: dispatcher halts e's context, runs the handler to completion (a wait in Destroy warns and halts), then `entity_destroy` |
 
-Properties (`GETP`/`SETP` page, v1): `VM_P_X 0, VM_P_Y 1` (FIXED, world), `VM_P_VX 2, VM_P_VY 3` (FIXED), `VM_P_SPR 4, VM_P_FRAME 5, VM_P_FLAGS 6, VM_P_ANGLE 7, VM_P_DEPTH 8, VM_P_SCALE 9` — the ECS arrays of the same names. Dead or `ENTITY_NONE` entity: warn; `GETP` pushes 0, `SETP` is dropped. A property whose component bit the entity lacks warns in debug builds but still reads/writes the (zeroed-at-create) array. Unknown property: warn, 0/dropped. The page is append-only.
+Properties (`GETP`/`SETP` page, v1): `VM_P_X 0, VM_P_Y 1` (FIXED, world), `VM_P_VX 2, VM_P_VY 3` (FIXED), `VM_P_SPR 4, VM_P_FRAME 5, VM_P_FLAGS 6, VM_P_ANGLE 7, VM_P_DEPTH 8, VM_P_SCALE 9`, `VM_P_BODY_W 10, VM_P_BODY_H 11` (whole pixels, the size `body_overlap` tests; component `C_BODY`) — the ECS arrays of the same names. `SETP` truncates to the array's type; `GETP` extends it back (sign-extending `s16`, zero-extending `u8` and `u16`). Dead or `ENTITY_NONE` entity: warn; `GETP` pushes 0, `SETP` is dropped. A property whose component bit the entity lacks warns in debug builds but still reads/writes the (zeroed-at-create) array. Unknown property: warn, 0/dropped. The page is append-only.
 
 ### Engine calls
 
