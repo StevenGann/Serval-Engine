@@ -112,9 +112,9 @@ Immediately after the header: one 32-byte record per object.
 
 ### String table and code
 
-After the object table: string count × u32 blob-relative offsets, each to NUL-terminated bytes (the text engine's character set). Code fills the rest.
+After the object table: string count × u32 blob-relative offsets, each to NUL-terminated bytes in printable ASCII (what `text_print` draws; other bytes show as `?`, see [`text.h`](../include/serval/text.h)). Code and string bytes fill the rest of the blob, in any order: placing string bytes after the code keeps code offsets stable when strings are added. Object and string counts are bounded only by their 16-bit fields and by the tables fitting in the blob. Offsets are absolute (`CALL` targets too): a blob is always built whole, and the compiler's PC → event-block map is regenerated with it.
 
-**Load-time validation** (`vm_load` returns false and warns on the first failure): magic, version, cell width, counts within limits, every handler and string offset inside the blob and past the tables. **Runtime bound:** the dispatcher checks `pc` stays inside the blob; escaping it (a bad jump, or falling off the end) warns and halts the context — so a handler must end in `HALT` or `RET`-to-empty, which the compiler guarantees and the interpreter doesn't trust.
+**Load-time validation** (`vm_load` returns false and warns on the first failure): magic, version, cell width, counts within limits, every handler and string offset past the tables and strictly less than the blob size. The header does not mark where code starts, so the loader cannot tell a handler offset pointing into string bytes from one pointing at code; the runtime bounds checks make that safe, and the compiler is responsible for it. **Runtime bound:** the dispatcher checks `pc` stays inside the blob; escaping it (a bad jump, or falling off the end) warns and halts the context — so a handler must end in `HALT` or `RET`-to-empty, which the compiler guarantees and the interpreter doesn't trust.
 
 ## Opcode reference
 
@@ -139,7 +139,7 @@ One opcode byte, then operands as listed. `rel16` is a signed 16-bit offset from
 
 ### Arithmetic, logic, comparison
 
-All binary ops: `a, b → a ∘ b`. Arithmetic wraps; `DIV`/`MOD`/`FXDIV` by zero warn once and produce 0; `DIV` rounds toward zero. Shifts mask the count to width−1; `SHR` is arithmetic. Comparisons push 1 or 0.
+No operands. Binary ops: `a, b → a ∘ b`; unary `NEG`, `BNOT`, `LNOT`: `a → result`. Arithmetic wraps; `DIV`/`MOD`/`FXDIV` by zero warn once and produce 0; `DIV` rounds toward zero. Shifts mask the count to width−1; `SHR` is arithmetic. Comparisons push 1 or 0.
 
 | Range | Ops |
 | --- | --- |
@@ -161,7 +161,7 @@ All binary ops: `a, b → a ∘ b`. Arithmetic wraps; `DIV`/`MOD`/`FXDIV` by zer
 
 ### Waits
 
-A waiting context sleeps until its condition holds, checked at the start of each `vm_step()`.
+No operands (`WAIT` pops its frame count). A waiting context sleeps until its condition holds, checked at the start of each `vm_step()`.
 
 | Op | Mnemonic | Effect |
 | --- | --- | --- |
@@ -204,7 +204,7 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 7 | `random_range` | lo, hi | cell |
 | 8 | `button_down` | button mask | 0/1 |
 | 9 | `button_pressed` | button mask | 0/1 |
-| 10 | `screen_brightness` | value | |
+| 10 | `screen_set_brightness` | level | |
 | 11 | `path_start` | entity, path index (bindings), flags | |
 
 Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.songs = ..., .song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0).
@@ -309,6 +309,10 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 6. **Debug and performance:** `BRK` semantics finalized with [debug-link.md](debug-link.md), `vm_reload`, a script benchmark, and the IWRAM decision from its numbers. Freeze format v1 alongside the first release that ships it.
 
 Milestones 2 and 3 are pure `src/core` work with no hardware dependencies — buildable and testable entirely on the host.
+
+## What format v1 fixes
+
+Beyond the byte layout, these are part of format v1, and a compiler may rely on them: the limits `VM_STACK` (8), `VM_CALLS` (4), `VM_LOCALS` (8) and `VM_GLOBALS` (256); the SYS table's argument and result counts; the property page. `LDG`/`STG` may use any index below `VM_GLOBALS`; the header's global count only tells `vm_reload` whether the old values still fit. The opcode space is append-only like the pages: new opcodes take unassigned bytes and never change an existing one's meaning, so an older engine meets a newer opcode only as an unknown opcode (warn, halt context). After the first release that ships the VM, a change to the layout, an existing opcode or a limit is a new format version and a major engine version.
 
 ## Open items
 
