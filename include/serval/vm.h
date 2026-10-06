@@ -134,18 +134,19 @@ enum {
 // Engine calls for SYS. Arguments are pushed left to right (the last on
 // top). Append-only.
 enum {
-    VM_SYS_PSG_PLAY,       // sound id
-    VM_SYS_MUSIC_PLAY,     // song index (VmBindings.songs)
-    VM_SYS_MUSIC_STOP,     //
-    VM_SYS_MUSIC_PAUSE,    //
-    VM_SYS_MUSIC_RESUME,   //
-    VM_SYS_CAMERA_SET,     // x, y (whole pixels)
-    VM_SYS_TEXT_PRINT,     // col, row, string index
-    VM_SYS_RANDOM_RANGE,   // lo, hi -> random_range(lo, hi)
-    VM_SYS_BUTTON_DOWN,    // buttons -> 1 if button_down(buttons), else 0
-    VM_SYS_BUTTON_PRESSED, // buttons -> 1 if button_pressed(buttons), else 0
-    VM_SYS_BRIGHTNESS,     // level -> screen_set_brightness(level)
-    VM_SYS_PATH_START,     // entity, path index (VmBindings.paths), flags
+    VM_SYS_PSG_PLAY,          // sound id
+    VM_SYS_MUSIC_PLAY,        // song index (VmBindings.songs)
+    VM_SYS_MUSIC_STOP,        //
+    VM_SYS_MUSIC_PAUSE,       //
+    VM_SYS_MUSIC_RESUME,      //
+    VM_SYS_CAMERA_SET,        // x, y (whole pixels)
+    VM_SYS_TEXT_PRINT,        // col, row, string index
+    VM_SYS_RANDOM_RANGE,      // lo, hi -> random_range(lo, hi)
+    VM_SYS_BUTTON_DOWN,       // buttons -> 1 if button_down(buttons), else 0
+    VM_SYS_BUTTON_PRESSED,    // buttons -> 1 if button_pressed(buttons), else 0
+    VM_SYS_BRIGHTNESS,        // level -> screen_set_brightness(level)
+    VM_SYS_PATH_START,        // entity, path index (VmBindings.paths), flags
+    VM_SYS_TEXT_PRINT_NUMBER, // col, row, value: prints the value in decimal
     VM_SYS_COUNT
 };
 

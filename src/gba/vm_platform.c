@@ -1,5 +1,6 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
-// sound, music, text, buttons and brightness. The web build compiles it too.
+// sound, music, text (strings and numbers), buttons and brightness. The web
+// build compiles it too.
 
 #include "../core/vm_internal.h"
 #include "serval/audio.h"
@@ -28,6 +29,9 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         return 0;
     case VM_SYS_TEXT_PRINT:
         text_print(args[0], args[1], ptr);
+        return 0;
+    case VM_SYS_TEXT_PRINT_NUMBER:
+        text_print(args[0], args[1], text_format("%d", args[2]));
         return 0;
     case VM_SYS_BUTTON_DOWN:
         return button_down((u16)args[0]);

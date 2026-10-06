@@ -30,6 +30,7 @@ target_link_libraries(serval_test_harness
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
         SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c rom/gba_text_tests.c rom/audio_tests.c rom/splash_tests.c rom/map_tests.c rom/present_tests.c rom/save_tests.c rom/ecs_cost_tests.c
+                rom/vm_platform_tests.c
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")

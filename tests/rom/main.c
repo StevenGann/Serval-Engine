@@ -16,6 +16,7 @@ extern const TestSuite gba_map_tests;
 extern const TestSuite gba_present_tests;
 extern const TestSuite gba_save_tests;
 extern const TestSuite gba_ecs_cost_tests;
+extern const TestSuite gba_vm_tests;
 
 void test_output(const char* line) {
     debug_log(line);
@@ -29,7 +30,7 @@ int main(void) {
         &text_format_tests,   &core_tests,   &libc_tests,     &sprite_tests, &gba_text_tests,
         &audio_tests,         &splash_tests, &gba_map_tests,  &anim_tests,   &gba_present_tests,
         &psg_sequencer_tests, &save_tests,   &gba_save_tests, &input_tests,  &path_tests,
-        &gba_ecs_cost_tests,  &vm_tests,
+        &gba_ecs_cost_tests,  &vm_tests,     &gba_vm_tests,
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

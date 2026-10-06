@@ -206,6 +206,9 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 9 | `button_pressed` | button mask | 0/1 |
 | 10 | `screen_set_brightness` | level | |
 | 11 | `path_start` | entity, path index (bindings), flags | |
+| 12 | `text_print_number` | col, row, value | |
+
+`text_print_number` prints the value in decimal, as `text_print(col, row, text_format("%d", value))` would. Like `text_print`, it doesn't blank what was there: a number that got shorter (10, then 9) leaves a digit behind unless the script prints spaces over it first.
 
 Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.songs = ..., .song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0).
 

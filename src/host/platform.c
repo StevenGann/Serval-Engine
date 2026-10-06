@@ -63,7 +63,7 @@ ServalHostVmCalls serval_host_vm_calls;
 
 s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     // Arguments per VM_SYS_* call (docs/vm.md's SYS table).
-    static const u8 arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3};
+    static const u8 arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 3};
     ServalHostVmCalls* r = &serval_host_vm_calls;
     u32 n = fn < VM_SYS_COUNT ? arity[fn] : 0;
     r->calls++;

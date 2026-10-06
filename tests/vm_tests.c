@@ -2900,6 +2900,47 @@ static void platform_sys_calls_reach_the_platform(void) {
 #endif
 }
 
+// vm.md "Engine calls": SYS text_print_number(col, row, value) pops three and
+// pushes nothing; it is a platform call (vm_internal.h), so on the host the
+// recorder sees its arguments in push order, with no string or song.
+// tests/rom/vm_platform_tests.c checks what the GBA prints.
+static void sys_text_print_number(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(55);                     // 55
+    push8(3);                      // 55 col
+    push8(4);                      // 55 col row
+    push16(-1234);                 // 55 col row value
+    sys(VM_SYS_TEXT_PRINT_NUMBER); // 55: frame 1
+    stg(0);                        // glob[0] = 55
+    wait_frames(1);                //
+    push8(5);                      // col
+    push8(6);                      // col row
+    push32(INT32_MIN);             // col row value
+    sys(VM_SYS_TEXT_PRINT_NUMBER); // frame 2
+    store(1, 1);                   // carried on
+    op(VM_OP_HALT);                //
+    CHECK(load());
+#ifndef SERVAL_GBA
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+#endif
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 55);
+#ifndef SERVAL_GBA
+    CHECK(last_call(1, VM_SYS_TEXT_PRINT_NUMBER, 3, 4, -1234, NULL));
+#endif
+    frame();
+    CHECK(vm_global(1) == 1);
+#ifndef SERVAL_GBA
+    CHECK(last_call(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, NULL));
+#endif
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
 // --- Hot reload --------------------------------------------------------------
 
 // A blob for the reload cases: the Step handler of object 0 appends
@@ -3400,6 +3441,7 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
            {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
            {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
+           {"sys_text_print_number", sys_text_print_number},
            {"reload_keeps_globals_if_their_count_matches",
             reload_keeps_globals_if_their_count_matches},
            {"reload_keeps_attachments_to_objects_that_remain",

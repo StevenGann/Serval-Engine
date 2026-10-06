@@ -424,6 +424,8 @@ for (;;) {
 
 **Properties** (`GETP`/`SETP`, `VM_P_*`) are the ECS arrays of the same names: `pos_x`, `pos_y`, `vel_x`, `vel_y`, the sprite's `spr_id`, `spr_frame`, `spr_flags`, `spr_angle`, `spr_depth` and `spr_scale`, and the body size `body_w` and `body_h` (what `body_overlap` tests, so a script can size an entity it spawns). Writes truncate to the array's type. A property whose component the entity lacks (`C_POS`, `C_VEL`, `C_SPR`, or `C_BODY` for the body size) still reads and writes the array (*warns*).
 
+**Engine calls** (`SYS`, `VM_SYS_*`; arguments pushed in order, the last on top): `psg_play`, `psg_music_play` (a bound song), `psg_music_stop`, `psg_music_pause`, `psg_music_resume`, `camera_set`, `text_print` (a string of the blob), `random_range`, `button_down`, `button_pressed`, `screen_set_brightness`, `path_start` (a bound path) and `text_print_number` (a value, in decimal). Like `text_print`, `text_print_number` doesn't blank what was printed there before.
+
 `VmBindings` holds what the `SYS` engine calls reach by index, since scripts hold no pointers: `const PsgSong* const* songs` and `u16 song_count` (`VM_SYS_MUSIC_PLAY`), `const Path* const* paths` and `u16 path_count` (`VM_SYS_PATH_START`). The arrays must stay valid while scripts run.
 
 | Function | Description |

@@ -441,7 +441,7 @@ static bool anim_waitable(Entity e) {
 // --- Engine calls ------------------------------------------------------------
 
 // Arguments per VM_SYS_* call, and the calls that push a result.
-static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3};
+static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 3};
 #define SYS_RETURNS                                                                                \
     (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
 
