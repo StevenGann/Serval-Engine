@@ -976,7 +976,9 @@ static void drain(void) {
 // an animation the game restarts can raise it again).
 static void queue_anim_ends(void) {
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
-        if (!attached(slot) || !handler_of(bound_object[slot], VM_EV_ANIM_END))
+        // The handler first: most objects have none, and it costs no call.
+        if (bound[slot] == ENTITY_NONE || !handler_of(bound_object[slot], VM_EV_ANIM_END) ||
+            !attached(slot))
             continue;
         u32 flags = bound_flags[slot];
         if (anim_finished(bound[slot])) {
