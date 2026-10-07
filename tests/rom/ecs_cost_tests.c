@@ -118,8 +118,8 @@ static void physics_loop_costs(void) {
     debug_log(text_format("physics: %d bodies: fast loop %u cycles, contacts on %u, wrapping x %u, "
                           "4 with body_gravity %u",
                           BODIES, fast, contacts, wrapping, scaled));
-    // Release build: about 6,500 for the fast loop, 9,100 with contacts, 9,400
-    // wrapping and 10,500 with 4 scaled bodies (handled in ROM); a little
+    // Release build: about 6,500 for the fast loop, 9,400 with contacts, 9,700
+    // wrapping and 10,800 with 4 scaled bodies (handled in ROM); a little
     // more with debug checks.
     CHECK_TIMING(fast < 10000);
     CHECK_TIMING(contacts < fast + BODIES * 100);
