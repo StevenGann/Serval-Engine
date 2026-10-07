@@ -16,7 +16,7 @@ Game logic written in a statically checked **subset of Lua 5.4**, compiled ahead
 ## A script
 
 ```lua
--- fireflies.lua (excerpt)
+-- adapted from fireflies.lua
 Firefly = object { components = C_POS | C_VEL | C_SPR | C_ANIM | C_BODY | C_FIREFLY,
                    sprite = SPR_FIREFLY }
 
@@ -30,7 +30,8 @@ function Firefly:create()            -- a behaviour: it may wait
   live = live + 1
   for flight = 1, random_range(3, 4) do
     if not playing then break end
-    path_start(self, random_range(0, PATH_COUNT - 1), random_range(0, MIRROR_XY))
+    path_start(self, random_range(0, PATH_COUNT - 1),
+               random_range(0, PATH_MIRROR_X | PATH_MIRROR_Y))
     wait_move()
     wait(random_range(10, 40))
   end
@@ -58,11 +59,11 @@ A script file is a sequence of top-level statements, compiled once into one blob
 
 - **Objects:** `Name = object { components = expr, sprite = expr }`. Both fields are constant integer expressions (component bits `C_*` and sprite IDs come from the game's C headers, below). The object's number is its order of declaration.
 - **Handlers:** `function Name:create()`, `:step()`, `:destroy()`, `:collision(other)`, `:anim_end()`, `:room_start()`, the six `VM_EV_*` events. `create` and `room_start` are *behaviours* and may wait; the rest are *reactions* and run to completion ([vm.md](vm.md#behaviours-and-reactions)). `self` is the instance; `collision`'s parameter is the other entity. Collision events come from C: the pairs of entity sets the game names once with `vm_collide` ([vm.md](vm.md#collisions)), which the VM then tests every frame, or the game's own `vm_event` calls. A Room Start handler on an object with no components is a *thread*, started from C with `vm_start`.
-- **Globals:** top-level assignments and top-level `local` declarations become VM globals (`VM_GLOBALS` scalars). Their initial values must be constants, and they travel in the blob: `vm_load` sets them (a table the header's flag bit 0 announces; [vm.md](vm.md#header-16-bytes)), so a script starts with `playing = true` already true and C does nothing extra. The listing declares them as `.globals PLAYING=1`; a script whose globals all start at 0 (false, none) gets no table, and an object named `Init` is an object like any other.
+- **Globals:** top-level assignments and top-level `local` declarations (except `<const>` ones, which are constants) become VM globals (`VM_GLOBALS` scalars). Their initial values must be constants, and they travel in the blob: `vm_load` sets them (a table the header's flag bit 0 announces; [vm.md](vm.md#header-16-bytes)), so a script starts with `playing = true` already true and C does nothing extra. The listing declares them as `.globals PLAYING=1`; a script whose globals all start at 0 (false, none) gets no table, and an object named `Init` is an object like any other.
 - **Arrays:** `name = array(n)` (RAM, n cells, zeroed) or `name = { 3, 5, 8, ... }` (ROM, a constant table of integers, stored in the narrowest kind that holds every element). Top level only.
 - **Functions:** `function name(a, b) ... end` and `local function name(...)`, top level only.
 
-**Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two names that differ only in case are an error). `local NAME <const> = "text"` names a string for `text_print`, and a constant table of fixed values is a ROM array of their 256ths.
+**Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two objects, globals or arrays whose names differ only in case are an error). `local NAME <const> = "text"` names a string for `text_print` (C sees a string by its text: `"TIME UP!"` is `STR_TIME_UP`), and a constant table of fixed values is a ROM array of their 256ths.
 
 Names in ALL_CAPS that the script doesn't define are **constants from the game's C headers**, passed to the assembler ([`svm.py`](../tools/svm.py) `--header`), which knows the engine's and the game's `#define`s and enumerators. They are integers.
 
@@ -90,7 +91,7 @@ The compiler infers a static type for every expression and variable; mixing type
 | Lua | VM |
 | --- | --- |
 | `+ - *` on integers; unary `-` | `ADD SUB MUL NEG` |
-| `+ - *` on fixed | `ADD SUB FXMUL` (integers converted with a multiply by 256, folded for constants) |
+| `+ - *` on fixed | `ADD SUB FXMUL` (integers converted with a multiply by 256, folded for constants; a fixed times an integer is a plain `MUL`) |
 | `/` | `FXDIV` |
 | `//`, `%` | `IDIV`, `IMOD` (floored, as Lua's) |
 | `& \| ~ <<`, unary `~` | `AND OR XOR LSH BNOT`; `a >> b` is `LSH a, -b` |
@@ -136,11 +137,11 @@ Lua's `print` is not one of them: it is Lua's console output, which the subset d
 
 **Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then a script plays PSG sound and music only.
 
-**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), and floats beyond the fixed-point rules.
+**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), `^` except between constants (folded: the VM has no power operation), and floats beyond the fixed-point rules.
 
 ## The tool
 
-`tools/svlua.py`, Python 3 standard library only like the other tools, MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint.
+`tools/svlua.py`, Python 3 standard library only like the other tools (3.11 or later; `serval_add_script()` stops with an error on an older Python), MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint.
 
 Studio Advance's event editor compiles its event blocks through the same path (blocks → this subset → bytecode), so there is one compiler to make correct.
 
@@ -153,4 +154,4 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 ## Open questions
 
 - Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment, checked wherever `other.field` is used, is the alternative. The prototype gives slots in order of first appearance.
-- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every line of the compiler's listing ends in `; file:line`, so `svm.py` could build the table from them.
+- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every statement in the compiler's listing ends in `; file:line`, so `svm.py` could build the table from them.
