@@ -7,7 +7,8 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Confirm the frame loop order: input, `vm_step`, movement and physics, `vm_events`, animation, render ([frame-loop.md](frame-loop.md#frame-order-with-scripts)).
 - [x] Implement the bytecode VM: format v1, the interpreter, the scheduler and the engine bridge, milestones 2-4 of [vm.md](vm.md#milestones) (format v1 stays changeable until a release ships it, then breaking changes bump the major version).
 - [x] The VM's proof example, milestone 5 of [vm.md](vm.md#milestones): [`fireflies`](../examples/fireflies/main.c), a game whose logic is all bytecode. It added `VM_P_BODY_W`/`VM_P_BODY_H`, `VM_SYS_TEXT_PRINT_NUMBER` and the `INTERRUPTIBLE` opcode, and measured the first script workload ([what it exposed](examples-roadmap.md#what-fireflies-exposed)).
-- [ ] Finish the bytecode VM ([vm.md](vm.md#milestones) milestone 6): the debug link and `BRK`, a script benchmark, and the IWRAM decision from its numbers (`fireflies` gives a first workload).
+- [ ] Finish the bytecode VM ([vm.md](vm.md#milestones)): milestone 6, the revision for compiled Lua (frames, behaviours and reactions, instance fields, arrays, Lua's arithmetic); milestone 7, the Lua-subset compiler prototype ([lua.md](lua.md)) with `fireflies` ported; milestone 8, the debug link and `BRK`, a script benchmark and the IWRAM decision. v0.1.0 follows milestone 7.
+- [x] Compile a Lua subset to the VM, with the compiler open (MIT) in this repository: decided 2026-10-07 ([lua.md](lua.md)).
 - [ ] Define the debug link protocol: transport and message format ([debug-link.md](debug-link.md)).
 - [x] Choose the engine license: MIT ([licensing.md](licensing.md)).
 - [x] Verify licenses: libtonc (MIT), Maxmod (ISC), `mmutil` (BSD-3-Clause) ([licensing.md](licensing.md)).

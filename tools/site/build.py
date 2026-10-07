@@ -76,6 +76,7 @@ NAV = [
         ("frame-loop", "Frame loop"),
         ("runtime-systems", "Other runtime systems"),
         ("vm", "Bytecode VM"),
+        ("lua", "Scripting in Lua"),
         ("debug-link", "Debug link"),
         ("platforms", "Platforms"),
     ]),
