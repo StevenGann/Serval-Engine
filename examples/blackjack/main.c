@@ -25,8 +25,9 @@
 //     wobble on a spring when they land, the selected button sways, banner
 //     letters wobble in. table.c limits how many cards tilt at once (rotated
 //     sprites cost four times as much of the per-scanline sprite budget)
-//   - A card flip without a scaling API: the base squashed to 24, 14 and 4
-//     pixels and back, as animation frames built at boot
+//   - A card flip without scaling (sprite_draw_ex could squash the card;
+//     this example doesn't use it): the base squashed to 24, 14 and 4 pixels
+//     and back, as animation frames built at boot
 //   - Tweens with easing (an overshooting slide for a deal, ease-in for a
 //     discard), chips flying in arcs, letters dropping in with a damped
 //     bounce, rising "+75" pops, a bankroll that counts up and down

@@ -13,8 +13,9 @@
 //
 //   - the base (SPR_CARD, 32x64 with the card in rows 8-55): a blank face, a
 //     court card's face with a gold frame, or the back; plus squashed widths
-//     of the face and back for the flip (the engine rotates sprites but can't
-//     scale them, so the flip is an animation: 8 frames, 8 KB);
+//     of the face and back for the flip, an animation of 8 frames, 8 KB
+//     (the engine can scale sprites, with sprite_draw_ex, but this example
+//     doesn't);
 //   - the index (SPR_INDEX, 8x16): rank over a small suit, top-left, and the
 //     same flipped H+V bottom-right (52 frames of 2 tiles: 3.3 KB);
 //   - the middle: a big suit (SPR_PIP 16x16) on number cards, a chunkier one

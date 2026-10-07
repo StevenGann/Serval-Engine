@@ -38,8 +38,8 @@
 // every entity here has a sprite, so the caps below add up to at most 120
 // sprites, leaving room for the 3 drawn by hand (the focus hitbox and two HUD
 // icons): 120 + 3 = 123 of 128. A cannon's head is a metasprite of two
-// pieces, one more hardware sprite each: with the four a fort shows at once,
-// 127.
+// pieces, one more hardware sprite each: with the two a fort shows at once,
+// 125.
 //   player 1 + shots 20 + enemies 14 + boss parts 3 + enemy bullets 48
 //   + explosions and sparks 32 + items 2 = 120
 // Each spawn checks its cap (counted once per frame with ecs_count), so the
@@ -61,7 +61,8 @@
 // (a 32 x 32 dome and 32 x 16 barrels: 276 cycles a line), at most two on a
 // line. Should a line run out, the hardware drops the sprites with the
 // highest OAM numbers, which sys_render_by_depth gives to the lowest depth:
-// the player's own shots go first, enemy bullets last. In debug builds the
+// the boss (depth 0) and the turrets (1) go first, then the player's own
+// shots; enemy bullets last. In debug builds the
 // SELECT readout counts what a line lost (sprite_stats_scanlines).
 enum {
     DEPTH_BOSS = 0,

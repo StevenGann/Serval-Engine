@@ -4,7 +4,7 @@
 //
 // Demonstrates:
 //   - A vertically scrolling stage driven by the camera (camera_set): a tall
-//     map on background 2 (11 x 458 metatiles, built at boot from segments
+//     map on background 2 (11 x 426 metatiles, built at boot from segments
 //     written as text, stage.c) that the camera climbs a pixel per frame, over
 //     a starfield on background 3 that repeats (MAP_LAYER_WRAP) at half speed
 //     (scroll_factor): parallax. During the boss the camera rests at the top

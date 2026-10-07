@@ -223,8 +223,8 @@ void spawn_turret(int x, int y) {
 
 // Big turrets that turn to track the ship. Each has its own angle in
 // spr_angle (so its own rotation matrix: the hardware has 32, and at most
-// four cannons are on screen) and turns toward the ship by at most
-// CANNON_TURN a frame, so a ship that keeps moving stays ahead of the
+// two cannons, one fort's, are on screen) and turns toward the ship by at
+// most CANNON_TURN a frame, so a ship that keeps moving stays ahead of the
 // barrels. Once aimed to within CANNON_AIM it fires three pairs of shots
 // along the barrels, from the muzzles.
 #define CANNON_TURN (ANGLE_DEG(3) / 2)
