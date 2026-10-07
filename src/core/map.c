@@ -30,7 +30,11 @@ enum {
     W_LAYER_BG,
     W_LAYER_SIZE,
     W_LAYER_DATA,
+    W_LAYER_FLAGS,
     W_LAYER_CELL,
+    W_TYPE_LADDER,
+    W_TYPE_SLOPE,
+    W_TYPE_RESERVED,
     W_UNLOAD_BG,
     W_SCROLL_BG,
     W_SET_NO_MAP,
@@ -148,12 +152,41 @@ static void check_cells(const MapLayer* layer) {
     for (u32 k = 0; k < count; k++) {
         if (layer->cells[k] >= layer->metatile_count) {
             WARN_ONCE(W_LAYER_CELL,
-                      "map_load: cell (%u, %u) of the layer on background %u uses metatile %u, "
-                      "but it has only %u metatiles; it shows as empty",
+                      "map_load: cell (%u, %u) on background %u uses metatile %u, but the layer "
+                      "has only %u; it shows as empty",
                       k % layer->width, k / layer->width, layer->bg, layer->cells[k],
                       layer->metatile_count);
             return;
         }
+    }
+}
+
+// The playfield's collision types that this version doesn't implement:
+// ladders (planned) collide as MAP_EMPTY and slopes (planned) as MAP_SOLID
+// (src/ecs/map_movement.c), and the reserved types 10-15 as MAP_EMPTY. They
+// load, since a game may be written against planned API; debug builds say so
+// once per kind, here rather than in sys_map_movement, which would find them
+// every frame. Every metatile definition is checked, not only those the
+// cells use, as map_set_cell() can bring in any of them.
+static void check_collision_types(const MapLayer* layer) {
+    for (u32 k = 0; k < layer->metatile_count; k++) {
+        u32 type = MAP_TYPE(layer->metatiles[k].collision);
+        // Kept under TEXT_FORMAT_MAX (128 characters), or they'd be cut off.
+        if (type == MAP_LADDER)
+            WARN_ONCE(W_TYPE_LADDER,
+                      "map_load: playfield metatile %u is a ladder: ladders are planned, not "
+                      "implemented in this engine version; acts as MAP_EMPTY",
+                      k);
+        else if (type >= MAP_SLOPE_R && type <= MAP_SLOPE_L_LOW)
+            WARN_ONCE(W_TYPE_SLOPE,
+                      "map_load: playfield metatile %u is a slope: slopes are planned, not "
+                      "implemented in this engine version; acts as MAP_SOLID",
+                      k);
+        else if (type > MAP_SLOPE_L_LOW)
+            WARN_ONCE(W_TYPE_RESERVED,
+                      "map_load: playfield metatile %u has collision type %u, reserved for later "
+                      "engine versions; it collides as MAP_EMPTY",
+                      k, type);
     }
 }
 #endif
@@ -185,8 +218,19 @@ bool map_load(const MapLayer* layer) {
                   layer->bg);
         return false;
     }
+    // Refused rather than ignored: a later version may give these bits a
+    // meaning, which would change what such a layer does (docs/releases.md).
+    if (layer->flags & ~(MAP_LAYER_WRAP | MAP_LAYER_FIXED)) {
+        WARN_ONCE(W_LAYER_FLAGS,
+                  "map_load: the layer for background %u has .flags 0x%x; bits 2-7 are reserved "
+                  "(MAP_LAYER_WRAP and _FIXED exist); not loaded",
+                  layer->bg, layer->flags);
+        return false;
+    }
 #ifdef SERVAL_DEBUG
     check_cells(layer);
+    if (layer->bg == 2)
+        check_collision_types(layer);
 #endif
     serval_map_layers[layer->bg] = layer;
     serval_map_reload |= (u8)(1u << layer->bg);
@@ -276,6 +320,42 @@ void map_set_cell(int mx, int my, u16 metatile) {
         serval_map_redraw[serval_map_redraw_count++] = (MapChange){(u16)mx, (u16)my, 0};
     else
         serval_map_redraw_all = true;
+}
+
+u8 map_tags_in(int x, int y, int w, int h) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield || w <= 0 || h <= 0)
+        return 0;
+    // Clipped to the map in pixels first, in an order that can't overflow
+    // for any arguments: x + w is only computed with x negative (w is
+    // positive), or with 0 <= x < the map's width and w at most what is left
+    // of it.
+    int map_w = playfield->width * 16, map_h = playfield->height * 16;
+    if (x < 0) {
+        if (x + w <= 0)
+            return 0;
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        if (y + h <= 0)
+            return 0;
+        h += y;
+        y = 0;
+    }
+    if (x >= map_w || y >= map_h)
+        return 0;
+    int right = w > map_w - x ? map_w : x + w; // exclusive
+    int bottom = h > map_h - y ? map_h : y + h;
+    u32 tags = 0;
+    for (u32 my = (u32)y >> 4; my <= (u32)(bottom - 1) >> 4; my++) {
+        for (u32 mx = (u32)x >> 4; mx <= (u32)(right - 1) >> 4; mx++) {
+            u32 cell = serval_map_cell_in(playfield, mx, my);
+            if (cell < playfield->metatile_count)
+                tags |= playfield->metatiles[cell].collision;
+        }
+    }
+    return (u8)(tags & (MAP_TAG(0) | MAP_TAG(1) | MAP_TAG(2) | MAP_TAG(3)));
 }
 
 u8 map_collision_at(int x, int y) {

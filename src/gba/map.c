@@ -27,6 +27,7 @@
 
 #include "serval/map.h"
 
+#include <stddef.h>
 #include <tonc.h>
 
 #include "../core/map_internal.h"
@@ -42,6 +43,16 @@
 // coordinate counting up never reaches it (it would from -1 if this were
 // 0xFFFFFFFF, and layers scrolled left of or above their map start there).
 #define NO_WRAP 0x80000000u
+
+// The data formats Studio Advance emits (docs/tilemaps.md#rom-data-format):
+// their layout on 32-bit targets (the GBA and wasm32) must not change. New
+// fields go into padding, as Tileset.flags did.
+_Static_assert(sizeof(Tileset) == 16 && offsetof(Tileset, flags) == 13, "Tileset layout changed");
+_Static_assert(sizeof(Metatile) == 10 && offsetof(Metatile, collision) == 8,
+               "Metatile layout changed");
+_Static_assert(sizeof(MapLayer) == 20 && offsetof(MapLayer, flags) == 15 &&
+                   offsetof(MapLayer, scroll_factor) == 16,
+               "MapLayer layout changed");
 
 typedef struct {
     const MapLayer* layer; // what the window shows, or NULL
@@ -73,7 +84,18 @@ static u32 tile_update_count;
 static u16 tileset_tiles; // tile_count of the loaded tileset, 0 if none
 
 #ifdef SERVAL_DEBUG
-enum { W_POINTER, W_TILES, W_COUNT, W_PALETTES, W_SET_RANGE, W_SET_DATA, W_SET_FULL };
+enum {
+    W_POINTER,
+    W_LZ77,
+    W_FLAGS,
+    W_TILES,
+    W_COUNT,
+    W_PALETTES,
+    W_SET_RANGE,
+    W_SET_DATA,
+    W_SET_FULL,
+    W_SET_COLORS,
+};
 static u32 warned;
 #define WARN_ONCE(kind, ...)                                                                       \
     do {                                                                                           \
@@ -91,6 +113,21 @@ bool tileset_load(const Tileset* tileset) {
         WARN_ONCE(W_POINTER, "tileset_load: the tileset pointer is NULL or not valid");
         return false;
     }
+    // Refused rather than ignored: copying LZ77 data as tiles would show
+    // garbage, and a reserved bit may get a meaning later, which would change
+    // what such a tileset does (docs/releases.md).
+    if (tileset->flags & TILESET_LZ77) {
+        WARN_ONCE(W_LZ77, "tileset_load: TILESET_LZ77 (LZ77-compressed tilesets) is planned, not "
+                          "implemented in this engine version; nothing is loaded");
+        return false;
+    }
+    if (tileset->flags) {
+        WARN_ONCE(W_FLAGS,
+                  "tileset_load: unknown .flags 0x%x (bit 1 is reserved for 8bpp tilesets, bits "
+                  "2-7 for later use); nothing is loaded",
+                  tileset->flags);
+        return false;
+    }
     if (tileset->tile_count == 0 || !serval_plausible_pointer(tileset->tiles)) {
         WARN_ONCE(W_TILES, "tileset_load: the tileset needs .tiles and .tile_count");
         return false;
@@ -98,7 +135,7 @@ bool tileset_load(const Tileset* tileset) {
     if (tileset->tile_count > MAP_MAX_TILES || tileset->palette_count > MAP_MAX_PALETTES) {
         WARN_ONCE(W_COUNT,
                   "tileset_load: %u tiles and %u palettes, but at most %u tiles and %u palettes "
-                  "fit (background palette bank 15 is the text layer's)",
+                  "fit (palette bank 15 is the text layer's)",
                   tileset->tile_count, tileset->palette_count, MAP_MAX_TILES, MAP_MAX_PALETTES);
         return false;
     }
@@ -146,6 +183,17 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count) {
         tile_update_count++;
     tile_updates[k] = (TileUpdate){tiles, first, count};
     attach_hooks();
+}
+
+// Planned (map.h): background palette writes through a shadow palette. A stub
+// until then: it changes nothing, so the palettes stay as tileset_load() and
+// screen_set_backdrop() left them, and says so once.
+void tileset_set_colors(u32 index, const Color* colors, u32 count) {
+    (void)index;
+    (void)colors;
+    (void)count;
+    WARN_ONCE(W_SET_COLORS, "tileset_set_colors: palette writes are planned, not implemented in "
+                            "this engine version; the colors don't change");
 }
 
 // v modulo m (m > 0), from 0 to m - 1 also for negative v.

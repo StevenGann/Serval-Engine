@@ -1,7 +1,8 @@
 // Tests for map.h's platform-neutral part: map layers as data, the camera,
-// runtime cell changes, collision queries and sys_map_movement. Run natively
-// and in the test ROM (which also draws the layers; see tests/rom/map_tests.c
-// for that).
+// runtime cell changes, collision and tag queries and sys_map_movement. Run
+// natively and in the test ROM (which also draws the layers; see
+// tests/rom/map_tests.c for that). The planned collision types are tested in
+// planned_map_tests.c.
 
 #include "serval/debug.h"
 #include "serval/map.h"
@@ -174,6 +175,179 @@ static void map_load_rejects_bad_layers(void) {
 #ifdef SERVAL_DEBUG
     CHECK(debug_warning_count() == before + 1);
 #endif
+    reset();
+}
+
+// MapLayer.flags has two flags; map_load() refuses the other six bits (a
+// later version may give them a meaning), changing nothing.
+static void map_load_refuses_unknown_layer_flags(void) {
+    reset();
+    LOAD(room);
+    static const u16 one[1] = {SOLID};
+    MapLayer layer = {.width = 1,
+                      .height = 1,
+                      .cells = one,
+                      .metatiles = metatiles,
+                      .metatile_count = 4,
+                      .bg = 2,
+                      .flags = MAP_LAYER_WRAP | MAP_LAYER_FIXED};
+    CHECK(map_load(&layer));
+    CHECK(map_cell(0, 0) == SOLID);
+    LOAD(room);
+    u32 before = debug_warning_count();
+    for (u32 bit = 2; bit < 8; bit++) {
+        layer.flags = (u8)(MAP_LAYER_WRAP | (1u << bit));
+        CHECK(!map_load(&layer));
+    }
+    layer.flags = 0xFF;
+    CHECK(!map_load(&layer));
+    CHECK(debug_warning_count() == before + WARNINGS_ON); // once
+    // The room is still the playfield.
+    CHECK(map_cell(0, 0) == EMPTY && map_cell(2, 6) == SOLID);
+    layer.bg = 3; // refused on every background
+    layer.flags = 1u << 7;
+    CHECK(!map_load(&layer));
+    reset();
+}
+
+// Collision types 10-15 are reserved: they load, with a warning (once), and
+// collide as MAP_EMPTY; map_collision_at() returns them as they are.
+static void reserved_collision_types_load_and_collide_as_empty(void) {
+    reset();
+    static const Metatile reserved[] = {
+        {{0, 0, 0, 0}, MAP_EMPTY},
+        {{0, 0, 0, 0}, MAP_SOLID},
+        {{0, 0, 0, 0}, 12 | MAP_TAG(1)},
+        {{0, 0, 0, 0}, 15},
+    };
+    // A floor of type 12 over a solid one, and a type-15 wall.
+    static const u16 reserved_cells[] = {0, 0, 0, 3, //
+                                         0, 0, 0, 3, //
+                                         2, 2, 2, 3, //
+                                         1, 1, 1, 1};
+    const MapLayer layer = {.width = 4,
+                            .height = 4,
+                            .cells = reserved_cells,
+                            .metatiles = reserved,
+                            .metatile_count = 4,
+                            .bg = 2};
+    u32 before = debug_warning_count();
+    CHECK(map_load(&layer));
+    CHECK(debug_warning_count() == before + WARNINGS_ON);
+    CHECK(map_load(&layer)); // once per run
+    CHECK(debug_warning_count() == before + WARNINGS_ON);
+    CHECK(map_collision_at(5, 40) == (12 | MAP_TAG(1)));
+    physics_set_gravity(0, FX_ONE / 2);
+    u32 i = make_body(4, 0, 8, 8);
+    step(60);
+    CHECK(pos_y[i] == FX(48 - 8)); // through the type-12 row, onto the solid one
+    CHECK(body_contact[i] == MAP_CONTACT_FLOOR);
+    u32 j = make_body(4, 20, 8, 8); // in row 1, without gravity, moving right
+    body_gravity[j] = BODY_GRAVITY(0);
+    vel_x[j] = FX(2);
+    step(40);
+    CHECK(pos_x[j] == FX(64 - 8)); // through the type-15 column to the map's edge
+    CHECK(pos_y[j] == FX(20));
+    reset();
+}
+
+// Metatiles whose tags and collision types differ (a tag is not a type):
+// solid spikes, water that isn't solid, a tagged one-way platform.
+enum { T_NONE, T_SPIKES, T_WATER, T_LEDGE, T_ROCK, T_COUNT };
+#define TAG_SPIKES MAP_TAG(0)
+#define TAG_WATER MAP_TAG(1)
+static const Metatile tag_metatiles[T_COUNT] = {
+    [T_NONE] = {{0, 0, 0, 0}, MAP_EMPTY},
+    [T_SPIKES] = {{0, 0, 0, 0}, MAP_SOLID | TAG_SPIKES},
+    [T_WATER] = {{0, 0, 0, 0}, MAP_EMPTY | TAG_WATER},
+    [T_LEDGE] = {{0, 0, 0, 0}, MAP_ONEWAY | MAP_TAG(2) | MAP_TAG(3)},
+    [T_ROCK] = {{0, 0, 0, 0}, MAP_SOLID},
+};
+
+// 4x3 metatiles (64x48 pixels); 9 names a metatile the layer doesn't have.
+static const u16 tag_cells[4 * 3] = {
+    T_NONE, T_SPIKES, T_NONE,  T_WATER, //
+    T_ROCK, T_NONE,   T_LEDGE, T_NONE,  //
+    T_NONE, T_NONE,   T_NONE,  9,       //
+};
+
+static void map_tags_in_ors_the_tags_of_the_metatiles_overlapped(void) {
+    reset();
+    CHECK(map_tags_in(0, 0, 100, 100) == 0); // no playfield
+    const MapLayer layer = {.width = 4,
+                            .height = 3,
+                            .cells = tag_cells,
+                            .metatiles = tag_metatiles,
+                            .metatile_count = T_COUNT,
+                            .bg = 2};
+    CHECK(map_load(&layer));
+    // One pixel, then rectangles meeting or crossing metatile edges.
+    CHECK(map_tags_in(16, 0, 1, 1) == TAG_SPIKES);
+    CHECK(map_tags_in(31, 15, 1, 1) == TAG_SPIKES);
+    CHECK(map_tags_in(0, 0, 16, 16) == 0); // ends at the spikes' left edge
+    CHECK(map_tags_in(15, 0, 2, 1) == TAG_SPIKES);
+    CHECK(map_tags_in(32, 0, 16, 16) == 0); // starts at their right edge
+    CHECK(map_tags_in(31, 0, 30, 1) == (TAG_SPIKES | TAG_WATER));
+    CHECK(map_tags_in(20, 10, 20, 10) == (TAG_SPIKES | MAP_TAG(2) | MAP_TAG(3)));
+    // Only tags: no type bits, also over solid and one-way metatiles.
+    CHECK(map_tags_in(0, 0, 64, 48) == (TAG_SPIKES | TAG_WATER | MAP_TAG(2) | MAP_TAG(3)));
+    CHECK(map_tags_in(0, 16, 16, 16) == 0); // untagged rock
+    // A cell naming a metatile the layer doesn't have: no tags.
+    CHECK(map_tags_in(48, 32, 16, 16) == 0);
+    // Outside the map nothing is tagged; rectangles partly outside count
+    // what they overlap.
+    CHECK(map_tags_in(-100, 0, 50, 48) == 0);
+    CHECK(map_tags_in(-8, 0, 25, 1) == TAG_SPIKES); // pixels -8 to 16
+    CHECK(map_tags_in(-8, 0, 24, 1) == 0);          // -8 to 15
+    CHECK(map_tags_in(56, -20, 30, 21) == TAG_WATER);
+    CHECK(map_tags_in(56, -20, 30, 20) == 0);
+    CHECK(map_tags_in(64, 0, 10, 10) == 0 && map_tags_in(0, 48, 10, 10) == 0);
+    CHECK(map_tags_in(0, -1000, 64, 2000) == (TAG_SPIKES | TAG_WATER | MAP_TAG(2) | MAP_TAG(3)));
+    // No area: nothing.
+    CHECK(map_tags_in(16, 0, 0, 10) == 0 && map_tags_in(16, 0, 10, 0) == 0);
+    CHECK(map_tags_in(20, 5, -4, 4) == 0 && map_tags_in(20, 5, 4, -4) == 0);
+    // Extreme arguments don't overflow (the host build runs under UBSan).
+    const int int_max = 0x7FFFFFFF, int_min = -int_max - 1;
+    CHECK(map_tags_in(int_min, int_min, int_max, int_max) == 0);
+    CHECK(map_tags_in(-5, 0, int_max, 1) == (TAG_SPIKES | TAG_WATER));
+    CHECK(map_tags_in(int_min + 1, 20, int_max, 1) == 0);
+    CHECK(map_tags_in(int_min, 20, int_max, int_max) == 0);
+    CHECK(map_tags_in(int_max, 0, int_max, int_max) == 0);
+    CHECK(map_tags_in(30, int_max, 1, int_max) == 0);
+    // Runtime changes count.
+    map_set_cell(1, 0, T_NONE); // the spikes are gone
+    map_set_cell(0, 2, T_WATER);
+    CHECK(map_tags_in(16, 0, 16, 16) == 0);
+    CHECK(map_tags_in(0, 40, 1, 1) == TAG_WATER);
+    reset();
+}
+
+// The use in map.h: what a map body stands on is one pixel below its feet.
+static void map_tags_in_finds_what_a_body_stands_on(void) {
+    reset();
+    static const u16 floor_cells[4 * 3] = {
+        T_NONE, T_NONE,   T_NONE, T_NONE, //
+        T_NONE, T_NONE,   T_NONE, T_NONE, //
+        T_ROCK, T_SPIKES, T_ROCK, T_ROCK, //
+    };
+    const MapLayer layer = {.width = 4,
+                            .height = 3,
+                            .cells = floor_cells,
+                            .metatiles = tag_metatiles,
+                            .metatile_count = T_COUNT,
+                            .bg = 2};
+    CHECK(map_load(&layer));
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 i = make_body(2, 10, 12, 16);
+    step(60);
+    CHECK(body_contact[i] & MAP_CONTACT_FLOOR);
+    int x = fx_to_int(pos_x[i]), y = fx_to_int(pos_y[i]);
+    CHECK(map_tags_in(x, y, body_w[i], body_h[i]) == 0); // it doesn't overlap the floor
+    CHECK(map_tags_in(x, y + body_h[i], body_w[i], 1) == 0);
+    pos_x[i] = FX(10); // x 10-21: partly over the spikes
+    step(1);
+    x = fx_to_int(pos_x[i]);
+    CHECK(map_tags_in(x, y + body_h[i], body_w[i], 1) & TAG_SPIKES);
     reset();
 }
 
@@ -639,13 +813,50 @@ static void map_bodies_bounce_and_come_to_rest(void) {
         CHECK(body_contact[i] == MAP_CONTACT_FLOOR);
         CHECK(pos_y[i] == FX(120) && vel_y[i] == 0);
     }
-    // The most bouncy body never gains height.
-    u32 j = make_body(80, 0, 8, 8);
+    reset();
+}
+
+// body_bounce 255 is a perfect bounce: the body rebounds to the same height
+// every time, never higher (it was dropped from y 0) and never lower, so it
+// never comes to rest, while 254 loses a little height on every bounce. A
+// body already resting on a floor stays at rest, whatever its bounce.
+static void map_bodies_bounce_perfectly_at_255(void) {
+    reset();
+    LOAD(room);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 perfect = make_body(60, 0, 8, 8); // floor at 128: rests at y 120
+    body_bounce[perfect] = 255;
+    FIXED apex[8];
+    CHECK(bounce_apexes(perfect, apex, 8, 1000) == 8);
+    for (int k = 0; k < 8; k++)
+        CHECK(apex[k] == apex[0] && apex[k] >= 0);
+    reset();
+    LOAD(room);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 almost = make_body(80, 0, 8, 8);
+    body_bounce[almost] = 254;
+    CHECK(bounce_apexes(almost, apex, 8, 1000) == 8);
+    for (int k = 1; k < 8; k++)
+        CHECK(apex[k] > apex[k - 1]);
+    u32 resting = make_body(100, 120, 8, 8); // on the floor
+    body_bounce[resting] = 255;
+    for (int f = 0; f < 10; f++) {
+        step(1);
+        CHECK(body_contact[resting] == MAP_CONTACT_FLOOR);
+        CHECK(pos_y[resting] == FX(120) && vel_y[resting] == 0);
+    }
+    // Walls and ceilings: the speed, reversed.
+    physics_set_gravity(0, 0);
+    u32 i = make_body(60, 100, 8, 8);
+    body_bounce[i] = 255;
+    vel_x[i] = -FX(4) - 3;
+    CHECK(step_contacts(i, 5) == MAP_CONTACT_LEFT);
+    CHECK(vel_x[i] == FX(4) + 3);
+    u32 j = make_body(116, 90, 8, 8); // under the block at (7, 4): y 64-79
     body_bounce[j] = 255;
-    n = bounce_apexes(j, apex, 8, 600);
-    CHECK(n == 8);
-    for (int k = 0; k < n; k++)
-        CHECK(apex[k] >= 0);
+    vel_y[j] = -FX(3);
+    CHECK(step_contacts(j, 4) == MAP_CONTACT_CEILING);
+    CHECK(vel_y[j] == FX(3));
     reset();
 }
 
@@ -797,6 +1008,14 @@ TEST_SUITE(map_tests, "map",
            {"collision reads metatiles and the edges", collision_reads_metatiles_and_the_edges},
            {"tags come with the collision byte", tags_come_with_the_collision_byte},
            {"map_load rejects bad layers", map_load_rejects_bad_layers},
+           {"map_load refuses unknown layer flags", map_load_refuses_unknown_layer_flags},
+           {"reserved collision types load and collide as empty",
+            reserved_collision_types_load_and_collide_as_empty},
+           // After "map_load rejects bad layers": it loads a cell naming a
+           // missing metatile, whose warning that test counts.
+           {"map_tags_in ORs the tags of the metatiles overlapped",
+            map_tags_in_ors_the_tags_of_the_metatiles_overlapped},
+           {"map_tags_in finds what a body stands on", map_tags_in_finds_what_a_body_stands_on},
            // Before other camera tests: the warning comes once per run, so a
            // wrong one there would hide the checks for none here.
            {"camera warns on a playfield smaller than the screen",
@@ -820,6 +1039,7 @@ TEST_SUITE(map_tests, "map",
            {"other systems skip map bodies", other_systems_skip_map_bodies},
            {"misused map bodies warn", misused_map_bodies_warn},
            {"map bodies bounce and come to rest", map_bodies_bounce_and_come_to_rest},
+           {"map bodies bounce perfectly at 255", map_bodies_bounce_perfectly_at_255},
            {"map bodies bounce off walls and ceilings", map_bodies_bounce_off_walls_and_ceilings},
            {"map bodies slide with friction", map_bodies_slide_with_friction},
            {"map bodies fall no faster than max fall", map_bodies_fall_no_faster_than_max_fall},

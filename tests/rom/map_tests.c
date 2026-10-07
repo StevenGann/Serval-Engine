@@ -15,6 +15,12 @@
 
 #include "../../src/gba/internal.h"
 
+#ifdef SERVAL_DEBUG
+#define WARNINGS_ON 1
+#else
+#define WARNINGS_ON 0
+#endif
+
 // 16 metatiles whose 64 screen entries all differ (tiles, palettes, flips).
 #define METATILES 16
 static Metatile metatiles[METATILES];
@@ -177,6 +183,30 @@ static void tileset_load_rejects_bad_tilesets(void) {
 #else
     CHECK(debug_warning_count() == before);
 #endif
+}
+
+// Tileset.flags bits 1-7 are reserved: refused (a later version may give them
+// a meaning), loading nothing. Bit 0, TILESET_LZ77, is planned
+// (tests/planned_map_tests.c).
+static void tileset_load_refuses_unknown_flags(void) {
+    static const u32 other_tiles[3 * 8] = {0x55555555, [23] = 0x66666666};
+    const Tileset good = {
+        .tiles = tiles, .tile_count = 3, .palettes = palettes, .palette_count = 2};
+    CHECK(tileset_load(&good));
+    u32 before = debug_warning_count();
+    Tileset flagged = {.tiles = other_tiles, .tile_count = 3, .palettes = palettes};
+    for (u32 bit = 1; bit < 8; bit++) {
+        flagged.flags = (u8)(1u << bit);
+        CHECK(!tileset_load(&flagged));
+    }
+    flagged.flags = 0xFE;
+    CHECK(!tileset_load(&flagged));
+    CHECK(debug_warning_count() == before + WARNINGS_ON); // once
+    const u32* vram = (const u32*)&tile_mem[1][0];
+    CHECK(vram[0] == 0 && vram[16] == 0x12345678 && vram[23] == 0xFEDCBA98); // still `tiles`
+    flagged.flags = 0;
+    CHECK(tileset_load(&flagged));
+    CHECK(vram[0] == 0x55555555 && vram[23] == 0x66666666);
 }
 
 static void map_load_sets_up_the_backgrounds(void) {
@@ -588,6 +618,7 @@ static void render_systems_subtract_the_camera(void) {
 TEST_SUITE(gba_map_tests, "gba map",
            {"tileset_load copies tiles and palettes", tileset_load_copies_tiles_and_palettes},
            {"tileset_load rejects bad tilesets", tileset_load_rejects_bad_tilesets},
+           {"tileset_load refuses unknown flags", tileset_load_refuses_unknown_flags},
            {"map_load sets up the backgrounds", map_load_sets_up_the_backgrounds},
            {"small steps stream rows and columns", small_steps_stream_rows_and_columns},
            {"big jumps redraw the window", big_jumps_redraw_the_window},

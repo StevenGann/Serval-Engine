@@ -2,7 +2,11 @@
 
 Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffered screenblocks as the camera scrolls. 1.0 uses regular tiled backgrounds only; affine (Mode 7) is post-1.0.
 
-**Status:** partly implemented (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)). Implemented: one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles`), and map collision for map bodies (solid and one-way metatiles, plus four tag bits for the game). Planned: tileset groups with a bump allocator, LZ77-compressed tilesets, slopes, ladders and other collision types, 8bpp layers, raster effects.
+**Status:** implemented, with planned API declared (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)).
+
+- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles()`), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
+- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): LZ77-compressed tilesets (`TILESET_LZ77`), background palette writes (`tileset_set_colors()`), ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`). Raster effects are planned API in `screen.h` ([below](#raster-effects)).
+- **Not in the API yet**, and addable later without breaking existing games or data: 8bpp tilesets (a reserved `Tileset.flags` bit), tileset groups, more changed cells than `MAP_MAX_CHANGES`, ceiling slopes and other collision types (the reserved types 10-15).
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
 
@@ -50,12 +54,13 @@ typedef struct {
     u16 tile_count;       // at most MAP_MAX_TILES (1024)
     const u16 *palettes;  // palette_count banks of 16 colors (color 0 transparent)
     u8  palette_count;    // at most MAP_MAX_PALETTES (15), loaded into BG banks 0, 1, ...
+    u8  flags;            // TILESET_*; 0: .tiles as above
 } Tileset;
 
 typedef struct {
     u16 se[4];            // screen entries: top-left, top-right, bottom-left, bottom-right
                           // MAP_SE(tile, palette, MAP_SE_FLIP_H | MAP_SE_FLIP_V)
-    u8  collision;        // type (low 4 bits: MAP_EMPTY, MAP_SOLID, MAP_ONEWAY) | MAP_TAG(0..3)
+    u8  collision;        // collision type (low 4 bits) | MAP_TAG(0..3)
 } Metatile;
 
 typedef struct {
@@ -69,12 +74,46 @@ typedef struct {
 } MapLayer;
 ```
 
-Format addition (before the first release): `MAP_LAYER_FIXED` (bit 1 of `flags`); existing layers are unaffected.
+Offsets and sizes are the GBA's (and wasm32's: the web build has the same layout), checked at compile time in `src/gba/map.c`. Padding is not read; designated initializers leave it 0.
+
+**`Tileset`**, 16 bytes:
+
+| Offset | Field | Type | Values |
+| --- | --- | --- | --- |
+| 0 | `tiles` | `const u32*` | `tile_count` tiles of 8 words (32 bytes), 4 bits per pixel, row by row; with `TILESET_LZ77`, LZ77 data instead ([Tilesets](#tilesets)) |
+| 4 | `tile_count` | `u16` | 1 to `MAP_MAX_TILES` (1024) |
+| 6 | (padding) | 2 bytes | |
+| 8 | `palettes` | `const u16*` | `palette_count` × 16 colors; color 0 of each is never loaded. May be NULL if `palette_count` is 0 |
+| 12 | `palette_count` | `u8` | 0 to `MAP_MAX_PALETTES` (15) |
+| 13 | `flags` | `u8` | Bit 0 `TILESET_LZ77` (planned: refused until implemented); bit 1 reserved for 8bpp tilesets; bits 2-7 reserved. In this version `tileset_load()` refuses a tileset with any bit set (returns false, warns) |
+| 14 | (padding) | 2 bytes | |
+
+**`Metatile`**, 10 bytes:
+
+| Offset | Field | Type | Values |
+| --- | --- | --- | --- |
+| 0 | `se` | `u16[4]` | Screen entries, top-left, top-right, bottom-left, bottom-right: tile index (bits 0-9, into the tileset), H and V flip (bits 10 and 11), palette bank 0-14 (bits 12-15); `MAP_SE(tile, palette, flips)` |
+| 8 | `collision` | `u8` | Collision type in bits 0-3 ([Collision types](#collision-types): 0-2 implemented, 3-9 planned, 10-15 reserved); tags `MAP_TAG(0)` to `MAP_TAG(3)` in bits 4-7, the game's ([Tags](#tags)). Only the playfield's are read |
+| 9 | (padding) | 1 byte | |
+
+**`MapLayer`**, 20 bytes:
+
+| Offset | Field | Type | Values |
+| --- | --- | --- | --- |
+| 0 | `width` | `u16` | In metatiles, at least 1 |
+| 2 | `height` | `u16` | In metatiles, at least 1 |
+| 4 | `cells` | `const u16*` | `width` × `height` metatile indices, row by row. An index of `metatile_count` or more shows and collides as empty (debug builds warn at load) |
+| 8 | `metatiles` | `const Metatile*` | The definitions |
+| 12 | `metatile_count` | `u16` | At least 1 |
+| 14 | `bg` | `u8` | Background 1-3; its priority is its number |
+| 15 | `flags` | `u8` | Bit 0 `MAP_LAYER_WRAP`, bit 1 `MAP_LAYER_FIXED`; bits 2-7 reserved: `map_load()` refuses a layer with any of them (returns false, warns) |
+| 16 | `scroll_factor` | `FIXED` | Layer scroll = camera × factor (24.8 fixed point); 0 means `FX_ONE`; not used with `MAP_LAYER_FIXED` |
+
+Format additions before the first release: `MAP_LAYER_FIXED` (bit 1 of `MapLayer.flags`) and `Tileset.flags` (in what was padding); data written before them leaves them 0 and is unaffected.
 
 - Tileset tile 0 should be blank: a layer that doesn't wrap shows screen entry 0 outside its map.
-- A cell naming a metatile the layer doesn't have shows and collides as empty (debug builds warn when the layer loads).
-- Every layer is streamed, whatever its size, so the draft's `STREAMED` flag is gone; its priority is its BG number; one tileset serves all layers of a room (tileset groups are planned, below).
-- The four tag bits of the collision byte are for the game (bonus block, hazard...); only the type affects `sys_map_movement()`.
+- Every layer is streamed, whatever its size, so the draft's `STREAMED` flag is gone; its priority is its BG number; one tileset serves all layers of a room.
+- Loaders refuse flag bits they don't know rather than ignoring them: a later version may give a reserved bit a meaning, and data that carried it by mistake would then change behaviour ([releases.md](releases.md#versioning), "What breaks a data format"). Collision types are the exception: [they load](#collision-types), with a warning.
 
 ## Streaming
 
@@ -111,26 +150,115 @@ A camera moving less than 8 pixels per frame writes at most one row and one colu
 
 ## Tilesets
 
-**Implemented:** `tileset_load()` copies one tileset to charblocks 1-2 and its palettes to BG banks 0-14 immediately (like `sprite_group_load()`), so call it while loading a room, before its layers are shown.
+**Implemented:** `tileset_load()` copies one tileset to charblocks 1-2 and its palettes to BG banks 0-14 immediately (like `sprite_group_load()`), so call it while loading a room, before its layers are shown. It checks the whole tileset first (tiles, counts, palettes, flags) and loads nothing if any of it is wrong.
+
+**Flags** (`Tileset.flags`): `tileset_load()` refuses a tileset with a flag it doesn't know or doesn't implement yet, returning false (debug builds warn) and loading nothing.
+
+- Bit 0, `TILESET_LZ77`, **planned**: `.tiles` holds the tiles compressed with LZ77 in the GBA BIOS's format, a header word with `0x10` in its low byte and the unpacked size in bytes (which must be `tile_count × 32`) in bits 8-31, then the compressed data. The data must be "VRAM-safe": no match copies from the byte just before it (a distance of 1), so that the BIOS's VRAM decoder, which writes 16 bits at a time, can unpack it straight into VRAM. Until implemented, `tileset_load()` refuses it.
+- Bit 1: reserved for 8bpp tilesets (256-color tiles, a later addition). Refused.
+- Bits 2-7: reserved. Refused.
 
 **Animated tiles:** `tileset_set_tiles(first, tiles, count)` replaces tiles of the loaded tileset, so every cell using them changes at once (water, lava, a shimmering bonus block): the game keeps each animation frame's tiles in ROM and passes the next frame's when it is due. The copies are queued (`MAP_MAX_TILE_UPDATES`, 8 per frame; a second call for the same `first` replaces the first) and done in VBlank at the next `frame_end()`, before the map rows and columns: 32 bytes per tile, so a few dozen tiles per frame fit comfortably beside a full map redraw. Calls outside the tileset, or past the queue, are ignored with a warning in debug builds; `tileset_load()` drops queued updates.
 
-**Planned:** loaded per room as groups into charblocks with a bump allocator; LZ77 allowed.
+### Palette writes
+
+**Planned:** `tileset_set_colors(index, colors, count)` changes `count` background colors from color `index` on, where `index` = palette × 16 + color and palettes are numbered as in `MAP_SE()` (0-14): water whose colors cycle, a room faded toward dusk with `color_mix()` (`screen.h`), a flash. The semantics, fixed now:
+
+- The colors are copied at the call (`colors` may be a temporary) and reach the screen in VBlank at the next `frame_end()`.
+- They go to the engine's own copy of the palettes (the shadow palette), never to the tileset's data: a palette that is const data in ROM, or that another tileset uses too, keeps its colors there. This is the same copy-on-write rule as `sprite_set_colors()` for sprite palettes ([sprites.md](sprites.md#palettes)).
+- `tileset_load()` puts the tileset's colors back (colors 1-15 of its `palette_count` palettes), also over writes made before it in the same frame.
+- Color 0 of palette 0 is the backdrop, which `screen_set_backdrop()` also sets: writing it changes the backdrop, and `tileset_load()` leaves it alone. Color 0 of the other palettes is transparent: writes to it are kept, not shown.
+- Ignored, with a warning in debug builds, if the colors reach past color 239 (palette 15 is the text layer's) or `colors` is NULL.
+
+Until implemented, it changes nothing and warns once (debug builds).
+
+**Later (no API yet): tileset groups**, several tilesets loaded side by side at tile and palette offsets assigned at build time, for rooms that share part of their graphics. That would add `Tileset` fields whose 0 keeps today's layout (loading at tile 0 replaces everything, as now), so it can come in a minor version.
 
 ## Collision
 
-Read directly from ROM per metatile, separate from graphics. Dynamic changes (breakable blocks, doors) go in a small RAM overlay checked before ROM and applied during streaming.
+Read directly from ROM per metatile, separate from graphics: only the playfield's (BG2) collision bytes are read. Dynamic changes (breakable blocks, doors) go in a small RAM overlay checked before ROM and applied during streaming.
 
-**Implemented** (`src/core/map.c`, `src/ecs/map_movement.c`, platform-neutral and unit tested on the host):
+**Implemented** (`src/core/map.c`, `src/ecs/map_movement.c`, platform-neutral and unit tested on the host): collision types 0-2, with the planned and reserved ones colliding as the table below says; tags and `map_tags_in()`; map bodies and their contacts; runtime changes.
+
+### Collision types
+
+The low four bits of `Metatile.collision`, read with `MAP_TYPE()`:
+
+| Type | Name | Status | What `sys_map_movement()` does with it |
+| --- | --- | --- | --- |
+| 0 | `MAP_EMPTY` | Implemented | Nothing |
+| 1 | `MAP_SOLID` | Implemented | Blocks bodies from every side |
+| 2 | `MAP_ONEWAY` | Implemented | Blocks only bodies moving down into it from above |
+| 3 | `MAP_LADDER` | Planned | Empty until implemented |
+| 4-9 | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | Planned | Solid (the whole metatile) until implemented |
+| 10-15 | | Reserved | Empty |
+
+`map_load()` loads a playfield whose metatiles use the planned or reserved types rather than refusing it: a game or the editor can paint ladders and slopes now, and they start working, with no change to the data, in the version that implements them. Debug builds warn once per kind (ladders, slopes, reserved types) when such a playfield loads; the check runs at load time over the layer's metatile definitions, so it costs nothing per frame. Data must not use the reserved types: a later version will give them a meaning (ceiling slopes, for one), and such data would change behaviour then. `map_collision_at()` returns the collision byte as the metatile has it, whatever its type.
+
+**Ladders** (`MAP_LADDER`, planned): climbable, not solid. A map body overlapping a ladder metatile has `MAP_CONTACT_LADDER` in `body_contact`, so the game can let it climb: it sets the body's velocity itself, usually with `body_gravity` at `BODY_GRAVITY(0)` while it climbs. The top of a ladder (a ladder metatile with none above it) is a floor to bodies with gravity falling onto it, like `MAP_ONEWAY`; a body without gravity is climbing, and passes through it both ways. Until implemented, a ladder is empty and `MAP_CONTACT_LADDER` is never set.
+
+**Floor slopes** (`MAP_SLOPE_*`, planned): solid below a straight line across the metatile, empty above it. The name says which way the floor rises (`_R` to the right, `_L` to the left). The line's height above the metatile's bottom edge, in pixels:
+
+| Type | Name | At the left edge | At the right edge | Shape |
+| --- | --- | --- | --- | --- |
+| 4 | `MAP_SLOPE_R` | 0 | 16 | 45°; the top-right corner is high |
+| 5 | `MAP_SLOPE_L` | 16 | 0 | 45°; the top-left corner is high |
+| 6 | `MAP_SLOPE_R_LOW` | 0 | 8 | Left half of a 1:2 slope (about 27°) rising to the right |
+| 7 | `MAP_SLOPE_R_HIGH` | 8 | 16 | Its right half, placed right of `_R_LOW` |
+| 8 | `MAP_SLOPE_L_HIGH` | 16 | 8 | Left half of a 1:2 slope rising to the left |
+| 9 | `MAP_SLOPE_L_LOW` | 8 | 0 | Its right half, placed right of `_L_HIGH` |
+
+Each rises 16 or 8 pixels across its 16-pixel width, and slopes placed side by side as above meet at the same height. A map body will walk up and down them, standing on the line, with `MAP_CONTACT_FLOOR` as on a flat floor; the exact motion is specified when they are implemented. Until then each collides as `MAP_SOLID`.
+
+**Why these values.** The ladder and the six floor slopes take types 3-9 and leave 10-15 for ceiling slopes and whatever comes later: twelve slope shapes (floors and ceilings) would fill the type space. Hazards are not a type: a hazard is a property (spikes may be solid, lava not), which is what tags are for ([below](#tags)).
+
+### Tags
+
+The high four bits of `Metatile.collision` are the game's: `MAP_TAG(0)` to `MAP_TAG(3)`, e.g. bonus blocks, bricks and gems in `platformer`, or hazards, water and goals. `sys_map_movement()` ignores them.
+
+`map_tags_in(x, y, w, h)` (implemented) returns the tags of every playfield metatile that the rectangle of `w` × `h` world pixels with its top-left at (`x`, `y`) overlaps, ORed together, including runtime changes (`map_set_cell()`); the type bits of the result are 0. Metatiles outside the playfield, and cells naming a metatile the layer doesn't have, have no tags. It returns 0 without a playfield, or for a rectangle with no area (`w` or `h` 0 or less), and any `int` arguments are safe. A body resting on a metatile doesn't overlap it, so what a map body stands on is one pixel below its feet:
+
+```c
+#define TAG_SPIKES MAP_TAG(0)
+if (map_tags_in(fx_to_int(pos_x[i]), fx_to_int(pos_y[i]) + body_h[i], body_w[i], 1) & TAG_SPIKES)
+    hurt(i);
+```
+
+It costs one cell lookup per metatile overlapped, each looking through the runtime changes, so keep the rectangle to a few metatiles. `map_collision_at()` reads one pixel's whole collision byte, tags included.
+
+### Map bodies
 
 - `map_collision_at(x, y)` reads the playfield's collision byte at a world pixel. Outside the map, the sides are `MAP_SOLID` (also above and below the map, so bodies can't get around them) and above and below is `MAP_EMPTY` (bodies can jump above the map and fall out of the bottom). Without a playfield everything is empty.
-- `map_set_cell()` keeps up to `MAP_MAX_CHANGES` (64) changed playfield cells in a table in IWRAM that `map_cell()`, `map_collision_at()` and streaming check first; a cell set back to its original metatile leaves the table; loading the playfield clears it.
-- Map bodies (`C_POS | C_VEL | C_BODY | C_MAPBODY`) move with `sys_map_movement()`, which `sys_movement()` and `sys_physics()` skip. Each frame it adds gravity (`physics_set_gravity()`) and limits the fall speed (`body_max_fall`), then moves the body along x, then y, in steps of at most 7 pixels (less than a metatile, so the leading edge enters at most one new row or column of metatiles per step, and fast bodies can't pass through one). A body covers `[x, x + body_w) × [y, y + body_h)` in 24.8 fixed point; a step that would take its leading edge into a blocking metatile puts the body flush against it on a whole pixel instead, records the side in `body_contact`, and bounces the velocity on that axis: it becomes `-velocity * body_bounce / 256` (0, the default, stops the body), and the rest of that axis's movement this frame is dropped. On a floor (the side gravity pulls toward), a rebound slower than twice one frame's gravity is a rest, and `body_friction` slows a sliding body, as in `sys_physics()`; unlike `sys_physics()`'s bounds, walls and ceilings use `body_bounce` too, so the default stops a character at a wall. Every metatile along the edge is checked, so bodies of any size up to 255×255 work.
+- Map bodies (`C_POS | C_VEL | C_BODY | C_MAPBODY`) move with `sys_map_movement()`, which `sys_movement()` and `sys_physics()` skip. Each frame it adds gravity (`physics_set_gravity()`, scaled by the body's `body_gravity`) and limits the fall speed (`body_max_fall`), then moves the body along x, then y, in steps of at most 7 pixels (less than a metatile, so the leading edge enters at most one new row or column of metatiles per step, and fast bodies can't pass through one). A body covers `[x, x + body_w) × [y, y + body_h)` in 24.8 fixed point; a step that would take its leading edge into a blocking metatile puts the body flush against it on a whole pixel instead, records the side in `body_contact`, and bounces the velocity on that axis: it becomes `-velocity * body_bounce / 256` (0, the default, stops the body), and the rest of that axis's movement this frame is dropped.
+- **Bounces:** `body_bounce` 255 keeps the whole speed, a perfect bounce (a `u8` can't hold 256, so its largest value means it): a body dropped onto a floor rebounds to the same height every time. On a floor (the side gravity pulls toward), a rebound slower than twice one frame's gravity is a rest, whatever the bounce, so a body standing on a floor stays put; `body_friction` slows a sliding body, as in `sys_physics()`. Unlike `sys_physics()`'s bounds, walls and ceilings use `body_bounce` too, so the default stops a character at a wall. Every metatile along the edge is checked, so bodies of any size up to 255×255 work.
 - Only metatiles the leading edge newly enters block it. A body overlapping a solid metatile (placed there, or a cell changed under it) can move out, and one-way platforms follow naturally: a body moving down enters a `MAP_ONEWAY` row only from above, while one that jumped into it from below is already inside its row and falls through. Sideways movement ignores one-way metatiles.
 - A body standing on a floor touches it every frame while gravity pulls it down (`MAP_CONTACT_FLOOR`); a body stopped by a wall touches it again only when pushed into it again.
 
-**Planned:** slopes, ladders and hazards as collision types; collision events for scripts ([vm.md](vm.md)).
+**Contacts** (`body_contact`, one byte per entity, shared with `sys_physics()`, which reports bouncing bodies' contacts there with [`physics_set_contacts()`](runtime-systems.md#physics)):
+
+| Bit | Name | Set by |
+| --- | --- | --- |
+| 0 | `MAP_CONTACT_FLOOR` | `sys_map_movement()`: the body's bottom edge touched the map |
+| 1 | `MAP_CONTACT_CEILING` | Its top edge |
+| 2 | `MAP_CONTACT_LEFT` | Its left edge |
+| 3 | `MAP_CONTACT_RIGHT` | Its right edge |
+| 4 | | Reserved for the engine |
+| 5 | `BODY_CONTACT_EXIT` (`physics.h`) | `sys_physics()` only: a body left through an open edge |
+| 6 | `MAP_CONTACT_LADDER` | Planned: `sys_map_movement()`, while the body overlaps a ladder; never set until ladders are implemented |
+| 7 | | Reserved for the engine |
+
+Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` and `_RIGHT`. Scripts can't read map contacts yet: no VM property or event exposes `body_contact` ([vm.md](vm.md)).
+
+### Runtime changes
+
+`map_set_cell(mx, my, metatile)` changes a playfield cell: a broken block, a used bonus block, an opened door. Up to `MAP_MAX_CHANGES` (64) changed cells are kept in a table in IWRAM that `map_cell()`, `map_collision_at()`, `map_tags_in()`, `sys_map_movement()` and streaming check first; a cell set back to its original metatile leaves the table, a full table is reported in debug builds and the change ignored, and loading the playfield clears it. Changed cells are redrawn at the next `frame_end()` where they are in the streamed window, and the others when they scroll in. Every collision query looks through the table, which is why it is small; a later version can raise the constant, or add a flag (in a reserved `MapLayer.flags` bit) for layers whose cells are in RAM and written directly.
 
 ## Raster effects
 
-Per-scanline scroll changes via HBlank DMA (wavy water, split-screen HUDs, multi-speed parallax). Candidate for 1.0 if time allows; the debugger should be able to visualize them.
+Per-scanline changes to the background registers, timed by the HBlank interrupt or HBlank DMA: wavy water, split-screen HUDs, multi-speed parallax from one layer. **Decided:** raster effects are declared now as planned API, in `screen.h` and described with the other screen effects in [runtime-systems.md](runtime-systems.md#special-effects); they are implemented in a later minor version.
+
+Design notes for the implementation, from the map side:
+
+- A per-line scroll offset on a streamed layer can show tiles outside the streamed window: streaming keeps valid only the 31×21 tiles the screen covers at the layer's own scroll position, and the screenblock's other entries hold stale tiles. A layer with a raster effect needs streaming to keep a wider window, or offsets limited to what the window covers.
+- The web target draws each frame from the state at VBlank ([platforms.md](platforms.md#web)), so mid-frame register writes are not seen there; it needs per-line state in its renderer to show them.
+- The debugger should be able to show them ([debug-link.md](debug-link.md)).

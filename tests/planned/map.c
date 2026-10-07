@@ -9,4 +9,20 @@
 #include "serval/map.h"
 
 void planned_map(void);
-void planned_map(void) {}
+void planned_map(void) {
+    static const Tileset lz77 = {.flags = TILESET_LZ77}; // planned
+    (void)lz77;
+    static const Color colors[1] = {0};
+    tileset_set_colors(1, colors, 1);             // planned
+    static const u8 ladder = MAP_LADDER;          // planned
+    static const u8 slopes[] = {MAP_SLOPE_R,      // planned
+                                MAP_SLOPE_L,      // planned
+                                MAP_SLOPE_R_LOW,  // planned
+                                MAP_SLOPE_R_HIGH, // planned
+                                MAP_SLOPE_L_HIGH, // planned
+                                MAP_SLOPE_L_LOW}; // planned
+    static const u8 contact = MAP_CONTACT_LADDER; // planned
+    (void)ladder;
+    (void)slopes;
+    (void)contact;
+}

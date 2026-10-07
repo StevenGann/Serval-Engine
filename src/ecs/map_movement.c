@@ -28,16 +28,41 @@
 
 static const MapLayer* playfield;
 
-// Collision type of metatile (mx, my) of the playfield, by map_collision_at's
-// rules for cells outside it.
+// How bodies treat each collision type (MAP_TYPE) in this version: the three
+// it implements as themselves; the planned slopes as MAP_SOLID (a whole
+// metatile) and the planned ladder as MAP_EMPTY, until they are implemented;
+// the reserved types 10-15 as MAP_EMPTY. map_load() warns about all but the
+// first three (src/core/map.c).
+static const u8 movement_type[16] = {
+    [MAP_EMPTY] = MAP_EMPTY,
+    [MAP_SOLID] = MAP_SOLID,
+    [MAP_ONEWAY] = MAP_ONEWAY,
+    [MAP_LADDER] = MAP_EMPTY,
+    [MAP_SLOPE_R] = MAP_SOLID,
+    [MAP_SLOPE_L] = MAP_SOLID,
+    [MAP_SLOPE_R_LOW] = MAP_SOLID,
+    [MAP_SLOPE_R_HIGH] = MAP_SOLID,
+    [MAP_SLOPE_L_HIGH] = MAP_SOLID,
+    [MAP_SLOPE_L_LOW] = MAP_SOLID,
+    [10] = MAP_EMPTY,
+    [11] = MAP_EMPTY,
+    [12] = MAP_EMPTY,
+    [13] = MAP_EMPTY,
+    [14] = MAP_EMPTY,
+    [15] = MAP_EMPTY,
+};
+
+// Collision type of metatile (mx, my) of the playfield as bodies treat it
+// (movement_type), by map_collision_at's rules for cells outside it.
 static u32 type_at(int mx, int my) {
     if ((u32)mx >= playfield->width)
         return MAP_SOLID;
     if ((u32)my >= playfield->height)
         return MAP_EMPTY;
     u32 cell = serval_map_cell_in(playfield, (u32)mx, (u32)my);
-    return cell < playfield->metatile_count ? MAP_TYPE(playfield->metatiles[cell].collision)
-                                            : MAP_EMPTY;
+    return cell < playfield->metatile_count
+               ? movement_type[MAP_TYPE(playfield->metatiles[cell].collision)]
+               : MAP_EMPTY;
 }
 
 // Pixel coordinates of the first and last pixel a span [pos, pos + size)
@@ -74,12 +99,18 @@ static FIXED clamp_step(FIXED v) {
 }
 
 // The velocity of a body that hit the map moving at `vel` on an axis: reversed,
-// keeping body_bounce/256 of the speed (0, the default, stops it). On a floor
-// (the side `gravity` pulls toward on this axis) a rebound too slow to clear
-// twice one frame's gravity is a rest instead, as in sys_physics(): the body
-// stays on the floor with zero speed rather than hopping forever.
+// keeping body_bounce/256 of the speed (0, the default, stops it), or all of
+// it for 255: a u8 can't hold 256, so its largest value means a perfect
+// bounce (as in sys_physics()); otherwise even the bounciest body would lose
+// a little height on every bounce. On a floor (the side `gravity` pulls
+// toward on this axis) a rebound too slow to clear twice one frame's gravity
+// is a rest instead, as in sys_physics(), whatever the bounce: a body
+// standing on a floor, which gravity pulls into it every frame, stays there
+// with zero speed rather than hopping a fraction of a pixel forever.
 static FIXED rebound(FIXED vel, u32 bounce, FIXED gravity) {
-    FIXED speed = (FIXED)(((u32)serval_fx_abs(vel) * bounce) >> 8);
+    FIXED speed = serval_fx_abs(vel);
+    if (bounce != 255)
+        speed = (FIXED)(((u32)speed * bounce) >> 8);
     bool floor = (gravity > 0 && vel > 0) || (gravity < 0 && vel < 0);
     if (floor && speed < 2 * serval_fx_abs(gravity))
         return 0;
