@@ -1,0 +1,101 @@
+; arrays.svm: arrays.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+
+; --- Objects ---
+
+.object PROBE mask=0 sprite=0           ; arrays.lua:3 Probe
+
+; --- Globals ---
+
+.globals TOTAL                          ; arrays.lua:9 total: integer
+
+; --- Arrays ---
+
+.array SCORES 8                         ; arrays.lua:5 scores: integer
+.rom WAVES s8 3, 5, 8, 13               ; arrays.lua:6 waves: integer
+.rom SPEEDS s16 128, 384, -576          ; arrays.lua:7 speeds: fixed
+.rom BIG s32 1000, 70000                ; arrays.lua:8 big: integer
+
+; --- Probe:room_start, a behaviour: it may wait ---
+.handler PROBE ROOM_START               ; arrays.lua:11
+    ; frame: 0 i/v, 1 (for limit)/(assignment)
+    ENTER 0, 2                          ; arrays.lua:11
+    ; 12: for i = 1, #scores do
+    PUSH 1                              ; arrays.lua:12
+    STL 0                               ; arrays.lua:12
+    LEN SCORES                          ; arrays.lua:12
+    STL 1                               ; arrays.lua:12
+    LDL 0                               ; arrays.lua:12
+    LDL 1                               ; arrays.lua:12
+    GT                                  ; arrays.lua:12
+    JNZ probe_room_start_for1_end       ; arrays.lua:12 past the limit: no iteration
+probe_room_start_for1:                  ; arrays.lua:12
+    ; 13: scores[i] = waves[(i - 1) % #waves + 1] * 2
+    LDL 0                               ; arrays.lua:13 i
+    PUSH 1                              ; arrays.lua:13
+    SUB                                 ; arrays.lua:13 0-based
+    LDL 0                               ; arrays.lua:13 i
+    PUSH 1                              ; arrays.lua:13
+    SUB                                 ; arrays.lua:13
+    LEN WAVES                           ; arrays.lua:13
+    IMOD                                ; arrays.lua:13
+    LDA WAVES                           ; arrays.lua:13
+    PUSH 2                              ; arrays.lua:13
+    MUL                                 ; arrays.lua:13
+    STA SCORES                          ; arrays.lua:13
+    ; 12: for i = 1, #scores do
+    LDL 0                               ; arrays.lua:12
+    LDL 1                               ; arrays.lua:12
+    EQ                                  ; arrays.lua:12
+    JNZ probe_room_start_for1_end       ; arrays.lua:12 the last iteration
+    LDL 0                               ; arrays.lua:12
+    PUSH 1                              ; arrays.lua:12
+    ADD                                 ; arrays.lua:12
+    STL 0                               ; arrays.lua:12
+    JMP probe_room_start_for1           ; arrays.lua:12
+    ; 14: end
+probe_room_start_for1_end:              ; arrays.lua:14
+    ; 15: scores[1] = scores[#scores]
+    PUSH 0                              ; arrays.lua:15
+    LEN SCORES                          ; arrays.lua:15
+    PUSH 1                              ; arrays.lua:15
+    SUB                                 ; arrays.lua:15 0-based
+    LDA SCORES                          ; arrays.lua:15
+    STA SCORES                          ; arrays.lua:15
+    ; 16: total = scores[3] + big[2]
+    PUSH 2                              ; arrays.lua:16
+    LDA SCORES                          ; arrays.lua:16
+    PUSH 1                              ; arrays.lua:16
+    LDA BIG                             ; arrays.lua:16
+    ADD                                 ; arrays.lua:16
+    STG TOTAL                           ; arrays.lua:16
+    ; 17: local v = speeds[2] + speeds[total % 3 + 1]
+    PUSH 1                              ; arrays.lua:17
+    LDA SPEEDS                          ; arrays.lua:17
+    LDG TOTAL                           ; arrays.lua:17
+    PUSH 3                              ; arrays.lua:17
+    IMOD                                ; arrays.lua:17
+    LDA SPEEDS                          ; arrays.lua:17
+    ADD                                 ; arrays.lua:17
+    STL 0                               ; arrays.lua:17
+    ; 18: total = total + math.floor(v)
+    LDG TOTAL                           ; arrays.lua:18
+    LDL 0                               ; arrays.lua:18 v
+    PUSH 8                              ; arrays.lua:18
+    SHR                                 ; arrays.lua:18 math.floor: the whole part
+    ADD                                 ; arrays.lua:18
+    STG TOTAL                           ; arrays.lua:18
+    ; 19: scores[total % 8 + 1], total = total, 0   -- the index is taken before total changes
+    LDG TOTAL                           ; arrays.lua:19
+    PUSH 8                              ; arrays.lua:19
+    IMOD                                ; arrays.lua:19
+    STL 1                               ; arrays.lua:19
+    LDG TOTAL                           ; arrays.lua:19
+    PUSH 0                              ; arrays.lua:19
+    STG TOTAL                           ; arrays.lua:19
+    LDL 1                               ; arrays.lua:19
+    SWAP                                ; arrays.lua:19
+    STA SCORES                          ; arrays.lua:19
+    ; 20: end
+    HALT                                ; arrays.lua:20

@@ -2,7 +2,7 @@
 
 Game logic written in a statically checked **subset of Lua 5.4**, compiled ahead of time to the [bytecode VM](vm.md). There is no Lua runtime on the GBA: a script becomes the same kind of script blob the event editor's scripts do, with the same costs.
 
-**Status:** specified; nothing is implemented. The compiler prototype is [vm.md](vm.md#milestones) milestone 7, after the VM revision it needs (milestone 6). Its acceptance test is [`fireflies`](../examples/fireflies/main.c) rewritten in Lua with the same screenshots as its hand-written listing.
+**Status:** the compiler prototype is implemented: [`tools/svlua.py`](../tools/svlua.py) (`svlua.py compile SCRIPT.lua -o OUT.svm`; tests in `tools/svlua_test.py`, CTest `svlua_tool`) compiles a script to a listing in [vm.md](vm.md#listing-syntax)'s revised language, and [`tests/svlua/fireflies.lua`](../tests/svlua/fireflies.lua) is `fireflies` in the subset. Until the VM revision it needs ([vm.md](vm.md#milestones) milestone 6) lands, its output is checked as text (golden listings), assembled by `svm.py` through a test shim for the new opcodes, and run on a model of the revised VM in the tests. Still to come: `serval_add_script()` accepting `.lua`, the tests against real Lua below, and the acceptance test (milestone 7): `fireflies.lua` giving the same screenshots as the hand-written listing.
 
 ## The rule
 
@@ -140,6 +140,14 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 
 ## Open questions
 
-- Whether globals' initial values come from a generated initializer or stay the game's job.
-- Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment checked at `other.field` uses is the alternative.
-- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md).
+- Whether globals' initial values come from a generated initializer or stay the game's job. The prototype: a global must start at 0, false or none (what `vm_load` leaves) unless the script declares an object named `Init`; then `Init:room_start` (the script's, or a generated one) first sets every global to its initial value, and C starts it with `vm_start`. RAM arrays are left to `vm_load`'s zeroing.
+- Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment checked at `other.field` uses is the alternative. The prototype gives slots in order of first appearance; `fireflies.lua` uses none.
+- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every line of the prototype's listing ends in `; file:line`, so `svm.py` could build the table from them.
+- The names C sees: the prototype upper-cases objects, globals and arrays in the listing (`Firefly` is `OBJ_FIREFLY`, `score` is `G_SCORE`), as C names its constants and as the hand-written `fireflies` listing does, so `main.c` runs either; two names that differ only in case are an error. The alternative is the script's names as they are (`OBJ_Firefly`).
+- `scale` is 8.8 fixed point in the engine (256 is normal size), but the field list above makes it an integer; the prototype follows the list (`self.scale = 384`, not `1.5`).
+- The compiler doesn't read the C headers, so it folds header constants only where the assembler's integers compute what Lua does (`+ - * & | ~`, `<<` by a constant, `//` and `%` by powers of two); `>>`, `//` and `%` by other numbers and comparisons of header constants run in code, and in places that need a constant (an object's components, an array's length, a global's initial value) they are errors.
+- Rounding a float literal to 1/256 is an error that operations scale: `0.1 * 10` is 1.015625. "Within 1/256 per operation" holds for each operation on the values as stored, not against Lua's exact decimals.
+- A `for` step of 0 at run time: Lua raises an error; the prototype's loop logs `'for' step is zero` (`TRACE`, debug builds) and ends the handler (`HALT`), the nearest the VM has. A constant step of 0 is a compile error.
+- The wait rule is static and stricter than the VM: `wait(0)` in a reaction, which the VM allows, is rejected.
+- `-2147483648` is a float in Lua (the literal overflows before the minus applies), so it doesn't fit fixed point; a script writes `-2147483647 - 1`. `math.mininteger` and `math.maxinteger` would help, but the standard library stops at `floor`, `abs`, `min` and `max`.
+- The prototype accepts two things this document doesn't list: `<const>` strings (literals by another name, for `print`) and constant tables of fixed values (stored scaled by 256, in the narrowest kind).

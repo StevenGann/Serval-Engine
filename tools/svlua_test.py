@@ -661,7 +661,367 @@ end""")
 
 
 
+# --- Assembling the listings -------------------------------------------------
+
+# The revised VM (docs/vm.md, milestone 6) is being built on another branch:
+# until this tree's svm.py knows its opcodes and array directives, a listing
+# is assembled through this shim, which rewrites each new construct into the
+# bytes vm.md gives it. Once svm.py has ENTER, listings are assembled as they
+# are and the shim goes unused (delete it then).
+NEW_OPS = {"LDA": 0x0C, "STA": 0x0D, "LEN": 0x0E, "LSH": 0x1F, "IDIV": 0x26, "IMOD": 0x27,
+           "RETV": 0x2D, "ENTER": 0x2E, "NEXTI": 0x3E}
+NEW_PROPS = {"TAGS": 12, "ANIM_TIME": 13, "ANIM_STEP": 14}
+VM = svm.load_vm()
+REVISED = "ENTER" in svm.OPERANDS
+
+
+def shim(listing):
+    out = [".const VM_P_FIELD0 64"]
+    arrays = 0
+    for raw in listing.splitlines():
+        code = svm._strip_comment(raw).strip()
+        m = re.match(r"^\.(array|rom)\s+(\w+)", code)
+        if m:
+            out.append(f".const ARR_{m.group(2)} {arrays}")
+            arrays += 1
+            continue
+        m = re.match(r"^(\w+)(?:\s+(.*))?$", code)
+        if m and m.group(1) in NEW_OPS:
+            op, operand = m.group(1), (m.group(2) or "").strip()
+            if op == "ENTER":
+                out.append(f"    .byte {NEW_OPS[op]}, {operand}")
+            elif op in ("LDA", "STA", "LEN", "NEXTI"):
+                table = "OBJ" if op == "NEXTI" else "ARR"
+                out.append(f"    .byte {NEW_OPS[op]}, {table}_{operand} & 255, "
+                           f"{table}_{operand} >> 8")
+            else:
+                out.append(f"    .byte {NEW_OPS[op]}")
+        elif code == "SYS PATH_STOP":
+            out.append("    SYS 13")
+        elif re.match(r"^(GETP|SETP) (TAGS|ANIM_TIME|ANIM_STEP)$", code):
+            out.append(f"    {code.split()[0]} {NEW_PROPS[code.split()[1]]}")
+        else:
+            out.append(raw)
+    return "\n".join(out) + "\n"
+
+
+def assemble(listing, headers, name="test.svm"):
+    """The blob svm.py makes of a listing (through the shim until svm.py
+    knows the revised VM)."""
+    return svm.assemble(listing if REVISED else shim(listing), VM, headers, name)
+
+
+def header_names(defines=None, files=()):
+    headers = svm.HeaderNames(VM.names)
+    for path in files:
+        headers.load(path)
+    if defines:
+        headers.add_text("".join(f"#define {k} {v}\n" for k, v in defines.items()), "test.h")
+    headers.check()
+    return headers
+
+
+FIREFLIES_HEADERS = [os.path.join(ROOT, "examples", "fireflies", "game.h")] + [
+    os.path.join(ROOT, "include", "serval", name)
+    for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h")]
+
+
+# --- A model of the revised VM -----------------------------------------------
+
+
+class ListingVM:
+    """Runs a listing's handlers on a small model of docs/vm.md's revised VM
+    (frames, arrays, NEXTI, LSH, IDIV, IMOD), to check what compiled code
+    computes, not just how it reads. Waits don't suspend (they are logged),
+    every SYS call is logged, random_range gives its low end and the buttons
+    are self.buttons. A test model, not the engine: the integrator runs the
+    real VM on the same listings."""
+
+    PROPS = {"X": 0, "Y": 1, "VX": 2, "VY": 3, "SPR": 4, "FRAME": 5, "FLAGS": 6, "ANGLE": 7,
+             "DEPTH": 8, "SCALE": 9, "BODY_W": 10, "BODY_H": 11, "TAGS": 12, "ANIM_TIME": 13,
+             "ANIM_STEP": 14}
+    SYS = {"PSG_PLAY": (1, False), "MUSIC_PLAY": (1, False), "MUSIC_STOP": (0, False),
+           "MUSIC_PAUSE": (0, False), "MUSIC_RESUME": (0, False), "CAMERA_SET": (2, False),
+           "TEXT_PRINT": (3, False), "RANDOM_RANGE": (2, True), "BUTTON_DOWN": (1, True),
+           "BUTTON_PRESSED": (1, True), "BRIGHTNESS": (1, False), "PATH_START": (3, False),
+           "TEXT_PRINT_NUMBER": (4, False), "PATH_STOP": (1, False)}
+    STACK, CALLS = 64, 16
+
+    def __init__(self, listing, headers=None):
+        self.headers = headers or {}
+        self.consts = {"VM_P_FIELD0": 64}
+        self.objects, self.strings, self.globals, self.arrays = [], [], {}, {}
+        self.code, self.labels, self.handlers = [], {}, {}
+        self.entities = {}  # handle -> {"object": name, property number: value}
+        self.log = []
+        self.buttons = 0
+        for raw in listing.splitlines():
+            line = svm._strip_comment(raw).strip()
+            if not line:
+                continue
+            m = re.match(r"^(\w+):$", line)
+            if m:
+                self.labels[m.group(1)] = len(self.code)
+                continue
+            head, _, rest = line.partition(" ")
+            rest = rest.strip()
+            if head == ".const":
+                name, expr = rest.split(None, 1)
+                self.consts[name] = self.value(expr)
+            elif head == ".object":
+                self.consts["OBJ_" + rest.split()[0]] = len(self.objects)
+                self.objects.append(rest.split()[0])
+            elif head == ".string":
+                name, text = rest.split(None, 1)
+                self.consts["STR_" + name] = len(self.strings)
+                self.strings.append(text.strip('"'))
+            elif head == ".globals":
+                for name in rest.split():
+                    self.consts["G_" + name] = len(self.globals)
+                    self.globals[name] = 0
+            elif head == ".array":
+                name, length = rest.split(None, 1)
+                self.arrays[name] = (False, [0] * self.value(length))
+            elif head == ".rom":
+                name, kind, items = rest.split(None, 2)
+                self.arrays[name] = (True, svm.evaluate_list(items, self.resolve))
+            elif head == ".handler":
+                obj, event = rest.split()
+                self.handlers[obj, event] = len(self.code)
+            else:
+                self.code.append((head, rest))
+
+    def resolve(self, name):
+        if name in self.consts:
+            return self.consts[name]
+        if name in self.headers:
+            return self.headers[name]
+        raise svm.ExprError(f"unknown name {name}")
+
+    def value(self, text):
+        return svm.evaluate(text, self.resolve)
+
+    def spawn(self, obj, x=0, y=0):
+        handle = len(self.entities) + 1
+        self.entities[handle] = {"object": obj, 0: x, 1: y}
+        return handle
+
+    def prop(self, operand):
+        return self.PROPS[operand] if operand in self.PROPS else self.value(operand)
+
+    def run(self, obj, event, self_entity=0, other=0, limit=500000):
+        """Runs a handler to its end; returns the number of ops."""
+        pc = self.handlers[obj, event]
+        stack, calls, fp = [], [], 0
+        w = svlua.wrap32
+
+        def pop():
+            if not stack:
+                raise AssertionError(f"stack underflow at {pc}")
+            return stack.pop()
+
+        def push(v):
+            if len(stack) >= self.STACK:
+                raise AssertionError("stack overflow")
+            stack.append(w(v))
+
+        for ops in range(1, limit):
+            op, arg = self.code[pc]
+            pc += 1
+            if op == "HALT":
+                return ops
+            elif op == "PUSH":
+                push(self.value(arg))
+            elif op == "DUP":
+                push(stack[-1])
+            elif op == "DROP":
+                pop()
+            elif op == "SWAP":
+                b, a = pop(), pop()
+                push(b)
+                push(a)
+            elif op in ("LDG", "STG"):
+                if op == "LDG":
+                    push(self.globals[arg])
+                else:
+                    self.globals[arg] = pop()
+            elif op in ("LDL", "STL"):
+                n = int(arg)
+                if op == "STL":
+                    v = pop()
+                    assert fp + n < len(stack), "STL outside the frame"
+                    stack[fp + n] = v
+                else:
+                    assert fp + n < len(stack), "LDL outside the frame"
+                    push(stack[fp + n])
+            elif op == "ENTER":
+                p, n = (int(x) for x in arg.split(","))
+                assert p <= len(stack)
+                fp = len(stack) - p
+                for _ in range(n):
+                    push(0)
+            elif op in ("LDA", "STA", "LEN"):
+                rom, cells = self.arrays[arg]
+                if op == "LEN":
+                    push(len(cells))
+                elif op == "LDA":
+                    i = pop()
+                    push(cells[i] if 0 <= i < len(cells) else 0)
+                else:
+                    v, i = pop(), pop()
+                    assert not rom, "STA to a ROM array"
+                    if 0 <= i < len(cells):
+                        cells[i] = v
+                    else:
+                        self.log.append(("STA out of range", arg, i))
+            elif op in ("JMP", "JZ", "JNZ"):
+                if op == "JMP" or (pop() == 0) == (op == "JZ"):
+                    pc = self.labels[arg]
+            elif op == "CALL":
+                assert len(calls) < self.CALLS, "call depth"
+                calls.append((pc, fp))
+                fp = len(stack)
+                pc = self.labels[arg]
+            elif op in ("RET", "RETV"):
+                v = pop() if op == "RETV" else None
+                del stack[fp:]
+                if not calls:
+                    return ops
+                pc, fp = calls.pop()
+                if v is not None:
+                    push(v)
+            elif op == "WAIT":
+                self.log.append(("WAIT", pop()))
+            elif op in ("WAIT_ANIM", "WAIT_MOVE"):
+                self.log.append((op,))
+            elif op == "SELF":
+                push(self_entity)
+            elif op == "OTHER":
+                push(other)
+            elif op == "GETP":
+                e = pop()
+                push(self.entities.get(e, {}).get(self.prop(arg), 0))
+            elif op == "SETP":
+                v, e = pop(), pop()
+                self.entities.setdefault(e, {})[self.prop(arg)] = v
+            elif op == "SPAWN":
+                y, x = pop(), pop()
+                handle = self.spawn(arg, x, y)
+                self.log.append(("SPAWN", arg, x, y))
+                push(handle)
+            elif op == "KILL":
+                self.log.append(("KILL", pop()))
+            elif op == "NEXTI":
+                e = pop()
+                after = [h for h in sorted(self.entities)
+                         if h > e and self.entities[h].get("object") == arg]
+                push(after[0] if after else 0)
+            elif op == "SYS":
+                arity, returns = self.SYS[arg]
+                args = [pop() for _ in range(arity)][::-1]
+                self.log.append((arg, *args))
+                if returns:
+                    push(args[0] if arg == "RANDOM_RANGE" else int(bool(self.buttons & args[0])))
+            elif op == "TRACE":
+                self.log.append(("TRACE", self.strings[self.consts["STR_" + arg]]))
+            else:
+                if op in ("NEG", "BNOT", "LNOT"):
+                    a = pop()
+                    push({"NEG": -a, "BNOT": ~a, "LNOT": int(a == 0)}[op])
+                    continue
+                b, a = pop(), pop()
+                if op in ("IDIV", "IMOD", "DIV", "MOD", "FXDIV") and b == 0:
+                    push(0)
+                    continue
+                push({
+                    "ADD": lambda: a + b, "SUB": lambda: a - b, "MUL": lambda: a * b,
+                    "DIV": lambda: svlua.c_div(a, b), "MOD": lambda: a - svlua.c_div(a, b) * b,
+                    "FXMUL": lambda: (a * b) >> 8, "FXDIV": lambda: svlua.c_div(a * 256, b),
+                    "AND": lambda: a & b, "OR": lambda: a | b, "XOR": lambda: a ^ b,
+                    "SHL": lambda: a << (b & 31), "SHR": lambda: a >> (b & 31),
+                    "LSH": lambda: svlua.lua_shift_left(a, b),
+                    "IDIV": lambda: a // b, "IMOD": lambda: a % b,
+                    "EQ": lambda: int(a == b), "NE": lambda: int(a != b),
+                    "LT": lambda: int(a < b), "LE": lambda: int(a <= b),
+                    "GT": lambda: int(a > b), "GE": lambda: int(a >= b),
+                }[op]())
+        raise AssertionError("the handler runs away")
+
+
+def lit(n):
+    """An integer as a Lua expression: -2147483648 is a float in Lua (the
+    literal 2147483648 doesn't fit 32 bits before the minus applies)."""
+    return "(-2147483647 - 1)" if n == INT_MIN else str(n)
+
+
+def run_lua(source, obj="PROBE", event="ROOM_START", globals_=None, headers=None, **kw):
+    """Compiles a script, sets globals, runs one handler; returns the model."""
+    vm = ListingVM(svlua.compile_source(source, "t.lua"), headers)
+    vm.globals.update(globals_ or {})
+    vm.run(obj, event, **kw)
+    return vm
+
+
 # --- Code generation ---------------------------------------------------------
+
+
+GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "init")
+GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
+                  "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
+                  "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
+                  "SONG_WIN": 0}
+
+
+class Golden(unittest.TestCase):
+    """Small programs covering lua.md's "What compiles to what", compiled to
+    the listings in tests/svlua/ (reviewed by hand; SVLUA_UPDATE_GOLDEN=1
+    rewrites them)."""
+
+    def test_listings(self):
+        update = os.environ.get("SVLUA_UPDATE_GOLDEN") == "1"
+        for name in GOLDEN:
+            with self.subTest(name=name):
+                with open(os.path.join(FIXTURES, name + ".lua"), encoding="utf-8") as f:
+                    listing = svlua.compile_source(f.read(), name + ".lua")
+                path = os.path.join(FIXTURES, name + ".svm")
+                if update:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(listing)
+                with open(path, encoding="utf-8") as f:
+                    self.assertEqual(listing, f.read())
+
+    def test_listings_assemble(self):
+        headers = header_names(GOLDEN_HEADERS)
+        for name in GOLDEN:
+            with self.subTest(name=name):
+                with open(os.path.join(FIXTURES, name + ".svm"), encoding="utf-8") as f:
+                    result = assemble(f.read(), headers, name + ".svm")
+                self.assertGreater(len(result.blob), 16)
+
+    def test_every_row_of_the_table(self):
+        """Each row of lua.md's "What compiles to what" shows up in the
+        golden listings."""
+        text = ""
+        for name in GOLDEN:
+            with open(os.path.join(FIXTURES, name + ".svm"), encoding="utf-8") as f:
+                text += f.read()
+        ops = {line.split()[0] for line in text.splitlines()
+               if line.startswith("    ") and not line.strip().startswith(";")}
+        for op in ("ADD", "SUB", "MUL", "NEG", "FXMUL", "FXDIV", "IDIV", "IMOD", "AND", "OR",
+                   "XOR", "LSH", "BNOT", "EQ", "NE", "LT", "LE", "GT", "GE", "LNOT", "ENTER",
+                   "LDL", "STL", "CALL", "RET", "RETV", "JMP", "JZ", "JNZ", "GETP", "SETP",
+                   "LDA", "STA", "LEN", "NEXTI", "SPAWN", "KILL", "WAIT", "WAIT_ANIM",
+                   "WAIT_MOVE", "SYS", "LDG", "STG", "SELF", "OTHER", "HALT"):
+            with self.subTest(op=op):
+                self.assertIn(op, ops)
+        for sys_call in ("PSG_PLAY", "MUSIC_PLAY", "MUSIC_STOP", "MUSIC_PAUSE", "MUSIC_RESUME",
+                         "CAMERA_SET", "TEXT_PRINT", "TEXT_PRINT_NUMBER", "RANDOM_RANGE",
+                         "BUTTON_DOWN", "BUTTON_PRESSED", "BRIGHTNESS", "PATH_START",
+                         "PATH_STOP"):
+            with self.subTest(sys=sys_call):
+                self.assertIn(f"SYS {sys_call}", text)
+        self.assertIn("SETP FIELD_HP", text)  # an instance field
+        self.assertIn(".const FIELD_HP VM_P_FIELD0 + 0", text)
 
 
 class Listing(unittest.TestCase):
@@ -754,6 +1114,305 @@ class Listing(unittest.TestCase):
             self.compile("A = object {}\nlocal OBJ_A <const> = 1")
 
 
+class Semantics(unittest.TestCase):
+    """What the generated code computes, run on the model of the VM and
+    compared with Lua 5.4's rules (LUA_32BITS), written out here."""
+
+    @staticmethod
+    def lua_idiv(a, b):
+        return svlua.wrap32(a // b)
+
+    @staticmethod
+    def lua_mod(a, b):
+        return a % b
+
+    @staticmethod
+    def lua_shl(a, n):
+        if n <= -32 or n >= 32:
+            return 0
+        u = a & 0xFFFFFFFF
+        return svlua.wrap32(u << n if n >= 0 else u >> -n)
+
+    def test_integer_operators(self):
+        script = """Probe = object {}
+a = 0
+b = 0
+q = 0
+r = 0
+l = 0
+s = 0
+x = 0
+n = 0
+function Probe:room_start()
+  q = a // b; r = a % b; l = a << b; s = a >> b; x = a ~ b; n = -a + a * b
+end"""
+        listing = svlua.compile_source(script, "t.lua")
+        for a in (7, -7, 0, 1, -1, INT_MAX, INT_MIN, 123456789, -98765):
+            for b in (2, -2, 3, -3, 1, -1, 31, 32, 33, -31, -32, 40, -40, 7, INT_MAX, INT_MIN):
+                with self.subTest(a=a, b=b):
+                    vm = ListingVM(listing)
+                    vm.globals.update(A=a, B=b)
+                    vm.run("PROBE", "ROOM_START")
+                    g = vm.globals
+                    self.assertEqual(g["Q"], self.lua_idiv(a, b))
+                    self.assertEqual(g["R"], self.lua_mod(a, b))
+                    self.assertEqual(g["L"], self.lua_shl(a, b))
+                    self.assertEqual(g["S"], self.lua_shl(a, -b))
+                    self.assertEqual(g["X"], svlua.wrap32(a ^ b))
+                    self.assertEqual(g["N"], svlua.wrap32(-a + a * b))
+
+    def test_fixed_point_within_a_256th_per_operation(self):
+        script = """Probe = object {}
+a = 0.0
+b = 0.0
+m = 0.0
+d = 0.0
+s = 0.0
+i = 0
+function Probe:room_start()
+  m = a * b; d = a / b; s = a - b + 1; i = math.floor(a)
+end"""
+        listing = svlua.compile_source(script, "t.lua")
+        for a in (1.5, -2.25, 100.0, 0.0039, -0.5, 300.75):
+            for b in (0.5, -3.0, 7.25, 1.0, -0.125):
+                with self.subTest(a=a, b=b):
+                    vm = ListingVM(listing)
+                    ra, rb = round(a * 256), round(b * 256)
+                    vm.globals.update(A=ra, B=rb)
+                    vm.run("PROBE", "ROOM_START")
+                    fa, fb = ra / 256, rb / 256
+                    self.assertAlmostEqual(vm.globals["M"] / 256, fa * fb, delta=1 / 256)
+                    self.assertAlmostEqual(vm.globals["D"] / 256, fa / fb, delta=1 / 256)
+                    self.assertEqual(vm.globals["S"] / 256, fa - fb + 1)
+                    self.assertEqual(vm.globals["I"], int(fa // 1))
+
+    @staticmethod
+    def lua_for(start, limit, step):
+        """Lua 5.4's integer for loop (lvm.c forprep and OP_FORLOOP): the
+        values it gives, from the count it computes before starting."""
+        if step > 0 and start > limit or step < 0 and start < limit:
+            return []
+        if step > 0:
+            count = ((limit - start) & 0xFFFFFFFF) // step
+        else:
+            count = ((start - limit) & 0xFFFFFFFF) // ((-(step + 1) & 0xFFFFFFFF) + 1)
+        return [svlua.wrap32(start + k * step) for k in range(min(count + 1, 50))]
+
+    FOR_CASES = [(1, 10, 1), (10, 1, 1), (1, 1, 1), (10, 1, -1), (1, 10, -1), (1, 10, 3),
+                 (10, 1, -4), (0, 0, 7), (INT_MAX - 2, INT_MAX, 1), (INT_MIN + 2, INT_MIN, -1),
+                 (INT_MAX - 10, INT_MAX, 4), (INT_MIN, INT_MAX, 1 << 30),
+                 (INT_MAX, INT_MIN, -(1 << 30)), (INT_MAX, INT_MIN, INT_MIN),
+                 (INT_MIN, INT_MAX, INT_MAX), (-5, 5, INT_MAX), (0, INT_MAX, 1 << 29),
+                 (-3, -3, -2), (5, -5, -3)]
+
+    def check_loop(self, header, start, limit, step, consts):
+        script = f"""Probe = object {{}}
+lo = 0
+hi = 0
+st = 0
+count = 0
+last = 0
+sum = 0
+function Probe:room_start()
+  {header}
+    count = count + 1
+    last = i
+    sum = sum + i
+    if count == 50 then break end
+  end
+end"""
+        expected = self.lua_for(start, limit, step)
+        vm = ListingVM(svlua.compile_source(script, "t.lua"), consts)
+        vm.globals.update(LO=start, HI=limit, ST=step)
+        vm.run("PROBE", "ROOM_START")
+        self.assertEqual(vm.globals["COUNT"], len(expected))
+        if expected:
+            self.assertEqual(vm.globals["LAST"], expected[-1])
+        self.assertEqual(vm.globals["SUM"], svlua.wrap32(sum(expected)))
+
+    def test_integer_for_loops_count_as_lua_does(self):
+        for start, limit, step in self.FOR_CASES:
+            with self.subTest(start=start, limit=limit, step=step, step_is="run time"):
+                self.check_loop("for i = lo, hi, st do", start, limit, step, None)
+            with self.subTest(start=start, limit=limit, step=step, step_is="constant"):
+                self.check_loop(f"for i = lo, hi, {lit(step)} do", start, limit, step, None)
+            with self.subTest(start=start, limit=limit, step=step, step_is="a header constant"):
+                self.check_loop("for i = lo, hi, STEP do", start, limit, step, {"STEP": step})
+            with self.subTest(start=start, limit=limit, step=step, everything="constant"):
+                self.check_loop(f"for i = {lit(start)}, {lit(limit)}, {lit(step)} do", start,
+                                limit, step, None)
+        for start, limit in ((1, 4), (4, 1), (INT_MAX - 1, INT_MAX)):
+            with self.subTest(start=start, limit=limit, step="none"):
+                self.check_loop("for i = lo, hi do", start, limit, 1, None)
+
+    def test_a_run_time_step_of_zero_stops_the_script(self):
+        vm = run_lua(OBJ + "n = 0\nst = 0\nfunction A:room_start()\n"
+                     "  for i = 1, 10, st do n = n + 1 end\n  n = 99\nend", obj="A",
+                     globals_={"ST": 0})
+        self.assertEqual(vm.globals["N"], 0)
+        self.assertEqual(vm.log, [("TRACE", "'for' step is zero")])
+
+    def test_for_evaluates_its_limit_and_step_once(self):
+        vm = run_lua(OBJ + "n = 0\nhi = 0\nfunction A:room_start()\n"
+                     "  for i = 1, hi do hi = hi + 1; i = i * 10; n = n + i end\nend",
+                     obj="A", globals_={"HI": 3})
+        self.assertEqual(vm.globals["N"], 10 + 20 + 30)
+
+    def test_fixed_point_for_loops(self):
+        cases = {"for v = 0.0, 1.0, 0.25 do": [0, 64, 128, 192, 256],
+                 "for v = 1, 0, -0.5 do": [256, 128, 0],
+                 "for v = 0.5, 2 do": [128, 384],
+                 "for v = lo, hi, st do": [256, 192, 128]}
+        for header, values in cases.items():
+            with self.subTest(header=header):
+                vm = run_lua("Probe = object {}\nn = 0\nsum = 0.0\nlo = 0.0\nhi = 0.0\n"
+                             f"st = 0.0\nfunction Probe:room_start()\n  {header}\n"
+                             "    n = n + 1; sum = sum + v\n  end\nend",
+                             globals_={"LO": 256, "HI": 100, "ST": -64})
+                self.assertEqual(vm.globals["N"], len(values))
+                self.assertEqual(vm.globals["SUM"], sum(values))
+
+    def test_an_integer_loop_with_a_fixed_limit(self):
+        """Lua floors the limit going up and rounds it up going down."""
+        for header, values in {"for i = 1, x do": [1, 2], "for i = 3, y, -1 do": [3, 2, 1],
+                               "for i = 1, 2.5 do": [1, 2], "for i = 3, 0.5, -1 do": [3, 2, 1],
+                               "for i = 1, x, st do": [1, 2], "for i = 3, y, -st do": [3, 2, 1]
+                               }.items():
+            with self.subTest(header=header):
+                vm = run_lua("Probe = object {}\nn = 0\nsum = 0\nx = 0.0\ny = 0.0\nst = 0\n"
+                             f"function Probe:room_start()\n  {header} n = n + 1; "
+                             "sum = sum + i end\nend",
+                             globals_={"X": 640, "Y": 128, "ST": 1})  # 2.5 and 0.5
+                self.assertEqual((vm.globals["N"], vm.globals["SUM"]), (len(values), sum(values)))
+
+    def test_short_circuit(self):
+        script = OBJ + """calls = 0
+r = false
+function yes() calls = calls + 1; return true end
+function no() calls = calls + 10; return false end
+function A:room_start()
+  r = no() and yes()        -- 10
+  r = yes() or no()         -- 1
+  if no() or yes() then calls = calls + 100 end   -- 11 + 100
+  if yes() and no() then calls = calls + 1000 end -- 11
+  r = not (yes() and yes()) -- 2
+end"""
+        vm = run_lua(script, obj="A")
+        self.assertEqual(vm.globals["CALLS"], 10 + 1 + 111 + 11 + 2)
+        self.assertEqual(vm.globals["R"], 0)
+
+    def test_recursion_and_frames(self):
+        script = OBJ + """r1 = 0
+r2 = 0
+r3 = 0
+function fact(n) if n <= 1 then return 1 end return n * fact(n - 1) end
+function fib(n) if n < 2 then return n end return fib(n - 1) + fib(n - 2) end
+function mix(a, b, c)
+  local s = a * 100 + b * 10 + c
+  local t = add3(c, b, a)
+  return s - t
+end
+function add3(x, y, z) local w = x + y; return w + z end
+function A:room_start()
+  local before = 7
+  r1 = fact(10)
+  r2 = fib(12)
+  r3 = mix(1, 2, 3) + before
+end"""
+        vm = run_lua(script, obj="A")
+        self.assertEqual((vm.globals["R1"], vm.globals["R2"], vm.globals["R3"]),
+                         (3628800, 144, 123 - 6 + 7))
+
+    def test_math_functions(self):
+        vm = run_lua(OBJ + """a = 0
+b = 0
+c = 0
+d = 0.0
+function A:room_start()
+  local n = -5
+  a = math.abs(n) + math.abs(-n)
+  b = math.max(n, 3, -9) * 100 + math.min(n, 3, -9)
+  c = math.floor(-2.5) * 10 + math.floor(n)
+  d = math.max(1.5, -2.0)
+end""", obj="A")
+        self.assertEqual((vm.globals["A"], vm.globals["B"], vm.globals["C"], vm.globals["D"]),
+                         (10, 291, -35, 384))
+
+    def test_multiple_assignment(self):
+        vm = run_lua(OBJ + """a = 0
+b = 0
+i = 0
+t = array(5)
+function A:room_start()
+  a, b = b, a
+  i, t[i] = i + 1, 20   -- Lua's manual: t[3] is set, i becomes 4
+end""", obj="A", globals_={"A": 1, "B": 2, "I": 3})
+        self.assertEqual((vm.globals["A"], vm.globals["B"], vm.globals["I"]), (2, 1, 4))
+        self.assertEqual(vm.arrays["T"][1], [0, 0, 20, 0, 0])
+
+    def test_arrays(self):
+        vm = run_lua(OBJ + """t = array(4)
+rom = { 10, -20, 300 }
+total = 0
+n = 0
+function A:room_start()
+  for i = 1, #t do t[i] = rom[(i - 1) % #rom + 1] * i end
+  for i = 1, #t do total = total + t[i] end
+  n = #rom
+end""", obj="A")
+        self.assertEqual(vm.arrays["T"][1], [10, -40, 900, 40])
+        self.assertEqual((vm.globals["TOTAL"], vm.globals["N"]), (910, 3))
+
+    def test_goto_continue(self):
+        vm = run_lua(OBJ + """n = 0
+function A:room_start()
+  for i = 1, 5 do
+    if i % 2 == 0 then goto continue end
+    n = n + i
+    ::continue::
+  end
+  local k = 0
+  ::again::
+  k = k + 1
+  if k < 3 then goto again end
+  n = n * 10 + k
+end""", obj="A")
+        self.assertEqual(vm.globals["N"], 93)
+
+    def test_instances_and_entities(self):
+        script = """Enemy = object { components = 1 }
+Boss = object {}
+count = 0
+hp = 0
+function Enemy:step()
+  for e in instances(Enemy) do
+    count = count + 1
+    e.hp = e.hp + count
+    e.x = e.x + 1
+    if count == 2 then kill(e) end
+  end
+  hp = self.hp
+end"""
+        vm = ListingVM(svlua.compile_source(script, "t.lua"))
+        first = vm.spawn("ENEMY")
+        vm.spawn("BOSS")
+        vm.spawn("ENEMY", x=512)
+        third = vm.spawn("ENEMY")
+        vm.run("ENEMY", "STEP", self_entity=first)
+        self.assertEqual(vm.globals["COUNT"], 3)
+        self.assertEqual(vm.globals["HP"], 1)
+        self.assertEqual(vm.entities[3][0], 512 + 256)  # x: one pixel more
+        self.assertEqual(vm.entities[third][64], 3)
+        self.assertEqual(vm.log, [("KILL", 3)])
+
+    def test_init_sets_the_globals(self):
+        vm = run_lua("Init = object {}\nlives = 3\nspeed = 1.5\nalive = true\nhero = none\n"
+                     "function Init:room_start() lives = lives + 1 end", obj="INIT")
+        self.assertEqual(vm.globals, {"LIVES": 4, "SPEED": 384, "ALIVE": 1, "HERO": 0})
+        vm = run_lua("Init = object {}\nlives = 3\n", obj="INIT")  # a generated handler
+        self.assertEqual(vm.globals, {"LIVES": 3})
+
+
 class Tool(unittest.TestCase):
     def test_compile_to_a_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -798,6 +1457,123 @@ class Tool(unittest.TestCase):
             svlua.compile_source("x = ...", "a.lua")
         self.assertEqual((caught.exception.file, caught.exception.line, caught.exception.column),
                          ("a.lua", 1, 5))
+
+
+# --- fireflies in Lua --------------------------------------------------------
+
+
+class Fireflies(unittest.TestCase):
+    """tests/svlua/fireflies.lua, the whole fireflies game, against what the
+    example's C glue and hand-written listing expect."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(FIXTURES, "fireflies.lua"), encoding="utf-8") as f:
+            cls.compiled = svlua.compile_program(f.read(), "fireflies.lua")
+        cls.listing = cls.compiled.listing
+        cls.headers = header_names(files=FIREFLIES_HEADERS)
+        cls.constants = cls.headers.constants()
+
+    def model(self):
+        return ListingVM(self.listing, self.constants)
+
+    def test_compiles_without_warnings(self):
+        self.assertEqual(self.compiled.warnings, [])
+
+    def test_the_tables_match_the_hand_written_listing(self):
+        """The objects, their components and sprites, and the globals, in
+        the same order: what main.c and game.h rely on (OBJ_ROOM,
+        OBJ_SPAWNER, G_RESTART, C_PLAYER, C_FIREFLY)."""
+        path = os.path.join(ROOT, "examples", "fireflies", "fireflies.svm")
+        if not os.path.exists(path):
+            self.skipTest("no examples/ (a release archive)")
+        with open(path, encoding="utf-8") as f:
+            hand = f.read()
+
+        def tables(text):
+            objects, globals_ = [], []
+            for line in text.splitlines():
+                code = svm._strip_comment(line).strip()
+                if code.startswith(".object"):
+                    objects.append(code.replace(" ", ""))
+                elif code.startswith(".globals"):
+                    globals_ += code.split()[1:]
+            return objects, globals_
+
+        self.assertEqual(tables(self.listing), tables(hand))
+
+    def test_assembles_with_the_games_headers(self):
+        result = assemble(self.listing, self.headers, "fireflies.svm")
+        self.assertEqual(result.objects, ["ROOM", "SPAWNER", "PLAYER", "FIREFLY", "SPARKLE",
+                                          "RESTING"])
+        self.assertEqual(result.globals[4], "RESTART")
+        self.assertEqual(result.warnings, [])
+
+    def test_a_round(self):
+        """The Room's thread: the HUD, the serval, the fade in, 60 seconds,
+        time up, START, the fade out and the restart request."""
+        vm = self.model()
+        k = self.constants
+        vm.buttons = k["BUTTON_START"]
+        vm.run("ROOM", "ROOM_START")
+        g = vm.globals
+        self.assertEqual((g["RESTART"], g["PLAYING"], g["TIME"], g["SCORE"]), (1, 0, 0, 0))
+        prints = [vm.strings[c[3]] for c in vm.log if c[0] == "TEXT_PRINT"]
+        self.assertEqual(prints[:2], ["SCORE", "TIME"])
+        self.assertIn("CATCH THE FIREFLIES!", prints)
+        self.assertEqual(prints[-3:], ["TIME UP!", "CAUGHT", "PRESS START"])
+        levels = [c[1] for c in vm.log if c[0] == "BRIGHTNESS"]
+        self.assertEqual(levels, list(range(-16, 1, 2)) + list(range(-2, -17, -2)))
+        times = [c[3] for c in vm.log if c[0] == "TEXT_PRINT_NUMBER" and c[1] == 28]
+        self.assertEqual(times, list(range(60, -1, -1)))
+        ticks = [c for c in vm.log if c == ("PSG_PLAY", k["SND_TICK"])]
+        self.assertEqual(len(ticks), 10)
+        player = g["PLAYER"]
+        x = (k["SCREEN_W"] - k["SERVAL_BODY_W"]) // 2 * 256
+        self.assertIn(("SPAWN", "PLAYER", x, (k["FIELD_TOP"] + k["SCREEN_H"]
+                                              - k["SERVAL_BODY_H"]) // 2 * 256), vm.log)
+        self.assertIn(("KILL", player), vm.log)
+        self.assertIn(("SPAWN", "RESTING", x, vm.entities[player][1]), vm.log)
+
+    def test_a_firefly_life(self):
+        vm = self.model()
+        k = self.constants
+        vm.globals["PLAYING"] = 1
+        firefly = vm.spawn("FIREFLY", 100 * 256, 50 * 256)
+        vm.run("FIREFLY", "CREATE", self_entity=firefly)
+        self.assertEqual(vm.globals["LIVE"], 1)
+        # random_range gives its low end in the model: FLIGHTS_MIN flights
+        self.assertEqual(len([c for c in vm.log if c[0] == "PATH_START"]), 3)
+        self.assertEqual(vm.log[-2:], [("WAIT_ANIM",), ("KILL", firefly)])
+        self.assertEqual(vm.entities[firefly][4], k["SPR_FIREFLY_FADE"])
+
+    def test_a_catch(self):
+        vm = self.model()
+        k = self.constants
+        serval = vm.spawn("PLAYER", 120 * 256, 80 * 256)
+        firefly = vm.spawn("FIREFLY", 100 * 256, 50 * 256)
+        vm.globals.update(SCORE=9, SPAWN_MIN=40, SPAWN_MAX=90)
+        vm.run("FIREFLY", "COLLISION", self_entity=firefly, other=serval)
+        self.assertEqual(vm.globals["SCORE"], 10)
+        self.assertEqual((vm.globals["SPAWN_MIN"], vm.globals["SPAWN_MAX"]), (35, 78))
+        self.assertIn(("SPAWN", "SPARKLE", 96 * 256, 46 * 256), vm.log)
+        self.assertIn(("PSG_PLAY", k["SND_JINGLE"]), vm.log)
+        self.assertEqual(vm.entities[serval][6], k["SPRITE_FLIP_H"])  # it faces left
+        self.assertEqual(vm.log[-1], ("KILL", firefly))
+
+    def test_the_serval_walks(self):
+        vm = self.model()
+        k = self.constants
+        serval = vm.spawn("PLAYER")
+        vm.buttons = k["BUTTON_LEFT"] | k["BUTTON_DOWN"]
+        vm.run("PLAYER", "STEP", self_entity=serval)
+        e = vm.entities[serval]
+        self.assertEqual((e[2], e[3]), (-384, 384))  # 1.5 pixels per frame
+        self.assertEqual(e[4], k["SPR_SERVAL_WALK"])
+        self.assertEqual(e[6] & k["SPRITE_FLIP_H"], k["SPRITE_FLIP_H"])
+        vm.buttons = 0
+        vm.run("PLAYER", "STEP", self_entity=serval)
+        self.assertEqual((e[2], e[3], e[4]), (0, 0, k["SPR_SERVAL_IDLE"]))
 
 
 if __name__ == "__main__":

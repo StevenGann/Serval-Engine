@@ -1,0 +1,290 @@
+; control.svm: control.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+
+; --- Objects ---
+
+.object PROBE mask=0 sprite=0           ; control.lua:3 Probe
+
+; --- Strings ---
+
+.string FOR_STEP_IS_ZERO "'for' step is zero" ; control.lua:23
+
+; --- Globals ---
+
+.globals N                              ; control.lua:5 n: integer
+.globals LO                             ; control.lua:6 lo: integer
+.globals HI                             ; control.lua:7 hi: integer
+.globals STEP                           ; control.lua:8 step: integer
+.globals X                              ; control.lua:9 x: fixed
+
+; --- Probe:room_start, a behaviour: it may wait ---
+.handler PROBE ROOM_START               ; control.lua:11
+    ; frame: 0 left/i/v/(for i), 1 (for limit)/i, 2 (for step)
+    ENTER 0, 3                          ; control.lua:11
+    ; 12: while n < 10 do
+probe_room_start_while1:                ; control.lua:12
+    LDG N                               ; control.lua:12
+    PUSH 10                             ; control.lua:12
+    LT                                  ; control.lua:12
+    JZ probe_room_start_while1_end      ; control.lua:12
+    ; 13: n = n + 1
+    LDG N                               ; control.lua:13
+    PUSH 1                              ; control.lua:13
+    ADD                                 ; control.lua:13
+    STG N                               ; control.lua:13
+    ; 14: if n == 5 then break end
+    LDG N                               ; control.lua:14
+    PUSH 5                              ; control.lua:14
+    EQ                                  ; control.lua:14
+    JZ probe_room_start_if2_end         ; control.lua:14
+    JMP probe_room_start_while1_end     ; control.lua:14 break
+probe_room_start_if2_end:               ; control.lua:14
+    ; 15: end
+    JMP probe_room_start_while1         ; control.lua:15
+probe_room_start_while1_end:            ; control.lua:15
+    ; 16: repeat
+probe_room_start_repeat3:               ; control.lua:16
+    ; 17: local left = n - 1
+    LDG N                               ; control.lua:17
+    PUSH 1                              ; control.lua:17
+    SUB                                 ; control.lua:17
+    STL 0                               ; control.lua:17
+    ; 18: n = left
+    LDL 0                               ; control.lua:18 left
+    STG N                               ; control.lua:18
+    ; 19: until left <= 0          -- until sees the body's locals
+    LDL 0                               ; control.lua:19 left
+    PUSH 0                              ; control.lua:19
+    LE                                  ; control.lua:19
+    JZ probe_room_start_repeat3         ; control.lua:19
+    ; 20: for i = 1, 10 do n = n + i end
+    PUSH 1                              ; control.lua:20
+    STL 0                               ; control.lua:20
+probe_room_start_for4:                  ; control.lua:20
+    LDG N                               ; control.lua:20
+    LDL 0                               ; control.lua:20 i
+    ADD                                 ; control.lua:20
+    STG N                               ; control.lua:20
+    LDL 0                               ; control.lua:20
+    PUSH 10                             ; control.lua:20
+    EQ                                  ; control.lua:20
+    JNZ probe_room_start_for4_end       ; control.lua:20 the last iteration
+    LDL 0                               ; control.lua:20
+    PUSH 1                              ; control.lua:20
+    ADD                                 ; control.lua:20
+    STL 0                               ; control.lua:20
+    JMP probe_room_start_for4           ; control.lua:20
+probe_room_start_for4_end:              ; control.lua:20
+    ; 21: for i = hi, lo, -1 do n = n + i end
+    LDG HI                              ; control.lua:21
+    STL 0                               ; control.lua:21
+    LDG LO                              ; control.lua:21
+    STL 1                               ; control.lua:21
+    LDL 0                               ; control.lua:21
+    LDL 1                               ; control.lua:21
+    LT                                  ; control.lua:21
+    JNZ probe_room_start_for5_end       ; control.lua:21 past the limit: no iteration
+probe_room_start_for5:                  ; control.lua:21
+    LDG N                               ; control.lua:21
+    LDL 0                               ; control.lua:21 i
+    ADD                                 ; control.lua:21
+    STG N                               ; control.lua:21
+    LDL 0                               ; control.lua:21
+    LDL 1                               ; control.lua:21
+    EQ                                  ; control.lua:21
+    JNZ probe_room_start_for5_end       ; control.lua:21 the last iteration
+    LDL 0                               ; control.lua:21
+    PUSH -1                             ; control.lua:21
+    ADD                                 ; control.lua:21
+    STL 0                               ; control.lua:21
+    JMP probe_room_start_for5           ; control.lua:21
+probe_room_start_for5_end:              ; control.lua:21
+    ; 22: for i = lo, hi, 3 do n = n + i end
+    LDG LO                              ; control.lua:22
+    STL 0                               ; control.lua:22
+    LDG HI                              ; control.lua:22
+    STL 1                               ; control.lua:22
+    LDL 0                               ; control.lua:22
+    LDL 1                               ; control.lua:22
+    GT                                  ; control.lua:22
+    JNZ probe_room_start_for6_end       ; control.lua:22 past the limit: no iteration
+probe_room_start_for6:                  ; control.lua:22
+    LDG N                               ; control.lua:22
+    LDL 0                               ; control.lua:22 i
+    ADD                                 ; control.lua:22
+    STG N                               ; control.lua:22
+    LDL 1                               ; control.lua:22
+    LDL 0                               ; control.lua:22
+    SUB                                 ; control.lua:22 the distance left
+    PUSH -2147483648                    ; control.lua:22
+    XOR                                 ; control.lua:22
+    PUSH -2147483645                    ; control.lua:22 the step's size 3, biased
+    LT                                  ; control.lua:22 unsigned: less than one more step
+    JNZ probe_room_start_for6_end       ; control.lua:22
+    LDL 0                               ; control.lua:22
+    PUSH 3                              ; control.lua:22
+    ADD                                 ; control.lua:22
+    STL 0                               ; control.lua:22
+    JMP probe_room_start_for6           ; control.lua:22
+probe_room_start_for6_end:              ; control.lua:22
+    ; 23: for i = lo, hi, step do n = n + i end
+    LDG LO                              ; control.lua:23
+    STL 0                               ; control.lua:23
+    LDG HI                              ; control.lua:23
+    STL 1                               ; control.lua:23
+    LDG STEP                            ; control.lua:23
+    STL 2                               ; control.lua:23
+    LDL 2                               ; control.lua:23
+    JNZ probe_room_start_for8_step_ok   ; control.lua:23
+    TRACE FOR_STEP_IS_ZERO              ; control.lua:23 Lua's error: the script stops
+    HALT                                ; control.lua:23
+probe_room_start_for8_step_ok:          ; control.lua:23
+    LDL 2                               ; control.lua:23
+    PUSH 0                              ; control.lua:23
+    LT                                  ; control.lua:23
+    JNZ probe_room_start_for9_down      ; control.lua:23
+    LDL 0                               ; control.lua:23
+    LDL 1                               ; control.lua:23
+    GT                                  ; control.lua:23
+    JNZ probe_room_start_for7_end       ; control.lua:23 past the limit: no iteration
+    JMP probe_room_start_for9_go        ; control.lua:23
+probe_room_start_for9_down:             ; control.lua:23
+    LDL 0                               ; control.lua:23
+    LDL 1                               ; control.lua:23
+    LT                                  ; control.lua:23
+    JNZ probe_room_start_for7_end       ; control.lua:23 past the limit: no iteration
+probe_room_start_for9_go:               ; control.lua:23
+probe_room_start_for7:                  ; control.lua:23
+    LDG N                               ; control.lua:23
+    LDL 0                               ; control.lua:23 i
+    ADD                                 ; control.lua:23
+    STG N                               ; control.lua:23
+    LDL 2                               ; control.lua:23
+    PUSH 0                              ; control.lua:23
+    LT                                  ; control.lua:23
+    JNZ probe_room_start_for10_left_down ; control.lua:23
+    LDL 1                               ; control.lua:23
+    LDL 0                               ; control.lua:23
+    SUB                                 ; control.lua:23 the distance left
+    LDL 2                               ; control.lua:23
+    JMP probe_room_start_for10_compare  ; control.lua:23
+probe_room_start_for10_left_down:       ; control.lua:23
+    LDL 0                               ; control.lua:23
+    LDL 1                               ; control.lua:23
+    SUB                                 ; control.lua:23 the distance left
+    LDL 2                               ; control.lua:23
+    NEG                                 ; control.lua:23 the step's size
+probe_room_start_for10_compare:         ; control.lua:23
+    PUSH -2147483648                    ; control.lua:23
+    XOR                                 ; control.lua:23
+    SWAP                                ; control.lua:23
+    PUSH -2147483648                    ; control.lua:23
+    XOR                                 ; control.lua:23
+    GT                                  ; control.lua:23 unsigned: less than one more step
+    JNZ probe_room_start_for7_end       ; control.lua:23
+    LDL 0                               ; control.lua:23
+    LDL 2                               ; control.lua:23
+    ADD                                 ; control.lua:23
+    STL 0                               ; control.lua:23
+    JMP probe_room_start_for7           ; control.lua:23
+probe_room_start_for7_end:              ; control.lua:23
+    ; 24: for v = 0.0, 1.0, 0.25 do x = x + v end
+    PUSH 0                              ; control.lua:24 (0.0)
+    STL 0                               ; control.lua:24
+probe_room_start_for11:                 ; control.lua:24
+    LDG X                               ; control.lua:24
+    LDL 0                               ; control.lua:24 v
+    ADD                                 ; control.lua:24
+    STG X                               ; control.lua:24
+    LDL 0                               ; control.lua:24
+    PUSH 64                             ; control.lua:24 (0.25)
+    ADD                                 ; control.lua:24
+    DUP                                 ; control.lua:24
+    STL 0                               ; control.lua:24
+    PUSH 256                            ; control.lua:24 (1.0)
+    LE                                  ; control.lua:24
+    JNZ probe_room_start_for11          ; control.lua:24
+probe_room_start_for11_end:             ; control.lua:24
+    ; 25: for i = 1, x do n = n + i end                -- an integer loop with a fixed limit
+    PUSH 1                              ; control.lua:25
+    STL 0                               ; control.lua:25
+    LDG X                               ; control.lua:25
+    PUSH 8                              ; control.lua:25
+    SHR                                 ; control.lua:25 an integer limit
+    STL 1                               ; control.lua:25
+    LDL 0                               ; control.lua:25
+    LDL 1                               ; control.lua:25
+    GT                                  ; control.lua:25
+    JNZ probe_room_start_for12_end      ; control.lua:25 past the limit: no iteration
+probe_room_start_for12:                 ; control.lua:25
+    LDG N                               ; control.lua:25
+    LDL 0                               ; control.lua:25 i
+    ADD                                 ; control.lua:25
+    STG N                               ; control.lua:25
+    LDL 0                               ; control.lua:25
+    LDL 1                               ; control.lua:25
+    EQ                                  ; control.lua:25
+    JNZ probe_room_start_for12_end      ; control.lua:25 the last iteration
+    LDL 0                               ; control.lua:25
+    PUSH 1                              ; control.lua:25
+    ADD                                 ; control.lua:25
+    STL 0                               ; control.lua:25
+    JMP probe_room_start_for12          ; control.lua:25
+probe_room_start_for12_end:             ; control.lua:25
+    ; 26: for i = 1, 3 do
+    PUSH 1                              ; control.lua:26
+    STL 0                               ; control.lua:26
+probe_room_start_for13:                 ; control.lua:26
+    ; 27: if i == 2 then goto continue end
+    LDL 0                               ; control.lua:27 i
+    PUSH 2                              ; control.lua:27
+    EQ                                  ; control.lua:27
+    JZ probe_room_start_if14_end        ; control.lua:27
+    JMP probe_room_start_continue       ; control.lua:27 goto continue
+probe_room_start_if14_end:              ; control.lua:27
+    ; 28: n = n + i
+    LDG N                               ; control.lua:28
+    LDL 0                               ; control.lua:28 i
+    ADD                                 ; control.lua:28
+    STG N                               ; control.lua:28
+    ; 29: ::continue::
+probe_room_start_continue:              ; control.lua:29
+    ; 26: for i = 1, 3 do
+    LDL 0                               ; control.lua:26
+    PUSH 3                              ; control.lua:26
+    EQ                                  ; control.lua:26
+    JNZ probe_room_start_for13_end      ; control.lua:26 the last iteration
+    LDL 0                               ; control.lua:26
+    PUSH 1                              ; control.lua:26
+    ADD                                 ; control.lua:26
+    STL 0                               ; control.lua:26
+    JMP probe_room_start_for13          ; control.lua:26
+    ; 30: end
+probe_room_start_for13_end:             ; control.lua:30
+    ; 31: for i = 1, 3 do i = i * 2; n = n + i end     -- the body assigns i: a copy
+    PUSH 1                              ; control.lua:31
+    STL 0                               ; control.lua:31
+probe_room_start_for15:                 ; control.lua:31
+    LDL 0                               ; control.lua:31
+    STL 1                               ; control.lua:31
+    LDL 1                               ; control.lua:31 i
+    PUSH 2                              ; control.lua:31
+    MUL                                 ; control.lua:31
+    STL 1                               ; control.lua:31
+    LDG N                               ; control.lua:31
+    LDL 1                               ; control.lua:31 i
+    ADD                                 ; control.lua:31
+    STG N                               ; control.lua:31
+    LDL 0                               ; control.lua:31
+    PUSH 3                              ; control.lua:31
+    EQ                                  ; control.lua:31
+    JNZ probe_room_start_for15_end      ; control.lua:31 the last iteration
+    LDL 0                               ; control.lua:31
+    PUSH 1                              ; control.lua:31
+    ADD                                 ; control.lua:31
+    STL 0                               ; control.lua:31
+    JMP probe_room_start_for15          ; control.lua:31
+probe_room_start_for15_end:             ; control.lua:31
+    ; 32: end
+    HALT                                ; control.lua:32

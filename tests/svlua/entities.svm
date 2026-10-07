@@ -1,0 +1,219 @@
+; entities.svm: entities.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   C_POS C_VEL C_SPR SPR_BULLET C_BODY SPR_ENEMY PATH_MIRROR_X BUTTON_A
+;   SND_SHOOT BUTTON_B SONG_WIN
+
+; --- Constants ---
+
+.const FIELD_HP VM_P_FIELD0 + 0         ; entities.lua:10 instance field hp (integer)
+.const FIELD_SPEED VM_P_FIELD0 + 1      ; entities.lua:11 instance field speed (fixed)
+
+; --- Objects ---
+
+.object BULLET mask=C_POS | C_VEL | C_SPR sprite=SPR_BULLET ; entities.lua:3 Bullet
+.object ENEMY mask=C_POS | C_SPR | C_BODY | C_GAME(2) sprite=SPR_ENEMY ; entities.lua:4 Enemy
+
+; --- Strings ---
+
+.string HITS "HITS"                     ; entities.lua:42
+
+; --- Globals ---
+
+.globals HITS                           ; entities.lua:6 hits: integer
+.globals TARGET                         ; entities.lua:7 target: entity
+
+; --- Enemy:create, a behaviour: it may wait ---
+.handler ENEMY CREATE                   ; entities.lua:9
+    ; 10: self.hp = 3                        -- an instance field
+    SELF                                ; entities.lua:10
+    PUSH 3                              ; entities.lua:10
+    SETP FIELD_HP                       ; entities.lua:10
+    ; 11: self.speed = 0.75                  -- another, fixed
+    SELF                                ; entities.lua:11
+    PUSH 192                            ; entities.lua:11 (0.75)
+    SETP FIELD_SPEED                    ; entities.lua:11
+    ; 12: self.body_w = 16
+    SELF                                ; entities.lua:12
+    PUSH 16                             ; entities.lua:12
+    SETP BODY_W                         ; entities.lua:12
+    ; 13: self.tags = self.tags | 1
+    SELF                                ; entities.lua:13
+    SELF                                ; entities.lua:13
+    GETP TAGS                           ; entities.lua:13
+    PUSH 1                              ; entities.lua:13
+    OR                                  ; entities.lua:13
+    SETP TAGS                           ; entities.lua:13
+    ; 14: path_start(self, 0, PATH_MIRROR_X)
+    SELF                                ; entities.lua:14
+    PUSH 0                              ; entities.lua:14
+    PUSH PATH_MIRROR_X                  ; entities.lua:14
+    SYS PATH_START                      ; entities.lua:14
+    ; 15: wait_move()
+    WAIT_MOVE                           ; entities.lua:15
+    ; 16: wait(30)
+    PUSH 30                             ; entities.lua:16
+    WAIT                                ; entities.lua:16
+    ; 17: wait_anim()
+    WAIT_ANIM                           ; entities.lua:17
+    ; 18: path_stop(self)
+    SELF                                ; entities.lua:18
+    SYS PATH_STOP                       ; entities.lua:18
+    ; 19: end
+    HALT                                ; entities.lua:19
+
+; --- Enemy:collision, a reaction: it runs to completion ---
+.handler ENEMY COLLISION                ; entities.lua:21
+    ; 22: self.hp = self.hp - 1
+    SELF                                ; entities.lua:22
+    SELF                                ; entities.lua:22
+    GETP FIELD_HP                       ; entities.lua:22
+    PUSH 1                              ; entities.lua:22
+    SUB                                 ; entities.lua:22
+    SETP FIELD_HP                       ; entities.lua:22
+    ; 23: bullet.frame = self.frame + 1
+    OTHER                               ; entities.lua:23
+    SELF                                ; entities.lua:23
+    GETP FRAME                          ; entities.lua:23
+    PUSH 1                              ; entities.lua:23
+    ADD                                 ; entities.lua:23
+    SETP FRAME                          ; entities.lua:23
+    ; 24: if self.hp <= 0 then
+    SELF                                ; entities.lua:24
+    GETP FIELD_HP                       ; entities.lua:24
+    PUSH 0                              ; entities.lua:24
+    LE                                  ; entities.lua:24
+    JZ enemy_collision_if1_end          ; entities.lua:24
+    ; 25: kill(self)
+    SELF                                ; entities.lua:25
+    KILL                                ; entities.lua:25
+    ; 26: hits = hits + 1
+    LDG HITS                            ; entities.lua:26
+    PUSH 1                              ; entities.lua:26
+    ADD                                 ; entities.lua:26
+    STG HITS                            ; entities.lua:26
+    ; 27: end
+enemy_collision_if1_end:                ; entities.lua:27
+    ; 28: kill(bullet)
+    OTHER                               ; entities.lua:28
+    KILL                                ; entities.lua:28
+    ; 29: end
+    HALT                                ; entities.lua:29
+
+; --- Enemy:step, a reaction: it runs to completion ---
+.handler ENEMY STEP                     ; entities.lua:31
+    ; frame: 0 n
+    ENTER 0, 1                          ; entities.lua:31
+    ; 32: self.x = self.x + self.speed
+    SELF                                ; entities.lua:32
+    SELF                                ; entities.lua:32
+    GETP X                              ; entities.lua:32
+    SELF                                ; entities.lua:32
+    GETP FIELD_SPEED                    ; entities.lua:32
+    ADD                                 ; entities.lua:32
+    SETP X                              ; entities.lua:32
+    ; 33: self.anim_time = 0
+    SELF                                ; entities.lua:33
+    PUSH 0                              ; entities.lua:33
+    SETP ANIM_TIME                      ; entities.lua:33
+    ; 34: if button_pressed(BUTTON_A) then
+    PUSH BUTTON_A                       ; entities.lua:34
+    SYS BUTTON_PRESSED                  ; entities.lua:34
+    JZ enemy_step_if1_end               ; entities.lua:34
+    ; 35: target = spawn(Bullet, self.x, self.y - 8)
+    SELF                                ; entities.lua:35
+    GETP X                              ; entities.lua:35
+    SELF                                ; entities.lua:35
+    GETP Y                              ; entities.lua:35
+    PUSH 2048                           ; entities.lua:35 (8.0)
+    SUB                                 ; entities.lua:35
+    SPAWN BULLET                        ; entities.lua:35
+    STG TARGET                          ; entities.lua:35
+    ; 36: target.vy = -2
+    LDG TARGET                          ; entities.lua:36
+    PUSH -512                           ; entities.lua:36 (-2.0)
+    SETP VY                             ; entities.lua:36
+    ; 37: play_sound(SND_SHOOT)
+    PUSH SND_SHOOT                      ; entities.lua:37
+    SYS PSG_PLAY                        ; entities.lua:37
+    ; 38: end
+enemy_step_if1_end:                     ; entities.lua:38
+    ; 39: if button_down(BUTTON_B) and target ~= none then
+    PUSH BUTTON_B                       ; entities.lua:39
+    SYS BUTTON_DOWN                     ; entities.lua:39
+    JZ enemy_step_if2_end               ; entities.lua:39
+    LDG TARGET                          ; entities.lua:39
+    JZ enemy_step_if2_end               ; entities.lua:39
+    ; 40: camera_set(math.floor(target.x) - 120, 0)
+    LDG TARGET                          ; entities.lua:40
+    GETP X                              ; entities.lua:40
+    PUSH 8                              ; entities.lua:40
+    SHR                                 ; entities.lua:40 math.floor: the whole part
+    PUSH 120                            ; entities.lua:40
+    SUB                                 ; entities.lua:40
+    PUSH 0                              ; entities.lua:40
+    SYS CAMERA_SET                      ; entities.lua:40
+    ; 41: end
+enemy_step_if2_end:                     ; entities.lua:41
+    ; 42: print(0, 0, "HITS")
+    PUSH 0                              ; entities.lua:42
+    PUSH 0                              ; entities.lua:42
+    PUSH STR_HITS                       ; entities.lua:42
+    SYS TEXT_PRINT                      ; entities.lua:42
+    ; 43: print(5, 0, hits, 3)
+    PUSH 5                              ; entities.lua:43
+    PUSH 0                              ; entities.lua:43
+    LDG HITS                            ; entities.lua:43
+    PUSH 3                              ; entities.lua:43
+    SYS TEXT_PRINT_NUMBER               ; entities.lua:43
+    ; 44: local n = random_range(1, 6)
+    PUSH 1                              ; entities.lua:44
+    PUSH 6                              ; entities.lua:44
+    SYS RANDOM_RANGE                    ; entities.lua:44
+    STL 0                               ; entities.lua:44
+    ; 45: brightness(n - 16)
+    LDL 0                               ; entities.lua:45 n
+    PUSH 16                             ; entities.lua:45
+    SUB                                 ; entities.lua:45
+    SYS BRIGHTNESS                      ; entities.lua:45
+    ; 46: end
+    HALT                                ; entities.lua:46
+
+; --- Bullet:anim_end, a reaction: it runs to completion ---
+.handler BULLET ANIM_END                ; entities.lua:48
+    ; frame: 0 e
+    ENTER 0, 1                          ; entities.lua:48
+    ; 49: for e in instances(Enemy) do
+    PUSH 0                              ; entities.lua:49 none: from the first
+    STL 0                               ; entities.lua:49
+bullet_anim_end_instances1:             ; entities.lua:49
+    LDL 0                               ; entities.lua:49
+    NEXTI ENEMY                         ; entities.lua:49
+    DUP                                 ; entities.lua:49
+    STL 0                               ; entities.lua:49
+    JZ bullet_anim_end_instances1_end   ; entities.lua:49 none left
+    ; 50: if e.hp > 2 then e.hp = 2 end
+    LDL 0                               ; entities.lua:50 e
+    GETP FIELD_HP                       ; entities.lua:50
+    PUSH 2                              ; entities.lua:50
+    GT                                  ; entities.lua:50
+    JZ bullet_anim_end_if2_end          ; entities.lua:50
+    LDL 0                               ; entities.lua:50 e
+    PUSH 2                              ; entities.lua:50
+    SETP FIELD_HP                       ; entities.lua:50
+bullet_anim_end_if2_end:                ; entities.lua:50
+    ; 51: end
+    JMP bullet_anim_end_instances1      ; entities.lua:51
+bullet_anim_end_instances1_end:         ; entities.lua:51
+    ; 52: music_play(SONG_WIN)
+    PUSH SONG_WIN                       ; entities.lua:52
+    SYS MUSIC_PLAY                      ; entities.lua:52
+    ; 53: music_pause()
+    SYS MUSIC_PAUSE                     ; entities.lua:53
+    ; 54: music_resume()
+    SYS MUSIC_RESUME                    ; entities.lua:54
+    ; 55: music_stop()
+    SYS MUSIC_STOP                      ; entities.lua:55
+    ; 56: end
+    HALT                                ; entities.lua:56
