@@ -17,9 +17,11 @@
 //   - Text for the score, the net and messages
 //
 // What to expect when booting the ROM:
-//   - First the Serval Engine splash: "made with" and "Serval Engine" fade in
-//     on black, a coin-like jingle plays, and they fade out (about 3 seconds;
-//     any button skips it once the text is in).
+//   - First the Serval Engine splash: "made with" and the engine's logo (a
+//     serval's head beside "SERVAL ENGINE" in chunky gold and cream letters)
+//     fade in on black, a coin-like jingle plays, and they fade out (about 3
+//     seconds; any button but L and R skips it once the logo is in; L and R
+//     cycle the four candidate logo styles while one is being picked).
 //   - A dark navy screen with "P O N G", "PRESS START" and the controls
 //     ("UP/DOWN:MOVE  START:PAUSE").
 //   - After START (a rising four-note chime): a dotted net down the middle,
