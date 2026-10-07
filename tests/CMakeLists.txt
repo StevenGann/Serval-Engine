@@ -20,6 +20,36 @@ function(serval_add_header_check target)
     target_link_libraries(${target} PRIVATE serval_warnings)
 endfunction()
 
+# Planned API (SERVAL_PLANNED, docs/development.md#planned-api): every planned
+# name in the public headers is used in planned/, and every use warns, with
+# this build's compiler and target flags (tools/check-planned.py). A test on
+# the host and the GBA; part of the build (ALL) in web builds, which run no
+# tests.
+separate_arguments(_serval_planned_flags NATIVE_COMMAND "${CMAKE_C_FLAGS}")
+if(SERVAL_TARGET_GBA)
+    list(APPEND _serval_planned_flags -DSERVAL_GBA)
+elseif(SERVAL_TARGET_WEB)
+    list(APPEND _serval_planned_flags -DSERVAL_WEB)
+endif()
+set(_serval_planned_check
+    "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-planned.py"
+    --include "${PROJECT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/planned"
+    -- "${CMAKE_C_COMPILER}" ${_serval_planned_flags})
+if(SERVAL_TARGET_WEB)
+    file(GLOB _serval_planned_inputs CONFIGURE_DEPENDS
+         "${PROJECT_SOURCE_DIR}/include/serval/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/planned/*.c")
+    set(_serval_planned_stamp "${CMAKE_CURRENT_BINARY_DIR}/planned_api.stamp")
+    add_custom_command(OUTPUT "${_serval_planned_stamp}"
+        COMMAND ${_serval_planned_check}
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_serval_planned_stamp}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/tools/check-planned.py" ${_serval_planned_inputs}
+        COMMENT "Checking that every planned API warns (tools/check-planned.py)"
+        VERBATIM)
+    add_custom_target(serval_planned_api_check ALL DEPENDS "${_serval_planned_stamp}")
+    return()
+endif()
+add_test(NAME planned_api COMMAND ${_serval_planned_check})
+
 add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c
     physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c save_tests.c input_tests.c path_tests.c splash_logic_tests.c
     vm_tests.c)

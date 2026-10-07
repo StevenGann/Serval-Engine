@@ -188,9 +188,12 @@ if(SERVAL_TARGET_GBA)
 endif()
 
 # Web builds have no test suites of their own: the host tests cover src/web/'s
-# renderer and sound, and the GBA tests the rest.
-if(SERVAL_BUILD_TESTS AND NOT SERVAL_TARGET_WEB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    enable_testing()
+# renderer and sound, and the GBA tests the rest. tests/ only checks the
+# planned API there, with emcc, as part of the build.
+if(SERVAL_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(NOT SERVAL_TARGET_WEB)
+        enable_testing()
+    endif()
     if(SERVAL_TARGET_GBA)
         include(cmake/ServalRomChecks.cmake)
     endif()
