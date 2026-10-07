@@ -25,8 +25,9 @@
 //   - A game split into files: main.c runs the game, scores.c the table and
 //     the initials entry screen
 //   - Text styles (text_set_style): the new entry in the table in yellow;
-//     held-button repeat for the letters (button_repeat); counting and
-//     listing entities of a kind (ecs_count, ecs_gather)
+//     held-button repeat for the letters (button_repeat, with
+//     button_repeat_reset so UP still held from thrusting doesn't run through
+//     them); counting and listing entities of a kind (ecs_count, ecs_gather)
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (a
@@ -56,7 +57,8 @@
 //   - If it does: after 2 seconds (or START), "NEW HIGH SCORE" with a rising
 //     jingle, the score, its place, and three letters "A  A  A" with a caret
 //     under the one being changed. UP and DOWN cycle it through A-Z, '.' and
-//     space (shown as '_'), with a short blip, repeating while held; A or
+//     space (shown as '_'), with a short blip, repeating while held (UP still
+//     held from thrusting does nothing until released and pressed again); A or
 //     RIGHT moves to the next letter, B or LEFT back (a lower blip). A on the
 //     last letter, or START at any time, confirms with a two-note chime: the
 //     table is saved and shown with the new entry in yellow.

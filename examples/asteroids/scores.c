@@ -114,7 +114,6 @@ static const char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ. ";
 static int entry_score, entry_rank;
 static int cursor;    // the letter being changed: 0 to 2
 static int choice[3]; // each letter's index in letters[]
-static bool pressed;  // UP or DOWN was pressed on this screen
 
 static void draw_entry(void) {
     // "A  B  C" and a caret under the current letter; both lines have the
@@ -134,7 +133,9 @@ int entry_begin(int score) {
     entry_rank = scores_rank(score);
     cursor = 0;
     choice[0] = choice[1] = choice[2] = 0; // "AAA"
-    pressed = false;                       // UP may still be held from thrusting: wait for a press
+    // UP may still be held from thrusting: it changes no letter until it is
+    // released and pressed again.
+    button_repeat_reset();
     text_clear();
     text_print_centered(3, "NEW HIGH SCORE");
     text_print_centered(5, text_format("SCORE %d   PLACE %d", score, entry_rank + 1));
@@ -147,13 +148,8 @@ int entry_begin(int score) {
 }
 
 // +1 (UP), -1 (DOWN) or 0: one step per press, then repeating while held
-// (button_repeat). A button still held from the game repeats too, so nothing
-// happens until UP or DOWN is pressed on this screen.
+// (button_repeat).
 static int letter_step(void) {
-    if (button_pressed(BUTTON_UP | BUTTON_DOWN))
-        pressed = true;
-    if (!pressed)
-        return 0;
     return button_repeat(BUTTON_UP) ? 1 : button_repeat(BUTTON_DOWN) ? -1 : 0;
 }
 
