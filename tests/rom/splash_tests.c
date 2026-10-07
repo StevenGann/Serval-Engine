@@ -21,8 +21,8 @@ static void splash_runs_and_restores_state(void) {
     REG_BG0CNT = game_bg0cnt;
     REG_DISPCNT |= DCNT_BG0;
     bool text_before = serval_text_active();
-    // A game's colors in the logo's palette banks (10-13) and the grey's (14).
-    for (u32 bank = 10; bank <= 14; bank++)
+    // A game's colors in the logo's palette bank (13) and the grey's (14).
+    for (u32 bank = 13; bank <= 14; bank++)
         for (u32 c = 1; c < 16; c++)
             pal_bg_bank[bank][c] = RGB15(bank - 10, c, 7);
 
@@ -43,9 +43,9 @@ static void splash_runs_and_restores_state(void) {
     for (u32 i = 0; i < 20 * 32; i++)
         map_clear = map_clear && se_mem[31][i] == 0;
     CHECK(map_clear);
-    // ...and the logo's palette banks hold the game's colors again.
+    // ...and the two palette banks hold the game's colors again.
     bool banks_restored = true;
-    for (u32 bank = 10; bank <= 14; bank++)
+    for (u32 bank = 13; bank <= 14; bank++)
         for (u32 c = 1; c < 16; c++)
             banks_restored = banks_restored && pal_bg_bank[bank][c] == RGB15(bank - 10, c, 7);
     CHECK(banks_restored);

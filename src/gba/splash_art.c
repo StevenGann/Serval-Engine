@@ -1,25 +1,15 @@
-// The splash screen's logo: a serval's head and "SERVAL" over "ENGINE" in
-// chunky letters, the mark-and-wordmark design, in four variations while the
-// final one is picked (docs/open-questions.md). Everything is drawn when the
-// splash starts (as the examples draw their art at boot) from small ASCII
-// pictures and a few rules (outline, bevel, a smoothed 2x scale, the finish's
-// light and shade) on a canvas that is cut into 4bpp tiles in charblock 1.
-// Pictures use one character per pixel: '.' is transparent, letters pick
-// colors from a key string. Every style says "made with" above (the text
+// The splash screen's logo: a serval's head beside "SERVAL" over "ENGINE" in
+// chunky letters, the mark-and-wordmark design (docs/core-api.md). Everything
+// is drawn when the splash starts (as the examples draw their art at boot)
+// from small ASCII pictures and a few rules (outline, bevel, a smoothed 2x
+// scale, light and shade) on a canvas that is cut into 4bpp tiles in
+// charblock 1. Pictures use one character per pixel: '.' is transparent,
+// letters pick colors from a key string. "made with" goes above (the text
 // layer's font, through the splash's grey bank).
-//
-// Style 0 is the head as chosen: bigger eyes, whisker dots, enormous ears
-// (the left upright and notched, the right swivelled out), beside the name.
-// The others are that drawing with one decision changed, as small patches
-// over it: 1 the expression, 2 the markings, 3 the finish. Once one is
-// picked the other three go, with the cycling (splash.c).
 
 #include "splash_art.h"
 
-#include "../core/splash_internal.h"
-#include "../core/warn.h"
 #include "internal.h"
-#include "serval/screen.h"
 #include "serval/text.h"
 
 #include <tonc.h>
@@ -28,11 +18,10 @@
 
 // Pixels, one byte each (a color index), cut into tiles row by row. Tiles
 // with nothing drawn cost no VRAM (pack() skips them). EWRAM: it is not on
-// any hot path. Every style draws the same lockup on the same canvas, shown
-// at the same place on screen, with "made with" above.
+// any hot path. The canvas is the lockup's size, shown at (SCREEN_COL,
+// SCREEN_ROW) of the map with "made with" above.
 #define CANVAS_COLS 18
 #define CANVAS_ROWS 6
-#define CANVAS_TILES (CANVAS_COLS * CANVAS_ROWS)
 #define CANVAS_W (CANVAS_COLS * 8)
 #define CANVAS_H (CANVAS_ROWS * 8)
 #define SCREEN_COL 6
@@ -270,13 +259,12 @@ static void label(const Font* f, const char* s, int x, int y, int color, int tra
         x += glyph(f, *s, x, y, color) + tracking;
 }
 
-// --- The family ------------------------------------------------------------------------
+// --- The logo ---------------------------------------------------------------------------
 //
-// The colors every style has, in the order the pictures' key string lists
-// them: K outline (and pupils), O fur, L light fur, S shaded fur, D dark
-// markings, W white, I inner ear, E eye, N nose; then the letters' first
-// line (G, light H, dark J) and second (C, shade B); and X, the finish's
-// shade under the letters (style 3; unused by the others).
+// Its colors, in the order the pictures' key string lists them: K outline
+// (and pupils), O fur, L light fur, S shaded fur, D dark markings, W white,
+// I inner ear, E eye, N nose; then the letters' first line (G, light H, dark
+// J) and second (C, shade B); and X, the shade under the letters.
 
 enum {
     MK_K = 1,
@@ -298,49 +286,8 @@ enum {
 static const char head_keys[] = ".KOLSDWIEN";
 
 // Daylight: a gold serval with green eyes, "SERVAL" in gold, "ENGINE" in
-// cream, a near-black outline.
-static const u16 colors_day[16] = {
-    0,
-    COLOR_RGB(24, 16, 8),     // K
-    COLOR_RGB(231, 156, 57),  // O
-    COLOR_RGB(255, 214, 123), // L
-    COLOR_RGB(181, 107, 41),  // S
-    COLOR_RGB(57, 33, 16),    // D
-    COLOR_RGB(255, 247, 231), // W
-    COLOR_RGB(247, 198, 173), // I
-    COLOR_RGB(165, 231, 82),  // E
-    COLOR_RGB(206, 107, 107), // N
-    COLOR_RGB(247, 181, 49),  // G
-    COLOR_RGB(255, 231, 132), // H
-    COLOR_RGB(165, 107, 24),  // J
-    COLOR_RGB(255, 247, 214), // C
-    COLOR_RGB(181, 165, 132), // B
-    0,                        // X (unused)
-};
-
-// The markings' daylight: the same with a darker nose.
-static const u16 colors_marked[16] = {
-    0,
-    COLOR_RGB(24, 16, 8),     // K
-    COLOR_RGB(231, 156, 57),  // O
-    COLOR_RGB(255, 214, 123), // L
-    COLOR_RGB(181, 107, 41),  // S
-    COLOR_RGB(57, 33, 16),    // D
-    COLOR_RGB(255, 247, 231), // W
-    COLOR_RGB(247, 198, 173), // I
-    COLOR_RGB(165, 231, 82),  // E
-    COLOR_RGB(140, 57, 57),   // N
-    COLOR_RGB(247, 181, 49),  // G
-    COLOR_RGB(255, 231, 132), // H
-    COLOR_RGB(165, 107, 24),  // J
-    COLOR_RGB(255, 247, 214), // C
-    COLOR_RGB(181, 165, 132), // B
-    0,                        // X (unused)
-};
-
-// The finish's daylight: a deep warm brown outline instead of black, and the
-// shade under the letters.
-static const u16 colors_warm[16] = {
+// cream, a deep warm brown outline.
+static const u16 colors[16] = {
     0,
     COLOR_RGB(90, 41, 24),    // K
     COLOR_RGB(231, 156, 57),  // O
@@ -450,44 +397,7 @@ static const Picture ear_right = {
     "..OOOIIIIIOOOOOO."
     "...OOOOOOOOOOOOO.",
     17, 17, false};
-
-// The expression (style 1), over the face: a knowing look. Both eyes get a
-// dark lid and glance to the right, toward the name (the patch covers both
-// eyes, so they aren't mirrored), and the right corner of the mouth lifts.
-static const Picture eyes_knowing = {
-    ".DDDD.............DDDD."
-    "EEWEEE............EEWEEE"
-    "EEEKKE............EEEKKE"
-    "EEEKKE............EEEKKE",
-    24, 4, false};
-static const Picture mouth_smirk = {
-    "..D"
-    "DDW"
-    ".W.",
-    3, 3, false};
-
-// The markings (style 2), over the right ear: its back is black with a bold
-// white bar across it, as a serval's is.
-static const Picture ear_back = {
-    "..D."
-    "..DD"
-    ".DDD"
-    "DDDD"
-    "WWWW"
-    "WWWW"
-    "DDDD"
-    ".DDD"
-    "..DD"
-    "...D",
-    4, 10, false};
 // clang-format on
-
-// The markings' spots, in the face's coordinates (mirrored): a short outer
-// forehead stripe below the ear, spots down the temple past the eye, and
-// two more on the cheek.
-static const u8 marking_spots[][2] = {
-    {11, 19}, {11, 20}, {4, 22}, {2, 25}, {3, 28}, {9, 35}, {7, 40},
-};
 
 // "SERVAL" over "ENGINE" with the first line's top-left corner at (x, y):
 // 92 x 44 pixels, beveled, then outlined. Drawn after the head and its
@@ -501,93 +411,38 @@ static void wordmark(int x, int y) {
     outline(MK_K, MK_G);
 }
 
-// The lockup every style shares: the head at the left of the canvas, its
-// outline, the name 8 pixels to its right, both vertically centered on each
-// other. Patches over the head go between head() and lockup().
+// The lockup: the head at the left of the canvas, the name 8 pixels to its
+// right, both vertically centered on each other, with light and shade. The
+// head gets its outline, light from above on the ear rims and the top of
+// the forehead, and shade inside the ears where they meet the fur; the
+// letters' bottom row is a shade darker than their bevel. Last comes the
+// shade under the chin: it borrows the second line's shade, a letter color,
+// which the wordmark's outline and the letters' shade would otherwise take
+// for letters.
 #define HEAD_X 1
 #define HEAD_Y 1
-static void head(void) {
+static void logo(void) {
     picture(&face, HEAD_X, HEAD_Y, head_keys);
     picture(&ear_left, HEAD_X, HEAD_Y, head_keys);
     picture(&ear_right, HEAD_X + 19, HEAD_Y, head_keys);
-}
-
-static void lockup(void) {
-    outline(MK_K, 1);
-    wordmark(45, 2);
-}
-
-// Style 0: the head as chosen.
-static void build_chosen(void) {
-    head();
-    lockup();
-}
-
-// Style 1, the expression: the knowing look.
-static void build_expression(void) {
-    head();
-    picture(&eyes_knowing, HEAD_X + 6, HEAD_Y + 24, head_keys);
-    picture(&mouth_smirk, HEAD_X + 19, HEAD_Y + 36, head_keys);
-    lockup();
-}
-
-// Style 2, the markings: the ear's back, a short outer forehead stripe,
-// spots down the temples and more on the cheeks (and a darker nose, in the
-// palette).
-static void build_markings(void) {
-    head();
-    picture(&ear_back, HEAD_X + 31, HEAD_Y, head_keys);
-    for (u32 i = 0; i < sizeof marking_spots / sizeof marking_spots[0]; i++) {
-        int x = marking_spots[i][0], y = marking_spots[i][1];
-        put(HEAD_X + x, HEAD_Y + y, MK_D);
-        put(HEAD_X + 2 * face.w - 1 - x, HEAD_Y + y, MK_D);
-    }
-    lockup();
-}
-
-// Style 3, the finish: a rendering pass over the chosen drawing. Light from
-// above on the ear rims and the top of the forehead, shade inside the ears
-// where they meet the head and under the chin, the letters' bottom edge a
-// shade darker than their bevel (and the outline a deep warm brown, in the
-// palette).
-static void build_finish(void) {
-    head();
     outline(MK_K, 1);
     rim(MK_O, MK_K, MK_L);
     shade(MK_I, MK_I, MK_N, 1, 1u << MK_O);
     wordmark(45, 2);
     shade(MK_G, MK_B, MK_X, 1, 1u << MK_K);
-    // Last: the chin borrows the second line's shade, a letter color, which
-    // the wordmark's outline and the pass above would otherwise take for
-    // letters.
     shade(MK_W, MK_W, MK_B, 1, (1u << MK_O) | (1u << MK_S) | (1u << MK_K));
 }
 
-// --- The styles -----------------------------------------------------------------------------
+// --- Into VRAM ----------------------------------------------------------------------------
 
-typedef struct {
-    void (*build)(void);
-    const u16* colors;
-} Style;
-
-static const Style styles[SERVAL_SPLASH_STYLES] = {
-    {build_chosen, colors_day},
-    {build_expression, colors_day},
-    {build_markings, colors_marked},
-    {build_finish, colors_warm},
-};
-
-// Which tile in charblock 1 each canvas tile became (BLANK: nothing drawn,
-// shown as the map's empty tile 0).
-#define BLANK 0xFF
-static u8 tile_of[SERVAL_SPLASH_STYLES][CANVAS_TILES] SERVAL_EWRAM_BSS;
-
-// Cuts the canvas into tiles, row by row, at a style's place in charblock 1,
-// skipping tiles with nothing drawn. Tiles past the style's budget are left
-// blank (a warning in debug builds).
-static void pack(u32 style) {
-    u32* block = (u32*)&tile_mem[SERVAL_SPLASH_ART_CHARBLOCK][style * SERVAL_SPLASH_ART_TILES];
-    u32 used = 0, dropped = 0;
+// Cuts the canvas into tiles, row by row, from the start of charblock 1,
+// and puts each on the map at the canvas's place on screen. Tiles with
+// nothing drawn are skipped: the map keeps its empty tile 0 there. (The
+// charblock has room for the whole canvas, so nothing is ever left out.)
+static void pack(void) {
+    u32* block = (u32*)&tile_mem[SERVAL_SPLASH_ART_CHARBLOCK][0];
+    u32 base = SE_PALBANK(SERVAL_SPLASH_ART_BANK) + SERVAL_SPLASH_ART_CHARBLOCK * 512;
+    u32 used = 0;
     for (int ty = 0; ty < CANVAS_ROWS; ty++) {
         for (int tx = 0; tx < CANVAS_COLS; tx++) {
             u32 words[8], any = 0;
@@ -598,45 +453,21 @@ static void pack(u32 style) {
                 words[y] = word;
                 any |= word;
             }
-            u8* slot = &tile_of[style][ty * CANVAS_COLS + tx];
-            if (!any) {
-                *slot = BLANK;
-            } else if (used < SERVAL_SPLASH_ART_TILES) {
-                for (int y = 0; y < 8; y++)
-                    block[used * 8 + (u32)y] = words[y];
-                *slot = (u8)used++;
-            } else {
-                *slot = BLANK;
-                dropped++;
-            }
+            if (!any)
+                continue;
+            for (int y = 0; y < 8; y++)
+                block[used * 8 + (u32)y] = words[y];
+            se_mem[31][(SCREEN_ROW + ty) * 32 + SCREEN_COL + tx] = (SCR_ENTRY)(base + used);
+            used++;
         }
-    }
-    if (dropped)
-        SERVAL_WARN("splash: logo style %u needs %u tiles over its %u; the rest is blank",
-                    (unsigned)style, (unsigned)dropped, (unsigned)SERVAL_SPLASH_ART_TILES);
-}
-
-void serval_splash_art_load(void) {
-    for (u32 s = 0; s < SERVAL_SPLASH_STYLES; s++) {
-        const Style* st = &styles[s];
-        canvas_clear();
-        st->build();
-        pack(s);
-        for (u32 c = 1; c < 16; c++)
-            pal_bg_bank[SERVAL_SPLASH_ART_FIRST_BANK + s][c] = st->colors[c];
     }
 }
 
-void serval_splash_art_show(u32 style, u32 text_bank) {
-    memset32(&se_mem[31][0], 0, SERVAL_SPLASH_ART_ROWS * 32 * sizeof(SCR_ENTRY) / 4);
-    u32 base = SE_PALBANK(SERVAL_SPLASH_ART_FIRST_BANK + style) +
-               SERVAL_SPLASH_ART_CHARBLOCK * 512 + style * SERVAL_SPLASH_ART_TILES;
-    for (u32 ty = 0; ty < CANVAS_ROWS; ty++) {
-        for (u32 tx = 0; tx < CANVAS_COLS; tx++) {
-            u8 t = tile_of[style][ty * CANVAS_COLS + tx];
-            if (t != BLANK)
-                se_mem[31][(SCREEN_ROW + ty) * 32 + SCREEN_COL + tx] = (SCR_ENTRY)(base + t);
-        }
-    }
+void serval_splash_art_draw(u32 text_bank) {
+    canvas_clear();
+    logo();
+    pack();
+    for (u32 c = 1; c < 16; c++)
+        pal_bg_bank[SERVAL_SPLASH_ART_BANK][c] = colors[c];
     serval_text_print_bank(TEXT_COL, TEXT_ROW, "made with", text_bank);
 }
