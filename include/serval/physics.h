@@ -38,14 +38,15 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 // none, so the body stops on the floor. 255 (a u8 can't hold 256) is a
 // perfect bounce, which loses nothing: the body comes back up as high as it
 // fell from (to within about a pixel, the frame steps), bounce after bounce,
-// so a ball dropped onto a floor bounces for ever. It leaves at the speed that
-// does that, about the speed it hit at. A floor bounce of any body_bounce,
-// 255 included, becomes a rest when the body hits the floor, or would leave
-// it, slower than twice one frame's gravity (a perfect bounce rests that way
-// only if it hit slower than about 3.6 times one frame's gravity). Only floor
-// bounces read it: off walls gravity doesn't pull toward, sys_physics()
-// keeps all of the speed whatever body_bounce is. Map bodies use it on every
-// side of the map they hit (sys_map_movement(), map.h).
+// so a ball dropped onto a floor bounces for ever (unless body_max_fall limits
+// its fall, which takes height away). It leaves at the speed that does that,
+// about the speed it hit at. A floor bounce of any body_bounce, 255 included,
+// becomes a rest when the body hits the floor, or would leave it, slower than
+// twice one frame's gravity (a perfect bounce rests that way only if it hit
+// slower than about 3.6 times one frame's gravity). Only floor bounces read
+// it: off walls gravity doesn't pull toward, sys_physics() keeps all of the
+// speed whatever body_bounce is. Map bodies use it on every side of the map
+// they hit (sys_map_movement(), map.h).
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
 extern u8 body_friction[MAX_ENT];
