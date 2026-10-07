@@ -315,6 +315,9 @@ static int max_bet(void) {
 
 static void start_betting(void) {
     state = BETTING;
+    // A direction still held from the round (or from the title) doesn't step
+    // the bet until it is released and pressed again.
+    button_repeat_reset();
     step = 0;
     hand_count = 1;
     hands[0].count = hands[1].count = 0;

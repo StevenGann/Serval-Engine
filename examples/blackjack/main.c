@@ -63,9 +63,11 @@
 //     Top left: the bankroll (1000 chips on a first boot). Top right: the
 //     shoe, a pile of card backs that thins as it empties. "PLACE YOUR BET"
 //     with the bet in gold and its chips in the middle: LEFT/RIGHT change it
-//     by 10, UP/DOWN by 50 (held, they repeat), each step with a chip clink
-//     and the new chips dropping onto the pile (button_repeat). A or the swaying DEAL button
-//     deals; START goes back to the title.
+//     by 10, UP/DOWN by 50 (held, they repeat; one still held from the round
+//     or the title does nothing until pressed again), each step with a chip
+//     clink and the new chips dropping onto the pile (button_repeat,
+//     button_repeat_reset). A or the swaying DEAL button deals; START goes
+//     back to the title.
 //   - The deal: the chips slide to the bet's place at the left, the bankroll
 //     counts down in red, and four cards hiss out of the shoe one after the
 //     other, tilted as they fly, overshooting a little and wobbling as they
