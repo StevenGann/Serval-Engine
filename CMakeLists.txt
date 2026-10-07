@@ -57,6 +57,7 @@ include(cmake/Serval.cmake)
 # Platform-neutral engine code: builds for the GBA and for the host, so its
 # logic can be unit tested natively. See docs/platforms.md.
 set(SERVAL_PORTABLE_SOURCES
+    src/core/color.c
     src/core/input.c
     src/core/map.c
     src/core/path.c
@@ -89,6 +90,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/map.c
         src/gba/music.c
         src/gba/psg.c
+        src/gba/sampled_audio.c
         src/gba/screen.c
         src/gba/splash.c
         src/gba/splash_art.c
@@ -118,6 +120,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/map.c
         src/gba/music.c
         src/gba/psg.c
+        src/gba/sampled_audio.c
         src/gba/screen.c
         src/gba/splash.c
         src/gba/splash_art.c

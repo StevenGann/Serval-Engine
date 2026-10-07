@@ -51,6 +51,13 @@ extern const TestSuite input_tests;
 extern const TestSuite path_tests;
 extern const TestSuite vm_tests;
 extern const TestSuite splash_logic_tests;
+extern const TestSuite color_tests;
+
+// Planned API at run time (docs/development.md#planned-api).
+extern const TestSuite planned_audio_tests;
+extern const TestSuite planned_sprites_tests;
+extern const TestSuite planned_map_tests;
+extern const TestSuite planned_screen_tests;
 
 // Host-only suites for the web backend's renderer and sound (src/web/).
 extern const TestSuite web_ppu_tests;
