@@ -46,8 +46,8 @@ static void planned(u32 stub, const char* message) {
 #define PLANNED(stub, message) ((void)0)
 #endif
 
-// The warnings' common parts. Each message stays under TEXT_FORMAT_MAX (128),
-// which would cut it short.
+// The warnings' common parts. Each whole message stays within 247 characters
+// (SERVAL_WARN_MAX - 1, warn.h), or it is cut off.
 #define MUSIC ": tracker music is planned, not implemented in this engine version; "
 #define SFX ": sampled sound effects are planned, not implemented in this engine version; "
 

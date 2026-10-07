@@ -2,6 +2,8 @@
 #include "serval/text.h"
 #include "test.h"
 
+#include "../src/core/warn.h"
+
 static bool equals(const char* a, const char* b) {
     while (*a && *a == *b) {
         a++;
@@ -156,6 +158,80 @@ static void precision_ignored_on_other_conversions(void) {
 #endif
 }
 
+// --- Warnings (serval_warnf, warn.h; debug builds only) ----------------------
+
+#define FORTY "0123456789012345678901234567890123456789"
+#define TWO_HUNDRED_FORTY FORTY FORTY FORTY FORTY FORTY FORTY
+
+// Warnings have a buffer of their own, past text_format's 127 characters: a
+// message of SERVAL_WARN_MAX - 1 (247) characters arrives whole.
+static void long_warnings_arrive_whole(void) {
+#ifdef SERVAL_DEBUG
+    u32 warnings = debug_warning_count();
+    serval_warnf("%s|%d|%x", TWO_HUNDRED_FORTY, -12, 0xABu);
+    CHECK(length(serval_warn_text()) == 247);
+    CHECK(equals(serval_warn_text(), TWO_HUNDRED_FORTY "|-12|ab"));
+    CHECK(debug_warning_count() == warnings + 1);
+
+    SERVAL_WARN("%s: sprite %u, frame %u", FORTY FORTY FORTY FORTY, 513u, 7u); // the macro's way
+    CHECK(equals(serval_warn_text(), FORTY FORTY FORTY FORTY ": sprite 513, frame 7"));
+    CHECK(debug_warning_count() == warnings + 2);
+#endif
+}
+
+// Longer ones are cut after 247 characters, with a NUL after them, whether the
+// cut falls in a conversion or in the format's own text; a shorter warning
+// after them ends where it should.
+static void longer_warnings_are_cut_at_247(void) {
+#ifdef SERVAL_DEBUG
+    serval_warnf("%s|%s", TWO_HUNDRED_FORTY, "0123456789");
+    CHECK(length(serval_warn_text()) == 247);
+    CHECK(equals(serval_warn_text(), TWO_HUNDRED_FORTY "|012345"));
+
+    serval_warnf("%s and then plain text", TWO_HUNDRED_FORTY);
+    CHECK(equals(serval_warn_text(), TWO_HUNDRED_FORTY " and th"));
+
+    serval_warnf("short: %d", 5);
+    CHECK(equals(serval_warn_text(), "short: 5"));
+#endif
+}
+
+// Widths and %s precisions are capped at the largest buffer's size, not
+// text_format's, so a warning gets them in full.
+static void wide_fields_in_warnings(void) {
+#ifdef SERVAL_DEBUG
+    serval_warnf("%200d|", 5);
+    const char* s = serval_warn_text();
+    CHECK(length(s) == 201);
+    CHECK(s[0] == ' ' && equals(s + 199, "5|"));
+
+    serval_warnf("%.2000s", TWO_HUNDRED_FORTY FORTY); // 280 characters
+    CHECK(equals(serval_warn_text(), TWO_HUNDRED_FORTY "0123456"));
+#endif
+}
+
+// A problem with a warning's own format (here %lld, which prints only the low
+// 32 bits) is reported while that warning is being formatted. It has a buffer
+// of its own, so the first warning still arrives whole. This is the test run's
+// first %ll, which text_format reports only once.
+static void warning_while_formatting_a_warning(void) {
+#ifdef SERVAL_DEBUG
+    u32 warnings = debug_warning_count();
+    serval_warnf("%s|%lld|%s", TWO_HUNDRED_FORTY, 5LL, "end");
+    CHECK(equals(serval_warn_text(), TWO_HUNDRED_FORTY "|5|end"));
+    CHECK(debug_warning_count() == warnings + 2);
+#endif
+}
+
+// text_format keeps its own limit, TEXT_FORMAT_MAX - 1 (127) characters, for
+// the same text and fields.
+static void text_format_keeps_its_limit(void) {
+    CHECK(
+        equals(text_format("%s|%s", TWO_HUNDRED_FORTY, "0123456789"), FORTY FORTY FORTY "0123456"));
+    CHECK(length(text_format("%200d|", 5)) == TEXT_FORMAT_MAX - 1);
+    CHECK(equals(text_format("%.2000s", TWO_HUNDRED_FORTY), FORTY FORTY FORTY "0123456"));
+}
+
 TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_text_and_percent},
            {"integers", integers}, {"width_and_zero_padding", width_and_zero_padding},
            {"accepts_fixed_width_types", accepts_fixed_width_types},
@@ -167,4 +243,9 @@ TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_te
            {"width_on_hex_chars_and_strings", width_on_hex_chars_and_strings},
            {"huge_width_is_capped", huge_width_is_capped}, {"string_precision", string_precision},
            {"star_precision", star_precision},
-           {"precision_ignored_on_other_conversions", precision_ignored_on_other_conversions});
+           {"precision_ignored_on_other_conversions", precision_ignored_on_other_conversions},
+           {"long_warnings_arrive_whole", long_warnings_arrive_whole},
+           {"longer_warnings_are_cut_at_247", longer_warnings_are_cut_at_247},
+           {"wide_fields_in_warnings", wide_fields_in_warnings},
+           {"warning_while_formatting_a_warning", warning_while_formatting_a_warning},
+           {"text_format_keeps_its_limit", text_format_keeps_its_limit});

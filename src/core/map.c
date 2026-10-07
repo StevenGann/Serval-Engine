@@ -171,7 +171,7 @@ static void check_cells(const MapLayer* layer) {
 static void check_collision_types(const MapLayer* layer) {
     for (u32 k = 0; k < layer->metatile_count; k++) {
         u32 type = MAP_TYPE(layer->metatiles[k].collision);
-        // Kept under TEXT_FORMAT_MAX (128 characters), or they'd be cut off.
+        // Each must stay within 247 characters (SERVAL_WARN_MAX - 1, warn.h), or it is cut off.
         if (type == MAP_LADDER)
             WARN_ONCE(W_TYPE_LADDER,
                       "map_load: playfield metatile %u is a ladder: ladders are planned, not "

@@ -12,6 +12,10 @@
 #define MGBA_LOG_INFO 3
 #define MGBA_LOG_SEND 0x100
 
+#define WARN_PREFIX "serval: "
+_Static_assert(MGBA_DEBUG_MAX - (sizeof(WARN_PREFIX) - 1) >= SERVAL_WARN_MAX - 1,
+               "the longest warning must fit in mGBA's debug string after its prefix");
+
 static u32 warnings;
 
 static void mgba_log(u32 level, const char* prefix, const char* message) {
@@ -33,7 +37,7 @@ void debug_log(const char* message) {
 
 void serval_warn(const char* message) {
     warnings++;
-    mgba_log(MGBA_LOG_WARN, "serval: ", message);
+    mgba_log(MGBA_LOG_WARN, WARN_PREFIX, message);
 }
 
 u32 debug_warning_count(void) {

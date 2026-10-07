@@ -29,6 +29,7 @@
 #include "serval/map.h"
 #include "serval/physics.h"
 #include "serval/random.h"
+#include "serval/text.h"
 #include "sprite_internal.h"
 #include "vm_internal.h"
 #include "warn.h"

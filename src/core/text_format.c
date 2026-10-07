@@ -4,15 +4,23 @@
 
 #include <stdarg.h>
 
+// Where formatted text goes: characters are written at `at` until it reaches
+// `end`, the place kept for the terminating NUL; the rest are dropped.
 typedef struct {
-    char* out;
-    u32 len;
+    char* at;
+    char* end;
 } Buffer;
 
 static void put(Buffer* b, char c) {
-    if (b->len < TEXT_FORMAT_MAX - 1)
-        b->out[b->len++] = c;
+    if (b->at < b->end)
+        *b->at++ = c;
 }
+
+// The size of the largest buffer here, serval_warnf's (warn.h). A wider field
+// or a longer precision could never be printed, so they are capped at it,
+// which also keeps a huge one from overflowing or padding for billions of
+// characters.
+#define FIELD_MAX SERVAL_WARN_MAX
 
 // Field options parsed from a conversion such as "%-8s" or "%05d".
 typedef struct {
@@ -117,7 +125,7 @@ static __attribute__((noinline)) const char* precision_conversion(Buffer* b, con
         p++;
     } else {
         for (; *p >= '0' && *p <= '9'; p++) {
-            if (precision < TEXT_FORMAT_MAX) // more could never be printed anyway
+            if (precision < FIELD_MAX) // more could never be printed anyway
                 precision = precision * 10 + (u32)(*p - '0');
         }
     }
@@ -151,14 +159,12 @@ static __attribute__((noinline)) const char* convert(Buffer* b, const char* p, v
     if (f.left)
         f.pad = ' '; // as in printf, '-' overrides '0'
     while (*p >= '0' && *p <= '9') {
-        // Wider than the buffer is pointless; capping it also keeps a huge
-        // width from overflowing or padding for billions of characters.
-        if (f.width < TEXT_FORMAT_MAX)
+        if (f.width < FIELD_MAX)
             f.width = f.width * 10 + (u32)(*p - '0');
         p++;
     }
-    if (f.width > TEXT_FORMAT_MAX)
-        f.width = TEXT_FORMAT_MAX;
+    if (f.width > FIELD_MAX)
+        f.width = FIELD_MAX;
     Field text_field = {f.width, ' ', f.left}; // %s and %c never zero-pad
 
     // A precision ("%.3s", "%.*s") is handled out of line, keeping this
@@ -246,27 +252,62 @@ static __attribute__((noinline)) const char* convert(Buffer* b, const char* p, v
     return p;
 }
 
+// Formats `fmt` into `out`, which holds `size` characters, NUL included;
+// output past that is cut off. Inlined into text_format and serval_warnf, so
+// text_format makes no extra call.
+static inline __attribute__((always_inline)) void format(char* out, u32 size, const char* fmt,
+                                                         va_list* args) {
+    char* at = out;
+    char* end = out + size - 1;
+    for (const char* p = fmt; *p; p++) {
+        if (*p != '%') {
+            if (at < end)
+                *at++ = *p;
+            continue;
+        }
+        Buffer b = {at, end};
+        p = convert(&b, p + 1, args);
+        at = b.at;
+    }
+    *at = '\0';
+}
+
 const char* text_format(const char* fmt, ...) {
     static SERVAL_EWRAM_BSS char buffers[4][TEXT_FORMAT_MAX];
     static u32 next;
     char* out = buffers[next];
-    u32 len = 0;
     next = (next + 1) % 4;
 
     va_list args;
     va_start(args, fmt);
-    for (const char* p = fmt; *p; p++) {
-        if (*p != '%') {
-            if (len < TEXT_FORMAT_MAX - 1)
-                out[len++] = *p;
-            continue;
-        }
-        Buffer b = {out, len};
-        p = convert(&b, p + 1, &args);
-        len = b.len;
-    }
+    format(out, TEXT_FORMAT_MAX, fmt, &args);
     va_end(args);
-
-    out[len] = '\0';
     return out;
 }
+
+#ifdef SERVAL_DEBUG
+// serval_warnf's buffers. Debug builds only: SERVAL_EWRAM_BSS puts them in the
+// same section as text_format's buffers, so the linker couldn't drop them from
+// a release game that prints text. The second takes a warning reported while
+// the first is being formatted: one of this file's own, about the warning's
+// format (an unsupported conversion, say), which would otherwise overwrite it.
+static SERVAL_EWRAM_BSS char warn_buffers[2][SERVAL_WARN_MAX];
+static SERVAL_EWRAM_BSS u32 warn_depth;
+
+void serval_warnf(const char* fmt, ...) {
+    char* out = warn_buffers[warn_depth ? 1 : 0];
+    warn_depth++;
+
+    va_list args;
+    va_start(args, fmt);
+    format(out, SERVAL_WARN_MAX, fmt, &args);
+    va_end(args);
+
+    warn_depth--;
+    serval_warn(out);
+}
+
+const char* serval_warn_text(void) {
+    return warn_buffers[0];
+}
+#endif

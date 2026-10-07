@@ -162,6 +162,8 @@ void debug_log(const char* message) {
 void serval_warn(const char* message) {
     warnings++;
     char line[288];
+    _Static_assert(sizeof(line) - sizeof("serval: ") >= SERVAL_WARN_MAX - 1,
+                   "the longest warning must fit in the line after its prefix");
     size_t n = strlen(message);
     if (n > sizeof(line) - 9)
         n = sizeof(line) - 9;
