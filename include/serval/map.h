@@ -197,7 +197,8 @@ void tileset_set_colors(u32 index, const Color* colors, u32 count);
 bool map_load(const MapLayer* layer);
 
 // Hides the map layer on background bg (1-3) and forgets it, and its
-// map_set_scroll() offset.
+// map_set_scroll() offset. Ignored (warning in debug builds) for a background
+// outside 1-3.
 void map_unload(u32 bg);
 
 // Moves background bg's layer (1-3) by (x, y) pixels from where the camera
