@@ -36,7 +36,7 @@ These are the shared contracts. Changing any of them is a cross-repository chang
 - the ROM data formats: `SpriteAsset`, `SpriteGroup`, `SpritePiece`, `Tileset`, `Metatile`, `MapLayer`, `PsgSound`, `PsgSong`, `Path` and their flags ([sprites.md](sprites.md#rom-data-format), [tilemaps.md](tilemaps.md), [audio.md](audio.md), [runtime-systems.md](runtime-systems.md#paths)); the editor writes them with designated initializers;
 - the VM blob format, opcodes, SYS calls and properties ([vm.md](vm.md)), which the editor also emits;
 - the Lua subset and `tools/svlua.py`'s command line ([lua.md](lua.md)); `tools/svm.py`'s command line and listing syntax ([vm.md](vm.md#tools));
-- `serval.json` and the release zip's layout ([releases.md](releases.md#manifest));
+- `serval.json` ([releases.md](releases.md#manifest)) and the release zip's layout ([releases.md](releases.md#release-contents));
 - the CMake functions `serval_add_rom()` and `serval_add_script()` (`cmake/Serval.cmake`), checked from outside the tree by `tests/consumer/` and `tools/check-consumer.sh`;
 - the debug link, once defined ([debug-link.md](debug-link.md)).
 

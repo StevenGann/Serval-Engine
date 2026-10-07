@@ -63,7 +63,7 @@ serval: sprite_group_load: needs 1025 tiles, but only 1024 of 1024 are free
 serval: entity_create: all 128 entities are in use; returning ENTITY_NONE
 ```
 
-Each problem is reported once rather than every frame, as one line of at most 247 characters after the prefix (`serval:` and a space; mGBA's log line holds 255; on the web it goes to the browser's console as a warning). Release builds compile the warnings out, with the checks that exist only to warn, so they cost nothing; the checks that keep a call safe stay, and the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
+A problem that recurs every frame (a sprite that isn't loaded, a full entity pool, a sound that can't play) is reported once rather than every frame; some modules report it again after a reset (`psg_table_set()` for sounds, `sprite_groups_reset()` for drawing). Calls that refuse what they are given, which games make rarely, warn each time they are made: `sprite_group_load()`, `vm_load()` and `vm_reload()`, `sprite_table_set()` with too many sprites, and `sprite_groups_mark()` past its nesting limit or `sprite_groups_release()` of a mark that isn't current (`map_load()` and `tileset_load()` report each problem once). Each warning is one line of at most 247 characters after the prefix (`serval:` and a space; mGBA's log line holds 255; on the web it goes to the browser's console as a warning). Release builds compile the warnings out, with the checks that exist only to warn, so they cost nothing; the checks that keep a call safe stay, and the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
 
 ## Hardware the engine uses
 
@@ -94,6 +94,12 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 | The dispatcher | In use: `serval_init()` installs libtonc's (`irq_init()`, master handler `isr_master`, which doesn't nest) and turns interrupts on | Add handlers for the free interrupts with libtonc's `irq_add()` or `irq_set()`; never install another master handler (`irq_init()`, `irq_set_master()`) |
 | VBlank | In use: enabled by `serval_init()`; `frame_end()` waits for it with the BIOS's `VBlankIntrWait()`, with no handler of the engine's yet. Its handler is reserved: Maxmod's `mmVBlank()` will run there first, uninterrupted (*planned*, [audio.md](audio.md#frame-loop)), and anything else the engine needs each VBlank later | Must not set a VBlank handler (`irq_add(II_VBLANK, ...)` would replace the engine's) |
 | HBlank | Reserved: raster effects (*planned*) | Must not use it |
+| `IME` | In use: turned on by `serval_init()` (`irq_init()`); engine calls that must not be interrupted (EEPROM transfers) turn it off briefly and restore it | Must leave it on; a short critical section that turns it off and restores it is fine |
+| `IE` | In use: bit 0 (VBlank), set by `serval_init()`; bit 1 (HBlank) reserved for raster effects (*planned*). The other bits are the free interrupts' | Only the free interrupts' bits, through libtonc's `irq_enable()`, `irq_disable()` or `irq_add()` |
+| `IF` | In use: the dispatcher acknowledges each interrupt it takes | Must not write it |
+| `DISPSTAT` | In use: bit 3, the VBlank interrupt request, set by `serval_init()`; bit 4 (HBlank's) reserved for raster effects (*planned*). Bits 0-2 are status, read-only | May set bits 5 and 8-15 (the VCount interrupt and its line); must leave bits 3 and 4 alone |
+| The IRQ vector (0x03007FFC) | In use: the dispatcher's address, set by `serval_init()`; the BIOS calls it for every interrupt | Must not change it (see the dispatcher, above) |
+| The BIOS's interrupt flags (0x03007FF8) | In use: the dispatcher sets each interrupt's bit there too, which the BIOS's `VBlankIntrWait()` in `frame_end()` waits on | Must not write it |
 | Timer 0, timers 2-3, DMA 0-2 | Reserved with their timers and channels, above | Must not use them |
 | VCount, timer 1, DMA 3, serial, keypad, cartridge | Free (DMA 3's for the game's own transfers) | The game's |
 
@@ -147,6 +153,9 @@ Games write palette RAM only through the API (loads, `screen_set_backdrop()`, `t
 | --- | --- | --- |
 | `WAITCNT` | In use: set by `serval_init()`; the EEPROM backend sets wait state 2 to 8 cycles before each transfer | Must not change it |
 | `KEYINPUT` | Read by `frame_begin()` | May read it; `button_*()` report the same state |
+| The stacks (top of IWRAM; `src/gba/crt0.s`, `src/gba/gba.ld`) | In use: `main()`, the game and interrupt handlers run on the system-mode stack, which grows down from 0x03007F00; the linker script keeps the 2 KiB below it free of IWRAM code and data (a ROM whose IWRAM use reaches into them fails to link). The IRQ-mode stack, 0x03007F00-0x03007F9F, holds the few registers the BIOS and the dispatcher save per interrupt | Run on them; keep large local arrays and deep recursion in check |
+| IWRAM from 0x03007FA0 | The BIOS's: its supervisor-mode stack and its variables, the IRQ vector and interrupt flags above among them | Must not use it |
+| mGBA's debug registers (0x04FFF600-0x04FFF780) | In use: `debug_log()` writes its message there in every build, warnings in debug builds (the string at 0x04FFF600, the flags at 0x04FFF700, the enable register at 0x04FFF780). Real hardware and other emulators ignore these addresses | Through `debug_log()` |
 | Cartridge save memory (SRAM, Flash or EEPROM) | In use by `save.h` in a game that calls it, of the type `serval_add_rom(... SAVE <type>)` picks; timeouts count scanlines (`VCOUNT`), taking no timer or interrupt ([runtime-systems.md](runtime-systems.md#save-data)) | Through `save.h` |
 
 `serval_splash()` borrows more while it runs, and puts it back: the backdrop, BG0, `BLDCNT` and `BLDY`, colors of BG banks 13 and 14, and PSG square 1 ([below](#splash-screen)).
@@ -175,7 +184,7 @@ Every bit and value of the data formats and flag words that this version doesn't
 | `PsgSound.channel`, `PsgTrack.channel` | 4-255 are invalid | 3, `PSG_WAVE` ([wave channel](audio.md#wave-channel)) | Refused: `psg_play()` skips the sound, `psg_music_play()` leaves the track out (warns) | [audio.md](audio.md#wave-channel) |
 | VM blob header flags | Bit 1 (an extended handler table), bits 2-15 | | `vm_load()` refuses the blob | [vm.md](vm.md#header-16-bytes) |
 | VM blob reserved fields | Bytes 6-7 of an object record, byte 3 of an array record: must be 0 | | Refused | [vm.md](vm.md#blob-format) |
-| VM entity properties | 15-63 (later engine properties) | | Read 0, write nothing (warns) | [vm.md](vm.md#entities) |
+| VM entity properties | 15-63 (later engine properties); 80-255, past the 16 instance fields (64-79), are unassigned (more fields would change `VM_FIELDS`, which format v1 fixes) | | Read 0, write nothing (warns) | [vm.md](vm.md#entities) |
 | VM engine calls and opcodes | SYS numbers from `VM_SYS_COUNT` on (calls for tracker music, sampled sound and later features, appended); unassigned opcodes | | Halt the script (warns) | [vm.md](vm.md#engine-calls) |
 
 ## Splash screen
