@@ -18,6 +18,13 @@ crisp at any size a page shows it at:
   serval-engine-mark.png, @4x, @8x, @16x   the head alone, centered on a 64 x
                                            64 square (256, 512, 1024): avatars,
                                            icons, favicons
+  serval-engine-social.png                 GitHub's social preview card, 1280 x
+                                           640 and opaque: the lockup at 6x on
+                                           the splash's black, a tagline under
+                                           it in the splash's 8x8 font (libtonc's
+                                           sys8) at 3x. No Nintendo marks: the
+                                           repository's description says what
+                                           the engine runs on
 
 Usage:
   tools/logo-png.py [--out DIR] [--cc COMPILER]
@@ -68,6 +75,13 @@ int main(int argc, char** argv) {
 
 MARK_SQUARE = 64  # the mark's canvas: the 39 x 47 head with room for a round crop
 
+SOCIAL_W, SOCIAL_H = 1280, 640  # GitHub's recommended social preview size
+SOCIAL_LOGO_SCALE = 6           # 828 x 282: clear of the edges that cards crop
+SOCIAL_TEXT_SCALE = 3
+SOCIAL_GAP = 48                 # pixels between the lockup and the tagline
+TAGLINE = "An open-source game runtime in C"
+TAGLINE_COLOR = 14              # the wordmark's warm grey (palette index B)
+
 
 def draw(cc):
     """The canvas as (width, height, palette RGB triples, rows of indices)."""
@@ -106,6 +120,58 @@ def bgr555_to_rgb(color):
     def expand(v):
         return v << 3 | v >> 2
     return (expand(color & 31), expand(color >> 5 & 31), expand(color >> 10 & 31))
+
+
+def sys8():
+    """libtonc's 8x8 font, as the text layer uses it: 96 glyphs (ASCII 32 to
+    127) of 8 rows, one byte per row, bit 0 the leftmost pixel. Read from
+    libtonc's source (little-endian .word data after sys8Glyphs)."""
+    words, inside = [], False
+    with open(os.path.join(ROOT, "third_party", "libtonc", "src", "font", "sys8.s")) as f:
+        for line in f:
+            line = line.split("@")[0].strip()
+            if line.startswith("sys8Glyphs:"):
+                inside = True
+            elif inside and line.startswith(".word"):
+                words += [int(w, 16) for w in line[len(".word"):].split(",")]
+            elif inside and line:
+                break
+    data = b"".join(struct.pack("<I", w) for w in words)
+    if len(data) != 96 * 8:
+        sys.exit("logo-png: couldn't read libtonc's sys8 font")
+    return data
+
+
+def text(s, color):
+    """s in sys8, one row of 8 x 8 cells, as rows of palette indices."""
+    font = sys8()
+    rows = [[0] * (8 * len(s)) for _ in range(8)]
+    for i, ch in enumerate(s):
+        glyph = font[(ord(ch) - 32) * 8:(ord(ch) - 31) * 8] if 32 <= ord(ch) < 128 else bytes(8)
+        for y in range(8):
+            for x in range(8):
+                if glyph[y] >> x & 1:
+                    rows[y][8 * i + x] = color
+    return rows
+
+
+def place(target, rows, left, top):
+    for y, row in enumerate(rows):
+        target[top + y][left:left + len(row)] = row
+
+
+def social(logo):
+    """The 1280 x 640 card: the lockup and the tagline, centered together on
+    a black field (index 0, written opaque)."""
+    lockup = scale(logo, SOCIAL_LOGO_SCALE)
+    tagline = scale(crop(text(TAGLINE, TAGLINE_COLOR), *bounds(text(TAGLINE, TAGLINE_COLOR))),
+                    SOCIAL_TEXT_SCALE)
+    height = len(lockup) + SOCIAL_GAP + len(tagline)
+    top = (SOCIAL_H - height) // 2
+    card = [[0] * SOCIAL_W for _ in range(SOCIAL_H)]
+    place(card, lockup, (SOCIAL_W - len(lockup[0])) // 2, top)
+    place(card, tagline, (SOCIAL_W - len(tagline[0])) // 2, top + len(lockup) + SOCIAL_GAP)
+    return card
 
 
 def crop(rows, x0, y0, x1, y1):
@@ -147,8 +213,9 @@ def scale(rows, n):
     return [[v for v in row for _ in range(n)] for row in rows for _ in range(n)]
 
 
-def png(rows, palette):
-    """An indexed-color PNG (4 bits per pixel), index 0 fully transparent."""
+def png(rows, palette, transparent=True):
+    """An indexed-color PNG (4 bits per pixel), index 0 fully transparent
+    unless `transparent` is false (then it shows as its palette color)."""
     h, w = len(rows), len(rows[0])
     raw = bytearray()
     for row in rows:
@@ -163,7 +230,7 @@ def png(rows, palette):
     return (b"\x89PNG\r\n\x1a\n" +
             chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 4, 3, 0, 0, 0)) +
             chunk(b"PLTE", b"".join(bytes(c) for c in palette)) +
-            chunk(b"tRNS", b"\x00") +  # index 0 transparent; the rest opaque
+            (chunk(b"tRNS", b"\x00") if transparent else b"") +  # index 0 transparent
             chunk(b"IDAT", zlib.compress(bytes(raw), 9)) +
             chunk(b"IEND", b""))
 
@@ -178,6 +245,8 @@ def images(cc):
         out[f"serval-engine-logo{'' if n == 1 else f'@{n}x'}.png"] = png(scale(logo, n), palette)
     for n in (1, 4, 8, 16):
         out[f"serval-engine-mark{'' if n == 1 else f'@{n}x'}.png"] = png(scale(mark, n), palette)
+    # Index 0 is black in the palette already: the splash's backdrop.
+    out["serval-engine-social.png"] = png(social(logo), palette, transparent=False)
     return out
 
 
