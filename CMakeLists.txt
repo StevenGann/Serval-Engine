@@ -63,6 +63,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/psg_sequencer.c
     src/core/random.c
     src/core/save.c
+    src/core/splash_logic.c
     src/core/sprite_table.c
     src/core/text_format.c
     src/core/trig.c
