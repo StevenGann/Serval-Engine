@@ -45,7 +45,7 @@
 #define VM_FIELDS 16         // instance fields per attached entity (VM_P_FIELD)
 #define VM_ARRAY_CELLS 1024  // the RAM arrays' pool, in cells
 #define VM_EVENT_QUEUE 32    // events waiting for dispatch
-#define VM_OPS_PER_SLICE 256 // opcodes a script may run in one phase
+#define VM_OPS_PER_SLICE 256 // opcodes per handler run; a reaction atop a behaviour counts apart
 
 // --- Blob format (docs/vm.md#blob-format) ------------------------------------
 

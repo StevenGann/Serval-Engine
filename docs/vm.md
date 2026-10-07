@@ -101,7 +101,7 @@ Draining runs behaviours to their first wait or their end, and reactions to thei
 
 Game code can still raise Collision events itself with `vm_event(e, other, VM_EV_COLLISION)`, for rules `vm_collide` doesn't express (a stomp judged with `body_hit_side`, a collision with map tiles); queued before `vm_events()`, they run in its first drain, before the pass.
 
-**Budget:** a behaviour that executes more than `VM_OPS_PER_SLICE` opcodes in one phase is forced into a one-frame wait with a debug warning, and a reaction that does is halted — an endless loop warns and throttles instead of hanging the game. The engine never fails silently: every misuse case below warns via `SERVAL_WARN` (debug builds) and fails safe.
+**Budget:** a behaviour that executes more than `VM_OPS_PER_SLICE` opcodes in one run (since it started or last waited; a reaction on top of it counts its own) is forced into a one-frame wait with a debug warning, and a reaction that does is halted — an endless loop warns and throttles instead of hanging the game. The engine never fails silently: every misuse case below warns via `SERVAL_WARN` (debug builds) and fails safe.
 
 ### Determinism
 
