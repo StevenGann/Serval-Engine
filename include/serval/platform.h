@@ -1,7 +1,8 @@
 #ifndef SERVAL_PLATFORM_H
 #define SERVAL_PLATFORM_H
 
-// Integer types and memory placement macros, shared by every engine module.
+// Integer types, memory placement macros and the planned-API marker, shared by
+// every engine module.
 //
 // SERVAL_GBA is defined when building for the Game Boy Advance. Without it
 // (host builds for unit tests), the placement macros expand to nothing, so
@@ -40,6 +41,27 @@ typedef s32 FIXED;
 #define SERVAL_IWRAM_DATA
 #define SERVAL_EWRAM_DATA
 #define SERVAL_EWRAM_BSS
+#endif
+
+// Planned API: names this version declares, so that the API is complete, but
+// does not implement yet (docs/releases.md#planned-api). Every use of a planned
+// function or constant compiles with a warning at the use, e.g.
+//
+//     warning: 'music_play' is deprecated: Serval: planned, not implemented in
+//     this version: tracker music, docs/audio.md [-Wdeprecated-declarations]
+//
+// and does nothing harmful at run time: a planned function returns 0, false or
+// its type's "none" and changes nothing, a loader refuses data that needs a
+// planned feature, and debug builds warn once ("serval: ..."). To write code
+// against planned API anyway (it starts working in the engine version that
+// implements it), define SERVAL_NO_PLANNED_WARNINGS before including any Serval
+// header (-DSERVAL_NO_PLANNED_WARNINGS), or silence one place with
+// #pragma GCC diagnostic ignored "-Wdeprecated-declarations" (GCC and Clang).
+#if defined(SERVAL_NO_PLANNED_WARNINGS) || !(defined(__GNUC__) || defined(__clang__))
+#define SERVAL_PLANNED(what)
+#else
+#define SERVAL_PLANNED(what)                                                                       \
+    __attribute__((deprecated("Serval: planned, not implemented in this version: " what)))
 #endif
 
 #endif // SERVAL_PLATFORM_H

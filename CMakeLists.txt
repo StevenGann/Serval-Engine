@@ -144,8 +144,12 @@ endif()
 target_include_directories(${serval_engine_target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # Debug builds report API misuse as warnings (src/core/warn.h). Public, so
 # games can key their own debug code off SERVAL_DEBUG too.
+# The engine itself names planned API (SERVAL_PLANNED in platform.h: its stubs,
+# and loaders that refuse data needing it) without warnings. Private, so games
+# keep the warnings (docs/development.md#planned-api).
 target_compile_definitions(${serval_engine_target}
-    PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>)
+    PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:SERVAL_DEBUG>
+    PRIVATE SERVAL_NO_PLANNED_WARNINGS)
 
 # Save memory, one object per save type (serval_add_rom's SAVE): each ROM or
 # page links its game's type, and --gc-sections drops it if the game never
@@ -165,7 +169,7 @@ if(SERVAL_TARGET_GBA OR SERVAL_TARGET_WEB)
         string(TOLOWER "${type}" name)
         add_library(serval_save_${name} OBJECT ${source})
         target_compile_definitions(serval_save_${name}
-            PRIVATE SERVAL_SAVE_TYPE=${type} SERVAL_SAVE_${type})
+            PRIVATE SERVAL_SAVE_TYPE=${type} SERVAL_SAVE_${type} SERVAL_NO_PLANNED_WARNINGS)
         target_link_libraries(serval_save_${name} PRIVATE serval serval_warnings)
     endforeach()
 endif()
