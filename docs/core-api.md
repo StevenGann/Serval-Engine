@@ -63,7 +63,7 @@ serval: sprite_group_load: needs 1025 tiles, but only 1024 of 1024 are free
 serval: entity_create: all 128 entities are in use; returning ENTITY_NONE
 ```
 
-Each problem is reported once rather than every frame. Release builds compile the checks out entirely, so they cost nothing; the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
+Each problem is reported once rather than every frame, as one line of at most 247 characters after the `serval:` prefix (mGBA's log line holds 255; on the web it goes to the browser's console as a warning). Release builds compile the checks out entirely, so they cost nothing; the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
 
 ## Hardware the engine uses
 
