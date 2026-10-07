@@ -51,7 +51,7 @@ u32 save_slot_capacity(void);
 // (warning in debug builds) for a bad slot, size or data pointer, or if the
 // save didn't verify (read back differently: no save memory of this type);
 // the slot then keeps its previous save. On the GBA with SRAM it takes about
-// 1.3 ms for 100 bytes and 22 ms (over a frame) for a full slot; Flash and
+// 1.4 ms for 100 bytes and 22 ms (over a frame) for a full slot; Flash and
 // EEPROM are slower (docs/runtime-systems.md#save-data): call it at a natural
 // pause (game over, a menu), not every frame.
 bool save_write(u32 slot, const void* data, u32 size, u16 version);

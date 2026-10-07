@@ -41,7 +41,9 @@
 // trips the compiler's -Wmissing-field-initializers (part of -Wextra; an
 // error with warnings as errors), as it would for any C struct.
 typedef struct {
-    u16 frames;  // how long the step lasts, in frames; 0: forever (the path never ends)
+    u16 frames; // how long the step lasts, in frames; 0: forever (the path never ends)
+    // (Two bytes of padding follow on the GBA: reserved for a later flags field
+    // whose 0 keeps today's behaviour; leave them zero, as initializers do.)
     s32 turn;    // heading change per frame, in u16 angle units, clockwise on screen
                  // (ANGLE_DEG(2); negative or ANGLE_DEG(-2) turns the other way)
     FIXED speed; // pixels per frame along the heading when the step starts; negative

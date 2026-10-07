@@ -37,6 +37,7 @@ World coordinates are pixels from the top-left of the playfield (BG2) map; colli
 | Charblocks 4-5 | Sprite tiles ([sprites.md](sprites.md)) |
 | BG palette banks 0-14 | Tileset palettes (`MAP_MAX_PALETTES`); color 0 of bank 0 is the backdrop, and `tileset_load()` skips color 0 of every bank |
 | BG palette bank 15 | Text layer |
+| Charblock 0 tiles 384-511, screenblocks 24-27 | Unused today; reserved for the text layer and the engine ([core-api.md](core-api.md#hardware-the-engine-uses)) |
 
 Map layers are 4bpp, 32×32-entry (256×256 pixel) regular backgrounds; `map_load()` sets their BGxCNT (character base 1, their screenblock, priority = BG number) and DISPCNT enable bit at once, and `map_unload()` clears the bit at the next `frame_end()`.
 
