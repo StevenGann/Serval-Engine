@@ -156,7 +156,7 @@ Planned API has a compile-time check of its own, CTest `planned_api` ([below](#p
 
 ```sh
 tools/bench.sh            # optional preset argument, default gba-release
-# bunnymark: 128 bunnies, 600 frames: avg 73412 cycles (26.1%), peak 77647 (gba-release)
+# bunnymark: 128 bunnies, 600 frames: avg 73360 cycles (26.1%), peak 77491 (gba-release)
 ```
 
 The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it on every push and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
@@ -188,6 +188,7 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-07 | `fae0016` | 73,426 | 26.1% | `button_repeat_reset()` (before: avg 73,421, peak 78,653; after: peak 78,643): one more mask in held-button repeat, which `frame_begin()` runs (\~+5). Measured afterwards, at the freeze, by benchmarking the commits in between; the commit itself recorded no numbers |
 | 2026-10-07 | `9911e93` | 73,426 | 26.1% | API freeze, sprites: `SPRITE_BLEND` joins the render loops' out-of-line test (before: avg 73,426, peak 78,643; after: the same). The flags that take the out-of-line path are now bits 4 and 7-12, past one ARM immediate, so the test is `BIC #0x6F` then `ORRS` with the angle and the flags shifted left; an empty `asm` keeps GCC from folding the mask into a constant load (\~+400). IWRAM +24 bytes for games that draw sprites |
 | 2026-10-07 | `cf9d54b` | 73,412 | 26.1% | API freeze, ECS: `body_bounce` 255 is a perfect bounce (before: avg 73,426, peak 78,643; after: peak 77,647). A body resting on its floor is recognized before the bounce's multiply, so it pays neither that nor the 255 test; the perfect bounce's computation is inlined (as a call to ROM it cost \~2,600). The map bodies' perfect bounce (`8801ead`) measured the same |
+| 2026-10-07 | `4d9f0e1` | 73,360 | 26.1% | Warnings get a 248-byte buffer of their own (before: avg 73,412, peak 77,647; after: peak 77,491). Release builds have no warnings; the change is `text_format`, which now shares its formatter with them: its padding and copying write through a pointer instead of indexing the buffer (\~−50, bunnymark's three HUD lines a frame) |
 
 ## Memory use
 
