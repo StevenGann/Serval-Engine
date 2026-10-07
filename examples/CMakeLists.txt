@@ -14,6 +14,8 @@ target_link_libraries(asteroids PRIVATE serval_warnings)
 
 serval_add_rom(platformer SOURCES platformer/main.c platformer/game.c platformer/level.c
                platformer/player.c platformer/objects.c platformer/art.c platformer/sound.c
+               platformer/stage_overworld.c platformer/art_overworld.c
+               platformer/sound_overworld.c
                TITLE "SERVAL DASH" GAME_CODE "SVPF")
 target_link_libraries(platformer PRIVATE serval_warnings)
 

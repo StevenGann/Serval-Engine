@@ -1,10 +1,17 @@
-// Game states, the HUD, the camera, scoring and the goal.
+// Game states, the HUD, the camera, scoring, the goal and the order of the
+// stages.
 
 #include "game.h"
 
+// The stages, played in this order.
+static const StageDef* const stages[] = {
+    &stage_overworld,
+};
+#define STAGES ((int)(sizeof stages / sizeof stages[0]))
+
 typedef enum {
     TITLE,
-    STAGE_CARD, // "STAGE 1" and the lives left, before the level starts
+    STAGE_CARD, // "STAGE 1-1" and the lives left, before the level starts
     PLAYING,
     PAUSED,
     DYING,
@@ -12,15 +19,13 @@ typedef enum {
     GOAL_WALK,  // to the den
     GOAL_TALLY, // time left becomes points
     STAGE_CLEAR,
-    GAME_OVER
+    GAME_OVER,
+    ENDING // after the last stage (its ending hooks)
 } State;
 
-#define SKY COLOR_RGB(100, 168, 252)
 #define START_LIVES 3
-#define TIME_START 300
 #define FRAMES_PER_TICK 24 // the countdown ticks a little faster than seconds
 #define HURRY_TIME 100
-#define HURRY_TEMPO 180 // the level's tune speeds up from 150 when time runs low
 #define GEMS_PER_LIFE 20
 #define CARD_FRAMES 150
 #define CLEAR_FRAMES 300
@@ -30,11 +35,14 @@ typedef enum {
 #define CAMERA_LEAD 104
 #define CAMERA_HEAD 24
 #define CAMERA_FEET 136
-#define CAMERA_REST_Y (11 * TILE - CAMERA_FEET) // standing on the ground
+#define CAMERA_REST_Y ((start_my + 1) * TILE - CAMERA_FEET) // standing at the start
 #define FADE_STEP 2     // brightness per frame: 8 frames from black to normal
 #define GLINT_PERIOD 64 // frames between glints sweeping over the bonus blocks
 #define GLINT_STEP 4    // frames each step of the glint shows
 
+const StageDef* stage;
+static int stage_index;      // in stages[]
+static u32 stage_group_mark; // sprite groups loaded after this are the stage's
 static State state;
 static int state_timer;
 static int score, gems, lives, time_left, time_ticks;
@@ -94,12 +102,13 @@ static bool update_fade(void) {
 
 // --- HUD and animated tiles ---------------------------------------------------
 
-// One row at the top: score, gems, stage, time and lives. The icons are
-// sprites drawn above the text layer.
+// One row at the top, all 30 columns: score, gems, stage, time and lives.
+// The icons are sprites drawn above the text layer.
 static void draw_hud(void) {
-    text_print_line(0, 0,
-                    text_format(" %06d  x%02d  STAGE 1  %03d  x%d", score, gems, time_left, lives));
-    sprite_draw(SPR_HUD_GEM, 0, 8 * 8, 0, SPRITE_ABOVE_HUD);
+    text_print_line(
+        0, 0,
+        text_format("%06d  x%02d STAGE %s  %03d  x%d", score, gems, stage->name, time_left, lives));
+    sprite_draw(SPR_HUD_GEM, 0, 7 * 8, 0, SPRITE_ABOVE_HUD);
     sprite_draw(SPR_HUD_CLOCK, 0, 22 * 8, 0, SPRITE_ABOVE_HUD);
     sprite_draw(SPR_HUD_SERVAL, 0, 27 * 8, 0, SPRITE_ABOVE_HUD);
 }
@@ -110,10 +119,12 @@ static void draw_hud(void) {
 static void animate_bonus_blocks(void) {
     u32 t = frame_count() % GLINT_PERIOD;
     if (t % GLINT_STEP == 0 && t / GLINT_STEP < BONUS_GLINT_FRAMES)
-        tileset_set_tiles(TILE_BONUS, bonus_glint_tiles[t / GLINT_STEP], BONUS_TILE_COUNT);
+        tileset_set_tiles(stage->bonus_tile, bonus_glint_tiles[t / GLINT_STEP], BONUS_TILE_COUNT);
 }
 
 static void draw_banner(void) {
+    if (pole_mx < 0)
+        return; // a stage without a pole
     int y = state >= GOAL_SLIDE && state <= STAGE_CLEAR ? banner_y : (pole_top_my + 1) * TILE;
     sprite_draw(SPR_BANNER, 0, pole_mx * TILE - 9 - cam_x, y - cam_y, 0);
 }
@@ -139,14 +150,33 @@ static void update_camera(void) {
     cam_y = camera_y();
 }
 
+// --- Stages ------------------------------------------------------------------
+
+// Makes stages[index] the stage: its tileset, its sprite group (in place of
+// the last stage's, after the global group's mark) and its level, built into
+// the map buffers. With the screen black: it writes VRAM at once, and the
+// buffers may be on screen until the maps are unloaded.
+static void load_stage(int index) {
+    stage_index = index;
+    stage = stages[index];
+    sprite_groups_release(stage_group_mark);
+    sprite_group_load(stage->sprites);
+    tileset_load(stage->tileset);
+    level_build();
+}
+
 // --- States ------------------------------------------------------------------
 
 static void show_title(void) {
     state = TITLE;
-    time_left = TIME_START;
     state_timer = 0;
     ecs_reset();
-    screen_set_backdrop(SKY);
+    map_unload(1);
+    map_unload(2);
+    map_unload(3);
+    load_stage(0); // the title shows the first stage's start
+    time_left = stage->time;
+    screen_set_backdrop(stage->backdrop);
     level_show();
     cam_x = 0;
     cam_y = CAMERA_REST_Y;
@@ -169,15 +199,16 @@ static void show_stage_card(void) {
     map_unload(2);
     map_unload(3);
     screen_set_backdrop(COLOR_RGB(0, 0, 0));
+    load_stage(stage_index); // also rebuilds the level after a lost life
     text_clear();
-    text_print_centered(8, "STAGE 1");
+    text_print_centered(8, text_format("STAGE %s", stage->name));
     text_print_centered(11, text_format("x %d", lives));
 }
 
 static void start_level(void) {
     state = PLAYING;
     text_clear();
-    screen_set_backdrop(SKY);
+    screen_set_backdrop(stage->backdrop);
     level_show();
     int mx = checkpoint_reached ? checkpoint_mx : start_mx;
     int my = checkpoint_reached ? checkpoint_my : start_my;
@@ -187,9 +218,11 @@ static void start_level(void) {
     camera_set(cam_x, cam_y);
     cam_x = camera_x();
     objects_reset(cam_x / TILE);
-    time_left = TIME_START;
+    time_left = stage->time;
     time_ticks = 0;
-    psg_music_play(&level_song);
+    if (stage->start)
+        stage->start();
+    psg_music_play(stage->song);
 }
 
 static void start_game(void) {
@@ -199,10 +232,37 @@ static void start_game(void) {
     score = 0;
     gems = 0;
     lives = START_LIVES;
+    stage_index = 0;
     checkpoint_reached = false;
     player_big = false;
     psg_play(SND_START);
     fade_to(show_stage_card);
+}
+
+// The ending, after the last stage: its hooks show it on a black screen.
+static void show_ending(void) {
+    state = ENDING;
+    ecs_reset();
+    psg_music_stop();
+    map_unload(1);
+    map_unload(2);
+    map_unload(3);
+    screen_set_backdrop(COLOR_RGB(0, 0, 0));
+    text_clear();
+    if (stage->ending_start)
+        stage->ending_start();
+}
+
+// After "STAGE CLEAR!": on to the next stage, keeping the score, gems, lives
+// and the serval's size; after the last one, its ending.
+static void next_stage(void) {
+    checkpoint_reached = false;
+    if (stage_index + 1 < STAGES) {
+        stage_index++;
+        show_stage_card();
+    } else {
+        show_ending();
+    }
 }
 
 static void game_over(void) {
@@ -245,7 +305,7 @@ static void update_time(void) {
     time_ticks = 0;
     if (time_left > 0 && --time_left == HURRY_TIME) {
         psg_play(SND_HURRY);
-        psg_music_set_tempo(HURRY_TEMPO); // faster from where it is
+        psg_music_set_tempo(stage->hurry_tempo); // faster from where it is
     }
     if (time_left == 0)
         player_die(false);
@@ -279,11 +339,15 @@ static void update_playing(void) {
     }
     if (!checkpoint_reached && player_center_x() >= checkpoint_mx * TILE)
         checkpoint_reached = true;
-    // Touching the pole, or its base (a serval that jumped short).
-    if (fx_to_int(pos_x[player]) + body_w[player] >= pole_mx * TILE + 6 ||
-        (fx_to_int(pos_x[player]) + body_w[player] >= pole_mx * TILE &&
-         (body_contact[player] & MAP_CONTACT_RIGHT)))
-        start_goal();
+    int right = fx_to_int(pos_x[player]) + body_w[player];
+    if (pole_mx >= 0) {
+        // Touching the pole, or its base (a serval that jumped short).
+        if (right >= pole_mx * TILE + 6 ||
+            (right >= pole_mx * TILE && (body_contact[player] & MAP_CONTACT_RIGHT)))
+            start_goal();
+    } else if (player_center_x() >= exit_x + TILE) {
+        goal_start_exit(); // a stage without a pole: into its exit
+    }
     update_camera();
 }
 
@@ -299,13 +363,17 @@ static void update_goal_slide(void) {
         banner_y += 2;
     if (serval_down && banner_down && ++state_timer > 20) {
         // Around the pole and off toward the den.
-        state = GOAL_WALK;
-        state_timer = 0;
         pos_x[player] = FX(pole_mx * TILE + 10);
         ent_mask[player] |= C_MAPBODY;
         text_print_line(0, 4, "");
-        psg_music_play(&goal_song);
+        goal_start_exit();
     }
+}
+
+void goal_start_exit(void) {
+    state = GOAL_WALK;
+    state_timer = 0;
+    psg_music_play(&goal_song); // in place of the stage's tune
 }
 
 static void update_goal_walk(void) {
@@ -343,16 +411,18 @@ void game_init(void) {
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN); // black while loading; the title fades in
     lives = START_LIVES;
     psg_table_set(sound_table, SOUND_COUNT);
+    // Sprites in layers: the global group (the serval, gems, the HUD...)
+    // stays loaded, and each stage's group is loaded after this mark,
+    // released to it when the next stage loads (load_stage).
     sprite_table_set(sprite_table, SPRITE_COUNT);
-    sprite_group_load(&sprite_group);
-    tileset_load(&tileset);
+    sprite_group_load(&global_group);
+    stage_group_mark = sprite_groups_mark();
     physics_set_gravity(0, GRAVITY);
     // Bodies that aren't map bodies (brick debris) fall through the level:
     // sys_physics' bounds have no walls.
     physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT | PHYSICS_EDGE_TOP |
                            PHYSICS_EDGE_BOTTOM);
     text_set_shadow(true); // white text stays readable over the clouds
-    level_build();
     show_title();
 }
 
@@ -399,8 +469,15 @@ static void update_state(void) {
         update_goal_tally();
         break;
     case STAGE_CLEAR:
+        if (--state_timer == 0 || start)
+            fade_to(stage_index + 1 < STAGES || stage->ending_start ? next_stage : show_title);
+        break;
     case GAME_OVER:
         if (--state_timer == 0 || start)
+            fade_to(show_title);
+        break;
+    case ENDING:
+        if (!stage->ending_update || stage->ending_update())
             fade_to(show_title);
         break;
     }
@@ -409,16 +486,21 @@ static void update_state(void) {
 void game_frame(void) {
     if (!update_fade()) // fading out: the game waits
         update_state();
-    if (state != PAUSED)
+    if (state == TITLE || (state >= PLAYING && state <= STAGE_CLEAR && state != PAUSED)) {
         animate_bonus_blocks();
+        if (state != TITLE && stage->effects)
+            stage->effects();
+    }
 
     // Drawing: the HUD icons, the serval and everything else, the banner.
     if (state == STAGE_CARD) {
         sprite_draw(SPR_HUD_SERVAL, 0, 12 * 8, 11 * 8, 0);
-    } else if (state != GAME_OVER) {
+    } else if (state != GAME_OVER && state != ENDING) {
         draw_hud();
         player_update_sprite(state == GOAL_SLIDE);
         sys_render();
+        if (stage->draw)
+            stage->draw();
         draw_banner();
     }
 }

@@ -1,320 +1,104 @@
-// The level: a first level in the classic side-scroller style, written as
-// text, one screen (16 x 13 metatiles) at a time, and converted into map cells
-// when the game boots. Also what blocks do when they are hit.
+// The level of the stage being played: built from the stage's level text
+// into map cells in RAM when the stage starts, then shown; and what blocks,
+// gems and hazards do.
 
 #include "game.h"
 
-// Legend (one character per 16x16 metatile):
-//   .  sky                 #  ground (grass on top)   X  stone block
-//   B  bricks              G  bricks hiding gems      P  bonus block (a gem)
-//   F  bonus block (fish)  o  gem in the air          T  tree stump (2 wide)
-//   ^  goal pole's knob    |  goal pole               D  the den (4 x 3)
-//   b  bush (2 wide)       w  tall grass (2 wide, in front of sprites)
-//   f  flowers (2 wide, in front of sprites)
+// Legend (one character per 16x16 metatile), the same in every stage; each
+// stage's art draws these its own way, and its cell hook adds characters of
+// its own (stage_<name>.c):
+//   .  empty (sky, dark)   #  ground (its top row the surface)
+//   X  stone block         B  bricks              G  bricks hiding gems
+//   P  bonus block (a gem) F  bonus block (fish)  o  gem in the air
+//   -  one-way platform (2 halves, alternating)
+//   ^  goal pole's knob    |  goal pole
+//   D  the exit: the den, or the stage's own (4 x 3)
 //   s  the serval's start  c  checkpoint (restart here after losing a life)
-//   e  beetle              r  frog
-// Row 11 is the ground's surface; the serval stands on it in row 10.
-#define SCREENS (LEVEL_W / 16)
-static const char level_text[SCREENS][LEVEL_H][16 + 1] = {
-    // Screen 0: columns 0-15
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "...s....bb..ww..",
-        "################",
-        "################",
-    },
-    // Screen 1: columns 16-31
-    {
-        "................",
-        "................",
-        "................",
-        ".......P........",
-        "................",
-        "................",
-        "................",
-        ".P...BFBP.......",
-        "................",
-        "................",
-        "...ff......e..bb",
-        "################",
-        "################",
-    },
-    // Screen 2: columns 32-47
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        ".........oo.....",
-        "................",
-        "................",
-        "................",
-        "...........TT...",
-        "..TT.......TT...",
-        "..TT...e...TT..w",
-        "################",
-        "################",
-    },
-    // Screen 3: columns 48-63
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "......ooo.......",
-        "...TT........TT.",
-        "...TT........TT.",
-        "...TT........TT.",
-        "w..TT..e.e...TT.",
-        "################",
-        "################",
-    },
-    // Screen 4: columns 64-79
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "..............BB",
-        "................",
-        "................",
-        "...........BFB..",
-        "................",
-        "................",
-        "bb..............",
-        "#####..#########",
-        "#####..#########",
-    },
-    // Screen 5: columns 80-95
-    {
-        "................",
-        "................",
-        "................",
-        "e..e............",
-        "BBBBBB....BBPB..",
-        "................",
-        "................",
-        "...............G",
-        "................",
-        "................",
-        "................",
-        "######...#######",
-        "######...#######",
-    },
-    // Screen 6: columns 96-111
-    {
-        "................",
-        "................",
-        "................",
-        "...........F....",
-        "................",
-        "................",
-        "................",
-        ".....BB.P..P..P.",
-        "................",
-        "................",
-        "..cff..r.....r..",
-        "################",
-        "################",
-    },
-    // Screen 7: columns 112-127
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "........BBB....B",
-        "................",
-        "................",
-        ".....B..........",
-        "................",
-        "................",
-        ".bb.e.e.....e.e.",
-        "################",
-        "################",
-    },
-    // Screen 8: columns 128-143
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "PPB.............",
-        "................",
-        "................",
-        "BB.......XXXX...",
-        "........XXXXXX..",
-        ".......XXXXXXXX.",
-        "..r...XXXXXXXXXX",
-        "################",
-        "################",
-    },
-    // Screen 9: columns 144-159
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "oo..............",
-        "................",
-        ".........oo.....",
-        ".......XX..X....",
-        "......XXX..XX...",
-        ".....XXXX..XXX..",
-        "..wwXXXXX..XXXX.",
-        "#########..#####",
-        "#########..#####",
-    },
-    // Screen 10: columns 160-175
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "........BBPB....",
-        "................",
-        "....TT..........",
-        "ff..TT......e.e.",
-        "################",
-        "################",
-    },
-    // Screen 11: columns 176-191
-    {
-        "................",
-        "................",
-        "................",
-        ".............XX.",
-        "............XXX.",
-        "...........XXXX.",
-        "..........XXXXX.",
-        ".........XXXXXX.",
-        "........XXXXXXX.",
-        "..TT...XXXXXXXX.",
-        "..TT..XXXXXXXXX.",
-        "################",
-        "################",
-    },
-    // Screen 12: columns 192-207
-    {
-        "................",
-        ".......^........",
-        ".......|........",
-        ".......|........",
-        ".......|........",
-        ".......|........",
-        ".......|........",
-        ".......|........",
-        ".......|...DDDD.",
-        ".......|...DDDD.",
-        "bb.....X...DDDD.",
-        "################",
-        "################",
-    },
-    // Screen 13: columns 208-223
-    {
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        ".ww.bb..ff.bb...",
-        "################",
-        "################",
-    },
-};
+//   e  walker (a beetle)   r  hopper (a frog)
+// The serval stands on the ground's surface in the row above it.
 
-// The cells of the playfield (background 2) and the foreground (background 1),
-// built from the text at boot. In RAM, since they are built at runtime: a
-// level made in an editor would be const data in ROM instead.
-static u16 playfield_cells[LEVEL_W * LEVEL_H] SERVAL_EWRAM_BSS;
-static u16 foreground_cells[LEVEL_W * LEVEL_H] SERVAL_EWRAM_BSS;
-
-static const MapLayer playfield = {
-    .width = LEVEL_W,
-    .height = LEVEL_H,
-    .cells = playfield_cells,
-    .metatiles = metatiles,
-    .metatile_count = MT_COUNT,
-    .bg = 2,
-};
-
-// Tall grass and flowers in front of the sprites: the serval runs behind them.
-static const MapLayer foreground = {
-    .width = LEVEL_W,
-    .height = LEVEL_H,
-    .cells = foreground_cells,
-    .metatiles = metatiles,
-    .metatile_count = MT_COUNT,
-    .bg = 1,
-};
-
-Spawn spawns[MAX_SPAWNS];
+int level_w, level_h, level_pixel_w, level_pixel_h;
+Spawn spawns[MAX_SPAWNS] SERVAL_EWRAM_BSS;
 int spawn_count;
 int start_mx, start_my;
 int checkpoint_mx, checkpoint_my;
 int pole_mx, pole_top_my, pole_base_my;
-int den_door_x;
+int exit_x, den_door_x;
 
-static char text_at(int mx, int my) {
-    if (mx < 0 || mx >= LEVEL_W || my < 0 || my >= LEVEL_H)
+// The cells of the playfield (background 2) and the foreground (background 1),
+// built from the stage's text when it starts: one buffer each, sized for the
+// largest stage. In RAM, since they are built at runtime: a level made in an
+// editor would be const data in ROM instead. map_load() keeps reading them
+// while the layers are shown, so they are rebuilt only with the screen black.
+static u16 playfield_cells[LEVEL_MAX_CELLS] SERVAL_EWRAM_BSS;
+static u16 foreground_cells[LEVEL_MAX_CELLS] SERVAL_EWRAM_BSS;
+static bool has_foreground; // anything in front of the sprites
+
+// The layers point at the cells and at the stage's metatiles; map_load()
+// keeps the pointer, so they are static, filled in by level_build(). (In
+// EWRAM, like the cells: IWRAM is for what runs every frame.)
+static MapLayer playfield SERVAL_EWRAM_BSS;
+// Tall grass, flowers and the like in front of the sprites: the serval
+// runs behind them.
+static MapLayer foreground SERVAL_EWRAM_BSS;
+
+char level_text_at(int mx, int my) {
+    if (mx < 0 || mx >= level_w || my < 0 || my >= level_h)
         return '.';
-    return level_text[mx / 16][my][mx % 16];
+    return stage->text[(mx / 16) * level_h + my][mx % 16];
 }
 
-// How many cells left of (mx, my) hold the same character: for pieces wider
-// than a metatile, whether this is their left or right half (or which column).
-static int run_left(int mx, int my) {
-    char c = text_at(mx, my);
+int level_run_left(int mx, int my) {
+    char c = level_text_at(mx, my);
     int n = 0;
-    while (n < mx && text_at(mx - n - 1, my) == c)
+    while (n < mx && level_text_at(mx - n - 1, my) == c)
         n++;
     return n;
 }
 
-static int run_up(int mx, int my) {
-    char c = text_at(mx, my);
+int level_run_up(int mx, int my) {
+    char c = level_text_at(mx, my);
     int n = 0;
-    while (n < my && text_at(mx, my - n - 1) == c)
+    while (n < my && level_text_at(mx, my - n - 1) == c)
         n++;
     return n;
 }
 
-static void add_spawn(SpawnKind kind, int mx, int my) {
+void level_add_spawn(int kind, int mx, int my) {
     if (spawn_count == MAX_SPAWNS)
         return;
-    spawns[spawn_count++] = (Spawn){.kind = (u8)kind, .mx = (u8)mx, .my = (u8)my};
+    spawns[spawn_count++] = (Spawn){.kind = (u8)kind, .mx = (u16)mx, .my = (u8)my};
 }
 
 void level_build(void) {
+    level_w = stage->screens * 16;
+    level_h = stage->height;
+    if (level_w * level_h > LEVEL_MAX_CELLS)
+        level_w = LEVEL_MAX_CELLS / level_h; // (a stage too big for the buffers)
+    level_pixel_w = level_w * TILE;
+    level_pixel_h = level_h * TILE;
+    playfield.cells = playfield_cells;
+    foreground.cells = foreground_cells;
+    playfield.bg = 2;
+    foreground.bg = 1;
+    playfield.width = foreground.width = (u16)level_w;
+    playfield.height = foreground.height = (u16)level_h;
+    playfield.metatiles = foreground.metatiles = stage->metatiles;
+    playfield.metatile_count = foreground.metatile_count = stage->metatile_count;
     spawn_count = 0;
+    pole_mx = -1;
+    exit_x = den_door_x = level_pixel_w + SCREEN_W; // none: never reached
+    has_foreground = false;
     // Column by column, so the spawn list comes out sorted from left to right.
-    for (int mx = 0; mx < LEVEL_W; mx++) {
-        for (int my = 0; my < LEVEL_H; my++) {
-            char c = text_at(mx, my);
+    for (int mx = 0; mx < level_w; mx++) {
+        for (int my = 0; my < level_h; my++) {
+            char c = level_text_at(mx, my);
             u16 cell = MT_EMPTY, front = MT_EMPTY;
-            int half = run_left(mx, my) % 2;
             switch (c) {
+            case '.':
+                break;
             case '#':
-                cell = text_at(mx, my - 1) == '#' ? MT_GROUND : MT_GROUND_TOP;
+                cell = level_text_at(mx, my - 1) == '#' ? MT_GROUND : MT_GROUND_TOP;
                 break;
             case 'X':
                 cell = MT_STONE;
@@ -334,14 +118,8 @@ void level_build(void) {
             case 'o':
                 cell = MT_GEM;
                 break;
-            case 'T':
-                if (text_at(mx, my - 1) != 'T')
-                    cell = MT_STUMP_TOP;
-                else if (text_at(mx, my + 1) != 'T')
-                    cell = MT_STUMP_BASE;
-                else
-                    cell = MT_STUMP;
-                cell = (u16)(cell + half);
+            case '-':
+                cell = (u16)(MT_ONEWAY + level_run_left(mx, my) % 2);
                 break;
             case '^':
                 cell = MT_POLE_TOP;
@@ -350,22 +128,15 @@ void level_build(void) {
                 break;
             case '|':
                 cell = MT_POLE;
-                if (text_at(mx, my + 1) != '|')
+                if (level_text_at(mx, my + 1) != '|')
                     pole_base_my = my + 1;
                 break;
             case 'D':
-                cell = (u16)(MT_DEN + run_up(mx, my) * 4 + run_left(mx, my));
-                if (run_left(mx, my) == 0 && run_up(mx, my) == 0)
+                cell = (u16)(MT_EXIT + level_run_up(mx, my) * 4 + level_run_left(mx, my));
+                if (level_run_left(mx, my) == 0 && level_run_up(mx, my) == 0) {
+                    exit_x = mx * TILE;
                     den_door_x = (mx + 2) * TILE;
-                break;
-            case 'b':
-                cell = (u16)(MT_BUSH + half);
-                break;
-            case 'w':
-                front = (u16)(MT_TALL_GRASS + half);
-                break;
-            case 'f':
-                front = (u16)(MT_FLOWERS + half);
+                }
                 break;
             case 's':
                 start_mx = mx;
@@ -376,16 +147,19 @@ void level_build(void) {
                 checkpoint_my = my;
                 break;
             case 'e':
-                add_spawn(SPAWN_BEETLE, mx, my);
+                level_add_spawn(SPAWN_WALKER, mx, my);
                 break;
             case 'r':
-                add_spawn(SPAWN_FROG, mx, my);
+                level_add_spawn(SPAWN_HOPPER, mx, my);
                 break;
             default:
+                if (stage->cell)
+                    cell = stage->cell(c, mx, my, &front);
                 break;
             }
-            playfield_cells[my * LEVEL_W + mx] = cell;
-            foreground_cells[my * LEVEL_W + mx] = front;
+            playfield_cells[my * level_w + mx] = cell;
+            foreground_cells[my * level_w + mx] = front;
+            has_foreground |= front != MT_EMPTY;
         }
     }
 }
@@ -401,9 +175,15 @@ static int gem_brick_count;
 
 void level_show(void) {
     gem_brick_count = 0;
-    map_load(&far_layer);
+    if (stage->far_layer)
+        map_load(stage->far_layer);
+    else
+        map_unload(3);
     map_load(&playfield); // also forgets earlier map_set_cell changes
-    map_load(&foreground);
+    if (has_foreground)
+        map_load(&foreground);
+    else
+        map_unload(1);
 }
 
 // --- Blocks ------------------------------------------------------------------
@@ -420,14 +200,14 @@ static int gem_brick_hit(int mx, int my) {
 }
 
 void level_hit_block(int mx, int my, bool big) {
-    u8 collision = metatiles[map_cell(mx, my)].collision;
-    if (collision & TAG_BONUS) {
+    u8 tags = map_tags_in(mx * TILE, my * TILE, 1, 1);
+    if (tags & TAG_BONUS) {
         knock_enemies_on(mx, my);
-        if (collision & TAG_POWER) {
+        if (map_cell(mx, my) == MT_BONUS_FISH) { // told apart by its number
             spawn_bump(mx, my, BLOCK_FRAME_USED, MT_USED);
             spawn_fish(mx, my);
             psg_play(SND_POWER_APPEARS);
-        } else if (collision & TAG_BRICK) {
+        } else if (tags & TAG_BRICK) {
             bool last = gem_brick_hit(mx, my) >= GEM_BRICK_GEMS;
             spawn_bump(mx, my, last ? BLOCK_FRAME_USED : BLOCK_FRAME_BRICK,
                        last ? MT_USED : MT_GEM_BRICK);
@@ -436,7 +216,7 @@ void level_hit_block(int mx, int my, bool big) {
             spawn_bump(mx, my, BLOCK_FRAME_USED, MT_USED);
             spawn_gem_pop(mx, my);
         }
-    } else if (collision & TAG_BRICK) {
+    } else if (tags & TAG_BRICK) {
         knock_enemies_on(mx, my);
         if (big) {
             map_set_cell(mx, my, MT_EMPTY);
@@ -457,9 +237,11 @@ void level_bump_done(int mx, int my, u16 metatile) {
 }
 
 void level_collect_gems(int x, int y, int w, int h) {
+    if (!(map_tags_in(x, y, w, h) & TAG_GEM)) // the usual case: none
+        return;
     for (int my = y >> 4; my <= (y + h - 1) >> 4; my++) {
         for (int mx = x >> 4; mx <= (x + w - 1) >> 4; mx++) {
-            if (metatiles[map_cell(mx, my)].collision & TAG_GEM) {
+            if (map_tags_in(mx * TILE, my * TILE, 1, 1) & TAG_GEM) {
                 map_set_cell(mx, my, MT_EMPTY);
                 spawn_sparkle(mx * TILE + 4, my * TILE + 4);
                 add_gem();

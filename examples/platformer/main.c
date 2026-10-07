@@ -24,9 +24,16 @@
 //   - Stomping with body_hit_side: landing on an enemy (BODY_SIDE_BOTTOM)
 //     squashes it, touching it from any other side hurts
 //   - Metatile tags (MAP_TAG) marking bonus blocks, bricks and gems, found by
-//     map_cell and map_collision_at; blocks changed at runtime with
-//     map_set_cell (used blocks, broken bricks, collected gems), undone by
-//     reloading the map when a life is lost
+//     map_tags_in (a bonus block with a fish is told apart by its metatile
+//     number); blocks changed at runtime with map_set_cell (used blocks,
+//     broken bricks, collected gems), undone by rebuilding the level when a
+//     life is lost
+//   - Stages as modules: the frame (game.c, level.c, player.c, objects.c)
+//     plays a table of stages (StageDef), each with its own level text,
+//     tileset, sprite group and music, and hooks for its own objects. Each
+//     stage's sprite group is loaded above a mark taken after the global
+//     group (sprite_groups_mark), and released to it when the next stage
+//     loads (sprite_groups_release)
 //   - A platformer controller: acceleration, running with B, skidding,
 //     variable jump height, growing and shrinking
 //   - Sprite animation: sys_animate with frame_times plays walking beetles,
@@ -42,7 +49,8 @@
 //   - Screen fades between title, stage card, level, game over and stage
 //     clear (screen_set_brightness)
 //   - HUD text with a drop shadow (text_set_shadow), text_print_centered
-//   - A level written as text in the source (level.c), converted at boot
+//   - Levels written as text in the source (stage_<name>.c), built into one
+//     map buffer in RAM when a stage starts (level.c)
 //   - Music (PsgSong): an original looping tune on all three tone
 //     generators, sped up where it is when time runs low
 //     (psg_music_set_tempo), paused and resumed with the game
@@ -59,9 +67,9 @@
 //     green hills and pale blue mountains behind, white clouds, an orange
 //     spotted serval on the grass, "S E R V A L   D A S H", a blinking "PRESS
 //     START" and the controls. The top row is the HUD: score, gems (blue gem
-//     icon), "STAGE 1", time (clock icon) and lives (serval head icon). All
+//     icon), "STAGE 1-1", time (clock icon) and lives (serval head icon). All
 //     text has a dark drop shadow, so it stays readable over the clouds.
-//   - START: a rising chime, a fade to a black "STAGE 1" card with the lives
+//   - START: a rising chime, a fade to a black "STAGE 1-1" card with the lives
 //     left, then a fade into the level and its music: a bouncy tune in F major
 //     (melody, bass and drums) that loops about every 26 seconds. The
 //     countdown starts at 300 and ticks down a little faster than once a
@@ -92,7 +100,7 @@
 //   - With 100 time left: a warning jingle over the tune, which speeds up
 //     from where it is (150 to 180 beats per minute) until the level ends.
 //   - Losing a life: the music stops, the serval hops up and falls off the
-//     screen to a sad tune, then a fade to the "STAGE 1" card; after the
+//     screen to a sad tune, then a fade to the "STAGE 1-1" card; after the
 //     checkpoint (about 40% of the way) the level restarts there. With no
 //     lives left: "GAME OVER", then the title.
 //   - The goal: a tall pole with a gold knob and a red pennant. Touching it,
@@ -107,9 +115,12 @@
 //   START = Enter.)
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
-// into game.c (states, HUD, camera, goal), level.c (the level and its
-// blocks), player.c, objects.c (enemies, items, effects), art.c (graphics,
-// converted from ASCII pixel art) and sound.c.
+// into the frame every stage runs in, game.c (states, HUD, camera, goal),
+// level.c (building the level, its blocks), player.c, objects.c (enemies,
+// items, effects), art.c (shared graphics, converted from ASCII pixel art)
+// and sound.c (shared sound effects), and the stages: stage_<name>.c (the
+// level and its hooks), art_<name>.c and sound_<name>.c, with a header,
+// stage_<name>.h. Stage 1-1 is stage_overworld.c.
 
 #include "game.h"
 

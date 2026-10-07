@@ -136,10 +136,19 @@ void player_after_move(void) {
         pos_x[i] = FX(cam_x);
         vel_x[i] = int_max(vel_x[i], 0);
     }
-    level_collect_gems(fx_to_int(pos_x[i]), fx_to_int(pos_y[i]), PLAYER_W, body_h[i]);
+    int x = fx_to_int(pos_x[i]), y = fx_to_int(pos_y[i]);
+    level_collect_gems(x, y, PLAYER_W, body_h[i]);
     if (player_invulnerable > 0)
         player_invulnerable--;
-    if (fx_to_int(pos_y[i]) > LEVEL_PIXEL_H)
+    // Hazards: metatiles tagged TAG_HAZARD that the serval overlaps or
+    // stands on (the row below its feet).
+    if (map_tags_in(x, y, PLAYER_W, body_h[i] + 1) & TAG_HAZARD) {
+        if (stage->hazard)
+            stage->hazard();
+        else
+            player_hurt();
+    }
+    if (y > level_pixel_h)
         player_die(true);
 }
 

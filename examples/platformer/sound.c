@@ -1,4 +1,6 @@
-// Sound effects and music on the tone generators (audio.h).
+// Sound effects every stage shares, the sound table and the goal's fanfare,
+// on the tone generators (audio.h). Each stage's music and its own sound
+// effects are in its sound_<name>.c.
 //
 // Channels: square 1 for the serval's own sounds (jumps, growing, shrinking,
 // the pole slide, stomps); square 2 for pickups and jingles (gems, 1-up,
@@ -41,10 +43,7 @@ static const u16 hurry_notes[] = {A5, 0, A5, 0, A5, C6};
 static const u16 start_notes[] = {G5, C6, E6, G6};
 static const u16 game_over_notes[] = {G5, E5, C5, 0, D5, B4, G4};
 
-// Jingles: sounds of lower priority (everything else) wait until they end.
-#define JINGLE_PRIORITY 1
-
-static const PsgSound sounds[SOUND_COUNT] = {
+static const PsgSound sounds[SOUND_SHARED_COUNT] = {
     [SND_JUMP] = {.duty = PSG_DUTY_25,
                   .frequency = 330,
                   .slide = 2,
@@ -135,173 +134,38 @@ static const PsgSound sounds[SOUND_COUNT] = {
                        .priority = JINGLE_PRIORITY},
 };
 
+// One table for every stage: the shared sounds, then each stage's block of
+// STAGE_SOUNDS (game.h).
+#define STAGE_SOUND_IDS(stage, array)                                                              \
+    [SND_STAGE(stage) + 0] = &(array)[0], [SND_STAGE(stage) + 1] = &(array)[1],                    \
+                        [SND_STAGE(stage) + 2] = &(array)[2],                                      \
+                        [SND_STAGE(stage) + 3] = &(array)[3],                                      \
+                        [SND_STAGE(stage) + 4] = &(array)[4], [SND_STAGE(stage) + 5] = &(array)[5]
+
 const PsgSound* const sound_table[SOUND_COUNT] = {
-    [SND_JUMP] = &sounds[SND_JUMP],         [SND_JUMP_BIG] = &sounds[SND_JUMP_BIG],
-    [SND_GEM] = &sounds[SND_GEM],           [SND_BUMP] = &sounds[SND_BUMP],
-    [SND_BREAK] = &sounds[SND_BREAK],       [SND_POWER_APPEARS] = &sounds[SND_POWER_APPEARS],
-    [SND_POWER_UP] = &sounds[SND_POWER_UP], [SND_SHRINK] = &sounds[SND_SHRINK],
-    [SND_STOMP] = &sounds[SND_STOMP],       [SND_KICK] = &sounds[SND_KICK],
-    [SND_DEATH] = &sounds[SND_DEATH],       [SND_ONE_UP] = &sounds[SND_ONE_UP],
-    [SND_POLE] = &sounds[SND_POLE],         [SND_TALLY] = &sounds[SND_TALLY],
-    [SND_HURRY] = &sounds[SND_HURRY],       [SND_PAUSE] = &sounds[SND_PAUSE],
-    [SND_START] = &sounds[SND_START],       [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
+    [SND_JUMP] = &sounds[SND_JUMP],
+    [SND_JUMP_BIG] = &sounds[SND_JUMP_BIG],
+    [SND_GEM] = &sounds[SND_GEM],
+    [SND_BUMP] = &sounds[SND_BUMP],
+    [SND_BREAK] = &sounds[SND_BREAK],
+    [SND_POWER_APPEARS] = &sounds[SND_POWER_APPEARS],
+    [SND_POWER_UP] = &sounds[SND_POWER_UP],
+    [SND_SHRINK] = &sounds[SND_SHRINK],
+    [SND_STOMP] = &sounds[SND_STOMP],
+    [SND_KICK] = &sounds[SND_KICK],
+    [SND_DEATH] = &sounds[SND_DEATH],
+    [SND_ONE_UP] = &sounds[SND_ONE_UP],
+    [SND_POLE] = &sounds[SND_POLE],
+    [SND_TALLY] = &sounds[SND_TALLY],
+    [SND_HURRY] = &sounds[SND_HURRY],
+    [SND_PAUSE] = &sounds[SND_PAUSE],
+    [SND_START] = &sounds[SND_START],
+    [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
+    STAGE_SOUND_IDS(STAGE_OVERWORLD, overworld_sounds),
 };
 
-// --- Music -------------------------------------------------------------------
-//
-// "Savanna Stroll", the level's tune (written for this example): F major, 150
-// beats per minute, 16 bars that loop, about 26 seconds. A tick is a 16th
-// note, so a bar is 16 ticks. The melody's two A phrases (bars 1-4 and 5-8)
-// answer each other, the B phrase (bars 9-12) climbs higher over Bb, Am, Gm
-// and C, and bars 13-16 bring the opening back with a cadence that leads into
-// the loop.
-
-static const PsgNote melody[] = {
-    // A: F, Bb, Gm-C, F
-    {PSG_F4, 3},
-    {PSG_A4, 3},
-    {PSG_C5, 2},
-    {PSG_E5, 4},
-    {PSG_D5, 2},
-    {PSG_C5, 2},
-    {PSG_D5, 3},
-    {PSG_AS4, 3},
-    {PSG_F4, 2},
-    {PSG_G4, 2},
-    {PSG_A4, 2},
-    {PSG_AS4, 4},
-    {PSG_G4, 3},
-    {PSG_AS4, 3},
-    {PSG_D5, 2},
-    {PSG_C5, 3},
-    {PSG_AS4, 3},
-    {PSG_G4, 2},
-    {PSG_A4, 6},
-    {PSG_REST, 2},
-    {PSG_C5, 2},
-    {PSG_D5, 2},
-    {PSG_E5, 2},
-    {PSG_G5, 2},
-    // A': F, Dm, Bb-C, F
-    {PSG_F5, 3},
-    {PSG_E5, 3},
-    {PSG_C5, 2},
-    {PSG_A4, 4},
-    {PSG_C5, 2},
-    {PSG_F5, 2},
-    {PSG_A5, 3},
-    {PSG_F5, 3},
-    {PSG_D5, 2},
-    {PSG_E5, 2},
-    {PSG_F5, 2},
-    {PSG_A5, 4},
-    {PSG_G5, 3},
-    {PSG_F5, 3},
-    {PSG_D5, 2},
-    {PSG_E5, 3},
-    {PSG_D5, 3},
-    {PSG_C5, 2},
-    {PSG_F5, 8},
-    {PSG_REST, 4},
-    {PSG_C5, 2},
-    {PSG_D5, 2},
-    // B: Bb, Am, Gm, C
-    {PSG_F5, 4},
-    {PSG_D5, 2},
-    {PSG_F5, 2},
-    {PSG_AS5, 6},
-    {PSG_A5, 2},
-    {PSG_A5, 4},
-    {PSG_E5, 2},
-    {PSG_A5, 2},
-    {PSG_C6, 6},
-    {PSG_G5, 2},
-    {PSG_G5, 4},
-    {PSG_D5, 2},
-    {PSG_G5, 2},
-    {PSG_AS5, 4},
-    {PSG_A5, 2},
-    {PSG_G5, 2},
-    {PSG_E5, 3},
-    {PSG_F5, 3},
-    {PSG_G5, 2},
-    {PSG_C6, 4},
-    {PSG_AS5, 2},
-    {PSG_G5, 2},
-    // A'': F, Bb, Gm-C, F
-    {PSG_F4, 3},
-    {PSG_A4, 3},
-    {PSG_C5, 2},
-    {PSG_E5, 4},
-    {PSG_D5, 2},
-    {PSG_C5, 2},
-    {PSG_D5, 3},
-    {PSG_AS4, 3},
-    {PSG_F4, 2},
-    {PSG_G4, 2},
-    {PSG_A4, 2},
-    {PSG_AS4, 4},
-    {PSG_G4, 3},
-    {PSG_AS4, 3},
-    {PSG_D5, 2},
-    {PSG_E5, 3},
-    {PSG_G5, 3},
-    {PSG_E5, 2},
-    {PSG_F5, 6},
-    {PSG_C5, 2},
-    {PSG_A4, 2},
-    {PSG_C5, 2},
-    {PSG_F4, 4},
-};
-
-// The bass walks root, fifth, octave, fifth in 8th notes (the track's
-// .length of 2 ticks), a bar or half a bar per chord.
-#define BASS_HALF(root)                                                                            \
-    {(root), 0}, {(root) + 7, 0}, {(root) + 12, 0}, {                                              \
-        (root) + 7, 0                                                                              \
-    }
-#define BASS_BAR(root) BASS_HALF(root), BASS_HALF(root)
-
-static const PsgNote bass[] = {
-    BASS_BAR(PSG_F2),  BASS_BAR(PSG_AS2), BASS_HALF(PSG_G2),  BASS_HALF(PSG_C3), BASS_BAR(PSG_F2),
-    BASS_BAR(PSG_F2),  BASS_BAR(PSG_D3),  BASS_HALF(PSG_AS2), BASS_HALF(PSG_C3), BASS_BAR(PSG_F2),
-    BASS_BAR(PSG_AS2), BASS_BAR(PSG_A2),  BASS_BAR(PSG_G2),   BASS_BAR(PSG_C3),  BASS_BAR(PSG_F2),
-    BASS_BAR(PSG_AS2), BASS_HALF(PSG_G2), BASS_HALF(PSG_C3),  BASS_BAR(PSG_F2),
-};
-
-// One bar of drums, repeated under everything: a low thump (kick), a
-// mid-pitched burst (snare) and a short hiss (hi-hat).
-#define KICK PSG_A2
-#define SNARE PSG_E5
-#define HAT PSG_C8
-static const PsgNote drums[] = {
-    {KICK, 2}, {HAT, 2}, {SNARE, 2}, {HAT, 2}, {KICK, 2}, {KICK, 2}, {SNARE, 2}, {HAT, 2},
-};
-
-static const PsgTrack level_tracks[] = {
-    {.channel = PSG_SQUARE2,
-     .duty = PSG_DUTY_25,
-     .volume = 9,
-     .fade = -5,
-     .notes = melody,
-     .note_count = sizeof melody / sizeof melody[0]},
-    {.channel = PSG_SQUARE1,
-     .duty = PSG_DUTY_50,
-     .volume = 8,
-     .fade = -2,
-     .length = 2,
-     .notes = bass,
-     .note_count = sizeof bass / sizeof bass[0]},
-    {.channel = PSG_NOISE,
-     .volume = 6,
-     .fade = -1,
-     .notes = drums,
-     .note_count = sizeof drums / sizeof drums[0]},
-};
-
-const PsgSong level_song = {.tempo = 150, .tracks = level_tracks, .track_count = 3};
-
-// The fanfare as the serval hops off the goal pole: played once (PSG_NO_LOOP).
+// The fanfare as the serval hops off the goal pole, or walks into a stage's
+// exit: played once (PSG_NO_LOOP).
 static const PsgNote fanfare_melody[] = {
     {PSG_G5, 2}, {PSG_A5, 2}, {PSG_C6, 2}, {PSG_REST, 1},
     {PSG_A5, 1}, {PSG_C6, 3}, {PSG_D6, 1}, {PSG_F6, 8},
