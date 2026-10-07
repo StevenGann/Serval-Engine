@@ -5,7 +5,8 @@
 //   - A complete small game: title screen, serve, play, pause, game over
 //   - Engine physics for the ball (sys_physics with open left and right edges,
 //     so it bounces off the top and bottom but scores by leaving the screen;
-//     physics_set_contacts and body_contact report the bounces)
+//     physics_set_contacts and body_contact report the bounces and, with
+//     BODY_CONTACT_EXIT and a side, the goals)
 //   - Collisions with body_overlap: paddles are bodies without velocity, which
 //     the game moves itself
 //   - Shaded multi-color sprites; several sprites sharing tiles with different
@@ -34,10 +35,11 @@
 //     hit makes it a little faster and makes that paddle flash white.
 //   - Up and Down move your paddle. The computer follows the ball, a bit slower
 //     than you and not perfectly, so it can be beaten.
-//   - A ball past a paddle's face scores for the other side (the paddle's
-//     ends don't catch a ball that is already past it): the background glows
-//     blue (your point, with a rising tone) or orange (the computer's, with a
-//     falling tone), and the ball is served again toward whoever conceded.
+//   - A ball past a paddle's face scores for the other side as soon as it is
+//     off the screen (the paddle's ends don't catch a ball that is already
+//     past it): the background glows blue (your point, with a rising tone)
+//     or orange (the computer's, with a falling tone), and the ball is served
+//     again toward whoever conceded.
 //   - First to 7 wins: "YOU WIN!" with a fanfare, or "CPU WINS" with a sad
 //     descending tune. START then plays again.
 //   - START pauses and resumes during a game, with a tick.
@@ -398,13 +400,10 @@ static void update_play(void) {
         psg_play(SND_WALL);
     hit_paddle(player, 1);
     hit_paddle(cpu, -1);
-    // A point once the ball is a pixel past the open edge. (body_contact's
-    // BODY_CONTACT_EXIT says when it is entirely outside, which can be a
-    // frame sooner; this test is the game's rule.)
-    if (pos_x[ball] < -FX(BALL_SIZE))
-        score_point(false);
-    else if (pos_x[ball] > FX(SCREEN_W))
-        score_point(true);
+    // A point on the frame the ball is entirely off screen: sys_physics sets
+    // BODY_CONTACT_EXIT, with the side of the open edge the ball left through.
+    if (body_contact[ball] & BODY_CONTACT_EXIT)
+        score_point((body_contact[ball] & BODY_SIDE_RIGHT) != 0); // past the CPU: yours
 }
 
 // Remembers the ball's position for the trail.
@@ -457,7 +456,7 @@ int main(void) {
     screen_set_backdrop(COLOR_RGB(BACKDROP_R, BACKDROP_G, BACKDROP_B));
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);
     physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT);
-    physics_set_contacts(true); // body_contact: the walls the ball bounced off
+    physics_set_contacts(true); // body_contact: the walls the ball bounced off, and goals
 
     ball = create(SPR_BALL, BALL_SIZE, BALL_SIZE, C_VEL);
     spr_flags[ball] = SPRITE_ABOVE_HUD; // over the net, which is text
