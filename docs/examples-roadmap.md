@@ -115,7 +115,14 @@ The single level became stages: a frame (`game.c`, `level.c`, `player.c`, `objec
 
 #### Stage 1-3, the treetops
 
-A placeholder for now: a short level on the overworld's art, with its hedges for one-way canopies over bottomless gaps and frogs on them, ending at the goal pole.
+High in a forest: one-way canopies on rows 4 to 9 over bottomless gaps, caterpillars and tree frogs on them, birds on a path, three burr trees, and the goal pole on a great tree's bough with a hollow in its trunk to walk into. Its own tileset (285 tiles: 97 for the playfield, 188 for a parallax layer of clouds over the forest's crowns far below), sprite group (caterpillar, tree frog, bird and burr, four palettes after the blocks') and a tune in 6/8. Every required jump is at most 3 metatiles up and 48 pixels across, and at least 33 pixels narrower than the widest gap a walking jump clears at that height. What it used and exposed:
+
+- **A perfect bounce: worked as designed.** Burrs are map bodies with `body_bounce` 255 and no `body_max_fall` (a limit would take height away, as `physics.h` says): each comes back up to the pixel row it dropped from on every landing (150 bounces logged in a run, every one peaking on the same row: 54 pixels above the canopy for the first and third trees, 22 for the second), rolling left until it runs out of canopy and falls into the gap.
+- **A stage hook can steer the frame's objects.** The update hook runs after `objects_update()` has set velocities, so the treetops turns walkers and the fish back over bottomless drops, and stops frogs hopping into them, without touching `objects.c`: `map_collision_at()` down the column ahead finds a floor, or none. (A brick row over a canopy has a floor below it, so things step off it as in the other stages.)
+- **An entity without a sprite** is a fine spawner: a burr tree is `entity_create(C_POS | C_STAGE(1))` with a timer; nothing draws it, and the frame removes it once it is far behind the camera, like any entity with a position.
+- **Paths, again without gravity:** birds fly a looping weave (three steps whose turns cancel), and stomping one stops its path (`enemy_squash` calls `path_stop()`).
+- **Compound meter:** `PsgSong.ticks_per_beat` 3 makes a tick an eighth note of 6/8, a beat a dotted quarter.
+- **No new engine gaps.** Its tileset repeats the shared block tiles once more (tileset groups, above).
 
 #### Stage 1-4, the castle
 

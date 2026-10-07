@@ -90,9 +90,22 @@
 //   - A recolored brick (the stage group's block palette) and an exit
 //     without a pole
 //
-// Demonstrates in stage 1-3, the treetops (stage_treetops.c): a placeholder
-// for now, on the overworld's art: one-way canopies over bottomless gaps,
-// with frogs on them, and the goal pole.
+// Demonstrates in stage 1-3, the treetops (stage_treetops.c):
+//   - One-way canopies (MAP_ONEWAY) at varied heights over bottomless gaps,
+//     on trunks that aren't solid, and a daytime sky whose parallax layer is
+//     clouds over a forest's crowns far below
+//   - A perfect bounce (body_bounce 255, with no body_max_fall): burrs
+//     dropped by burr trees roll toward the serval, bouncing back up to the
+//     height they dropped from on every landing, until they run out of
+//     canopy; they hurt on touch (body_overlap). A burr tree is an entity
+//     with a position and a timer but no sprite
+//   - Paths (path.h, sys_path): birds fly in on a looping weave, dipping and
+//     climbing as they come (bodies with BODY_GRAVITY(0))
+//   - The stage's update hook steering the frame's objects after
+//     objects_update(): caterpillars (the walkers) and the fish turn back
+//     over a bottomless drop, and a frog about to hop into one hops in place
+//     (map_collision_at below them)
+//   - A song in 6/8 (PsgSong.ticks_per_beat 3: a tick is an eighth note)
 //
 // Demonstrates in stage 1-4, the castle (stage_castle.c, boss.c): a
 // placeholder for now, on the underground's art: spikes, plank ledges, an
@@ -182,12 +195,35 @@
 //     shrinks and blinks, and can jump out; a small one loses a life).
 //   - At the end a stone staircase climbs to a timbered opening in the rock
 //     wall, with daylight and green hills beyond; walking in ends the stage.
-//   Stage 1-3, the treetops (a placeholder for now):
-//   - The overworld's tiles under a paler sky, with green hedges on tree
-//     trunks for canopies: the serval jumps up through them and lands on
-//     them, and the gaps between them are bottomless. Red frogs sit on the
-//     canopies and the ground. A short sketch of a tune in G major. The goal
-//     pole and the striped tent end it.
+//   Stage 1-3, the treetops:
+//   - High in a forest under a pale blue sky with white clouds, the forest's
+//     crowns far below in a blue-green haze, scrolling at half speed. The
+//     serval starts on a great tree's mossy top and jumps from canopy to
+//     canopy: leafy crowns with pink blossoms on brown trunks that branch
+//     out under them, from the lower part of the screen to near its top,
+//     with nothing below them (falling between them loses a life). It jumps
+//     up through a canopy from below and lands on it. Leafy sprigs stand in
+//     front of it here and there. A bright, lilting tune in A major in 6/8
+//     (melody, bass and drums) that loops about every 29 seconds, sped up
+//     from 100 to 125 beats per minute when time runs low.
+//   - Green caterpillars with orange heads crawl along the canopies, turning
+//     back at the ends, and lie flat when stomped; green tree frogs with red
+//     eyes hop toward you, but at a canopy's end they hop in place. Blue
+//     birds fly in from the right with a chirp, dipping and climbing as they
+//     come: stomp one (it vanishes in a sparkle), or pass under it or over
+//     it.
+//   - Three burr trees: spiky brown burrs drop out of the leaves with a
+//     rustle, one every two and a half seconds, and roll toward you along
+//     the canopy, spinning and bouncing back up to the same height every
+//     time, until they fall off its end. They hurt on touch and can't be
+//     stomped: walk under the first and third trees' high bounces, jump the
+//     second's low ones.
+//   - Gold bonus blocks and pale wooden bricks over some canopies, one with
+//     the fish (which turns back at a canopy's end too), and blue gems in
+//     the air, most of them over the gaps.
+//   - The end: a broad bough on a great tree, the goal pole with a golden
+//     acorn standing on a log end, and the great tree's trunk with a hollow
+//     at its foot, lit from within; the serval walks into it.
 //   Stage 1-4, the castle (a placeholder for now):
 //   - The underground's tiles over a red-black backdrop: a spike dip, a pit
 //     of spikes crossed on plank ledges, a woodlouse, and the timbered exit at
