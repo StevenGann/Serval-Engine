@@ -10,8 +10,11 @@
 #        (defaults: gba-release, web-release)
 #
 # GBA builds need an arm-none-eabi GCC on PATH, or ARM_GNU_TOOLCHAIN set to the
-# toolchain's root directory; web builds need Emscripten (emsdk_env.sh
-# sourced). See docs/development.md.
+# toolchain's root directory; web builds need Emscripten (EMSDK set, or emcc
+# on PATH). Whichever of the two this shell lacks is taken from the file
+# tools/setup-dev.sh writes, ~/opt/serval-env.sh (SERVAL_ENV_FILE to use
+# another), so a terminal, IDE or task runner started before setup still
+# works; variables already set are kept. See docs/development.md.
 #
 # An example is a directory under examples/ with a main.c; its CMake target
 # (in examples/CMakeLists.txt) has the same name as the directory.
@@ -64,11 +67,28 @@ build_platform() {
 
 cd "$root"
 
+env_file="${SERVAL_ENV_FILE:-$HOME/opt/serval-env.sh}"
+if [[ -f "$env_file" ]]; then
+    loaded=()
+    for var in ARM_GNU_TOOLCHAIN EMSDK; do
+        [[ -n "${!var:-}" ]] && continue
+        value="$(. "$env_file" > /dev/null 2>&1; printf '%s' "${!var:-}")"
+        if [[ -n "$value" ]]; then
+            export "$var=$value"
+            loaded+=("$var")
+        fi
+    done
+    if [[ ${#loaded[@]} -gt 0 ]]; then
+        echo "Using ${loaded[*]} from $env_file."
+        echo
+    fi
+fi
+
 if command -v arm-none-eabi-gcc > /dev/null || [[ -n "${ARM_GNU_TOOLCHAIN:-}" ]]; then
     platforms=$((platforms + 1))
     build_platform "$gba_preset" gba roms
 else
-    echo "GBA: skipped (arm-none-eabi-gcc not found; put it on PATH or set ARM_GNU_TOOLCHAIN)."
+    echo "GBA: skipped (arm-none-eabi-gcc not found; run tools/setup-dev.sh, or put it on PATH or set ARM_GNU_TOOLCHAIN)."
     echo
 fi
 
@@ -76,7 +96,7 @@ if command -v emcc > /dev/null || [[ -n "${EMSDK:-}" ]]; then
     platforms=$((platforms + 1))
     build_platform "$web_preset" html html
 else
-    echo "Web: skipped (Emscripten not found; source emsdk_env.sh)."
+    echo "Web: skipped (Emscripten not found; run tools/setup-dev.sh, or set EMSDK or source emsdk_env.sh)."
     echo
 fi
 
