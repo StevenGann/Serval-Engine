@@ -12,6 +12,7 @@
 // behaviour if it waits (docs/vm.md "Behaviours and reactions").
 //
 //     vm_load(game_scripts, sizeof game_scripts);
+//     vm_collide(C_PLAYER, C_COIN); // vm_events() raises their Collision events
 //     Entity e = entity_create(C_POS | C_SPR);
 //     vm_attach(e, OBJ_PLAYER); // its Create handler runs in the next phase
 //     for (;;) {
@@ -19,7 +20,7 @@
 //         vm_step();            // waits, queued events, Step reactions
 //         sys_movement();
 //         sys_physics();
-//         vm_events();          // Collision reactions (vm_event from game code)
+//         vm_events();          // queued events, then vm_collide's collisions
 //         sys_animate();
 //         sys_render();
 //         frame_end();
@@ -49,8 +50,11 @@
 #define VM_ARRAY_RECORD_SIZE 8 // bytes per array record
 
 // Header flags. Bit 0: the globals' initial values (global count x s32) follow
-// the array table, and vm_load starts the globals at them instead of 0. Every
-// other bit must be 0.
+// the array table, and vm_load starts the globals at them instead of 0. Bit 1
+// is reserved for an extended handler table (events beyond an object record's
+// six slots, in a later version). Every bit but bit 0 must be 0: vm_load
+// refuses a blob with any other bit set (warns, returns false), so a blob that
+// needs a later engine never runs half-understood on this one.
 #define VM_FLAG_GLOBAL_VALUES 1
 
 // Array kinds (an array record's kind): cells in the RAM pool, or constant
@@ -172,33 +176,40 @@ enum {
 #define VM_P_FIELD0 64
 #define VM_P_FIELD(n) (VM_P_FIELD0 + (n))
 
-// Engine calls for SYS. Arguments are pushed left to right (the last on
-// top). Append-only.
+// Engine calls for SYS, each named after the C function it calls (the Lua
+// subset's builtins have the same names in lower case; docs/lua.md).
+// Arguments are pushed left to right (the last on top). Append-only: the
+// numbers are part of the blob format. Tracker music and sampled sound
+// (audio.h's music_* and sfx_*) have no calls yet; they arrive with their
+// implementations, appended.
 enum {
-    VM_SYS_PSG_PLAY,          // sound id
-    VM_SYS_MUSIC_PLAY,        // song index (VmBindings.songs)
-    VM_SYS_MUSIC_STOP,        //
-    VM_SYS_MUSIC_PAUSE,       //
-    VM_SYS_MUSIC_RESUME,      //
-    VM_SYS_CAMERA_SET,        // x, y (whole pixels)
-    VM_SYS_TEXT_PRINT,        // col, row, string index
-    VM_SYS_RANDOM_RANGE,      // lo, hi -> random_range(lo, hi)
-    VM_SYS_BUTTON_DOWN,       // buttons -> 1 if button_down(buttons), else 0
-    VM_SYS_BUTTON_PRESSED,    // buttons -> 1 if button_pressed(buttons), else 0
-    VM_SYS_BRIGHTNESS,        // level -> screen_set_brightness(level)
-    VM_SYS_PATH_START,        // entity, path index (VmBindings.paths), flags
-    VM_SYS_TEXT_PRINT_NUMBER, // col, row, value, width: the value in decimal; width >= 1
-                              // right-aligns it in that many columns, spaces in front
-    VM_SYS_PATH_STOP,         // entity
+    VM_SYS_PSG_PLAY,              // sound id -> psg_play(id)
+    VM_SYS_PSG_MUSIC_PLAY,        // song index (VmBindings.psg_songs) -> psg_music_play
+    VM_SYS_PSG_MUSIC_STOP,        // psg_music_stop()
+    VM_SYS_PSG_MUSIC_PAUSE,       // psg_music_pause()
+    VM_SYS_PSG_MUSIC_RESUME,      // psg_music_resume()
+    VM_SYS_CAMERA_SET,            // x, y (whole pixels) -> camera_set(x, y)
+    VM_SYS_TEXT_PRINT,            // col, row, string index -> text_print
+    VM_SYS_RANDOM_RANGE,          // lo, hi -> random_range(lo, hi)
+    VM_SYS_BUTTON_DOWN,           // buttons -> 1 if button_down(buttons), else 0
+    VM_SYS_BUTTON_PRESSED,        // buttons -> 1 if button_pressed(buttons), else 0
+    VM_SYS_SCREEN_SET_BRIGHTNESS, // level -> screen_set_brightness(level)
+    VM_SYS_PATH_START,            // entity, path index (VmBindings.paths), flags
+    VM_SYS_TEXT_PRINT_NUMBER,     // col, row, value, width: the value in decimal; width >= 1
+                                  // right-aligns it in that many columns, spaces in front
+                                  // (no C function: C prints numbers with text_format)
+    VM_SYS_PATH_STOP,             // entity -> path_stop(entity)
     VM_SYS_COUNT
 };
 
-// Data that SYS calls reach by index, since scripts hold no pointers. The
-// arrays must stay valid while scripts run; vm_bind copies this struct.
+// Data that SYS calls reach by index, since scripts hold no pointers: the
+// songs VM_SYS_PSG_MUSIC_PLAY plays and the paths VM_SYS_PATH_START starts.
+// The arrays must stay valid while scripts run; vm_bind copies this struct.
+// An index past a count, or a NULL entry, warns and does nothing.
 typedef struct {
-    const PsgSong* const* songs;
+    const PsgSong* const* psg_songs;
     const Path* const* paths;
-    u16 song_count;
+    u16 psg_song_count;
     u16 path_count;
 } VmBindings;
 
@@ -221,7 +232,12 @@ bool vm_load(const u8* blob, u32 size);
 // queue emptied.
 bool vm_reload(const u8* blob, u32 size);
 
+// Halts every context, detaches every entity and empties the queue: no
+// scripts run until the next vm_load. Keeps vm_bind's bindings and
+// vm_collide's pairs.
 void vm_unload(void);
+// Sets the data SYS calls reach by index (copied; the arrays it points to are
+// not). NULL clears it. Loading a blob keeps it.
 void vm_bind(const VmBindings* bindings);
 
 // --- Entities and events -----------------------------------------------------
@@ -241,14 +257,78 @@ void vm_kill(Entity e);
 // context index, or -1 (and warns) if there is no such handler or no free
 // context.
 int vm_start(u16 object, u8 event);
-// Queues an event for an entity: game code reports collisions this way,
-// e.g. vm_event(a, b, VM_EV_COLLISION) after body_overlap(a, b).
+// Queues an event for an entity, with `other` as the handler's OTHER; it runs
+// in the next drain (vm_step or vm_events). Game code can report collisions
+// this way, e.g. vm_event(a, b, VM_EV_COLLISION) after its own test, where
+// vm_collide's pairs don't fit. An event number of VM_EV_COUNT or more warns
+// and queues nothing; a full queue (VM_EVENT_QUEUE) drops the event and warns.
 void vm_event(Entity e, Entity other, u8 event);
+
+// --- Collisions ----------------------------------------------------------------
+
+#define VM_COLLIDE_PAIRS 8 // pairs vm_collide() keeps at once
+
+// Makes the VM find collisions itself, so a scripted game needs no collision
+// loop in C: once vm_events() has drained the queue, it tests every pair set
+// here and runs the Collision reactions of the bodies that overlap
+// (docs/vm.md#collisions).
+//
+// A pair names two sets of entities by component mask: the live entities
+// with every component in `a` (as ent_has(i, a)), and those with every
+// component in `b`; game components are the usual choice:
+// vm_collide(C_PLAYER, C_COIN), vm_collide(C_SHOT, C_ENEMY). Attached or not:
+// an entity C code runs can be the other side of a scripted one's collision.
+// Two entities overlap as body_overlap() (physics.h) says: their body_w x
+// body_h rectangles at pos_x, pos_y, touching edges not counting, and a
+// SPRITE_SCREEN entity compared with a world one in the world. An entity with
+// a 0 x 0 body (body_w and body_h are 0 until set) is a point.
+//
+// For each overlapping pair, each of the two that is attached to an object
+// with a Collision handler gets the event, with the other as OTHER: a's first,
+// then b's. Both are queued and the queue drained before the next test, so the
+// reactions run in this vm_events(), and the tests after them see what they
+// did: an entity a reaction killed (KILL) is tested no more this frame, one it
+// moved is tested where it is now, and one it took out of a set (VM_P_TAGS) is
+// tested no more as a member of that set. The queue never fills this way: it
+// holds an overlap's two events only until they run. Bodies that stay
+// overlapped collide again every frame, as in GameMaker; a reaction meant for
+// the first touch keeps its own state (a field, or a tag it clears).
+//
+// Order, deterministic: the pairs in the order they were set; in a pair, the
+// entities of `a` in slot order, each against the entities of `b` in slot
+// order. Each pair lists its sets (ecs_gather) when its turn comes, so an
+// entity spawned meanwhile is tested from the next pair, or the next frame.
+// An entity is never paired with itself, and two entities that are both in
+// both sets are tested once, as (lower slot, higher slot).
+//
+// Returns true once the pair is set, also when it already was (either way
+// round: (a, b) and (b, a) raise the same events). Returns false and warns if
+// a or b is 0 (that set would be every live entity; C_BODY means every body)
+// or VM_COLLIDE_PAIRS pairs are set. Pairs are the game's configuration, not
+// script state: vm_load, vm_reload and vm_unload keep them; while no blob is
+// loaded nothing is tested.
+//
+// Cost per pair and vm_events(), on the GBA: listing the sets, about 1,000
+// cycles each (one list when a == b), and about 75 cycles per test of an
+// entity of a against one of b, plus the reactions: about 3,000 for a player
+// against 8 fireflies, 17,000 for 10 shots against 20 enemies (6% of a frame).
+// Keep the sets small and apart: shots against enemies, not every body
+// against every body.
+bool vm_collide(u32 a, u32 b);
+// Removes every pair: vm_events() tests no collisions until vm_collide()
+// sets one again.
+void vm_collide_clear(void);
 
 // --- Running -----------------------------------------------------------------
 
-void vm_step(void);   // phase 1: after input, before movement
-void vm_events(void); // phase 2: after movement and physics
+// Phase 1, after input and before movement: resumes waiting scripts, queues
+// Animation End events, drains the queue, runs the Step reactions, drains
+// again (docs/vm.md "Scheduling: two phases per frame").
+void vm_step(void);
+// Phase 2, after movement and physics: drains the queue (events game code
+// queued since vm_step), then tests vm_collide's pairs, running their
+// Collision reactions as it finds them.
+void vm_events(void);
 
 // --- Inspecting --------------------------------------------------------------
 

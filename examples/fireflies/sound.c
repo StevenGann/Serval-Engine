@@ -1,5 +1,5 @@
 // Sound effects and music on the tone generators (audio.h). The scripts play
-// them by number (SYS psg_play, SYS music_play through vm_bind's songs).
+// them by number (SYS psg_play, SYS psg_music_play through vm_bind's psg_songs).
 //
 // Channels: the music's melody is on square 2, its bass on square 1 and
 // crickets on noise. A catch's chime and the last seconds' ticks are on

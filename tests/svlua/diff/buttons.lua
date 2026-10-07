@@ -10,23 +10,23 @@ presses = 0
 combo = 0
 
 function Pad:room_start()
-  print(1, 1, "PAD")
-  brightness(-8)
+  text_print(1, 1, "PAD")
+  screen_set_brightness(-8)
   while true do
     wait(1)
     if button_down(BUTTON_A) then
       downs = downs + 1
-      print(2, 2, downs)
+      text_print_number(2, 2, downs)
     end
     if button_pressed(BUTTON_A) then
       presses = presses + 1
-      play_sound(presses)
-      print(3, 3, presses, 4)
+      psg_play(presses)
+      text_print_number(3, 3, presses, 4)
     end
     if button_down(BUTTON_B) and button_down(BUTTON_LEFT) then
       combo = combo + 1
-      brightness(combo)
+      screen_set_brightness(combo)
     end
-    if button_pressed(BUTTON_B | BUTTON_START) then print(4, 4, "B!") end
+    if button_pressed(BUTTON_B | BUTTON_START) then text_print(4, 4, "B!") end
   end
 end

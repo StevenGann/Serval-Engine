@@ -64,9 +64,9 @@ SKIP = 77
 PROPS = ("x", "y", "vx", "vy", "sprite", "frame", "flags", "angle", "depth", "scale", "body_w",
          "body_h", "tags", "anim_time", "anim_step")
 FIXED_PROPS = ("x", "y", "vx", "vy", "scale")
-SYS_ARITY = {"PSG_PLAY": 1, "MUSIC_PLAY": 1, "MUSIC_STOP": 0, "MUSIC_PAUSE": 0,
-             "MUSIC_RESUME": 0, "CAMERA_SET": 2, "TEXT_PRINT": 2, "RANDOM_RANGE": 2,
-             "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "BRIGHTNESS": 1, "PATH_START": 3,
+SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC_PAUSE": 0,
+             "PSG_MUSIC_RESUME": 0, "CAMERA_SET": 2, "TEXT_PRINT": 2, "RANDOM_RANGE": 2,
+             "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "SCREEN_SET_BRIGHTNESS": 1, "PATH_START": 3,
              "TEXT_PRINT_NUMBER": 4, "PATH_STOP": 1}  # TEXT_PRINT: col, row, then its text
 
 

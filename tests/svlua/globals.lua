@@ -24,7 +24,7 @@ local level = 2                       -- a top-level local is a global too
 local paused = false
 
 function Init:room_start()
-  print(1, 1, GREETING)
+  text_print(1, 1, GREETING)
   speed = speed * 2
   origin = origin + HALF
   if not paused then level = level + count end

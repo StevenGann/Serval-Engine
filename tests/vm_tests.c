@@ -21,9 +21,7 @@
 #include "test.h"
 
 #include "../src/core/sprite_internal.h"
-#ifndef SERVAL_GBA
-#include "../src/core/vm_internal.h"
-#endif
+#include "../src/core/vm_internal.h" // serval_host_vm_calls only in host builds
 
 // Exactly n warnings since `before` in debug builds (both test presets);
 // release builds compile warnings out.
@@ -427,10 +425,12 @@ static void witness(u16 obj) {
     op(VM_OP_HALT);
 }
 
-// Every case starts from an empty ECS and no blob, so cases are independent.
+// Every case starts from an empty ECS, no blob and no collision pairs, so
+// cases are independent.
 static void reset(void) {
     ecs_reset();
     vm_unload();
+    vm_collide_clear();
 }
 
 static void start(u16 obj) {
@@ -3697,6 +3697,31 @@ static void animation_properties_restart_an_animation(void) {
 
 // --- SYS ---------------------------------------------------------------------
 
+// vm.md "Engine calls": the SYS page's numbers are part of the format and
+// never change; a rename (VM_SYS_PSG_MUSIC_*, VM_SYS_SCREEN_SET_BRIGHTNESS)
+// keeps them.
+static void sys_page_numbers_are_fixed(void) {
+    static const u32 page[] = {VM_SYS_PSG_PLAY,
+                               VM_SYS_PSG_MUSIC_PLAY,
+                               VM_SYS_PSG_MUSIC_STOP,
+                               VM_SYS_PSG_MUSIC_PAUSE,
+                               VM_SYS_PSG_MUSIC_RESUME,
+                               VM_SYS_CAMERA_SET,
+                               VM_SYS_TEXT_PRINT,
+                               VM_SYS_RANDOM_RANGE,
+                               VM_SYS_BUTTON_DOWN,
+                               VM_SYS_BUTTON_PRESSED,
+                               VM_SYS_SCREEN_SET_BRIGHTNESS,
+                               VM_SYS_PATH_START,
+                               VM_SYS_TEXT_PRINT_NUMBER,
+                               VM_SYS_PATH_STOP};
+    u32 moved = 0;
+    for (u32 k = 0; k < sizeof page / sizeof page[0]; k++)
+        moved += page[k] != k;
+    CHECK(moved == 0);
+    CHECK(VM_SYS_COUNT == 14);
+}
+
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
 // sequence from the same seed), pops two and pushes one.
 static void sys_random_range(void) {
@@ -3821,19 +3846,19 @@ static void sys_bad_string_or_song_index(void) {
     string(0, "A");
     string(1, "B");
     handler(0, VM_EV_CREATE);
-    push8(55);              // 55
-    push8(3);               // 55 col
-    push8(4);               // 55 col row
-    ldg(0);                 // 55 col row index
-    sys(VM_SYS_TEXT_PRINT); // 55
-    stg(1);                 // glob[1] = 55
-    push8(56);              // 56
-    ldg(2);                 // 56 index
-    sys(VM_SYS_MUSIC_PLAY); // 56
-    stg(3);                 // glob[3] = 56
-    op(VM_OP_HALT);         //
+    push8(55);                  // 55
+    push8(3);                   // 55 col
+    push8(4);                   // 55 col row
+    ldg(0);                     // 55 col row index
+    sys(VM_SYS_TEXT_PRINT);     // 55
+    stg(1);                     // glob[1] = 55
+    push8(56);                  // 56
+    ldg(2);                     // 56 index
+    sys(VM_SYS_PSG_MUSIC_PLAY); // 56
+    stg(3);                     // glob[3] = 56
+    op(VM_OP_HALT);             //
     CHECK(load());
-    vm_bind(&(VmBindings){.songs = songs, .song_count = 2});
+    vm_bind(&(VmBindings){.psg_songs = songs, .psg_song_count = 2});
 #ifndef SERVAL_GBA
     serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
 #endif
@@ -3845,8 +3870,8 @@ static void sys_bad_string_or_song_index(void) {
     CHECK(vm_global(1) == 55 && vm_global(3) == 56);
     CHECK_WARNED(before, 2);
 
-    vm_bind(&(VmBindings){.song_count = 0}); // no songs bound
-    vm_set_global(0, -1);                    // a negative string index
+    vm_bind(&(VmBindings){.psg_song_count = 0}); // no songs bound
+    vm_set_global(0, -1);                        // a negative string index
     vm_set_global(2, 0);
     vm_set_global(1, 0);
     vm_set_global(3, 0);
@@ -3883,36 +3908,36 @@ static void platform_sys_calls_reach_the_platform(void) {
     string(0, "HI");
     u32 hello = string(1, "HELLO");
     handler(0, VM_EV_CREATE);
-    push8(5);                    // sound 5
-    sys(VM_SYS_PSG_PLAY);        // frame 1
-    wait_frames(1);              //
-    push8(1);                    // song 1
-    sys(VM_SYS_MUSIC_PLAY);      // frame 2
-    wait_frames(1);              //
-    sys(VM_SYS_MUSIC_STOP);      // frame 3
-    wait_frames(1);              //
-    sys(VM_SYS_MUSIC_PAUSE);     // frame 4
-    wait_frames(1);              //
-    sys(VM_SYS_MUSIC_RESUME);    // frame 5
-    wait_frames(1);              //
-    push8(3);                    // col
-    push8(4);                    // col row
-    push8(1);                    // col row string
-    sys(VM_SYS_TEXT_PRINT);      // frame 6
-    wait_frames(1);              //
-    push16(BUTTON_A | BUTTON_L); // buttons
-    sys(VM_SYS_BUTTON_DOWN);     // frame 7: 1
-    stg(0);                      // glob[0] = 1
-    wait_frames(1);              //
-    push16(BUTTON_START);        // buttons
-    sys(VM_SYS_BUTTON_PRESSED);  // frame 8: 0
-    stg(1);                      // glob[1] = 0
-    wait_frames(1);              //
-    push8(-16);                  // level
-    sys(VM_SYS_BRIGHTNESS);      // frame 9
-    op(VM_OP_HALT);              //
+    push8(5);                          // sound 5
+    sys(VM_SYS_PSG_PLAY);              // frame 1
+    wait_frames(1);                    //
+    push8(1);                          // song 1
+    sys(VM_SYS_PSG_MUSIC_PLAY);        // frame 2
+    wait_frames(1);                    //
+    sys(VM_SYS_PSG_MUSIC_STOP);        // frame 3
+    wait_frames(1);                    //
+    sys(VM_SYS_PSG_MUSIC_PAUSE);       // frame 4
+    wait_frames(1);                    //
+    sys(VM_SYS_PSG_MUSIC_RESUME);      // frame 5
+    wait_frames(1);                    //
+    push8(3);                          // col
+    push8(4);                          // col row
+    push8(1);                          // col row string
+    sys(VM_SYS_TEXT_PRINT);            // frame 6
+    wait_frames(1);                    //
+    push16(BUTTON_A | BUTTON_L);       // buttons
+    sys(VM_SYS_BUTTON_DOWN);           // frame 7: 1
+    stg(0);                            // glob[0] = 1
+    wait_frames(1);                    //
+    push16(BUTTON_START);              // buttons
+    sys(VM_SYS_BUTTON_PRESSED);        // frame 8: 0
+    stg(1);                            // glob[1] = 0
+    wait_frames(1);                    //
+    push8(-16);                        // level
+    sys(VM_SYS_SCREEN_SET_BRIGHTNESS); // frame 9
+    op(VM_OP_HALT);                    //
     CHECK(load());
-    vm_bind(&(VmBindings){.songs = songs, .song_count = 2});
+    vm_bind(&(VmBindings){.psg_songs = songs, .psg_song_count = 2});
     serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
     vm_set_global(1, 99);
     start(0);
@@ -3920,13 +3945,13 @@ static void platform_sys_calls_reach_the_platform(void) {
     vm_step();
     CHECK(last_call(1, VM_SYS_PSG_PLAY, 5, 0, 0, NULL));
     frame();
-    CHECK(last_call(2, VM_SYS_MUSIC_PLAY, 1, 0, 0, &song_b));
+    CHECK(last_call(2, VM_SYS_PSG_MUSIC_PLAY, 1, 0, 0, &song_b));
     frame();
-    CHECK(last_call(3, VM_SYS_MUSIC_STOP, 0, 0, 0, NULL));
+    CHECK(last_call(3, VM_SYS_PSG_MUSIC_STOP, 0, 0, 0, NULL));
     frame();
-    CHECK(last_call(4, VM_SYS_MUSIC_PAUSE, 0, 0, 0, NULL));
+    CHECK(last_call(4, VM_SYS_PSG_MUSIC_PAUSE, 0, 0, 0, NULL));
     frame();
-    CHECK(last_call(5, VM_SYS_MUSIC_RESUME, 0, 0, 0, NULL));
+    CHECK(last_call(5, VM_SYS_PSG_MUSIC_RESUME, 0, 0, 0, NULL));
     frame();
     CHECK(last_call(6, VM_SYS_TEXT_PRINT, 3, 4, 1, placed + hello));
     const char* text = serval_host_vm_calls.ptr;
@@ -3940,10 +3965,10 @@ static void platform_sys_calls_reach_the_platform(void) {
     CHECK(last_call(8, VM_SYS_BUTTON_PRESSED, BUTTON_START, 0, 0, NULL));
     CHECK(vm_global(1) == 0);
     frame();
-    CHECK(last_call(9, VM_SYS_BRIGHTNESS, -16, 0, 0, NULL));
+    CHECK(last_call(9, VM_SYS_SCREEN_SET_BRIGHTNESS, -16, 0, 0, NULL));
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
-    vm_bind(&(VmBindings){.song_count = 0});
+    vm_bind(&(VmBindings){.psg_song_count = 0});
 #endif
 }
 
@@ -4831,6 +4856,411 @@ static void loader_checks_array_records(void) {
 #endif
 }
 
+// --- Collisions (vm_collide) ---------------------------------------------------
+
+// The sets of the collision tests, by game component.
+#define TAG_A C_GAME(0)
+#define TAG_B C_GAME(1)
+#define TAG_C C_GAME(2)
+#define TAG_D C_GAME(3)
+
+// Game component n, for a run-time n (C_GAME checks a constant one).
+static u32 game_tag(u32 n) {
+    return 1u << (16 + n);
+}
+
+// The log of Collision reactions: array 0, its length in glob[LOG]. An entry
+// is self * 100 + other, each entity named by its spr_depth.
+enum { LOG = 0, LOG_CELLS = 64 };
+
+static void collide_blob_begin(u16 objects) {
+    blob_begin_arrays(objects, 0, GLOBALS, 1);
+    ram_array(0, LOG_CELLS, 0);
+}
+
+// Starts obj's Collision handler with code that logs the event; the caller
+// adds the rest (at least a HALT).
+static void log_collision(u16 obj) {
+    handler(obj, VM_EV_COLLISION);
+    ldg(LOG);         // n
+    op(VM_OP_SELF);   // n self
+    getp(VM_P_DEPTH); // n id
+    push8(100);       // n id 100
+    op(VM_OP_MUL);    // n id*100
+    op(VM_OP_OTHER);  // n id*100 other
+    getp(VM_P_DEPTH); // n id*100 other_id
+    op(VM_OP_ADD);    // n entry
+    sta(0);           // log[n] = entry
+    count(LOG);       // n + 1
+}
+
+// An entity with the components `tags`, a w x h body at (x, y) in whole
+// pixels, named `id` (its spr_depth) in the log.
+static Entity collider(u32 tags, s32 x, s32 y, u32 w, u32 h, s16 id) {
+    Entity e = entity_create(C_POS | C_SPR | C_BODY | tags);
+    u32 i = entity_index(e);
+    pos_x[i] = FX(x);
+    pos_y[i] = FX(y);
+    body_w[i] = (u8)w;
+    body_h[i] = (u8)h;
+    spr_depth[i] = id;
+    return e;
+}
+
+// True if the log holds exactly these n entries, in order.
+static bool logged(const s32* entries, u32 n) {
+    if (vm_global(LOG) != (s32)n)
+        return false;
+    for (u32 k = 0; k < n; k++)
+        if (serval_vm_array_cell(k) != entries[k])
+            return false;
+    return true;
+}
+
+// vm.h vm_collide: vm_events() (not vm_step) tests the pair, and two
+// entities whose bodies overlap (body_overlap) both get a Collision event,
+// with the other as OTHER: a's first, then b's. They collide again on every
+// frame they overlap, and not once apart. Touching edges don't count; a
+// SPRITE_SCREEN entity is compared with a world one in the world (the camera
+// added). No warnings.
+static void collide_raises_collisions_on_both_sides(void) {
+    reset();
+    map_unload(2); // no playfield: the camera isn't clamped
+    camera_set(0, 0);
+    collide_blob_begin(2);
+    log_collision(0);
+    op(VM_OP_HALT);
+    log_collision(1);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    Entity a = collider(TAG_A, 10, 10, 8, 8, 1);
+    Entity b = collider(TAG_B, 14, 14, 8, 8, 2);    // overlaps a
+    Entity edge = collider(TAG_B, 18, 10, 8, 8, 3); // touches a's right edge
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_attach(edge, 1);
+    u32 before = debug_warning_count();
+    vm_step(); // the Creates; no collision in this phase
+    CHECK(vm_global(LOG) == 0);
+    vm_events();
+    static const s32 once[] = {102, 201};
+    CHECK(logged(once, 2));
+    frame(); // still overlapping: again
+    static const s32 twice[] = {102, 201, 102, 201};
+    CHECK(logged(twice, 4));
+    u32 bi = entity_index(b);
+    pos_x[bi] = FX(30); // apart
+    frame();
+    CHECK(logged(twice, 4));
+    // On the screen at x -86 with the camera at x 100: x 14 in the world.
+    spr_flags[bi] |= SPRITE_SCREEN;
+    pos_x[bi] = FX(14 - 100);
+    camera_set(100, 0);
+    vm_set_global(LOG, 0);
+    frame();
+    CHECK(logged(once, 2));
+    camera_set(0, 0); // now at x -86 in the world as well: apart
+    frame();
+    CHECK(logged(once, 2));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_collide: the sets hold every live entity with their components,
+// attached or not. Only an entity attached to an object with a Collision
+// handler gets the event; an unattached one can still be OTHER.
+static void collide_events_go_to_collision_handlers_only(void) {
+    reset();
+    collide_blob_begin(2);
+    log_collision(0);
+    op(VM_OP_HALT);
+    handler(1, VM_EV_CREATE); // object 1: no Collision handler
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    Entity a = collider(TAG_A, 0, 0, 8, 8, 1);
+    collider(TAG_B, 4, 4, 8, 8, 2); // unattached, overlapping a
+    Entity c = collider(TAG_A, 50, 0, 8, 8, 3);
+    Entity d = collider(TAG_B, 54, 4, 8, 8, 4); // overlapping c
+    vm_attach(a, 0);
+    vm_attach(c, 1);
+    vm_attach(d, 0);
+    u32 before = debug_warning_count();
+    frame();
+    static const s32 expected[] = {102, 403};
+    CHECK(logged(expected, 2));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_collide "Order": the pairs in the order they were set; in a pair,
+// the entities of a in slot order, each against those of b in slot order.
+static void collide_order_is_pairs_then_slots(void) {
+    reset();
+    collide_blob_begin(1);
+    log_collision(0);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_C, TAG_D));
+    CHECK(vm_collide(TAG_A, TAG_B));
+    // All on the same spot, created in slot order.
+    Entity e[6] = {collider(TAG_A, 0, 0, 8, 8, 1), collider(TAG_B, 1, 1, 8, 8, 2),
+                   collider(TAG_A, 2, 2, 8, 8, 3), collider(TAG_B, 3, 3, 8, 8, 4),
+                   collider(TAG_C, 4, 4, 8, 8, 5), collider(TAG_D, 5, 5, 8, 8, 6)};
+    for (u32 k = 0; k < 6; k++)
+        vm_attach(e[k], 0);
+    CHECK(entity_index(e[0]) < entity_index(e[1]) && entity_index(e[1]) < entity_index(e[2]));
+    CHECK(entity_index(e[2]) < entity_index(e[3]));
+    frame();
+    static const s32 expected[] = {506, 605, 102, 201, 104, 401, 302, 203, 304, 403};
+    CHECK(logged(expected, 10));
+}
+
+// vm.h vm_collide: an entity is never paired with itself; two entities in
+// both sets are tested once, with the lower slot as a; a pair set again
+// (either way round) changes nothing.
+static void collide_tests_each_pair_of_entities_once(void) {
+    reset();
+    collide_blob_begin(1);
+    log_collision(0);
+    op(VM_OP_HALT);
+    CHECK(load());
+    // One set against itself.
+    CHECK(vm_collide(TAG_A, TAG_A));
+    CHECK(vm_collide(TAG_A, TAG_A)); // set already: nothing changes
+    Entity e[3] = {collider(TAG_A, 0, 0, 8, 8, 1), collider(TAG_A, 2, 2, 8, 8, 2),
+                   collider(TAG_A, 4, 4, 8, 8, 3)};
+    for (u32 k = 0; k < 3; k++)
+        vm_attach(e[k], 0);
+    u32 before = debug_warning_count();
+    frame();
+    static const s32 same[] = {102, 201, 103, 301, 203, 302};
+    CHECK(logged(same, 6));
+
+    // Sets that share entities: p and q are in both.
+    reset();
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    CHECK(vm_collide(TAG_B, TAG_A)); // the same pair the other way round
+    Entity p = collider(TAG_A | TAG_B, 0, 0, 8, 8, 1);
+    Entity q = collider(TAG_A | TAG_B, 2, 2, 8, 8, 2);
+    Entity r = collider(TAG_B, 4, 4, 8, 8, 3);
+    vm_attach(p, 0);
+    vm_attach(q, 0);
+    vm_attach(r, 0);
+    frame();
+    static const s32 shared[] = {102, 201, 103, 301, 203, 302};
+    CHECK(logged(shared, 6));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_collide: an overlap's reactions run (and the queue is drained)
+// before the next test, so later tests see what they did. A shot that kills
+// itself on the first enemy doesn't reach the second, and its Destroy has run
+// by the end of vm_events(); an entity that takes itself out of the set by
+// its tags (VM_P_TAGS) isn't tested as a member of it again.
+static void collide_reactions_run_before_the_next_test(void) {
+    reset();
+    collide_blob_begin(4);
+    log_collision(0); // the shot: logs, then kills itself
+    op(VM_OP_SELF);
+    op(VM_OP_KILL);
+    op(VM_OP_HALT);
+    handler(0, VM_EV_DESTROY);
+    store(1, 1); // glob[1]: its Destroy ran
+    op(VM_OP_HALT);
+    log_collision(1); // an enemy: logs
+    op(VM_OP_HALT);
+    log_collision(2); // a decoy: logs, then leaves the sets (tags 0)
+    op(VM_OP_SELF);
+    push8(0);
+    setp(VM_P_TAGS);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    Entity shot = collider(TAG_A, 0, 0, 8, 8, 1);
+    Entity e1 = collider(TAG_B, 2, 2, 8, 8, 2);
+    Entity e2 = collider(TAG_B, 4, 4, 8, 8, 3);
+    vm_attach(shot, 0);
+    vm_attach(e1, 1);
+    vm_attach(e2, 1);
+    u32 before = debug_warning_count();
+    frame();
+    static const s32 shot_log[] = {102, 201};
+    CHECK(logged(shot_log, 2));
+    CHECK(!entity_alive(shot) && vm_global(1) == 1);
+
+    Entity decoy = collider(TAG_A, 0, 0, 8, 8, 4);
+    vm_attach(decoy, 2);
+    vm_set_global(LOG, 0);
+    frame();
+    static const s32 decoy_log[] = {402, 204};
+    CHECK(logged(decoy_log, 2));
+    CHECK(!ent_has(entity_index(decoy), TAG_A));
+    frame(); // no longer in set a: nothing
+    CHECK(logged(decoy_log, 2));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_collide: an entity destroyed during the pass is not tested again,
+// even when a spawn reuses its slot in the same pass: the new entity, though
+// it has the set's components and overlaps an entity of b, is tested from the
+// next frame. The pool is full, so the spawn must take the freed slot.
+static void collide_skips_a_slot_reused_during_the_pass(void) {
+    reset();
+    collide_blob_begin(4);
+    object(2, C_POS | C_SPR | C_BODY | TAG_A, 0); // the replacement
+    log_collision(0);                             // x: logs, then kills itself and z
+    op(VM_OP_SELF);
+    op(VM_OP_KILL);
+    ldg(2); // z
+    op(VM_OP_KILL);
+    op(VM_OP_HALT);
+    log_collision(1); // y and y2: log
+    op(VM_OP_HALT);
+    log_collision(2); // the replacement: logs; its Create sizes it, names it 9
+    op(VM_OP_HALT);
+    handler(2, VM_EV_CREATE);
+    op(VM_OP_SELF);
+    push8(8);
+    setp(VM_P_BODY_W);
+    op(VM_OP_SELF);
+    push8(8);
+    setp(VM_P_BODY_H);
+    op(VM_OP_SELF);
+    push8(9);
+    setp(VM_P_DEPTH);
+    op(VM_OP_HALT);
+    handler(3, VM_EV_DESTROY); // z: spawns the replacement on y2
+    push32(FX(40));            // x
+    push32(FX(10));            // x y
+    spawn(2);                  // e
+    op(VM_OP_DROP);            //
+    op(VM_OP_HALT);            //
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    Entity x = collider(TAG_A, 10, 10, 8, 8, 1);
+    Entity y = collider(TAG_B, 12, 12, 8, 8, 2);
+    Entity y2 = collider(TAG_B, 40, 10, 8, 8, 3);
+    Entity z = entity_create(C_POS);
+    vm_attach(x, 0);
+    vm_attach(y, 1);
+    vm_attach(y2, 1);
+    vm_attach(z, 3);
+    vm_set_global(2, z);
+    while (entity_create(C_POS) != ENTITY_NONE) {
+    }
+    CHECK(ecs_free_count() == 0);
+    u32 before = debug_warning_count();
+    frame();
+    static const s32 first[] = {102, 201};
+    CHECK(logged(first, 2));
+    CHECK(!entity_alive(x) && !entity_alive(z));
+    Entity spawned = entity_at(entity_index(x)); // the slot x had
+    CHECK(spawned != ENTITY_NONE && ent_has(entity_index(spawned), TAG_A));
+    CHECK(spr_depth[entity_index(spawned)] == 9);
+    frame();
+    static const s32 next[] = {102, 201, 903, 309};
+    CHECK(logged(next, 4));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_events: it drains the events game code queued first, then runs
+// the pass, so the pass sees what their reactions did.
+static void collide_runs_after_the_queued_events(void) {
+    reset();
+    collide_blob_begin(2);
+    log_collision(0); // logs, then kills itself
+    op(VM_OP_SELF);
+    op(VM_OP_KILL);
+    op(VM_OP_HALT);
+    log_collision(1);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    Entity a = collider(TAG_A, 0, 0, 8, 8, 1);
+    Entity b = collider(TAG_B, 4, 4, 8, 8, 2);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_step();
+    vm_event(a, b, VM_EV_COLLISION); // as the game's own collision code would
+    vm_events();
+    static const s32 expected[] = {102};
+    CHECK(logged(expected, 1));
+    CHECK(!entity_alive(a));
+}
+
+// vm.h vm_collide: the queue holds each overlap's events only until they
+// run, so a pass with more events than VM_EVENT_QUEUE drops none: 6 x 6
+// overlapping entities raise 72 events, and nothing warns.
+static void collide_never_fills_the_queue(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_COLLISION);
+    count(1);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(vm_collide(TAG_A, TAG_B));
+    for (u32 k = 0; k < 12; k++)
+        vm_attach(collider(k < 6 ? TAG_A : TAG_B, (s32)k, (s32)k, 16, 16, (s16)k), 0);
+    u32 before = debug_warning_count();
+    frame();
+    CHECK(6 * 6 * 2 > VM_EVENT_QUEUE);
+    CHECK(vm_global(1) == 6 * 6 * 2);
+    CHECK_WARNED(before, 0);
+}
+
+// vm.h vm_collide: a mask of 0 and a pair past VM_COLLIDE_PAIRS are refused
+// (false, one warning per kind); vm_collide_clear removes every pair; pairs
+// outlast vm_load, vm_reload and vm_unload; without a blob nothing is tested.
+static void vm_collide_limits_and_lifetime(void) {
+    reset();
+    u32 before = debug_warning_count();
+    CHECK(!vm_collide(0, TAG_B));
+    CHECK(!vm_collide(TAG_A, 0));
+    CHECK_WARNED(before, 1);
+    for (u32 k = 0; k < VM_COLLIDE_PAIRS; k++)
+        CHECK(vm_collide(TAG_A, game_tag(k + 1)));
+    CHECK(vm_collide(C_GAME(1), TAG_A)); // set already: true, takes no room
+    CHECK(!vm_collide(TAG_A, C_GAME(VM_COLLIDE_PAIRS + 1)));
+    CHECK(!vm_collide(TAG_B, TAG_C));
+    CHECK_WARNED(before, 2);
+    vm_collide_clear();
+    for (u32 k = 0; k < VM_COLLIDE_PAIRS; k++)
+        CHECK(vm_collide(TAG_B, game_tag(k + 2)));
+    CHECK_WARNED(before, 2);
+
+    vm_collide_clear();
+    collide_blob_begin(1);
+    log_collision(0);
+    op(VM_OP_HALT);
+    CHECK(vm_collide(TAG_A, TAG_B)); // before any blob is loaded
+    Entity a = collider(TAG_A, 0, 0, 8, 8, 1);
+    Entity b = collider(TAG_B, 4, 4, 8, 8, 2);
+    frame(); // no blob: nothing tested, nothing warns
+    CHECK(load());
+    vm_attach(a, 0);
+    vm_attach(b, 0);
+    frame();
+    static const s32 once[] = {102, 201};
+    CHECK(logged(once, 2));
+    CHECK(reload()); // kept: a and b stay attached, and still collide
+    vm_set_global(LOG, 0);
+    frame();
+    CHECK(logged(once, 2));
+    vm_unload();
+    frame();
+    CHECK(load()); // kept through the unload too
+    vm_attach(a, 0);
+    vm_attach(b, 0);
+    frame();
+    CHECK(logged(once, 2));
+    vm_collide_clear();
+    vm_set_global(LOG, 0);
+    frame();
+    CHECK(vm_global(LOG) == 0);
+    CHECK_WARNED(before, 2);
+}
+
 // --- Determinism -------------------------------------------------------------
 
 // Runs a program that spawns movers at random places, a frame apart, from a
@@ -5044,6 +5474,7 @@ TEST_SUITE(
     {"animation_end_is_raised_when_an_animation_finishes",
      animation_end_is_raised_when_an_animation_finishes},
     {"animation_properties_restart_an_animation", animation_properties_restart_an_animation},
+    {"sys_page_numbers_are_fixed", sys_page_numbers_are_fixed},
     {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
     {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
     {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
@@ -5065,6 +5496,15 @@ TEST_SUITE(
     {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
     {"loader_checks_array_records", loader_checks_array_records},
     {"loader_checks_initial_values", loader_checks_initial_values},
+    {"collide_raises_collisions_on_both_sides", collide_raises_collisions_on_both_sides},
+    {"collide_events_go_to_collision_handlers_only", collide_events_go_to_collision_handlers_only},
+    {"collide_order_is_pairs_then_slots", collide_order_is_pairs_then_slots},
+    {"collide_tests_each_pair_of_entities_once", collide_tests_each_pair_of_entities_once},
+    {"collide_reactions_run_before_the_next_test", collide_reactions_run_before_the_next_test},
+    {"collide_skips_a_slot_reused_during_the_pass", collide_skips_a_slot_reused_during_the_pass},
+    {"collide_runs_after_the_queued_events", collide_runs_after_the_queued_events},
+    {"collide_never_fills_the_queue", collide_never_fills_the_queue},
+    {"vm_collide_limits_and_lifetime", vm_collide_limits_and_lifetime},
     {"runs_are_deterministic", runs_are_deterministic},
     {"debug_ops_log_and_continue", debug_ops_log_and_continue},
     {"unload_stops_everything", unload_stops_everything});

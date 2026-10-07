@@ -41,8 +41,8 @@ end
 
 function Firefly:collision(player)   -- a reaction: runs to completion
   score = score + 1
-  print(7, 0, score, 3)
-  play_sound(SND_CHIME)
+  text_print_number(7, 0, score, 3)
+  psg_play(SND_CHIME)
   spawn(Sparkle, self.x - 4, self.y - 4)  -- x is fixed point: 4 means 4 pixels
   kill(self)
 end
@@ -57,12 +57,12 @@ end
 A script file is a sequence of top-level statements, compiled once into one blob:
 
 - **Objects:** `Name = object { components = expr, sprite = expr }`. Both fields are constant integer expressions (component bits `C_*` and sprite IDs come from the game's C headers, below). The object's number is its order of declaration.
-- **Handlers:** `function Name:create()`, `:step()`, `:destroy()`, `:collision(other)`, `:anim_end()`, `:room_start()`, the six `VM_EV_*` events. `create` and `room_start` are *behaviours* and may wait; the rest are *reactions* and run to completion ([vm.md](vm.md#behaviours-and-reactions)). `self` is the instance; `collision`'s parameter is the other entity. A Room Start handler on an object with no components is a *thread*, started from C with `vm_start`.
+- **Handlers:** `function Name:create()`, `:step()`, `:destroy()`, `:collision(other)`, `:anim_end()`, `:room_start()`, the six `VM_EV_*` events. `create` and `room_start` are *behaviours* and may wait; the rest are *reactions* and run to completion ([vm.md](vm.md#behaviours-and-reactions)). `self` is the instance; `collision`'s parameter is the other entity. Collision events come from C: the pairs of entity sets the game names once with `vm_collide` ([vm.md](vm.md#collisions)), which the VM then tests every frame, or the game's own `vm_event` calls. A Room Start handler on an object with no components is a *thread*, started from C with `vm_start`.
 - **Globals:** top-level assignments and top-level `local` declarations become VM globals (`VM_GLOBALS` scalars). Their initial values must be constants, and they travel in the blob: `vm_load` sets them (a table the header's flag bit 0 announces; [vm.md](vm.md#header-16-bytes)), so a script starts with `playing = true` already true and C does nothing extra. The listing declares them as `.globals PLAYING=1`; a script whose globals all start at 0 (false, none) gets no table, and an object named `Init` is an object like any other.
 - **Arrays:** `name = array(n)` (RAM, n cells, zeroed) or `name = { 3, 5, 8, ... }` (ROM, a constant table of integers, stored in the narrowest kind that holds every element). Top level only.
 - **Functions:** `function name(a, b) ... end` and `local function name(...)`, top level only.
 
-**Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two names that differ only in case are an error). `local NAME <const> = "text"` names a string for `print`, and a constant table of fixed values is a ROM array of their 256ths.
+**Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two names that differ only in case are an error). `local NAME <const> = "text"` names a string for `text_print`, and a constant table of fixed values is a ROM array of their 256ths.
 
 Names in ALL_CAPS that the script doesn't define are **constants from the game's C headers**, passed to the assembler ([`svm.py`](../tools/svm.py) `--header`), which knows the engine's and the game's `#define`s and enumerators. They are integers.
 
@@ -76,7 +76,7 @@ The compiler infers a static type for every expression and variable; mixing type
 | fixed | a Lua float, kept as 24.8 fixed point | a cell (`FIXED`) |
 | boolean | `true`, `false` | 1 or 0 |
 | entity | an instance (`self`, `other`, `spawn(...)`) | its handle; no entity is `none` (0) |
-| string | a literal, only as an argument to `print` | a string-table index |
+| string | a literal, only as an argument to `text_print` | a string-table index |
 | array | a top-level array | an array number |
 
 - **Integers** wrap on overflow, as Lua's do with `LUA_32BITS`.
@@ -115,20 +115,28 @@ The compiler infers a static type for every expression and variable; mixing type
 
 ## Engine functions
 
-| Lua | SYS call |
-| --- | --- |
-| `play_sound(id)` | `psg_play` |
-| `music_play(song)`, `music_stop()`, `music_pause()`, `music_resume()` | the music calls (songs by binding index) |
-| `camera_set(x, y)` | `camera_set` |
-| `print(col, row, "text")` | `text_print` |
-| `print(col, row, n [, width])` | `text_print_number` (n an integer) |
-| `random_range(lo, hi)` | `random_range` (an integer) |
-| `button_down(mask)`, `button_pressed(mask)` | the button calls (booleans) |
-| `brightness(level)` | `screen_set_brightness` |
-| `path_start(e, path, flags)`, `path_stop(e)` | the path calls (paths by binding index) |
-| `none` | the entity 0 |
+Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#engine-calls)) is that name in capitals: `psg_music_play` is `VM_SYS_PSG_MUSIC_PLAY`, which calls `psg_music_play()`.
 
-**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), and floats beyond the fixed-point rules.
+| Lua | SYS call | Notes |
+| --- | --- | --- |
+| `psg_play(id)` | `PSG_PLAY` | a sound of the game's `psg_table_set` table |
+| `psg_music_play(song)`, `psg_music_stop()`, `psg_music_pause()`, `psg_music_resume()` | `PSG_MUSIC_PLAY`, `_STOP`, `_PAUSE`, `_RESUME` | PSG music; `song` is an index into `VmBindings.psg_songs` |
+| `camera_set(x, y)` | `CAMERA_SET` | whole pixels |
+| `text_print(col, row, "text")` | `TEXT_PRINT` | a literal string or a `<const>` one, printable ASCII |
+| `text_print_number(col, row, n [, width])` | `TEXT_PRINT_NUMBER` | n an integer; with a width of 1 or more, right-aligned in that many columns (no width: just the digits) |
+| `random_range(lo, hi)` | `RANDOM_RANGE` | an integer |
+| `button_down(mask)`, `button_pressed(mask)` | `BUTTON_DOWN`, `BUTTON_PRESSED` | booleans |
+| `screen_set_brightness(level)` | `SCREEN_SET_BRIGHTNESS` | |
+| `path_start(e, path, flags)`, `path_stop(e)` | `PATH_START`, `PATH_STOP` | `path` is an index into `VmBindings.paths` |
+| `none` | | the entity 0 |
+
+Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`).
+
+**C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too.
+
+**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then a script plays PSG sound and music only.
+
+**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), and floats beyond the fixed-point rules.
 
 ## The tool
 

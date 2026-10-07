@@ -35,7 +35,7 @@
 
 ; --- Init:room_start, a behaviour: it may wait ---
 .handler INIT ROOM_START                ; globals.lua:26
-    ; 27: print(1, 1, GREETING)
+    ; 27: text_print(1, 1, GREETING)
     PUSH 1                              ; globals.lua:27
     PUSH 1                              ; globals.lua:27
     PUSH STR_HELLO_3                    ; globals.lua:27

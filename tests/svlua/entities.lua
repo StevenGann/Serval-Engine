@@ -1,5 +1,5 @@
 -- Entities: properties and instance fields (GETP, SETP), spawn and kill,
--- waits, the engine functions (SYS), print, and loops over instances (NEXTI).
+-- waits, engine functions (SYS) and text_print, loops over instances (NEXTI).
 Bullet = object { components = C_POS | C_VEL | C_SPR, sprite = SPR_BULLET }
 Enemy = object { components = C_POS | C_SPR | C_BODY | C_GAME(2), sprite = SPR_ENEMY }
 
@@ -34,23 +34,23 @@ function Enemy:step()
   if button_pressed(BUTTON_A) then
     target = spawn(Bullet, self.x, self.y - 8)
     target.vy = -2
-    play_sound(SND_SHOOT)
+    psg_play(SND_SHOOT)
   end
   if button_down(BUTTON_B) and target ~= none then
     camera_set(math.floor(target.x) - 120, 0)
   end
-  print(0, 0, "HITS")
-  print(5, 0, hits, 3)
+  text_print(0, 0, "HITS")
+  text_print_number(5, 0, hits, 3)
   local n = random_range(1, 6)
-  brightness(n - 16)
+  screen_set_brightness(n - 16)
 end
 
 function Bullet:anim_end()
   for e in instances(Enemy) do
     if e.hp > 2 then e.hp = 2 end
   end
-  music_play(SONG_WIN)
-  music_pause()
-  music_resume()
-  music_stop()
+  psg_music_play(SONG_WIN)
+  psg_music_pause()
+  psg_music_resume()
+  psg_music_stop()
 end

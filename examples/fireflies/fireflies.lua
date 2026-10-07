@@ -4,7 +4,7 @@
 -- fireflies_script, the blob main.c loads; the generated fireflies_script.h
 -- gives C the objects and globals by name (main.c starts OBJ_ROOM and
 -- OBJ_SPAWNER as threads and reads G_RESTART). C_PLAYER and C_FIREFLY, the
--- component tags main.c's collision pairs look for, come from game.h.
+-- component tags of main.c's collision pair (vm_collide), come from game.h.
 --
 -- The game was first written by hand as a listing (tests/svm/fireflies.svm,
 -- now a test of the assembler). This port keeps its objects, globals and
@@ -94,23 +94,23 @@ function Room:room_start()
   playing = true
   spawn_min = SPAWN_MIN_START
   spawn_max = SPAWN_MAX_START
-  play_sound(SND_START)
-  music_play(SONG_DUSK)
+  psg_play(SND_START)
+  psg_music_play(SONG_DUSK)
   -- The HUD, and the last round's messages cleared.
-  print(1, 0, "SCORE")
-  print(TIME_COL - 5, 0, "TIME")
+  text_print(1, 0, "SCORE")
+  text_print(TIME_COL - 5, 0, "TIME")
   print_score()
   print_time()
-  print(HINT_COL, TIME_UP_ROW, BLANK_LINE)
-  print(HINT_COL, CAUGHT_ROW, BLANK_LINE)
-  print(HINT_COL, START_ROW, BLANK_LINE)
-  print(HINT_COL, HINT_ROW, "CATCH THE FIREFLIES!")
+  text_print(HINT_COL, TIME_UP_ROW, BLANK_LINE)
+  text_print(HINT_COL, CAUGHT_ROW, BLANK_LINE)
+  text_print(HINT_COL, START_ROW, BLANK_LINE)
+  text_print(HINT_COL, HINT_ROW, "CATCH THE FIREFLIES!")
   -- The serval, in the middle of the meadow.
   player = spawn(Player, PLAYER_X, PLAYER_Y)
   -- Fade in from black (where the last round, or the boot, left it).
   local level = SCREEN_BRIGHTNESS_MIN
   while true do
-    brightness(level)
+    screen_set_brightness(level)
     if level == 0 then break end
     level = level + FADE_STEP
     wait(1)
@@ -122,34 +122,34 @@ function Room:room_start()
     time = time - 1
     print_time()
     if time == ROUND_SECONDS - 3 then
-      print(HINT_COL, HINT_ROW, BLANK_LINE)  -- the hint goes after 3 seconds
+      text_print(HINT_COL, HINT_ROW, BLANK_LINE)  -- the hint goes after 3 seconds
     end
     if time <= 10 and time ~= 0 then
-      play_sound(SND_TICK)  -- the last ten seconds tick
+      psg_play(SND_TICK)  -- the last ten seconds tick
     end
   until time == 0
 
   -- Time is up. The Spawner and the fireflies see playing and stop.
   playing = false
-  music_stop()
-  play_sound(SND_TIME_UP)
+  psg_music_stop()
+  psg_play(SND_TIME_UP)
   -- The serval sits down where it stands, facing the same way: a resting
   -- serval takes its place. It isn't a player (no C_PLAYER), so fireflies
   -- drifting into it are no longer caught.
   local resting = spawn(Resting, player.x, player.y)
   resting.flags = player.flags
   kill(player)
-  print(11, TIME_UP_ROW, "TIME UP!")
-  print(10, CAUGHT_ROW, "CAUGHT")
-  print(17, CAUGHT_ROW, score)
+  text_print(11, TIME_UP_ROW, "TIME UP!")
+  text_print(10, CAUGHT_ROW, "CAUGHT")
+  text_print_number(17, CAUGHT_ROW, score)
   wait(90)
-  print(9, START_ROW, "PRESS START")
+  text_print(9, START_ROW, "PRESS START")
   repeat wait(1) until button_pressed(BUTTON_START)
   -- Fade out, then ask C for a new round.
   level = 0
   repeat
     level = level - FADE_STEP
-    brightness(level)
+    screen_set_brightness(level)
     wait(1)
   until level <= SCREEN_BRIGHTNESS_MIN
   restart = true  -- main.c restarts after this frame
@@ -243,7 +243,7 @@ end
 function Firefly:collision(serval)
   score = score + 1
   print_score()
-  play_sound(SND_CHIME)
+  psg_play(SND_CHIME)
   -- A sparkle where it was: 16x16, centered on the 8x8 firefly.
   spawn(Sparkle, self.x - 4, self.y - 4)
   -- The serval turns to face it: flipped (facing left) if the firefly's
@@ -255,7 +255,7 @@ function Firefly:collision(serval)
   serval.flags = flags
   -- Every tenth: a jingle, and fireflies come a little faster.
   if score % 10 == 0 then
-    play_sound(SND_JINGLE)
+    psg_play(SND_JINGLE)
     if spawn_max > SPAWN_MAX_FLOOR then
       spawn_min = spawn_min - SPAWN_MIN_STEP
       spawn_max = spawn_max - SPAWN_MAX_STEP
@@ -289,12 +289,12 @@ end
 
 -- The score, over the last round's (0 after 23 would leave a 3 behind).
 function print_score()
-  print(SCORE_COL, 0, "   ")
-  print(SCORE_COL, 0, score)
+  text_print(SCORE_COL, 0, "   ")
+  text_print_number(SCORE_COL, 0, score)
 end
 
 -- The seconds left (9 after 10 would leave a 0 behind).
 function print_time()
-  print(TIME_COL, 0, "  ")
-  print(TIME_COL, 0, time)
+  text_print(TIME_COL, 0, "  ")
+  text_print_number(TIME_COL, 0, time)
 end

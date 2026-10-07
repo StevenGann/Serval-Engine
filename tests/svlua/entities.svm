@@ -134,7 +134,7 @@ enemy_collision_if1_end:                ; entities.lua:27
     LDG TARGET                          ; entities.lua:36
     PUSH -512                           ; entities.lua:36 (-2.0)
     SETP VY                             ; entities.lua:36
-    ; 37: play_sound(SND_SHOOT)
+    ; 37: psg_play(SND_SHOOT)
     PUSH SND_SHOOT                      ; entities.lua:37
     SYS PSG_PLAY                        ; entities.lua:37
     ; 38: end
@@ -156,12 +156,12 @@ enemy_step_if1_end:                     ; entities.lua:38
     SYS CAMERA_SET                      ; entities.lua:40
     ; 41: end
 enemy_step_if2_end:                     ; entities.lua:41
-    ; 42: print(0, 0, "HITS")
+    ; 42: text_print(0, 0, "HITS")
     PUSH 0                              ; entities.lua:42
     PUSH 0                              ; entities.lua:42
     PUSH STR_HITS                       ; entities.lua:42
     SYS TEXT_PRINT                      ; entities.lua:42
-    ; 43: print(5, 0, hits, 3)
+    ; 43: text_print_number(5, 0, hits, 3)
     PUSH 5                              ; entities.lua:43
     PUSH 0                              ; entities.lua:43
     LDG HITS                            ; entities.lua:43
@@ -172,11 +172,11 @@ enemy_step_if2_end:                     ; entities.lua:41
     PUSH 6                              ; entities.lua:44
     SYS RANDOM_RANGE                    ; entities.lua:44
     STL 0                               ; entities.lua:44
-    ; 45: brightness(n - 16)
+    ; 45: screen_set_brightness(n - 16)
     LDL 0                               ; entities.lua:45 n
     PUSH 16                             ; entities.lua:45
     SUB                                 ; entities.lua:45
-    SYS BRIGHTNESS                      ; entities.lua:45
+    SYS SCREEN_SET_BRIGHTNESS           ; entities.lua:45
     ; 46: end
     HALT                                ; entities.lua:46
 
@@ -206,14 +206,14 @@ bullet_anim_end_if2_end:                ; entities.lua:50
     ; 51: end
     JMP bullet_anim_end_instances1      ; entities.lua:51
 bullet_anim_end_instances1_end:         ; entities.lua:51
-    ; 52: music_play(SONG_WIN)
+    ; 52: psg_music_play(SONG_WIN)
     PUSH SONG_WIN                       ; entities.lua:52
-    SYS MUSIC_PLAY                      ; entities.lua:52
-    ; 53: music_pause()
-    SYS MUSIC_PAUSE                     ; entities.lua:53
-    ; 54: music_resume()
-    SYS MUSIC_RESUME                    ; entities.lua:54
-    ; 55: music_stop()
-    SYS MUSIC_STOP                      ; entities.lua:55
+    SYS PSG_MUSIC_PLAY                  ; entities.lua:52
+    ; 53: psg_music_pause()
+    SYS PSG_MUSIC_PAUSE                 ; entities.lua:53
+    ; 54: psg_music_resume()
+    SYS PSG_MUSIC_RESUME                ; entities.lua:54
+    ; 55: psg_music_stop()
+    SYS PSG_MUSIC_STOP                  ; entities.lua:55
     ; 56: end
     HALT                                ; entities.lua:56

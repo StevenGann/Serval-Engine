@@ -137,7 +137,7 @@
     PUSH SND_START       ; sound
     SYS PSG_PLAY         ;
     PUSH SONG_DUSK       ; song
-    SYS MUSIC_PLAY       ;
+    SYS PSG_MUSIC_PLAY   ;
     ; The HUD, and the last round's messages cleared.
     PUSH 1               ; col
     PUSH 0               ; col row
@@ -175,7 +175,7 @@
     STL 0                      ;
 fade_in:
     LDL 0            ; level
-    SYS BRIGHTNESS   ;
+    SYS SCREEN_SET_BRIGHTNESS ;
     LDL 0            ; level
     JZ faded_in      ;
     LDL 0            ; level
@@ -220,7 +220,7 @@ no_tick:
     ; Time is up. The Spawner and the fireflies see G_PLAYING and stop.
     PUSH 0           ; 0
     STG PLAYING      ;
-    SYS MUSIC_STOP   ;
+    SYS PSG_MUSIC_STOP ;
     PUSH SND_TIME_UP ; sound
     SYS PSG_PLAY     ;
     ; The serval sits down where it stands, facing the same way: a resting
@@ -270,7 +270,7 @@ fade_out:
     SUB                        ; level-2
     DUP                        ; level-2 level-2
     STL 0                      ; level-2
-    SYS BRIGHTNESS             ;
+    SYS SCREEN_SET_BRIGHTNESS  ;
     PUSH 1                     ; 1
     WAIT                       ;
     LDL 0                      ; level

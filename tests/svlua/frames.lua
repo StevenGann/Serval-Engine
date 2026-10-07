@@ -21,7 +21,7 @@ function hypot2(a, b)
 end
 
 function report(v)
-  print(1, 1, v)
+  text_print_number(1, 1, v)
 end
 
 function Probe:room_start()

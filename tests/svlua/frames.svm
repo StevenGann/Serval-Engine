@@ -85,7 +85,7 @@ hypot2:                                 ; frames.lua:17
 report:                                 ; frames.lua:23
     ; frame: 0 v
     ENTER 1, 0                          ; frames.lua:23
-    ; 24: print(1, 1, v)
+    ; 24: text_print_number(1, 1, v)
     PUSH 1                              ; frames.lua:24
     PUSH 1                              ; frames.lua:24
     LDL 0                               ; frames.lua:24 v

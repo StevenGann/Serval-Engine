@@ -318,22 +318,25 @@ REJECTED = {
                         r"functions are declared at the top level only \(closures"),
     "varargs_parameter": ("function f(a, ...) end", 1, 15,
                           r"varargs \(\.\.\.\) are not in the subset"),
-    "varargs_value": (OBJ + "function A:step() print(1, 1, ...) end", 3, 31, r"varargs"),
+    "varargs_value": (OBJ + "function A:step() text_print(1, 1, ...) end", 3, 36, r"varargs"),
     "multiple_results": ("function f() return 1, 2 end", 1, 24,
                          r"multiple results are not in the subset"),
-    "string_at_run_time": (OBJ + "n = 0\nfunction A:step() print(1, 1, 'n=' .. n) end", 4, 39,
+    "string_at_run_time": (OBJ + "n = 0\nfunction A:step() text_print(1, 1, 'n=' .. n) end", 4,
+                           44,
                            r"string operations at run time are not in the subset"),
-    "string_library": (OBJ + "function A:step() print(1, 1, string.rep('a', 2)) end", 3, 31,
+    "string_library": (OBJ + "function A:step() text_print(1, 1, string.rep('a', 2)) end", 3, 36,
                        r"the string library .* is not in the subset"),
     "string_variable": (OBJ + "function A:step() local s = 'hi' end", 3, 29,
-                        r"strings exist only as print's argument"),
+                        r"strings exist only as text_print's argument"),
     "standard_library": (OBJ + "function A:step() local x = math.sin(1) end", 3, 29,
                          r"math\.sin is not in the subset: .*math\.floor, math\.abs, math\.min, "
                          r"math\.max, math\.mininteger and math\.maxinteger"),
     "math_tointeger": (OBJ + "function A:step() local x = math.tointeger(1.0) end", 3, 29,
                        r"math\.tointeger is not in the subset"),
-    "tostring": (OBJ + "function A:step() print(1, 1, tostring(3)) end", 3, 31,
+    "tostring": (OBJ + "function A:step() text_print(1, 1, tostring(3)) end", 3, 36,
                  r"tostring .* is not in the subset"),
+    "print": (OBJ + "function A:step() print(1, 1, 'hi') end", 3, 19,
+              r"print \(console output\) is not in the subset"),
     "coroutines": (OBJ + "function B:create() coroutine.yield() end", 3, 21,
                    r"the coroutine library is not in the subset"),
     "nil": (OBJ + "function A:step() local e = nil end", 3, 29, r"nil is not in the subset"),
@@ -355,7 +358,7 @@ REJECTED = {
                           r"functions in tables .* are not in the subset"),
     "top_level_code": ("x = 0\nif x == 0 then end", 2, 1,
                        r"if at the top level: only declarations"),
-    "top_level_call": ("print(1, 1, 'hi')", 1, 1, r"a call at the top level"),
+    "top_level_call": ("text_print(1, 1, 'hi')", 1, 1, r"a call at the top level"),
     "top_level_field": ("A = object {}\nA.x = 1", 2, 1,
                         r"only names are assigned at the top level"),
     "local_without_value": (OBJ + "function A:step() local x end", 3, 25,
@@ -376,7 +379,9 @@ REJECTED = {
                      r"attempt to assign to const variable 'K'"),
     "assign_self": (OBJ + "function A:step() self = none end", 3, 19,
                     r"self is the instance the handler runs for; it can't be assigned"),
-    "redefine_engine": ("function print() end", 1, 10, r"print is an engine function"),
+    "redefine_engine": ("function text_print() end", 1, 10,
+                        r"text_print is an engine function"),
+    "redefine_print": ("function print() end", 1, 10, r"print is Lua's print \(console output\)"),
     "redeclare": ("a = 0\nlocal a = 0", 2, 7, r"a is already declared \(line 1\)"),
     "local_used_above": (OBJ + "function A:step() local y = speed end\nlocal speed = 0", 3, 29,
                          r"speed is declared below \(line 4\) as a top-level local"),
@@ -588,21 +593,34 @@ function A:step() local x = pick(true) end""",
     def test_arity(self):
         self.assert_error(OBJ + "function f(a, b) end\nfunction A:step() f(1) end",
                           r"f takes 2 arguments, not 1")
-        self.assert_error(OBJ + "function A:step() play_sound() end",
-                          r"play_sound takes 1 argument, not 0")
-        self.assert_error(OBJ + "function A:step() print(1, 2) end",
-                          r"print takes 3 or 4 arguments, not 2")
+        self.assert_error(OBJ + "function A:step() psg_play() end",
+                          r"psg_play takes 1 argument, not 0")
+        self.assert_error(OBJ + "function A:step() text_print_number(1, 2) end",
+                          r"text_print_number takes 3 or 4 arguments, not 2")
+        self.assert_error(OBJ + "function A:step() text_print(1, 2, 'HI', 3) end",
+                          r"text_print takes 3 arguments, not 4")
 
     def test_engine_argument_types(self):
         self.assert_error(OBJ + "function A:step() camera_set(self.x, 0) end",
                           r"camera_set's first argument is an integer, and this is fixed\n  hint: "
                           r"math\.floor")
-        self.assert_error(OBJ + "function A:step() print(1, 1, self.x) end",
-                          r"print shows integers and literal strings, and this is fixed")
+        self.assert_error(OBJ + "function A:step() text_print_number(1, 1, self.x) end",
+                          r"text_print_number prints an integer, and this is fixed\n  hint: "
+                          r"math\.floor")
+        self.assert_error(OBJ + "function A:step() text_print_number(1, 1, 'HI') end",
+                          r"text_print_number prints an integer, and this is a string\n  hint: "
+                          r"text_print\(col, row, \"text\"\)")
+        self.assert_error(OBJ + "function A:step() print(1, 1, 'HI') end",
+                          r"print \(console output\) is not in the subset\n  hint: "
+                          r"text_print\(col, row, \"text\"\) draws text on the screen, "
+                          r"text_print_number\(col, row, n\) a number")
+        self.assert_error(OBJ + "function A:step() text_print(1, 1, 7) end",
+                          r"text_print draws a literal string, and this is an integer\n  hint: "
+                          r"text_print_number\(col, row, n\)")
         self.assert_error(OBJ + "function A:step() kill(3) end",
                           r"kill's first argument is an entity, and this is an integer")
-        self.assert_error(OBJ + "function A:step() print(1, 1, 'caf\\xe9') end",
-                          r"print draws printable ASCII \(32 to 126\), and this string has the "
+        self.assert_error(OBJ + "function A:step() text_print(1, 1, 'caf\\xe9') end",
+                          r"text_print draws printable ASCII \(32 to 126\), and this string has the "
                           r"byte 233")
         p = self.check(OBJ + "function A:step() local e = spawn(A, 10, 20.5); "
                        "local d = button_down(1); local r = random_range(1, 6) end")
@@ -653,7 +671,7 @@ function A:step() wander() end""",
 
     def test_header_constants_pass_through(self):
         p = self.check(OBJ + "function A:step() if button_down(BUTTON_A | BUTTON_B) then "
-                       "play_sound(SND_JUMP) end end")
+                       "psg_play(SND_JUMP) end end")
         self.assertEqual(list(p.headers), ["BUTTON_A", "BUTTON_B", "SND_JUMP"])
 
     def test_scopes(self):
@@ -864,9 +882,10 @@ class Golden(unittest.TestCase):
                    "WAIT_MOVE", "SYS", "LDG", "STG", "SELF", "OTHER", "HALT"):
             with self.subTest(op=op):
                 self.assertIn(op, ops)
-        for sys_call in ("PSG_PLAY", "MUSIC_PLAY", "MUSIC_STOP", "MUSIC_PAUSE", "MUSIC_RESUME",
+        for sys_call in ("PSG_PLAY", "PSG_MUSIC_PLAY", "PSG_MUSIC_STOP", "PSG_MUSIC_PAUSE",
+                         "PSG_MUSIC_RESUME",
                          "CAMERA_SET", "TEXT_PRINT", "TEXT_PRINT_NUMBER", "RANDOM_RANGE",
-                         "BUTTON_DOWN", "BUTTON_PRESSED", "BRIGHTNESS", "PATH_START",
+                         "BUTTON_DOWN", "BUTTON_PRESSED", "SCREEN_SET_BRIGHTNESS", "PATH_START",
                          "PATH_STOP"):
             with self.subTest(sys=sys_call):
                 self.assertIn(f"SYS {sys_call}", text)
@@ -984,14 +1003,14 @@ class Listing(unittest.TestCase):
     def test_names_in_the_listing(self):
         listing = self.compile("Firefly = object {}\nlocal flag = false\nscores = array(3)\n"
                                "local K <const> = 3\nfunction Firefly:step() "
-                               "print(1, 1, \"TIME UP!\"); scores[1] = K; flag = true end")
+                               "text_print(1, 1, \"TIME UP!\"); scores[1] = K; flag = true end")
         for line in (".object FIREFLY mask=0 sprite=0", ".globals FLAG", ".array SCORES 3",
                      ".const K 3", '.string TIME_UP "TIME UP!"', ".handler FIREFLY STEP"):
             self.assertIn(line, listing)
 
     def test_strings_are_shared(self):
-        listing = self.compile(OBJ + "function A:step() print(1, 1, 'HI'); print(2, 2, 'HI'); "
-                               "print(3, 3, 'H' .. 'I') end")
+        listing = self.compile(OBJ + "function A:step() text_print(1, 1, 'HI'); "
+                               "text_print(2, 2, 'HI'); text_print(3, 3, 'H' .. 'I') end")
         self.assertEqual(listing.count(".string"), 1)
         self.assertEqual(listing.count("PUSH STR_HI"), 3)
 
@@ -1419,7 +1438,7 @@ class Fireflies(unittest.TestCase):
 
     def play(self, **kw):
         """The game on the VM. No paths, songs or animations are bound, so
-        path_start and music_play warn and do nothing (a firefly stays where
+        path_start and psg_music_play warn and do nothing (a firefly stays where
         it appears, and its waits for the path to end don't wait), and
         WAIT_ANIM warns and continues."""
         return run_vm(self.source, files=FIREFLIES_HEADERS, warnings=True, **kw)
@@ -1473,9 +1492,9 @@ class Fireflies(unittest.TestCase):
         start_shown = next(c[0] for c in vm.calls if c[1] == "TEXT_PRINT" and
                            c[-1] == "PRESS START")
         self.assertEqual(start_shown, 3609 + 90)
-        levels = [c[0] for c in vm.calls_of("BRIGHTNESS")]
+        levels = [c[0] for c in vm.calls_of("SCREEN_SET_BRIGHTNESS")]
         self.assertEqual(levels, list(range(-16, 1, 2)) + list(range(-2, -17, -2)))
-        fade_out = [c[0] for c in vm.calls if c[1] == "BRIGHTNESS"][-8:]
+        fade_out = [c[0] for c in vm.calls if c[1] == "SCREEN_SET_BRIGHTNESS"][-8:]
         self.assertEqual(fade_out, list(range(3720, 3728)))  # from the frame START is pressed
         times = [c[2] for c in vm.calls_of("TEXT_PRINT_NUMBER") if c[0] == 28]
         self.assertEqual(times, list(range(60, -1, -1)))

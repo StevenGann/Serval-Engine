@@ -8,6 +8,8 @@
 // animations finished since the last check), a drain of the event queue, the
 // Step reactions, and a second drain. A binding's Create-pending flag keeps an
 // entity's Step reaction from running before its Create was drained.
+// vm_events() drains the queue, then runs the collision pass over
+// vm_collide's pairs, draining after each overlap it finds.
 //
 // Behaviours (Create, Room Start, vm_start threads) may wait; reactions (every
 // other event) run to completion. A reaction for an entity whose behaviour
@@ -158,6 +160,8 @@ enum {
     WARN_NESTED_PHASE,
     WARN_GLOBAL,
     WARN_VM_KILL_NONE,
+    WARN_COLLIDE_MASK,
+    WARN_COLLIDE_FULL,
     WARN_COUNT
 };
 static bool warned[WARN_COUNT];
@@ -653,17 +657,17 @@ static s32 sys_call(u32 fn, const s32* args) {
     case VM_SYS_PATH_STOP:
         path_stop(cell_entity(args[0]));
         return 0;
-    case VM_SYS_MUSIC_PLAY: {
+    case VM_SYS_PSG_MUSIC_PLAY: {
         s32 index = args[0];
         const PsgSong* song = NULL;
-        if (serval_plausible_pointer(bindings.songs) && index >= 0 &&
-            (u32)index < bindings.song_count)
-            song = bindings.songs[index];
+        if (serval_plausible_pointer(bindings.psg_songs) && index >= 0 &&
+            (u32)index < bindings.psg_song_count)
+            song = bindings.psg_songs[index];
         if (!serval_plausible_pointer(song)) {
             WARN_ONCE(WARN_SONG,
-                      "vm: SYS music_play: song %d is not bound (%u songs; vm_bind sets them); "
-                      "not played",
-                      (int)index, (u32)bindings.song_count);
+                      "vm: SYS psg_music_play: song %d is not bound (%u songs; vm_bind's "
+                      "psg_songs); not played",
+                      (int)index, (u32)bindings.psg_song_count);
             return 0;
         }
         return serval_vm_platform_call(fn, args, song);
@@ -1269,6 +1273,12 @@ static void react(u32 slot, u32 handler, Entity other, u32 event) {
     }
 }
 
+// Slots whose entity destroy() destroyed since the collision pass listed the
+// current pair's sets, as bits: the pass skips them even if a spawn has
+// reused the slot meanwhile (that entity isn't the one it listed). destroy()
+// is the only way an entity dies while the VM runs: no SYS call destroys.
+SERVAL_EWRAM_BSS static u32 destroyed_slots[MAX_ENT / 32];
+
 // The Destroy logic (KILL, vm_kill): runs e's Destroy reaction if it is
 // attached (on top of its behaviour if that waits), then halts the behaviour,
 // unbinds e and destroys it.
@@ -1283,6 +1293,7 @@ static void destroy(Entity e) {
         unbind(slot); // halts the behaviour
     }
     entity_destroy(e);
+    destroyed_slots[slot / 32] |= 1u << (slot % 32);
 }
 
 // Runs a queued event's handler for e (any event but Destroy): a behaviour
@@ -1420,11 +1431,131 @@ void vm_step(void) {
     in_phase = false;
 }
 
+// --- Collisions --------------------------------------------------------------
+
+// vm_collide's pairs, in the order they were set: component masks, never 0.
+SERVAL_EWRAM_BSS static u32 collide_a[VM_COLLIDE_PAIRS], collide_b[VM_COLLIDE_PAIRS];
+static u32 collide_count;
+// The pass's lists of the current pair's sets (slot indices, ascending), and
+// the slots listed in both, as bits.
+SERVAL_EWRAM_BSS static u8 set_a[MAX_ENT], set_b[MAX_ENT];
+SERVAL_EWRAM_BSS static u32 in_both[MAX_ENT / 32];
+
+static bool slot_bit(const u32* bits, u32 slot) {
+    return bits[slot / 32] >> (slot % 32) & 1;
+}
+
+// Marks the slots both sorted lists hold in in_both; true if there are any.
+static bool mark_both(const u8* a, u32 na, const u8* b, u32 nb) {
+    for (u32 k = 0; k < MAX_ENT / 32; k++)
+        in_both[k] = 0;
+    bool any = false;
+    for (u32 j = 0, k = 0; j < na && k < nb;) {
+        if (a[j] < b[k]) {
+            j++;
+        } else if (a[j] > b[k]) {
+            k++;
+        } else {
+            in_both[a[j] / 32] |= 1u << (a[j] % 32);
+            any = true;
+            j++;
+            k++;
+        }
+    }
+    return any;
+}
+
+// True if listed slot i is still in its set: alive, with the set's
+// components (a reaction may have changed its tags), and not destroyed since
+// the pair's sets were listed (the slot may hold a newer entity).
+static bool still_in_set(u32 i, u32 mask) {
+    return ent_has(i, mask) && !slot_bit(destroyed_slots, i);
+}
+
+// Queues a Collision event for slot i's entity, with slot o's as OTHER, if it
+// is attached to an object with a Collision handler.
+static void collision(u32 i, u32 o) {
+    if (attached(i) && handler_of(bound_object[i], VM_EV_COLLISION))
+        enqueue(bound[i], entity_at(o), VM_EV_COLLISION);
+}
+
+// Tests one pair: every listed entity of set a against every one of set b,
+// in slot order, running the Collision reactions of each overlap before the
+// next test (vm.h, vm_collide). The queue is empty at each overlap (drained
+// before the pass and after each overlap), so its two events always fit.
+static void collide_pair(u32 ma, u32 mb) {
+    for (u32 k = 0; k < MAX_ENT / 32; k++)
+        destroyed_slots[k] = 0;
+    u32 na = ecs_gather(ma, set_a);
+    if (!na)
+        return;
+    const u8* list_b = set_a; // the same set: listed once
+    u32 nb = na;
+    if (mb != ma) {
+        nb = ecs_gather(mb, set_b);
+        list_b = set_b;
+    }
+    // Entities in both sets meet twice, as (x, y) and (y, x): only the first,
+    // with the lower slot as a, is tested. With the same set, that is every
+    // pair after the entity in the list.
+    bool shared = ma != mb && mark_both(set_a, na, list_b, nb);
+    for (u32 j = 0; j < na; j++) {
+        u32 x = set_a[j];
+        if (!still_in_set(x, ma))
+            continue;
+        for (u32 k = ma == mb ? j + 1 : 0; k < nb; k++) {
+            u32 y = list_b[k];
+            // The overlap first: it is the common reason to go on, and the
+            // only cost most tests have. The rest is checked on a hit.
+            if (!body_overlap(x, y) || y == x || !still_in_set(y, mb))
+                continue;
+            if (shared && y < x && slot_bit(in_both, x) && slot_bit(in_both, y))
+                continue; // tested as (y, x)
+            collision(x, y);
+            collision(y, x);
+            drain();
+            if (!still_in_set(x, ma))
+                break; // a reaction killed x or took it out of the set
+        }
+    }
+}
+
+bool vm_collide(u32 a, u32 b) {
+    if (!a || !b) {
+        WARN_ONCE(WARN_COLLIDE_MASK,
+                  "vm_collide: a mask of 0 would test every live entity (C_BODY means every "
+                  "body); not set");
+        return false;
+    }
+    for (u32 p = 0; p < collide_count; p++) {
+        if ((collide_a[p] == a && collide_b[p] == b) || (collide_a[p] == b && collide_b[p] == a))
+            return true; // set already: setting it again would raise its events twice
+    }
+    if (collide_count == VM_COLLIDE_PAIRS) {
+        WARN_ONCE(WARN_COLLIDE_FULL,
+                  "vm_collide: %d pairs are set already (VM_COLLIDE_PAIRS); not set "
+                  "(vm_collide_clear removes them)",
+                  VM_COLLIDE_PAIRS);
+        return false;
+    }
+    collide_a[collide_count] = a;
+    collide_b[collide_count] = b;
+    collide_count++;
+    return true;
+}
+
+void vm_collide_clear(void) {
+    collide_count = 0;
+}
+
 void vm_events(void) {
     if (nested_phase("vm_events"))
         return;
     in_phase = true;
-    drain();
+    drain(); // what game code queued since vm_step
+    // No blob, no attached entity: nothing could react to a collision.
+    for (u32 p = 0; blob && p < collide_count; p++)
+        collide_pair(collide_a[p], collide_b[p]);
     in_phase = false;
 }
 

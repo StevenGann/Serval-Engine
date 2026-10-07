@@ -1046,17 +1046,19 @@ EVENTS = {
 }
 
 # Engine functions with plain arguments: (argument types, result, op or SYS call).
+# Each SYS call's function has its VM_SYS_* name in lower case, which is its C
+# function's name (docs/lua.md, "Engine functions").
 ENGINE = {
-    "play_sound": ((INT,), None, "SYS PSG_PLAY"),
-    "music_play": ((INT,), None, "SYS MUSIC_PLAY"),
-    "music_stop": ((), None, "SYS MUSIC_STOP"),
-    "music_pause": ((), None, "SYS MUSIC_PAUSE"),
-    "music_resume": ((), None, "SYS MUSIC_RESUME"),
+    "psg_play": ((INT,), None, "SYS PSG_PLAY"),
+    "psg_music_play": ((INT,), None, "SYS PSG_MUSIC_PLAY"),
+    "psg_music_stop": ((), None, "SYS PSG_MUSIC_STOP"),
+    "psg_music_pause": ((), None, "SYS PSG_MUSIC_PAUSE"),
+    "psg_music_resume": ((), None, "SYS PSG_MUSIC_RESUME"),
     "camera_set": ((INT, INT), None, "SYS CAMERA_SET"),
     "random_range": ((INT, INT), INT, "SYS RANDOM_RANGE"),
     "button_down": ((INT,), BOOL, "SYS BUTTON_DOWN"),
     "button_pressed": ((INT,), BOOL, "SYS BUTTON_PRESSED"),
-    "brightness": ((INT,), None, "SYS BRIGHTNESS"),
+    "screen_set_brightness": ((INT,), None, "SYS SCREEN_SET_BRIGHTNESS"),
     "path_start": ((ENTITY, INT, INT), None, "SYS PATH_START"),
     "path_stop": ((ENTITY,), None, "SYS PATH_STOP"),
     "kill": ((ENTITY,), None, "KILL"),
@@ -1066,8 +1068,11 @@ ENGINE = {
 }
 WAITS = ("wait", "wait_anim", "wait_move")
 # Every name the engine gives a script; none is the entity 0.
-ENGINE_NAMES = frozenset(ENGINE) | {"print", "spawn", "instances", "object", "array", "none",
-                                    "math"}
+# text_print and text_print_number are checked and compiled on their own (a
+# string argument; an optional width).
+TEXT_CALLS = ("text_print", "text_print_number")
+ENGINE_NAMES = frozenset(ENGINE) | frozenset(TEXT_CALLS) | {"spawn", "instances", "object",
+                                                           "array", "none", "math"}
 MATH_FUNCTIONS = ("floor", "abs", "min", "max")
 # math's integer limits, with LUA_32BITS.
 MATH_CONSTANTS = {"mininteger": INT_MIN, "maxinteger": INT_MAX}
@@ -1086,14 +1091,19 @@ STDLIB = {
     "coroutine": ("the coroutine library",
                   "handlers already are coroutines: create and room_start may wait()"),
     "string": ("the string library (string operations at run time)",
-               "print a literal: print(col, row, \"text\"); .. of two literals is folded"),
+               "draw a literal: text_print(col, row, \"text\"); .. of two literals is "
+               "folded"),
     "utf8": ("the utf8 library", None),
     "table": ("the table library", "arrays are declared at the top level: a = array(n)"),
     "os": ("the os library", None), "io": ("the io library", None),
     "debug": ("the debug library", None), "package": ("package", None),
     "require": ("require (modules)", "a script is one file"),
     "load": ("load", None), "loadfile": ("loadfile", None), "dofile": ("dofile", None),
-    "tostring": ("tostring (strings at run time)", "print(col, row, n) prints a number"),
+    "tostring": ("tostring (strings at run time)",
+                 "text_print_number(col, row, n) prints a number"),
+    "print": ("print (console output)",
+              "text_print(col, row, \"text\") draws text on the screen, "
+              "text_print_number(col, row, n) a number"),
     "tonumber": ("tonumber (strings at run time)", None),
     "type": ("type() (types are checked at compile time)", None),
     "select": ("select (varargs)", None),
@@ -2378,7 +2388,8 @@ class Checker:
         if have is None or vt is None or have == vt or (have == FIXED and vt == INT):
             return
         if vt == STRING:
-            self.fail(node, "strings exist only as print's argument", 'print(col, row, "text")')
+            self.fail(node, "strings exist only as text_print's argument",
+                      'text_print(col, row, "text")')
         where = ""
         if origin == "property":
             where = " (an engine property)"
@@ -2453,11 +2464,11 @@ class Checker:
 
     def value(self, e, allow_string=False):
         """The type of an expression used as a value: a number, a boolean or
-        an entity (or a string, for print and constants)."""
+        an entity (or a string, for text_print and constants)."""
         ty = self.expr(e)
         if ty == STRING and not allow_string:
-            self.fail(e, "strings exist only as print's argument (and as <const> values)",
-                      'print(col, row, "text")')
+            self.fail(e, "strings exist only as text_print's argument (and as <const> "
+                      "values)", 'text_print(col, row, "text")')
         if ty in (OBJECT, ARRAY, FUNCTION, BUILTIN, VOID):
             self.misuse(e, ty)
         return ty
@@ -2751,7 +2762,8 @@ class Checker:
             if ty not in (STRING, INT) or c is None or c.value is None:
                 self.fail(side, "string operations at run time are not in the subset: .. "
                           "joins literal strings (and integer literals) only",
-                          "print the pieces one by one: print(col, row, n)")
+                          "print the pieces one by one: text_print(col, row, \"text\"), "
+                          "text_print_number(col, row, n)")
             parts.append(c.value if ty == STRING else str(c.value).encode())
         e.const = Const(STRING, parts[0] + parts[1])
         return STRING
@@ -2976,8 +2988,8 @@ class Checker:
         return fn.result
 
     def engine_call(self, e, name):
-        if name == "print":
-            return self.print_call(e)
+        if name in TEXT_CALLS:
+            return self.text_call(e, name)
         if name == "spawn":
             return self.spawn_call(e)
         if name in ("object", "array"):
@@ -2994,31 +3006,38 @@ class Checker:
             self.argument(arg, want, name, index)
         return result or VOID
 
-    def print_call(self, e):
-        self.arity(e, "print", (3, 4))
+    def text_call(self, e, name):
+        """text_print(col, row, "text"): a string known at compile time.
+        text_print_number(col, row, n [, width]): an integer."""
+        number = name == "text_print_number"
+        self.arity(e, name, (3, 4) if number else (3,))
         for index in (0, 1):
-            self.argument(e.args[index], INT, "print", index)
+            self.argument(e.args[index], INT, name, index)
         what = e.args[2]
         ty = self.value(what, allow_string=True)
-        if ty == STRING:
-            if len(e.args) == 4:
-                self.fail(e.args[3], "a width is for numbers; a string prints as it is")
-            text = what.const.value
-            bad = next((b for b in text if not 0x20 <= b <= 0x7E), None)
-            if bad is not None:
-                self.fail(what, f"print draws printable ASCII (32 to 126), and this string "
-                          f"has the byte {bad} (0x{bad:02X})")
-            e.print_kind = "text"
+        if not number:
+            if ty == STRING:
+                text = what.const.value
+                bad = next((b for b in text if not 0x20 <= b <= 0x7E), None)
+                if bad is not None:
+                    self.fail(what, f"text_print draws printable ASCII (32 to 126), and this "
+                              f"string has the byte {bad} (0x{bad:02X})")
+            else:
+                hint = ("text_print_number(col, row, n) prints a number"
+                        if ty in (INT, FIXED, None) else None)
+                self.fail(what, f"text_print draws a literal string, and this is "
+                          f"{article(ty) if ty else 'a value'}", hint)
+        elif ty == STRING:
+            self.fail(what, "text_print_number prints an integer, and this is a string",
+                      'text_print(col, row, "text") draws a string')
         elif ty is None:
             self.want(what, INT)
-        elif ty == INT:
-            e.print_kind = "number"
-        else:
+        elif ty != INT:
             hint = "math.floor(x) makes a fixed value an integer" if ty == FIXED else None
-            self.fail(what, f"print shows integers and literal strings, and this is "
+            self.fail(what, f"text_print_number prints an integer, and this is "
                       f"{article(ty)}", hint)
         if len(e.args) == 4:
-            self.argument(e.args[3], INT, "print", 3)
+            self.argument(e.args[3], INT, name, 3)
         return VOID
 
     def spawn_call(self, e):
@@ -4078,10 +4097,10 @@ class FuncGen:
                 self.push(e.const, e)
             return
         name = sym.name
-        if name == "print":
+        if name in TEXT_CALLS:
             self.expr(e.args[0])
             self.expr(e.args[1])
-            if e.print_kind == "text":
+            if name == "text_print":
                 label = self.cg.string(e.args[2].const.value, e.line)
                 self.op(f"PUSH STR_{label}", e.args[2])
                 self.op("SYS TEXT_PRINT", e)

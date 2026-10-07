@@ -20,8 +20,8 @@
 // others are entities the script spawns. C reads G_RESTART only.
 #include "fireflies_script.h"
 
-// Game components in the objects' masks, so the C glue can find the pairs
-// to test for collisions.
+// Game components in the objects' masks, so main.c can name the two sets
+// whose bodies collide (vm_collide).
 #define C_PLAYER C_GAME(0)
 #define C_FIREFLY C_GAME(1)
 

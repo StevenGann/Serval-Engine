@@ -38,16 +38,16 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         // (psg_play warns), rather than another sound's ID once truncated.
         psg_play(args[0] >= 0 && args[0] <= 0xFFFF ? (u16)args[0] : 0xFFFF);
         return 0;
-    case VM_SYS_MUSIC_PLAY:
+    case VM_SYS_PSG_MUSIC_PLAY:
         psg_music_play(ptr);
         return 0;
-    case VM_SYS_MUSIC_STOP:
+    case VM_SYS_PSG_MUSIC_STOP:
         psg_music_stop();
         return 0;
-    case VM_SYS_MUSIC_PAUSE:
+    case VM_SYS_PSG_MUSIC_PAUSE:
         psg_music_pause();
         return 0;
-    case VM_SYS_MUSIC_RESUME:
+    case VM_SYS_PSG_MUSIC_RESUME:
         psg_music_resume();
         return 0;
     case VM_SYS_TEXT_PRINT:
@@ -60,7 +60,7 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         return button_down((u16)args[0]);
     case VM_SYS_BUTTON_PRESSED:
         return button_pressed((u16)args[0]);
-    case VM_SYS_BRIGHTNESS:
+    case VM_SYS_SCREEN_SET_BRIGHTNESS:
         screen_set_brightness(args[0]);
         return 0;
     default:

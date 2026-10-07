@@ -1,10 +1,13 @@
 // Tests for the VM's GBA engine calls (src/gba/vm_platform.c): what a script's
 // SYS text calls leave in the text layer's map. The blob is hand-assembled
 // (docs/vm.md "Blob format"); the shared suite (tests/vm_tests.c) covers the
-// interpreter's side of the calls.
+// interpreter's side of the calls, and vm_collide's rules. Also the cost of
+// vm_collide's pass on the hardware, logged.
 
 #include "../test.h"
 #include "serval/debug.h"
+#include "serval/ecs.h"
+#include "serval/physics.h"
 #include "serval/text.h"
 #include "serval/vm.h"
 
@@ -129,5 +132,80 @@ static void text_print_number_width(void) {
     text_clear();
 }
 
+// CPU cycles, from the cascaded timers serval_init() starts.
+static u32 cycles(void) {
+    u32 hi, lo;
+    do {
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+}
+
+// Cycle budgets only hold for optimized code: Debug builds (-O0) check
+// correctness but not timing.
+#ifdef __OPTIMIZE__
+#define CHECK_TIMING(cond) CHECK(cond)
+#else
+#define CHECK_TIMING(cond) ((void)(cond))
+#endif
+
+#define C_SHOT C_GAME(0)
+#define C_ENEMY C_GAME(1)
+
+// `count` 8x8 bodies with the component `tag`, 10 pixels apart in a row at y:
+// none touches another.
+static void make_row(u32 tag, u32 count, s32 y) {
+    for (u32 k = 0; k < count; k++) {
+        u32 i = entity_index(entity_create(C_POS | C_BODY | tag));
+        pos_x[i] = FX((s32)k * 10);
+        pos_y[i] = FX(y);
+        body_w[i] = body_h[i] = 8;
+    }
+}
+
+// vm_events() with its queue empty and the pairs set: the cycles the pass
+// costs, without reactions (nothing overlaps).
+static u32 events_cycles(void) {
+    u32 t0 = cycles();
+    vm_events();
+    return cycles() - t0;
+}
+
+// vm.h vm_collide "Cost": what the collision pass costs on the GBA, logged.
+// A pass over one pair lists both sets and tests every entity of one against
+// every one of the other: measured with 1 x 8 bodies (fireflies' player and
+// fireflies) and 10 x 20 (a shooter's shots and enemies), in a pool filled
+// with 64 other entities, none overlapping.
+static void collide_costs(void) {
+    ecs_reset();
+    CHECK(vm_load(printer, sizeof printer)); // any blob: no blob, no pass
+    for (u32 k = 0; k < 64; k++)
+        entity_create(C_POS);
+    make_row(C_SHOT, 1, 0);
+    make_row(C_ENEMY, 8, 20);
+    u32 none = events_cycles();
+    CHECK(vm_collide(C_SHOT, C_ENEMY));
+    u32 small = events_cycles();
+    make_row(C_SHOT, 9, 40);
+    make_row(C_ENEMY, 12, 60);
+    u32 large = events_cycles();
+    u32 before = debug_warning_count();
+    // Per test: the difference between 200 and 8 tests, the same two lists.
+    u32 per_test = (large - small) / (200 - 8);
+    debug_log(text_format("vm_collide: vm_events with no pair %u cycles; one pair, 1 x 8 bodies "
+                          "%u, 10 x 20 %u: about %u per test",
+                          none, small, large, per_test));
+    CHECK(debug_warning_count() == before);
+    // About 3,000 and 17,100 more than with no pair when this was written
+    // (gba-ci, mGBA): two lists of about 1,000 cycles each, then about 75
+    // cycles per test.
+    CHECK_TIMING(small - none < 4000);
+    CHECK_TIMING(per_test < 100);
+    vm_collide_clear();
+    vm_unload();
+    ecs_reset();
+}
+
 TEST_SUITE(gba_vm_tests, "gba_vm", {"text_calls_print", text_calls_print},
-           {"text_print_number_width", text_print_number_width});
+           {"text_print_number_width", text_print_number_width}, {"collide_costs", collide_costs});

@@ -327,19 +327,16 @@ end
 function env.wait_move() end -- no paths run: nothing to wait for
 function env.wait_anim() end -- no animations run: the VM warns and goes on
 
-function env.print(col, row, v, width)
-  if type(v) == "string" then
-    call("TEXT_PRINT", col, row, v)
-  else
-    call("TEXT_PRINT_NUMBER", col, row, v, width or 0)
-  end
+function env.text_print(col, row, text) call("TEXT_PRINT", col, row, text) end
+function env.text_print_number(col, row, n, width)
+  call("TEXT_PRINT_NUMBER", col, row, n, width or 0)
 end
-function env.play_sound(id) call("PSG_PLAY", id) end
-function env.music_play(song) call("MUSIC_PLAY", song) end
-function env.music_stop() call("MUSIC_STOP") end
-function env.music_pause() call("MUSIC_PAUSE") end
-function env.music_resume() call("MUSIC_RESUME") end
-function env.brightness(level) call("BRIGHTNESS", level) end
+function env.psg_play(id) call("PSG_PLAY", id) end
+function env.psg_music_play(song) call("PSG_MUSIC_PLAY", song) end
+function env.psg_music_stop() call("PSG_MUSIC_STOP") end
+function env.psg_music_pause() call("PSG_MUSIC_PAUSE") end
+function env.psg_music_resume() call("PSG_MUSIC_RESUME") end
+function env.screen_set_brightness(level) call("SCREEN_SET_BRIGHTNESS", level) end
 function env.camera_set(x, y) end
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end

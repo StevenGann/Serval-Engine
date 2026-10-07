@@ -25,11 +25,11 @@
 //         paths).
 //       * C (this file) does only what Studio Advance generates as C for a
 //         game made in its editor: main(), the art, sound and path tables
-//         (art.c, sound.c), vm_load of the blob, vm_bind, the frame loop in
-//         vm.h's order, the collision pairs (the player's body against each
-//         firefly's with body_overlap, reported to the firefly as a
-//         Collision event) and a full restart when the scripts set
-//         G_RESTART. No game rule is in C.
+//         (art.c, sound.c), vm_load of the blob, vm_bind, the one collision
+//         pair (vm_collide: the VM itself tests the player's body against
+//         each firefly's and runs the firefly's collision handler), the
+//         frame loop in vm.h's order and a full restart when the scripts set
+//         G_RESTART. No game rule, and no collision loop, is in C.
 //   - The Lua subset's compiler and the engine's assembler at build time:
 //     serval_add_script (examples/CMakeLists.txt) runs tools/svlua.py on
 //     fireflies.lua and tools/svm.py on its output, making fireflies_script,
@@ -90,19 +90,6 @@ static void start_round(void) {
     vm_start(OBJ_SPAWNER, VM_EV_ROOM_START);
 }
 
-// The collision pairs: the player against every firefly. A touching firefly
-// gets a Collision event with the player as OTHER; its handler decides what
-// that means.
-static void report_catches(void) {
-    static u8 players[MAX_ENT], fireflies[MAX_ENT];
-    u32 player_count = ecs_gather(C_PLAYER, players);
-    u32 firefly_count = ecs_gather(C_FIREFLY, fireflies);
-    for (u32 p = 0; p < player_count; p++)
-        for (u32 f = 0; f < firefly_count; f++)
-            if (body_overlap(players[p], fireflies[f]))
-                vm_event(entity_at(fireflies[f]), entity_at(players[p]), VM_EV_COLLISION);
-}
-
 int main(void) {
     serval_init();
     serval_splash();
@@ -118,8 +105,15 @@ int main(void) {
     text_set_color(COLOR_RGB(255, 246, 200), COLOR_RGB(10, 8, 30));
     text_set_shadow(true);
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);
-    vm_bind(&(VmBindings){
-        .songs = songs, .song_count = SONG_COUNT, .paths = paths, .path_count = PATH_COUNT});
+    vm_bind(&(VmBindings){.psg_songs = songs,
+                          .psg_song_count = SONG_COUNT,
+                          .paths = paths,
+                          .path_count = PATH_COUNT});
+    // The player against every firefly: vm_events() tests their bodies each
+    // frame, and a touching firefly's collision handler runs with the player
+    // as its other (the Player object has none). Set once: the pairs outlast
+    // the vm_load of every round.
+    vm_collide(C_PLAYER, C_FIREFLY);
     start_round();
 
     for (;;) {
@@ -128,8 +122,7 @@ int main(void) {
         sys_path();
         sys_movement();
         sys_physics(); // keeps bodies inside the bounds
-        report_catches();
-        vm_events(); // the Collision handlers, this frame
+        vm_events();   // queued events, then the vm_collide pair: catches, this frame
         sys_animate();
         sys_render_by_depth();
         frame_end();
