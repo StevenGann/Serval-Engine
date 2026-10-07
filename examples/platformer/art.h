@@ -34,7 +34,7 @@ enum {
     SPR_DEBRIS,                   // 8x8, tumbling (animated: frame_order, flipped)
     SPR_SHARED_COUNT
 };
-#define STAGE_SPRITES 16
+#define STAGE_SPRITES 24
 #define SPR_STAGE(stage) (SPR_SHARED_COUNT + (stage) * STAGE_SPRITES)
 #define SPRITE_COUNT SPR_STAGE(STAGE_COUNT)
 

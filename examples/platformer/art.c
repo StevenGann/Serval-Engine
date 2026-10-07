@@ -387,17 +387,18 @@ static const SpriteAsset sprites[SPR_SHARED_COUNT] = {
 
 // Every sprite ID: the shared sprites, then each stage's block of
 // STAGE_SPRITES (art.h).
-#define STAGE_SPRITE_IDS(stage, array)                                                             \
-    [SPR_STAGE(stage) +                                                                            \
-        0] = &(array)[0],                                                                          \
-        [SPR_STAGE(stage) + 1] = &(array)[1], [SPR_STAGE(stage) + 2] = &(array)[2],                \
-        [SPR_STAGE(stage) + 3] = &(array)[3], [SPR_STAGE(stage) + 4] = &(array)[4],                \
-        [SPR_STAGE(stage) + 5] = &(array)[5], [SPR_STAGE(stage) + 6] = &(array)[6],                \
-        [SPR_STAGE(stage) + 7] = &(array)[7], [SPR_STAGE(stage) + 8] = &(array)[8],                \
-        [SPR_STAGE(stage) + 9] = &(array)[9], [SPR_STAGE(stage) + 10] = &(array)[10],              \
-        [SPR_STAGE(stage) + 11] = &(array)[11], [SPR_STAGE(stage) + 12] = &(array)[12],            \
-        [SPR_STAGE(stage) + 13] = &(array)[13], [SPR_STAGE(stage) + 14] = &(array)[14],            \
-        [SPR_STAGE(stage) + 15] = &(array)[15]
+// clang-format off
+#define STAGE_SPRITE(stage, array, n) [SPR_STAGE(stage) + (n)] = &(array)[n]
+#define STAGE_SPRITE_IDS(stage, a)                                                                 \
+    STAGE_SPRITE(stage, a, 0), STAGE_SPRITE(stage, a, 1), STAGE_SPRITE(stage, a, 2),               \
+    STAGE_SPRITE(stage, a, 3), STAGE_SPRITE(stage, a, 4), STAGE_SPRITE(stage, a, 5),               \
+    STAGE_SPRITE(stage, a, 6), STAGE_SPRITE(stage, a, 7), STAGE_SPRITE(stage, a, 8),               \
+    STAGE_SPRITE(stage, a, 9), STAGE_SPRITE(stage, a, 10), STAGE_SPRITE(stage, a, 11),             \
+    STAGE_SPRITE(stage, a, 12), STAGE_SPRITE(stage, a, 13), STAGE_SPRITE(stage, a, 14),            \
+    STAGE_SPRITE(stage, a, 15), STAGE_SPRITE(stage, a, 16), STAGE_SPRITE(stage, a, 17),            \
+    STAGE_SPRITE(stage, a, 18), STAGE_SPRITE(stage, a, 19), STAGE_SPRITE(stage, a, 20),            \
+    STAGE_SPRITE(stage, a, 21), STAGE_SPRITE(stage, a, 22), STAGE_SPRITE(stage, a, 23)
+// clang-format on
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_SERVAL_SMALL] = &sprites[SPR_SERVAL_SMALL],
@@ -413,6 +414,8 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_DEBRIS] = &sprites[SPR_DEBRIS],
     STAGE_SPRITE_IDS(STAGE_OVERWORLD, overworld_sprites),
     STAGE_SPRITE_IDS(STAGE_UNDERGROUND, underground_sprites),
+    STAGE_SPRITE_IDS(STAGE_TREETOPS, treetops_sprites),
+    STAGE_SPRITE_IDS(STAGE_CASTLE, castle_sprites),
 };
 
 // The sprites every stage uses, loaded once: IDs 0 to SPR_GLOBAL_COUNT - 1.

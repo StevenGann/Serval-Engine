@@ -7,6 +7,8 @@
 static const StageDef* const stages[] = {
     &stage_overworld,
     &stage_underground,
+    &stage_treetops,
+    &stage_castle,
 };
 #define STAGES ((int)(sizeof stages / sizeof stages[0]))
 
@@ -55,6 +57,7 @@ static bool fading_out;
 static void (*next_screen)(void); // shown once the fade out reaches black
 static int title_stage;           // the stage START begins with, picked with SELECT
 int cam_x, cam_y;
+int camera_stop_x;
 
 // --- Saved progress ------------------------------------------------------------
 
@@ -195,7 +198,7 @@ static void update_camera(void) {
         y = feet - CAMERA_FEET;
     if (top - y < CAMERA_HEAD)
         y = top - CAMERA_HEAD;
-    camera_set(int_max(cam_x, x - CAMERA_LEAD), y);
+    camera_set(int_min(int_max(cam_x, x - CAMERA_LEAD), camera_stop_x), y);
     cam_x = camera_x();
     cam_y = camera_y();
 }
@@ -284,6 +287,7 @@ static void start_level(void) {
     cam_y = CAMERA_REST_Y;
     camera_set(cam_x, cam_y);
     cam_x = camera_x();
+    camera_stop_x = level_pixel_w; // no stop: camera_set() clamps to the map
     objects_reset(cam_x / TILE);
     time_left = stage->time;
     time_ticks = 0;

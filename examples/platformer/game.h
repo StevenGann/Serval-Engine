@@ -161,7 +161,9 @@ int player_center_x(void);
 // --- Objects (objects.c) -----------------------------------------------------
 
 // Per-entity data of the game's objects, beside the engine's component
-// pools; stages use them for their own objects too.
+// pools; stages use them for their own objects too. A stage needing more
+// per-entity data keeps it in EWRAM (SERVAL_EWRAM_BSS): IWRAM is nearly
+// full in debug builds (docs/development.md#memory-use).
 extern u8 obj_kind[MAX_ENT];   // C_ENEMY: SpawnKind
 extern s8 obj_dir[MAX_ENT];    // -1 left, 1 right
 extern s16 obj_timer[MAX_ENT]; // frames: until a frog hops, an effect ends...
@@ -196,6 +198,10 @@ void goal_start_exit(void); // the serval walks into the exit, ending the stage
 
 // Camera position in world pixels (follows the serval, never back left).
 extern int cam_x, cam_y;
+// The camera's x goes no further right than this: a stage's start or update
+// hook can stop it, e.g. at a boss's arena. Reset to the level's width
+// (no stop) whenever a stage (re)starts, before its start hook.
+extern int camera_stop_x;
 
 // --- Sound (sound.c) ---------------------------------------------------------
 
@@ -223,7 +229,7 @@ enum {
     SND_GAME_OVER,
     SOUND_SHARED_COUNT
 };
-#define STAGE_SOUNDS 6
+#define STAGE_SOUNDS 8
 #define SND_STAGE(stage) (SOUND_SHARED_COUNT + (stage) * STAGE_SOUNDS)
 #define SOUND_COUNT SND_STAGE(STAGE_COUNT)
 

@@ -136,11 +136,13 @@ static const PsgSound sounds[SOUND_SHARED_COUNT] = {
 
 // One table for every stage: the shared sounds, then each stage's block of
 // STAGE_SOUNDS (game.h).
-#define STAGE_SOUND_IDS(stage, array)                                                              \
-    [SND_STAGE(stage) + 0] = &(array)[0], [SND_STAGE(stage) + 1] = &(array)[1],                    \
-                        [SND_STAGE(stage) + 2] = &(array)[2],                                      \
-                        [SND_STAGE(stage) + 3] = &(array)[3],                                      \
-                        [SND_STAGE(stage) + 4] = &(array)[4], [SND_STAGE(stage) + 5] = &(array)[5]
+// clang-format off
+#define STAGE_SOUND(stage, array, n) [SND_STAGE(stage) + (n)] = &(array)[n]
+#define STAGE_SOUND_IDS(stage, a)                                                                  \
+    STAGE_SOUND(stage, a, 0), STAGE_SOUND(stage, a, 1), STAGE_SOUND(stage, a, 2),                  \
+    STAGE_SOUND(stage, a, 3), STAGE_SOUND(stage, a, 4), STAGE_SOUND(stage, a, 5),                  \
+    STAGE_SOUND(stage, a, 6), STAGE_SOUND(stage, a, 7)
+// clang-format on
 
 const PsgSound* const sound_table[SOUND_COUNT] = {
     [SND_JUMP] = &sounds[SND_JUMP],
@@ -163,6 +165,8 @@ const PsgSound* const sound_table[SOUND_COUNT] = {
     [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
     STAGE_SOUND_IDS(STAGE_OVERWORLD, overworld_sounds),
     STAGE_SOUND_IDS(STAGE_UNDERGROUND, underground_sounds),
+    STAGE_SOUND_IDS(STAGE_TREETOPS, treetops_sounds),
+    STAGE_SOUND_IDS(STAGE_CASTLE, castle_sounds),
 };
 
 // The fanfare as the serval hops off the goal pole, or walks into a stage's

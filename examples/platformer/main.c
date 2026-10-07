@@ -1,9 +1,10 @@
-// platformer: "Serval Dash", a side-scroller in the classic style, in
-// stages. Run and jump as a small serval through grassland (stage 1-1) and
-// a cave (stage 1-2): bonus blocks, bricks, enemies to stomp, pits, one-way
-// ledges and spikes, a banner pole before the den and an exit back to
-// daylight. Lives, score and gems carry from stage to stage; the furthest
-// stage reached and the best score are saved.
+// platformer: "Serval Dash", a side-scroller in the classic style, in four
+// stages. Run and jump as a small serval through grassland (stage 1-1), a
+// cave (1-2), the treetops (1-3) and a castle (1-4): bonus blocks, bricks,
+// enemies to stomp, pits, one-way ledges and spikes, banner poles before the
+// den and exits back to daylight, then an ending. Lives, score and gems carry
+// from stage to stage; the furthest stage reached and the best score are
+// saved.
 //
 // Demonstrates, in every stage (the frame: game.c, level.c, player.c,
 // objects.c):
@@ -89,6 +90,14 @@
 //   - A recolored brick (the stage group's block palette) and an exit
 //     without a pole
 //
+// Demonstrates in stage 1-3, the treetops (stage_treetops.c): a placeholder
+// for now, on the overworld's art: one-way canopies over bottomless gaps,
+// with frogs on them, and the goal pole.
+//
+// Demonstrates in stage 1-4, the castle (stage_castle.c, boss.c): a
+// placeholder for now, on the underground's art: spikes, plank ledges, an
+// exit, and the ending hooks (StageDef.ending_start, ending_update).
+//
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
 //     3 seconds; any button skips it once the logo is in).
@@ -173,8 +182,21 @@
 //     shrinks and blinks, and can jump out; a small one loses a life).
 //   - At the end a stone staircase climbs to a timbered opening in the rock
 //     wall, with daylight and green hills beyond; walking in ends the stage.
-//     It is the last stage for now: after "STAGE CLEAR!" the screen fades
-//     back to the title.
+//   Stage 1-3, the treetops (a placeholder for now):
+//   - The overworld's tiles under a paler sky, with green hedges on tree
+//     trunks for canopies: the serval jumps up through them and lands on
+//     them, and the gaps between them are bottomless. Red frogs sit on the
+//     canopies and the ground. A short sketch of a tune in G major. The goal
+//     pole and the striped tent end it.
+//   Stage 1-4, the castle (a placeholder for now):
+//   - The underground's tiles over a red-black backdrop: a spike dip, a pit
+//     of spikes crossed on plank ledges, a woodlouse, and the timbered exit at
+//     the end. A short sketch of a tune in D minor.
+//   After the last stage:
+//   - "STAGE CLEAR!", then a fade to a black screen: "THE END", "THE SERVAL
+//     IS HOME AGAIN", "THANK YOU FOR PLAYING" with the fanfare, for ten
+//     seconds (START after the first second skips it), then the title, which
+//     now shows the best score and lets SELECT pick any stage.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   START = Enter, SELECT = Backspace.)
 //
@@ -184,7 +206,8 @@
 // objects.c (enemies, items, effects), art.c (shared graphics, converted
 // from ASCII pixel art) and sound.c (shared sound effects). Each stage is
 // stage_<name>.c (its level and hooks), art_<name>.c, sound_<name>.c and
-// stage_<name>.h: overworld (1-1) and underground (1-2).
+// stage_<name>.h: overworld (1-1), underground (1-2), treetops (1-3) and
+// castle (1-4, with boss.c).
 
 #include "game.h"
 

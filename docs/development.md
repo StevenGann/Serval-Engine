@@ -206,10 +206,10 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | `bunnymark` | 18,356 bytes | 23,324 bytes |
 | `asteroids` | 18,992 bytes | 24,480 bytes |
 | `fireflies` | 20,232 bytes | 25,828 bytes |
-| `platformer` | 21,328 bytes | 26,592 bytes |
+| `platformer` | 21,292 bytes | 26,568 bytes |
 | `breakout` | 21,800 bytes | 27,292 bytes |
 
-At `01fd31b` they were within 300 bytes of these (`hello` 9,536, `breakout` 21,852). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
+At `01fd31b` they were within 300 bytes of these (`hello` 9,536, `breakout` 21,852). `platformer`'s row was measured again when it grew to four stages (it was 21,328 and 26,592 bytes): its spawn list moved to EWRAM, beside the level's cells and the map layers it now builds there, and the stages' code and data add almost nothing to IWRAM. `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
 
 Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `2a3f5a1`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 

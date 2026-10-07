@@ -78,8 +78,8 @@ thumbnail = { frame = 340, keys = ["200:S:2", "300:A:2"] }
 
 [examples.platformer]
 title = "SERVAL DASH"
-summary = "A first level in the classic side-scroller style: scrolling tile maps with parallax, map collision, animated sprites and tiles, enemies to stomp, music"
-tags = ["tilemaps", "physics", "animation", "music"]
+summary = "A side-scroller in the classic style, in four stages: scrolling tile maps with parallax, map collision, one-way ledges and hazards, a tileset and sprite group per stage, enemies to stomp, music, saved progress in Flash"
+tags = ["tilemaps", "physics", "animation", "music", "save"]
 level = 3
 thumbnail = { frame = 730, keys = ["200:S:2", "600:rB:200", "700:A:20"] }
 
