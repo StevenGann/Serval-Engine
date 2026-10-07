@@ -30,7 +30,7 @@ The text layer's 8x8 font (`sys8`) comes from libtonc and is covered by its noti
 | Component | Source | License | Obligation for a shipped game |
 | --- | --- | --- | --- |
 | Emscripten runtime (JavaScript glue, `emmalloc`) | [emscripten-core/emscripten](https://github.com/emscripten-core/emscripten) | MIT (or University of Illinois/NCSA) | Include copyright and permission notice |
-| musl (C library routines such as `memcpy`) | bundled with Emscripten | MIT | Include copyright and permission notice |
+| musl (C library routines such as `strlen`) | bundled with Emscripten | MIT | Include copyright and permission notice |
 | compiler-rt (compiler runtime) | bundled with Emscripten | Apache 2.0 with LLVM Exception | None: the exception covers compiled code |
 
 **Bottom line:** every game must include the notices of Serval Engine and libtonc (plus Emscripten and musl for web builds). The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
@@ -40,7 +40,7 @@ The text layer's 8x8 font (`sys8`) comes from libtonc and is covered by its noti
 ### Rules that keep it this way
 
 - **Never include `tonc_libgba.h`.** It is removed from the vendored copy ([VENDORED.md](../third_party/libtonc/VENDORED.md)). libtonc's libgba compatibility header carries libgba's LGPL v2+ notice and is standalone (nothing else in libtonc includes it). LGPL code statically linked into a ROM would oblige games to allow relinking.
-- **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license at all. The engine also needs its own ROM header anyway, without the Nintendo logo.
+- **Write our own crt0 and linker script.** devkitARM's GBA startup code (`gba_crt0.s`) is MPL 2.0, which would require every game to tell recipients where to get that file's source. Its linker script (`gba_cart.ld`, by Jeff Frohwein) carries no license, only a note releasing it into the public domain. The engine also needs its own ROM header anyway, without the Nintendo logo.
 - **Keep newlib out of the link.** GCC can emit `memcpy`/`memset` calls even in code that never calls libc. The engine provides its own `memcpy`, `memset`, `memmove`, `memcmp` and `strlen` (`src/gba/libc.c`, backed by libtonc's `tonccpy`/`toncset` and linked into every ROM as an object), so newlib and its many notices are not linked. Check the link map when adding code; every ROM's `*_rom_checks` test fails if `libc.a` appears in it ([development.md](development.md#tests)).
 
 ### Provenance note for legal review

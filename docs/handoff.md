@@ -31,7 +31,7 @@ After 1.0.0, implement the planned features one per minor version, in the order 
 
 ## What the editor relies on
 
-These are the shared contracts. Changing any of them is a cross-repository change and, after 1.0.0, a major version unless it is additive under the data-format rule ([releases.md](releases.md#planned-api)):
+These are the shared contracts. Changing any of them is a cross-repository change and, after 1.0.0, a major version unless it is additive under the data-format rule ([releases.md](releases.md#versioning)):
 
 - the ROM data formats: `SpriteAsset`, `SpriteGroup`, `SpritePiece`, `Tileset`, `Metatile`, `MapLayer`, `PsgSound`, `PsgSong`, `Path` and their flags ([sprites.md](sprites.md#rom-data-format), [tilemaps.md](tilemaps.md), [audio.md](audio.md), [runtime-systems.md](runtime-systems.md#paths)); the editor writes them with designated initializers;
 - the VM blob format, opcodes, SYS calls and properties ([vm.md](vm.md)), which the editor also emits;

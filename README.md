@@ -18,7 +18,7 @@ It is designed as three layers:
 
 Implemented in 1.0:
 
-- Frame loop with CPU-cycle timing; buttons with held-button repeat for menus; 24.8 fixed point, integer helpers, trig with `angle_of` (atan2) and `fx_length`, all without division; deterministic random numbers seeded from the player's input.
+- Frame loop with CPU-cycle timing; buttons with held-button repeat for menus; 24.8 fixed point, integer helpers, division-free trig with `angle_of` (atan2) and `fx_length`; deterministic random numbers seeded from the player's input.
 - Sprites: resident sprite groups, loaded in layers (global and per-room groups with marks), 12 hardware sizes, flips, layers, rotation and scaling (32 shared matrices per frame; per-frame counts of what the hardware limits drop), metasprites (pieces drawn, rotated and depth-sorted as one, about any pivot), depth sorting (cheap with few depths), any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; 128 on screen.
 - Tilemaps: one tileset per room, up to three layers of 16x16 metatiles on BG1-BG3, streamed around a camera (any map size); parallax, wrapping, fixed and self-scrolling layers; runtime cell changes; animated tiles; four game tag bits per metatile (hazards, water, goals), found under a rectangle with `map_tags_in()`.
 - ECS: 128 entities with generational handles; engine components for position, velocity, sprite, animation, body, map body and path; movement, physics, map movement, animation, path and render systems; game-defined components and systems; `ecs_count` and `ecs_gather` for cheap per-kind loops.
@@ -66,7 +66,7 @@ Each example's `main.c` starts by describing what it demonstrates and what you s
 
 ## Building
 
-Requires CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC ([ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses). On Linux, `tools/setup-dev.sh` installs all of it, plus mGBA's test runner and Emscripten, at the versions CI uses ([details](docs/development.md#requirements)).
+Requires CMake ≥ 3.25, Ninja, Python 3.11 or later and an `arm-none-eabi` GCC ([ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses). On Linux, `tools/setup-dev.sh` installs all of it, plus mGBA's test runner and Emscripten, at the versions CI uses ([details](docs/development.md#requirements)).
 
 ```sh
 tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
@@ -81,4 +81,4 @@ Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://ems
 
 ## License
 
-Serval Engine is released under the [MIT License](LICENSE), so it can be linked into any game, including commercial ones. Games must include the engine's copyright notice and libtonc's (and Maxmod's, once the engine links it for tracker music and sampled sound); see [docs/licensing.md](docs/licensing.md).
+Serval Engine is released under the [MIT License](LICENSE), so it can be linked into any game, including commercial ones. Games must include the engine's copyright notice and libtonc's (and Maxmod's, once the engine links it for tracker music and sampled sound; web builds also Emscripten's and musl's); see [docs/licensing.md](docs/licensing.md).
