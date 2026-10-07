@@ -11,14 +11,21 @@ fireflies game in Lua. Run directly: python3 tools/svlua_test.py
 (SVLUA_UPDATE_GOLDEN=1 rewrites the golden listings from the compiler).
 """
 
+import io
 import os
+import re
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import svlua  # noqa: E402
+import svm  # noqa: E402
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+FIXTURES = os.path.join(ROOT, "tests", "svlua")
+INT_MIN, INT_MAX = -0x80000000, 0x7FFFFFFF
 
 
 def tokens(text):
@@ -188,7 +195,8 @@ class Precedence(unittest.TestCase):
     def test_every_binary_operator_parses(self):
         for op in svlua.BINARY_PRIORITY:
             with self.subTest(op=op):
-                self.assertEqual(expr_tree(f"a {op} b"), ("Binary", op, ("Name", "a"), ("Name", "b")))
+                self.assertEqual(expr_tree(f"a {op} b"),
+                                 ("Binary", op, ("Name", "a"), ("Name", "b")))
 
 
 class Statements(unittest.TestCase):
@@ -303,7 +311,8 @@ REJECTED = {
                 r"function expressions \(closures\) are not in the subset"),
     "nested_function": (OBJ + "function A:step() local function f() end end", 3, 19,
                         r"functions are declared at the top level only \(closures"),
-    "varargs_parameter": ("function f(a, ...) end", 1, 15, r"varargs \(\.\.\.\) are not in the subset"),
+    "varargs_parameter": ("function f(a, ...) end", 1, 15,
+                          r"varargs \(\.\.\.\) are not in the subset"),
     "varargs_value": (OBJ + "function A:step() print(1, 1, ...) end", 3, 31, r"varargs"),
     "multiple_results": ("function f() return 1, 2 end", 1, 24,
                          r"multiple results are not in the subset"),
@@ -337,10 +346,13 @@ REJECTED = {
                     r"method calls \(self:jump\(\)\) are not in the subset"),
     "method_definition": ("A = object {}\nfunction A:jump() end", 2, 12,
                           r"A:jump is not an event; methods are not in the subset"),
-    "function_in_table": ("function a.b() end", 1, 12, r"functions in tables .* are not in the subset"),
-    "top_level_code": ("x = 0\nif x == 0 then end", 2, 1, r"if at the top level: only declarations"),
+    "function_in_table": ("function a.b() end", 1, 12,
+                          r"functions in tables .* are not in the subset"),
+    "top_level_code": ("x = 0\nif x == 0 then end", 2, 1,
+                       r"if at the top level: only declarations"),
     "top_level_call": ("print(1, 1, 'hi')", 1, 1, r"a call at the top level"),
-    "top_level_field": ("A = object {}\nA.x = 1", 2, 1, r"only names are assigned at the top level"),
+    "top_level_field": ("A = object {}\nA.x = 1", 2, 1,
+                        r"only names are assigned at the top level"),
     "local_without_value": (OBJ + "function A:step() local x end", 3, 25,
                             r"x gets no value, so it would be nil"),
     "missing_value": ("a, b = 1", 1, 4, r"b gets no value, so it would be nil"),
@@ -646,6 +658,146 @@ end""")
         self.assertEqual([(s.name, s.ty) for s in body.locals], [
             ("x", "integer"), ("x", "fixed"), ("i", "integer"), ("x", "boolean"),
             ("y", "integer")])
+
+
+
+# --- Code generation ---------------------------------------------------------
+
+
+class Listing(unittest.TestCase):
+    def compile(self, text):
+        return svlua.compile_source(text, "t.lua")
+
+    def code(self, text):
+        """The ops of a listing, without comments, one string per line."""
+        return [svm._strip_comment(line).strip() for line in self.compile(text).splitlines()
+                if svm._strip_comment(line).strip()]
+
+    def test_every_line_maps_to_the_script(self):
+        listing = self.compile(OBJ + "n = 0\nfunction A:step()\n  n = n + 1\nend")
+        for line in listing.splitlines():
+            if line.strip() and not line.lstrip().startswith(";"):
+                self.assertRegex(line, r"; t\.lua:\d+")
+        self.assertIn("    ; 5: n = n + 1\n", listing)
+
+    def test_handlers_end_in_halt_and_functions_in_ret(self):
+        code = self.code(OBJ + "function f() end\nfunction g() return 1 end\n"
+                         "function A:step() f(); local x = g() end")
+        self.assertEqual(code[code.index("f:") + 1], "RET")
+        self.assertEqual(code[code.index("g:") + 1:code.index("g:") + 3], ["PUSH 1", "RETV"])
+        self.assertEqual(code[-1], "HALT")
+
+    def test_constant_folding(self):
+        cases = {
+            "n = 2 + 3 * 4": "PUSH 14", "n = -7 // 2": "PUSH -4", "n = -7 % 3": "PUSH 2",
+            "n = 1 << 33": "PUSH 0", "n = -1 >> 1": "PUSH 2147483647",
+            "n = 0x7FFFFFFF + 1": "PUSH -2147483648", "n = ~0 ~ 5": "PUSH -6",
+            "f = 1.5": "PUSH 384", "f = 7 / 2": "PUSH 896", "f = 0.1 * 10": "PUSH 260",
+            "f = 2 ^ -1": "PUSH 128", "f = -0.5 // 0.25": "PUSH -512", "f = 5.5 % 2": "PUSH 384",
+            "n = math.floor(-1.5)": "PUSH -2", "n = math.abs(-3)": "PUSH 3",
+            "n = math.max(3, 9, 4)": "PUSH 9", "f = 3": "PUSH 768",
+            "n = #'four'": "PUSH 4", "b = 3 > 2 and not false": "PUSH 1",
+            "n = MAX * 2 + 1": "PUSH MAX * 2 + 1", "n = (A_BIT | B_BIT) & ~C_BIT":
+                "PUSH (A_BIT | B_BIT) & ~C_BIT", "f = MAX": "PUSH FX(MAX)",
+            "f = MAX + 0.5": "PUSH FX(MAX) + 128", "n = MAX // 4": "PUSH MAX >> 2",
+            "n = MAX % 8": "PUSH MAX & 7", "n = MAX << 2": "PUSH MAX << 2",
+            "n = C_GAME(3)": "PUSH C_GAME(3)",
+        }
+        for stat, op in cases.items():
+            with self.subTest(stat=stat):
+                code = self.code(OBJ + "n = 0\nf = 0.0\nb = false\n"
+                                 f"function A:step() {stat} end")
+                start = code.index(".handler A STEP")
+                self.assertEqual(code[start + 1], op)
+
+    def test_not_folded_where_the_assembler_would_differ(self):
+        """A header constant's >>, // or % by a non-power of two, ^ and
+        comparisons are computed at run time, since the assembler's
+        integers wouldn't give Lua's result."""
+        for stat, ops in {"n = MAX >> 2": ["PUSH MAX", "PUSH -2", "LSH"],
+                          "n = MAX // 3": ["PUSH MAX", "PUSH 3", "IDIV"],
+                          "n = MAX % 3": ["PUSH MAX", "PUSH 3", "IMOD"],
+                          "b = MAX > 3": ["PUSH MAX", "PUSH 3", "GT"],
+                          "n = MAX ~ 3": ["PUSH (MAX | 3) - (MAX & 3)"]}.items():
+            with self.subTest(stat=stat):
+                code = self.code(OBJ + f"n = 0\nb = false\nfunction A:step() {stat} end")
+                start = code.index(".handler A STEP")
+                self.assertEqual(code[start + 1:start + 1 + len(ops)], ops)
+
+    def test_frames(self):
+        code = self.code(OBJ + "function f(a, b) local c = a + b; return c end\n"
+                         "function g() return f(1, 2) end\n"
+                         "function A:step() local x = g(); do local y = 1 end; local z = 2 end")
+        self.assertEqual(code[code.index("f:") + 1], "ENTER 2, 1")
+        self.assertNotIn("ENTER", code[code.index("g:") + 1])  # no locals: no frame
+        self.assertEqual(code[code.index(".handler A STEP") + 1], "ENTER 0, 2")  # y's slot reused
+
+    def test_names_in_the_listing(self):
+        listing = self.compile("Firefly = object {}\nlocal flag = false\nscores = array(3)\n"
+                               "local K <const> = 3\nfunction Firefly:step() "
+                               "print(1, 1, \"TIME UP!\"); scores[1] = K; flag = true end")
+        for line in (".object FIREFLY mask=0 sprite=0", ".globals FLAG", ".array SCORES 3",
+                     ".const K 3", '.string TIME_UP "TIME UP!"', ".handler FIREFLY STEP"):
+            self.assertIn(line, listing)
+
+    def test_strings_are_shared(self):
+        listing = self.compile(OBJ + "function A:step() print(1, 1, 'HI'); print(2, 2, 'HI'); "
+                               "print(3, 3, 'H' .. 'I') end")
+        self.assertEqual(listing.count(".string"), 1)
+        self.assertEqual(listing.count("PUSH STR_HI"), 3)
+
+    def test_collisions_in_the_listing(self):
+        with self.assertRaisesRegex(svlua.CompileError, r"score and SCORE \(line 1\) are both "
+                                                        r"SCORE in the listing"):
+            self.compile("SCORE = 0\nscore = 0")
+        with self.assertRaisesRegex(svlua.CompileError, r"OBJ_A would name both"):
+            self.compile("A = object {}\nlocal OBJ_A <const> = 1")
+
+
+class Tool(unittest.TestCase):
+    def test_compile_to_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = os.path.join(tmp, "game.lua"), os.path.join(tmp, "game.svm")
+            with open(src, "w") as f:
+                f.write("A = object {}\nfunction A:step() end\nfunction unused() end\n")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(svlua.main(["compile", src, "-o", out]), 0)
+            self.assertIn("game.lua:3:10: warning: unused is never called", err.getvalue())
+            with open(out) as f:
+                self.assertIn(".handler A STEP", f.read())
+
+    def test_check_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "game.lua")
+            with open(src, "w") as f:
+                f.write("A = object {}\nfunction A:step() end\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(svlua.main(["compile", src, "--check"]), 0)
+            self.assertEqual(out.getvalue(), "")
+
+    def test_errors_exit_1_and_write_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = os.path.join(tmp, "bad.lua"), os.path.join(tmp, "bad.svm")
+            with open(src, "w") as f:
+                f.write("A = object {}\nfunction A:step()\n  local x = nil\nend\n")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(svlua.main(["compile", src, "-o", out]), 1)
+            self.assertEqual(err.getvalue(), f"{src}:3:13: error: nil is not in the subset\n"
+                             "  hint: use none for entities, and 0 or false for the other "
+                             "types\n")
+            self.assertFalse(os.path.exists(out))
+
+    def test_api(self):
+        listing = svlua.compile_source("A = object {}\nfunction A:step() end", "a.lua")
+        self.assertIn("; a.lua:2", listing)
+        self.assertEqual(svlua.check_source("A = object {}", "a.lua"), [])
+        with self.assertRaises(svlua.CompileError) as caught:
+            svlua.compile_source("x = ...", "a.lua")
+        self.assertEqual((caught.exception.file, caught.exception.line, caught.exception.column),
+                         ("a.lua", 1, 5))
 
 
 if __name__ == "__main__":

@@ -984,6 +984,13 @@ class Const:
         text = self.asm()
         return f"({text})" if self.asm_prec() < prec else text
 
+    def clear(self, prec):
+        """The text as an operand of a shift, & or |: parenthesized unless it
+        is a single term or the same operator, as C programmers write it."""
+        text = self.asm()
+        own = self.asm_prec()
+        return f"({text})" if own < P_UNARY and own != prec else text
+
     def __repr__(self):
         return f"Const({self.ty}, {self.value!r}, {self.text!r})"
 
@@ -1015,14 +1022,6 @@ def c_div(a, b):
     """C's division: rounds toward zero."""
     q = abs(a) // abs(b)
     return q if (a < 0) == (b < 0) else -q
-
-
-def fx_mul(a, b):
-    return wrap32((a * b) >> 8)  # FXMUL: the double-width product, floored
-
-
-def fx_div(a, b):
-    return wrap32(c_div(a * FX_ONE, b))  # FXDIV: rounds toward zero
 
 
 # --- Program model -----------------------------------------------------------
@@ -1530,8 +1529,8 @@ class Resolver:
         if func.vararg is not None:
             self.error(func.vararg, "varargs (...) are not in the subset")
         if len(func.params) != expected:
-            self.error(func, f"{event} takes {'one parameter, the other entity' if expected else 'no parameters'}"
-                       f", not {len(func.params)}",
+            takes = "one parameter, the other entity" if expected else "no parameters"
+            self.error(func, f"{event} takes {takes}, not {len(func.params)}",
                        "function Object:collision(other)" if expected else
                        f"function {obj.name}:{event}()")
         body = Body("handler", f"{obj.name}:{event}", func, stat)
@@ -1590,6 +1589,10 @@ class Resolver:
             self.error(node, f"{name} is declared below (line {self.later_locals[name]}) as a "
                        "top-level local, so here it would be an undefined global",
                        "move the declaration up")
+        if name == "C_GAME":  # the engine's macro, which the assembler knows
+            if name not in self.builtins:
+                self.builtins[name] = HeaderSym(name, node)
+            return self.builtins[name]
         if is_header_name(name):
             if name not in self.p.headers:
                 self.p.headers[name] = HeaderSym(name, node)
@@ -1949,7 +1952,6 @@ def resolve(chunk, file):
 
 # --- Types -------------------------------------------------------------------
 
-ARITHMETIC = ("+", "-", "*", "/", "//", "%", "^")
 BITWISE = ("&", "|", "~", "<<", ">>")
 COMPARISONS = ("==", "~=", "<", "<=", ">", ">=")
 _ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth")
@@ -1982,6 +1984,55 @@ def _log2(value):
     if value is not None and value > 0 and value & (value - 1) == 0:
         return value.bit_length() - 1
     return None
+
+
+def _const_truth(e):
+    """True or False if a condition is a known constant, else None."""
+    c = e.const
+    if c is not None and c.ty == BOOL and c.value is not None:
+        return bool(c.value)
+    return None
+
+
+def can_fall(block):
+    """Whether control can reach the end of a block (and fall out of it)."""
+    reachable = True
+    for stat in block.stats:
+        if isinstance(stat, Label):
+            reachable = True  # a goto may land here
+        elif reachable and not _stat_falls(stat):
+            reachable = False
+    return reachable
+
+
+def _stat_falls(s):
+    if isinstance(s, (Return, Goto, Break)):
+        return False
+    if isinstance(s, Do):
+        return can_fall(s.body)
+    if isinstance(s, If):
+        if s.orelse is None:
+            return True
+        return any(can_fall(b) for b in s.blocks) or can_fall(s.orelse)
+    if isinstance(s, While):
+        return _const_truth(s.cond) is not True or _has_break(s.body)
+    if isinstance(s, Repeat):
+        return ((can_fall(s.body) and _const_truth(s.cond) is not False)
+                or _has_break(s.body))
+    return True
+
+
+def _has_break(block):
+    """A break in the block that leaves the loop around it (not a nested one)."""
+    for s in block.stats:
+        if isinstance(s, Break):
+            return True
+        if isinstance(s, Do) and _has_break(s.body):
+            return True
+        if isinstance(s, If) and (any(_has_break(b) for b in s.blocks)
+                                  or (s.orelse is not None and _has_break(s.orelse))):
+            return True
+    return False
 
 
 class Checker:
@@ -2026,6 +2077,12 @@ class Checker:
             for sym in body.locals:
                 if sym.ty is None:  # pragma: no cover - inference always settles them
                     self.error(sym.node, f"can't tell the type of {sym.name}")
+        for fn in p.functions:
+            if fn.body.value_returns and can_fall(fn.body.func.body):
+                block = fn.body.func.body
+                raise CompileError(f"{fn.name} can reach its end without returning a value "
+                                   "(it would return nil)", self.file, block.end_line,
+                                   block.end_column, "end every path with a return")
         self.check_threads()
         self.check_waits()
         self.check_unused()
@@ -2759,7 +2816,7 @@ class Checker:
             return f"{a.group(P_ADD)} {op} {b.group(P_ADD + 1)}", P_ADD
         if op == "*":
             if ty == FIXED and a.ty == FIXED and b.ty == FIXED:
-                return f"{a.group(P_MUL)} * {b.group(P_MUL + 1)} >> 8", P_SHIFT
+                return f"({a.group(P_MUL)} * {b.group(P_MUL + 1)}) >> 8", P_SHIFT
             return f"{a.group(P_MUL)} * {b.group(P_MUL + 1)}", P_MUL
         if op == "/":  # FXDIV: (a * 256) / b, rounding toward zero like C's /
             return f"{a.group(P_MUL)} * {FX_ONE} / {b.group(P_MUL + 1)}", P_MUL
@@ -2768,9 +2825,9 @@ class Checker:
             if k is None:
                 return None
             if op == "//":  # floor division by 2^k: the arithmetic shift
-                return (a.asm(), a.asm_prec()) if k == 0 else (f"{a.group(P_SHIFT)} >> {k}",
+                return (a.asm(), a.asm_prec()) if k == 0 else (f"{a.clear(P_SHIFT)} >> {k}",
                                                                P_SHIFT)
-            return f"{a.group(P_AND)} & {b.value - 1}", P_AND
+            return f"{a.clear(P_AND)} & {b.value - 1}", P_AND
         return None
 
     def fold_bitwise(self, e, op, a, b):
@@ -2790,9 +2847,9 @@ class Checker:
                 return Const(INT, value)
         text = None
         if op == "&":
-            text = (f"{a.group(P_AND)} & {b.group(P_AND + 1)}", P_AND)
+            text = (f"{a.clear(P_AND)} & {b.clear(P_AND)}", P_AND)
         elif op == "|":
-            text = (f"{a.group(P_OR)} | {b.group(P_OR + 1)}", P_OR)
+            text = (f"{a.clear(P_OR)} | {b.clear(P_OR)}", P_OR)
         elif op == "~":  # the assembler has no xor: a ^ b = (a | b) - (a & b)
             text = (f"({a.group(P_OR)} | {b.group(P_OR + 1)}) - "
                     f"({a.group(P_AND)} & {b.group(P_AND + 1)})", P_ADD)
@@ -2803,7 +2860,7 @@ class Checker:
             if count == 0:
                 text = (a.asm(), a.asm_prec())
             elif count > 0:
-                text = (f"{a.group(P_SHIFT)} << {count}", P_SHIFT)
+                text = (f"{a.clear(P_SHIFT)} << {count}", P_SHIFT)
         if text is None:
             return None if value is None else Const(INT, value)
         if value is not None:
@@ -2976,10 +3033,10 @@ class Checker:
                     if ty == INT:
                         e.const = c
                     elif c.value is not None:
-                        text = f"{c.group(P_SHIFT)} >> 8" if c.text is not None else None
+                        text = f"{c.clear(P_SHIFT)} >> 8" if c.text is not None else None
                         e.const = Const(INT, c.value >> 8, text, P_SHIFT)
                     else:
-                        e.const = Const(INT, None, f"{c.group(P_SHIFT)} >> 8", P_SHIFT)
+                        e.const = Const(INT, None, f"{c.clear(P_SHIFT)} >> 8", P_SHIFT)
                 return INT
             if c is not None and c.value is not None:
                 e.const = Const(ty, wrap32(abs(c.value)))
@@ -3067,3 +3124,1095 @@ def check(text, file="script.lua"):
     program = resolve(parse(text, file), file)
     Checker(program).run()
     return program
+
+
+# --- Code generation ---------------------------------------------------------
+
+COMMENT_COLUMN = 40  # where a line's "; file:line" comment starts
+SIGN_BIT = -0x80000000  # XOR with it turns an unsigned comparison into a signed one
+
+
+def _escape(data):
+    """A .string literal's text: printable ASCII, with \\" and \\\\."""
+    return "".join("\\" + chr(b) if chr(b) in '"\\' else chr(b) for b in data)
+
+
+def _string_name(data, used):
+    """A readable listing name for a string: SCORE for "SCORE", TIME_UP for
+    "TIME UP!", SPACES3 for three spaces."""
+    text = data.decode("ascii", "replace")
+    if not text.strip():
+        base = f"SPACES{len(text)}" if text else "EMPTY"
+    else:
+        base = re.sub(r"[^A-Z0-9]+", "_", text.upper()).strip("_")[:24].strip("_") or "S"
+        if base[0].isdigit():
+            base = "S_" + base
+    name, n = base, 2
+    while name in used:
+        name = f"{base}_{n}"
+        n += 1
+    used.add(name)
+    return name
+
+
+class CodeGen:
+    """The listing: the tables (constants, objects, strings, globals,
+    arrays), then every handler and function in source order."""
+
+    def __init__(self, program, source):
+        self.p = program
+        self.base = os.path.basename(program.file)
+        self.source = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        self.strings = {}  # bytes -> (listing name, line of first use)
+        self.string_names = set()
+        self.labels = set()
+        self.names = {}  # every .const and generated expression name -> what it is
+
+    def error(self, node, message, hint=None):
+        raise CompileError(message, self.p.file, node.line, node.column, hint)
+
+    def source_line(self, line):
+        if line is not None and 1 <= line <= len(self.source):
+            return self.source[line - 1].strip()
+        return ""
+
+    def located(self, text, line, note=None):
+        where = f"; {self.base}:{line}" if line else ";"
+        if note:
+            where += " " + note
+        return text + " " * max(COMMENT_COLUMN - len(text), 1) + where
+
+    def unique_label(self, base):
+        name, n = base, 2
+        while name in self.labels:
+            name = f"{base}_{n}"
+            n += 1
+        self.labels.add(name)
+        return name
+
+    def string(self, data, line):
+        if data not in self.strings:
+            self.strings[data] = (_string_name(data, self.string_names), line)
+        return self.strings[data][0]
+
+    def claim(self, name, what, node):
+        """A name the listing defines for expressions; it must not hide a
+        header constant or another of the listing's names."""
+        if name in self.names or name in self.p.headers:
+            other = self.names.get(name, "a header constant the script uses")
+            self.error(node, f"{name} would name both {what} and {other} in the listing",
+                       "rename one")
+        self.names[name] = what
+
+    def generate(self):
+        p = self.p
+        for obj in p.objects:
+            self.claim("OBJ_" + obj.listing, f"object {obj.name}", obj.node)
+        for g in p.globals:
+            self.claim("G_" + g.listing, f"global {g.name}", g.node)
+        for arr in p.arrays:
+            self.claim("ARR_" + arr.listing, f"array {arr.name}", arr.node)
+        for c in p.consts:
+            if c.ty in NUMERIC and not c.inline:
+                self.claim(c.name, f"constant {c.name}", c.node)
+        for field in p.fields.values():
+            base = "FIELD_" + field.name.upper()
+            name, n = base, 2
+            while name in self.names or name in p.headers:
+                name = f"{base}_{n}"
+                n += 1
+            field.listing = name
+            self.claim(name, f"instance field {field.name}", field.node)
+        for fn in p.functions:
+            fn.label = self.unique_label(fn.name)
+        for obj in p.objects:  # handler labels are prefixes, kept apart from functions
+            for event in obj.handlers:
+                self.labels.add(f"{obj.listing.lower()}_{event}")
+
+        code = []
+        init = next((o for o in p.objects if o.name == INIT_OBJECT), None)
+        for body in p.bodies:
+            if body.kind == "function" and not body.fn.used:
+                continue
+            code += FuncGen(self, body, init_globals=body.obj is init and init is not None
+                            and body.event == "room_start").generate()
+        if init is not None and "room_start" not in init.handlers:
+            code += self.init_handler(init)
+        return "\n".join(self.tables() + code) + "\n"
+
+    def init_handler(self, init):
+        line = init.node.line
+        out = ["", f"; --- the initial values of the globals (no {INIT_OBJECT}:room_start in the "
+                   "script) ---",
+               self.located(f".handler {init.listing} ROOM_START", line)]
+        out += self.global_stores(line)
+        out.append(self.located("    HALT", line))
+        return out
+
+    def global_stores(self, line):
+        out = []
+        for g in self.p.globals:
+            out.append(self.located(f"    PUSH {g.init_const.asm()}", g.node.line,
+                                    f"{g.name} = {Checker.show(g.init_const)}"))
+            out.append(self.located(f"    STG {g.listing}", g.node.line))
+        return out
+
+    def tables(self):
+        p = self.p
+        out = [f"; {os.path.splitext(self.base)[0]}.svm: {self.base} compiled by {TOOL} (the Lua "
+               "subset, docs/lua.md)",
+               "; for Serval Engine's VM. Generated: edit the script, not this listing.",
+               "; Every line names the script's line it comes from."]
+        if p.headers:
+            out.append("; Constants from the game's C headers (svm.py asm --header for the "
+                       "headers that define them):")
+            line = ";  "
+            for name in p.headers:
+                if len(line) + len(name) + 1 > 78:
+                    out.append(line)
+                    line = ";  "
+                line += " " + name
+            out.append(line)
+        consts = [c for c in p.consts if c.ty in NUMERIC and not c.inline]
+        if consts or p.fields:
+            out += ["", "; --- Constants ---", ""]
+            for c in consts:
+                note = f"{c.name} = {fixed_text(c.definition.value)}" if (
+                    c.ty == FIXED and c.definition.value is not None) else None
+                out.append(self.located(f".const {c.name} {c.definition.asm()}", c.node.line, note))
+            for field in p.fields.values():
+                out.append(self.located(f".const {field.listing} VM_P_FIELD0 + {field.slot}",
+                                        field.node.line,
+                                        f"instance field {field.name} ({field.ty})"))
+        if p.objects:
+            out += ["", "; --- Objects ---", ""]
+            for obj in p.objects:
+                mask = obj.components_const
+                mask_text = mask.asm() if mask.text is not None or mask.value == 0 \
+                    else f"0x{mask.value:08X}"
+                out.append(self.located(f".object {obj.listing} mask={mask_text} "
+                                        f"sprite={obj.sprite_const.asm()}", obj.node.line,
+                                        obj.name))
+        if self.strings:
+            out += ["", "; --- Strings ---", ""]
+            for data, (name, line) in self.strings.items():
+                out.append(self.located(f'.string {name} "{_escape(data)}"', line))
+        if p.globals:
+            out += ["", "; --- Globals ---", ""]
+            for g in p.globals:
+                out.append(self.located(f".globals {g.listing}", g.node.line,
+                                        f"{g.name}: {g.ty}"))
+        if p.arrays:
+            out += ["", "; --- Arrays ---", ""]
+            for arr in p.arrays:
+                if arr.rom:
+                    items = ", ".join(c.asm() for c in arr.items)
+                    out.append(self.located(f".rom {arr.listing} {arr.rom_kind} {items}",
+                                            arr.node.line, f"{arr.name}: {arr.elem}"))
+                else:
+                    out.append(self.located(f".array {arr.listing} {arr.length.asm()}",
+                                            arr.node.line, f"{arr.name}: {arr.elem}"))
+        return out
+
+
+class FuncGen:
+    """One handler's or function's code: a frame (ENTER p, n) for its
+    parameters, locals and the loops' hidden state, and stack code."""
+
+    def __init__(self, cg, body, init_globals=False):
+        self.cg = cg
+        self.body = body
+        self.init_globals = init_globals
+        self.items = []
+        self.next_slot = 0
+        self.max_slot = 0
+        self.slot_names = {}
+        self.breaks = []
+        self.counter = 0
+        self.user_labels = {}
+        self.shown = None
+        if body.kind == "handler":
+            self.prefix = f"{body.obj.listing.lower()}_{body.event}"
+        else:
+            self.prefix = body.fn.label
+
+    # --- Output ---
+
+    def show(self, line):
+        """The script's line as a comment, when the code moves to a new one."""
+        if line is not None and line != self.shown:
+            self.shown = line
+            text = self.cg.source_line(line)
+            if text:
+                self.items.append(f"    ; {line}: {text}")
+
+    def op(self, text, node, note=None):
+        line = node if isinstance(node, int) else node.line
+        self.show(line)
+        self.items.append(self.cg.located("    " + text, line, note))
+
+    def label(self, name, node):
+        line = node if isinstance(node, int) else node.line
+        self.show(line)
+        self.items.append(self.cg.located(name + ":", line))
+
+    def labels(self, kind, *suffixes):
+        self.counter += 1
+        base = f"{self.prefix}_{kind}{self.counter}"
+        return [self.cg.unique_label(base + suffix) for suffix in suffixes]
+
+    def alloc(self, name):
+        slot = self.next_slot
+        self.next_slot += 1
+        self.max_slot = max(self.max_slot, self.next_slot)
+        names = self.slot_names.setdefault(slot, [])
+        if name not in names:
+            names.append(name)
+        return slot
+
+    # --- The body ---
+
+    def generate(self):
+        body = self.body
+        func = body.func
+        for index, param in enumerate(body.params):
+            param.slot = index
+            self.slot_names[index] = [param.name]
+        self.next_slot = self.max_slot = len(body.params)
+        if self.init_globals:
+            self.items.append(f"    ; the globals' initial values (an {INIT_OBJECT}:room_start "
+                              "starts with them)")
+            self.items += self.cg.global_stores(func.line)
+        self.block(func.body)
+        if can_fall(func.body):
+            end = func.body.end_line
+            self.op("HALT" if body.kind == "handler" else "RET", end)
+        if self.max_slot > 60:
+            self.cg.error(func, f"{body.name} needs {self.max_slot} frame cells; a context's "
+                          "stack has 64 for every frame and operand", "use fewer locals")
+        head = ["", f"; --- {self.cg.source_line(body.stat.line)} ---"]
+        line = body.stat.line
+        if body.kind == "handler":
+            what = ("a behaviour: it may wait" if body.behaviour
+                    else "a reaction: it runs to completion")
+            head[1] = f"; --- {body.name}, {what} ---"
+            head.append(self.cg.located(f".handler {body.obj.listing} {EVENTS[body.event][0]}",
+                                        line))
+        else:
+            head.append(self.cg.located(f"{body.fn.label}:", line))
+        params = len(body.params)
+        extra = self.max_slot - params
+        if params or extra:
+            frame = ", ".join(f"{slot} {'/'.join(names)}"
+                              for slot, names in sorted(self.slot_names.items()))
+            head.append(f"    ; frame: {frame}")
+            head.append(self.cg.located(f"    ENTER {params}, {extra}", line))
+        return head + self.items
+
+    def block(self, block, after=None):
+        mark = self.next_slot
+        for stat in block.stats:
+            getattr(self, "s_" + type(stat).__name__)(stat)
+        if after is not None:
+            after()
+        self.next_slot = mark
+
+    # --- Statements ---
+
+    def s_Local(self, s):
+        syms = []
+        for name, value in zip(s.names, s.values):
+            sym = name.sym
+            if sym.readonly and sym.const is not None:
+                continue  # a constant: its uses push the value
+            self.expr(value, sym.ty)
+            syms.append(sym)
+        for sym in syms:
+            sym.slot = self.alloc(sym.name)
+        for sym in reversed(syms):
+            self.op(f"STL {sym.slot}", s)
+
+    def s_Assign(self, s):
+        if len(s.targets) == 1:
+            self.assign(s.targets[0], s.values[0])
+            return
+        # Lua evaluates every value before assigning any, and a target's
+        # entity or index before any assignment changes it.
+        mark = self.next_slot
+        parts = []
+        for target in s.targets:
+            part = None
+            if isinstance(target, Field):
+                obj = _strip(target.obj)
+                if (isinstance(obj, Name) and obj.sym.kind == "entity") or obj.const is not None:
+                    part = ("expr", target.obj)
+                else:
+                    self.expr(target.obj)
+                    part = ("slot", self.alloc("(assignment)"))
+                    self.op(f"STL {part[1]}", target)
+            elif isinstance(target, Index):
+                c = self.index_const(target.key)
+                if c is not None:
+                    part = ("const", c)
+                else:
+                    self.index_value(target.key)
+                    part = ("slot", self.alloc("(assignment)"))
+                    self.op(f"STL {part[1]}", target)
+            parts.append(part)
+        for target, value in zip(s.targets, s.values):
+            self.expr(value, self.target_type(target))
+        for target, part in reversed(list(zip(s.targets, parts))):
+            if isinstance(target, Name):
+                self.store_name(target)
+                continue
+            kind, what = part
+            if kind == "expr":
+                self.expr(what)
+            elif kind == "slot":
+                self.op(f"LDL {what}", target)
+            else:
+                self.push(what, target)
+            self.op("SWAP", target)
+            if isinstance(target, Field):
+                self.op(f"SETP {self.property(target)}", target)
+            else:
+                self.op(f"STA {_strip(target.obj).sym.listing}", target)
+        self.next_slot = mark
+
+    def target_type(self, target):
+        if isinstance(target, Name):
+            return target.sym.ty
+        if isinstance(target, Field):
+            return PROPERTIES[target.name][1] if target.name in PROPERTIES else target.field.ty
+        return _strip(target.obj).sym.elem
+
+    def property(self, field):
+        if field.name in PROPERTIES:
+            return PROPERTIES[field.name][0]
+        return field.field.listing
+
+    def store_name(self, target):
+        sym = target.sym
+        if sym.kind == "local":
+            self.op(f"STL {sym.slot}", target)
+        else:
+            self.op(f"STG {sym.listing}", target)
+
+    def assign(self, target, value):
+        if isinstance(target, Name):
+            self.expr(value, target.sym.ty)
+            self.store_name(target)
+        elif isinstance(target, Field):
+            self.expr(target.obj)
+            self.expr(value, self.target_type(target))
+            self.op(f"SETP {self.property(target)}", target)
+        else:
+            arr = _strip(target.obj).sym
+            self.index_value(target.key)
+            self.expr(value, arr.elem)
+            self.op(f"STA {arr.listing}", target)
+
+    def s_CallStat(self, s):
+        self.call(s.call, discard=True)
+
+    def s_Do(self, s):
+        self.block(s.body)
+
+    def s_If(self, s):
+        clauses = list(zip(s.tests, s.blocks))
+        (end,) = self.labels("if", "_end")
+        number = self.counter
+        jumped_to_end = False
+        for index, (test, block) in enumerate(clauses):
+            truth = _const_truth(test)
+            if truth is False:
+                continue  # never runs
+            if truth is True:
+                self.block(block)
+                break
+            last = index == len(clauses) - 1
+            if not last:
+                target = self.cg.unique_label(f"{self.prefix}_if{number}_elseif{index + 1}")
+            elif s.orelse is not None:
+                target = self.cg.unique_label(f"{self.prefix}_if{number}_else")
+            else:
+                target = end
+            self.jump_if(test, False, target)
+            self.block(block)
+            if (not last or s.orelse is not None) and can_fall(block):
+                self.op(f"JMP {end}", block.end_line)
+                jumped_to_end = True
+            if target != end:
+                next_line = clauses[index + 1][0].line if not last else s.orelse.line
+                self.label(target, next_line)
+        else:
+            if s.orelse is not None:
+                self.block(s.orelse)
+        if jumped_to_end or any(_const_truth(t) is None for t in s.tests):
+            self.label(end, s.blocks[-1].end_line if s.orelse is None else s.orelse.end_line)
+
+    def loop_body(self, body, end, after=None):
+        """A loop's body; whether a break jumped to its end."""
+        self.breaks.append([end, False])
+        self.block(body, after)
+        return self.breaks.pop()[1]
+
+    def s_While(self, s):
+        truth = _const_truth(s.cond)
+        if truth is False:
+            return
+        top, end = self.labels("while", "", "_end")
+        self.label(top, s)
+        if truth is None:
+            self.jump_if(s.cond, False, end)
+        broke = self.loop_body(s.body, end)
+        self.op(f"JMP {top}", s.body.end_line)
+        if truth is None or broke:
+            self.label(end, s.body.end_line)
+
+    def s_Repeat(self, s):
+        top, end = self.labels("repeat", "", "_end")
+        self.label(top, s)
+
+        def until():  # inside the body's scope: until sees its locals
+            truth = _const_truth(s.cond)
+            if truth is None:
+                self.jump_if(s.cond, False, top)
+            elif truth is False:
+                self.op(f"JMP {top}", s.cond)
+
+        if self.loop_body(s.body, end, after=until):
+            self.label(end, s.cond)
+
+    def s_Return(self, s):
+        if self.body.kind == "handler":
+            self.op("HALT", s)
+        elif s.values:
+            self.expr(s.values[0])
+            self.op("RETV", s)
+        else:
+            self.op("RET", s)
+
+    def s_Break(self, s):
+        self.breaks[-1][1] = True
+        self.op(f"JMP {self.breaks[-1][0]}", s, "break")
+
+    def user_label(self, node):
+        if node not in self.user_labels:
+            self.user_labels[node] = self.cg.unique_label(f"{self.prefix}_{node.name}")
+        return self.user_labels[node]
+
+    def s_Goto(self, s):
+        self.op(f"JMP {self.user_label(s.target)}", s, f"goto {s.label}")
+
+    def s_Label(self, s):
+        self.label(self.user_label(s), s)
+
+    def s_GenericFor(self, s):
+        """for e in instances(Obj): NEXTI from 0 until it gives 0."""
+        call = s.exprs[0]
+        obj = call.args[0].sym
+        var = s.names[0].sym
+        mark = self.next_slot
+        top, end = self.labels("instances", "", "_end")
+        cursor = self.alloc(f"(instances of {obj.name})" if var.assigned else var.name)
+        self.op("PUSH 0", s, "none: from the first")
+        self.op(f"STL {cursor}", s)
+        self.label(top, s)
+        self.op(f"LDL {cursor}", s)
+        self.op(f"NEXTI {obj.listing}", s)
+        self.op("DUP", s)
+        self.op(f"STL {cursor}", s)
+        self.op(f"JZ {end}", s, "none left")
+        if var.assigned:
+            var.slot = self.alloc(var.name)
+            self.op(f"LDL {cursor}", s)
+            self.op(f"STL {var.slot}", s)
+        else:
+            var.slot = cursor
+        self.loop_body(s.body, end)
+        self.op(f"JMP {top}", s.body.end_line)
+        self.label(end, s.body.end_line)
+        self.next_slot = mark
+
+    def s_NumericFor(self, s):
+        """Lua 5.4's numeric for: the start, limit and step evaluated once;
+        an integer loop runs exactly as many times as Lua's precomputed count
+        says, without overflowing; a fixed-point loop adds the step and
+        compares, as Lua's float loop does."""
+        var = s.var.sym
+        mark = self.next_slot
+        top, end = self.labels("for", "", "_end")
+        want = None if s.integer else FIXED
+        self.expr(s.start, want)
+        idx = self.alloc(f"(for {var.name})" if var.assigned else var.name)
+        self.op(f"STL {idx}", s)
+        step_const = Const(INT, 1) if s.step is None else s.step.const
+        if step_const is not None and step_const.value is None:
+            step_const = None  # only the assembler knows it: a run-time step
+        if step_const is not None and not s.integer and step_const.ty == INT:
+            step_const = _promote(step_const, s.step, self.cg.p.file)
+        sign = None if step_const is None else (1 if step_const.value > 0 else -1)
+        limit = self.loop_limit(s, sign)
+        step = ("const", step_const) if step_const is not None else self.loop_part(
+            s.step, want, "(for step)")
+        if step_const is None:
+            self.step_checks(s, step, limit)
+        self.skip_check(s, idx, limit, step, sign, end)
+        self.label(top, s)
+        if var.assigned:
+            var.slot = self.alloc(var.name)
+            self.op(f"LDL {idx}", s)
+            self.op(f"STL {var.slot}", s)
+        else:
+            var.slot = idx  # the loop's own counter: the body never assigns it
+        self.loop_body(s.body, end)
+        if s.integer:
+            self.integer_next(s, idx, limit, step, sign, top, end)
+        else:
+            self.fixed_next(s, idx, limit, step, sign, top, end)
+        self.label(end, s.body.end_line)
+        self.next_slot = mark
+
+    def loop_part(self, e, want, name):
+        """A loop value evaluated once: a constant, or a hidden local."""
+        c = e.const
+        if c is not None and (c.value is not None or c.text is not None):
+            if want == FIXED and c.ty == INT:
+                c = _promote(c, e, self.cg.p.file)
+            return ("const", c)
+        self.expr(e, want)
+        slot = self.alloc(name)
+        self.op(f"STL {slot}", e)
+        return ("slot", slot)
+
+    def loop_limit(self, s, sign):
+        """The limit; in an integer loop a fixed limit becomes an integer as
+        Lua's forlimit does: floored going up, rounded up going down."""
+        e = s.limit
+        if not s.integer or e.ty == INT:
+            return self.loop_part(e, None if s.integer else FIXED, "(for limit)")
+        c = e.const
+        if c is not None and c.value is not None and sign is not None:
+            value = c.value >> 8 if sign > 0 else -((-c.value) >> 8)
+            return ("const", Const(INT, value))
+        self.expr(e)
+        if sign is not None:
+            self.fixed_to_limit(e, sign)
+        slot = self.alloc("(for limit)")
+        self.op(f"STL {slot}", e)
+        return ("slot", slot)
+
+    def fixed_to_limit(self, e, sign):
+        if sign < 0:
+            self.op("PUSH 255", e, "rounded up")
+            self.op("ADD", e)
+        self.op("PUSH 8", e)
+        self.op("SHR", e, "an integer limit")
+
+    def load(self, part, node):
+        kind, what = part
+        if kind == "slot":
+            self.op(f"LDL {what}", node)
+        else:
+            self.push(what, node)
+
+    def step_checks(self, s, step, limit):
+        """A run-time step: Lua stops the script if it is 0 ("'for' step is
+        zero"); and a fixed limit in an integer loop is converted by its
+        sign."""
+        (ok,) = self.labels("for", "_step_ok")
+        self.load(step, s.step)
+        self.op(f"JNZ {ok}", s.step)
+        name = self.cg.string(b"'for' step is zero", s.step.line)
+        self.op(f"TRACE {name}", s.step, "Lua's error: the script stops")
+        self.op("HALT", s.step)
+        self.label(ok, s.step)
+        if s.integer and s.limit.ty == FIXED:
+            down, done = self.labels("for", "_ceil", "_limit")
+            self.load(step, s.step)
+            self.op("PUSH 0", s.step)
+            self.op("LT", s.step)
+            self.op(f"JNZ {down}", s.step)
+            self.load(limit, s.limit)
+            self.fixed_to_limit(s.limit, 1)
+            self.op(f"JMP {done}", s.limit)
+            self.label(down, s.limit)
+            self.load(limit, s.limit)
+            self.fixed_to_limit(s.limit, -1)
+            self.label(done, s.limit)
+            self.op(f"STL {limit[1]}", s.limit)
+
+    def skip_check(self, s, idx, limit, step, sign, end):
+        """No iteration at all when the start is already past the limit."""
+        start = s.start.const
+        if (sign is not None and start is not None and start.value is not None
+                and limit[0] == "const" and limit[1].value is not None):
+            first = start.value
+            if not s.integer and start.ty == INT:
+                first *= FX_ONE
+            past = first > limit[1].value if sign > 0 else first < limit[1].value
+            if past:
+                self.op(f"JMP {end}", s, "past the limit: no iteration")
+            return
+        if sign is not None:
+            self.op(f"LDL {idx}", s)
+            self.load(limit, s)
+            self.op("GT" if sign > 0 else "LT", s)
+            self.op(f"JNZ {end}", s, "past the limit: no iteration")
+            return
+        down, go = self.labels("for", "_down", "_go")
+        self.load(step, s)
+        self.op("PUSH 0", s)
+        self.op("LT", s)
+        self.op(f"JNZ {down}", s)
+        self.op(f"LDL {idx}", s)
+        self.load(limit, s)
+        self.op("GT", s)
+        self.op(f"JNZ {end}", s, "past the limit: no iteration")
+        self.op(f"JMP {go}", s)
+        self.label(down, s)
+        self.op(f"LDL {idx}", s)
+        self.load(limit, s)
+        self.op("LT", s)
+        self.op(f"JNZ {end}", s, "past the limit: no iteration")
+        self.label(go, s)
+
+    def integer_next(self, s, idx, limit, step, sign, top, end):
+        """Stop when the next value would pass the limit: when the distance
+        left, as an unsigned number (it can be 2^32 - 1), is less than the
+        step's size. Never overflows, so the iterations are Lua's count."""
+        if sign is not None and abs(step[1].value) == 1:
+            self.op(f"LDL {idx}", s)
+            self.load(limit, s)
+            self.op("EQ", s)
+            self.op(f"JNZ {end}", s, "the last iteration")
+        elif sign is not None:
+            if sign > 0:
+                self.load(limit, s)
+                self.op(f"LDL {idx}", s)
+            else:
+                self.op(f"LDL {idx}", s)
+                self.load(limit, s)
+            self.op("SUB", s, "the distance left")
+            self.op(f"PUSH {SIGN_BIT}", s)
+            self.op("XOR", s)
+            size = wrap32(abs(step[1].value) ^ 0x80000000)
+            self.op(f"PUSH {size}", s, f"the step's size {abs(step[1].value)}, biased")
+            self.op("LT", s, "unsigned: less than one more step")
+            self.op(f"JNZ {end}", s)
+        else:
+            down, compare = self.labels("for", "_left_down", "_compare")
+            self.load(step, s)
+            self.op("PUSH 0", s)
+            self.op("LT", s)
+            self.op(f"JNZ {down}", s)
+            self.load(limit, s)
+            self.op(f"LDL {idx}", s)
+            self.op("SUB", s, "the distance left")
+            self.load(step, s)
+            self.op(f"JMP {compare}", s)
+            self.label(down, s)
+            self.op(f"LDL {idx}", s)
+            self.load(limit, s)
+            self.op("SUB", s, "the distance left")
+            self.load(step, s)
+            self.op("NEG", s, "the step's size")
+            self.label(compare, s)
+            self.op(f"PUSH {SIGN_BIT}", s)
+            self.op("XOR", s)
+            self.op("SWAP", s)
+            self.op(f"PUSH {SIGN_BIT}", s)
+            self.op("XOR", s)
+            self.op("GT", s, "unsigned: less than one more step")
+            self.op(f"JNZ {end}", s)
+        self.op(f"LDL {idx}", s)
+        self.load(step, s)
+        self.op("ADD", s)
+        self.op(f"STL {idx}", s)
+        self.op(f"JMP {top}", s)
+
+    def fixed_next(self, s, idx, limit, step, sign, top, end):
+        """Lua's float loop: add the step, go on while within the limit."""
+        self.op(f"LDL {idx}", s)
+        self.load(step, s)
+        self.op("ADD", s)
+        self.op("DUP", s)
+        self.op(f"STL {idx}", s)
+        if sign is not None:
+            self.load(limit, s)
+            self.op("LE" if sign > 0 else "GE", s)
+            self.op(f"JNZ {top}", s)
+            return
+        (down,) = self.labels("for", "_next_down")
+        self.load(step, s)
+        self.op("PUSH 0", s)
+        self.op("LT", s)
+        self.op(f"JNZ {down}", s)
+        self.load(limit, s)
+        self.op("LE", s)
+        self.op(f"JNZ {top}", s)
+        self.op(f"JMP {end}", s)
+        self.label(down, s)
+        self.load(limit, s)
+        self.op("GE", s)
+        self.op(f"JNZ {top}", s)
+
+    # --- Conditions ---
+
+    def jump_if(self, e, value, label):
+        """Jump to label when e is value (true or false), else fall through:
+        and, or and not become jumps, as Lua's short circuit."""
+        e = _strip(e)
+        truth = _const_truth(e)
+        if truth is not None:
+            if truth == value:
+                self.op(f"JMP {label}", e)
+            return
+        if isinstance(e, Unary) and e.op == "not":
+            self.jump_if(e.operand, not value, label)
+            return
+        if isinstance(e, Binary) and e.op in ("and", "or"):
+            if (e.op == "and") != value:  # either side alone decides
+                self.jump_if(e.left, value, label)
+                self.jump_if(e.right, value, label)
+            else:
+                (skip,) = self.labels(e.op, "")
+                self.jump_if(e.left, not value, skip)
+                self.jump_if(e.right, value, label)
+                self.label(skip, e)
+            return
+        if isinstance(e, Binary) and e.op in ("==", "~="):
+            other = self.zero_comparison(e)
+            if other is not None:
+                self.expr(other)
+                zero = e.op == "=="  # jump on zero when (x == 0) is value
+                self.op(f"{'JZ' if zero == value else 'JNZ'} {label}", e)
+                return
+        self.expr(e)
+        self.op(f"{'JNZ' if value else 'JZ'} {label}", e)
+
+    @staticmethod
+    def zero_comparison(e):
+        """x in x == 0, 0 ~= x and the like (0, 0.0, false, none): no
+        comparison needed, JZ or JNZ tests it."""
+        for side, other in ((e.right, e.left), (e.left, e.right)):
+            c = side.const
+            if c is not None and c.value == 0 and other.const is None:
+                return other
+        return None
+
+    # --- Expressions ---
+
+    def push(self, c, node):
+        note = None
+        if c.ty == FIXED and c.value is not None:
+            note = f"({fixed_text(c.value)})"
+        elif c.ty == BOOL:
+            note = "true" if c.value else "false"
+        elif c.ty == ENTITY and c.value == 0:
+            note = "none"
+        self.op(f"PUSH {c.asm()}", node, note)
+
+    def expr(self, e, want=None):
+        """Code that pushes e's value; want=FIXED converts an integer."""
+        c = e.const
+        if c is not None and c.ty != STRING and (c.value is not None or c.text is not None):
+            if want == FIXED and c.ty == INT:
+                c = _promote(c, e, self.cg.p.file)
+            self.push(c, e)
+            return
+        getattr(self, "g_" + type(e).__name__)(e)
+        if want == FIXED and e.ty == INT:
+            self.op(f"PUSH {FX_ONE}", e)
+            self.op("MUL", e, "to fixed point")
+
+    def g_Paren(self, e):
+        self.expr(e.expr)
+
+    def g_Name(self, e):
+        sym = e.sym
+        if sym.kind == "local":
+            self.op(f"LDL {sym.slot}", e, sym.name)
+        elif sym.kind == "global":
+            self.op(f"LDG {sym.listing}", e)
+        elif sym.kind == "entity":
+            self.op(sym.op, e)
+        elif sym.kind == "const":  # computed where it is used
+            self.expr(sym.init)
+        else:  # pragma: no cover - the checker allows nothing else here
+            self.cg.error(e, f"{sym.name} has no value")
+
+    def g_Field(self, e):
+        self.expr(e.obj)
+        self.op(f"GETP {self.property(e)}", e)
+
+    def index_const(self, key):
+        """The 0-based index as a constant, when the 1-based one is."""
+        c = key.const
+        if c is None or (c.value is None and c.text is None):
+            return None
+        if c.value is not None:
+            return Const(INT, c.value - 1)
+        return Const(INT, None, f"{c.group(P_ADD)} - 1", P_ADD)
+
+    def index_value(self, key):
+        """The 0-based index: Lua's index minus 1 (folded into a constant, or
+        into the + k or - k the index ends with: a[i + 1] is LDA i)."""
+        c = self.index_const(key)
+        if c is not None:
+            self.push(c, key)
+            return
+        k = _strip(key)
+        if isinstance(k, Binary) and k.op in ("+", "-") and k.right.const is not None \
+                and k.right.const.value is not None:
+            offset = wrap32((k.right.const.value if k.op == "+" else -k.right.const.value) - 1)
+            self.expr(k.left)
+            if offset:
+                self.op(f"PUSH {abs(offset)}" if offset != INT_MIN else f"PUSH {offset}", key)
+                self.op("ADD" if offset > 0 or offset == INT_MIN else "SUB", key, "0-based")
+            return
+        self.expr(key)
+        self.op("PUSH 1", key)
+        self.op("SUB", key, "0-based")
+
+    def g_Index(self, e):
+        self.index_value(e.key)
+        self.op(f"LDA {_strip(e.obj).sym.listing}", e)
+
+    def g_Unary(self, e):
+        if e.op == "#":
+            self.op(f"LEN {_strip(e.operand).sym.listing}", e)
+            return
+        self.expr(e.operand)
+        self.op({"-": "NEG", "not": "LNOT", "~": "BNOT"}[e.op], e)
+
+    def g_Binary(self, e):
+        op = e.op
+        if op in ("and", "or"):
+            if _const_truth(e.left) is not None:  # true and x, false or x: just x
+                self.expr(e.right)
+                return
+            (end,) = self.labels(op, "")
+            self.expr(e.left)
+            self.op("DUP", e)
+            self.op(f"{'JZ' if op == 'and' else 'JNZ'} {end}", e, "short circuit")
+            self.op("DROP", e)
+            self.expr(e.right)
+            self.label(end, e)
+            return
+        lt, rt = e.left.ty, e.right.ty
+        if op in COMPARISONS:
+            want = FIXED if FIXED in (lt, rt) else None
+            self.expr(e.left, want)
+            self.expr(e.right, want)
+            self.op({"==": "EQ", "~=": "NE", "<": "LT", "<=": "LE", ">": "GT", ">=": "GE"}[op], e)
+            return
+        if op in BITWISE:
+            self.expr(e.left)
+            if op == ">>":  # a >> b is LSH a, -b
+                c = e.right.const
+                if c is not None and c.value is not None:
+                    self.push(Const(INT, wrap32(-c.value)), e.right)
+                else:
+                    self.expr(e.right)
+                    self.op("NEG", e)
+                self.op("LSH", e)
+                return
+            self.expr(e.right)
+            self.op({"&": "AND", "|": "OR", "~": "XOR", "<<": "LSH"}[op], e)
+            return
+        ty = e.ty
+        if op == "*" and ty == FIXED and INT in (lt, rt):
+            # integer times fixed: MUL is exact (FXMUL of the converted
+            # integer gives the same value)
+            self.expr(e.left)
+            self.expr(e.right)
+            self.op("MUL", e)
+        elif op == "/" and lt == INT and rt == INT:
+            # FXDIV of two integers is their quotient in fixed point
+            self.expr(e.left)
+            self.expr(e.right)
+            self.op("FXDIV", e)
+        else:
+            want = FIXED if ty == FIXED else None
+            self.expr(e.left, want)
+            self.expr(e.right, want)
+            if ty == FIXED:
+                mnemonic = {"+": "ADD", "-": "SUB", "*": "FXMUL", "/": "FXDIV", "//": "IDIV",
+                            "%": "IMOD"}[op]
+            else:
+                mnemonic = {"+": "ADD", "-": "SUB", "*": "MUL", "//": "IDIV", "%": "IMOD"}[op]
+            self.op(mnemonic, e)
+            if op == "//" and ty == FIXED:  # Lua's float // is a whole float
+                self.op(f"PUSH {FX_ONE}", e)
+                self.op("MUL", e, "to fixed point")
+
+    def g_Call(self, e):
+        self.call(e, discard=False)
+
+    def call(self, e, discard):
+        func = e.func
+        if isinstance(func, Field):
+            self.math_call(e, func.name)
+            if discard:
+                self.op("DROP", e, "the result isn't used")
+            return
+        sym = func.sym
+        if sym.kind == "function":
+            for arg, param in zip(e.args, sym.body.params):
+                self.expr(arg, param.ty)
+            self.op(f"CALL {sym.label}", e)
+            if discard and sym.result != VOID:
+                self.op("DROP", e, "the result isn't used")
+            return
+        if sym.kind == "header":  # C_GAME(n): a constant
+            if not discard:
+                self.push(e.const, e)
+            return
+        name = sym.name
+        if name == "print":
+            self.expr(e.args[0])
+            self.expr(e.args[1])
+            if e.print_kind == "text":
+                label = self.cg.string(e.args[2].const.value, e.line)
+                self.op(f"PUSH STR_{label}", e.args[2])
+                self.op("SYS TEXT_PRINT", e)
+            else:
+                self.expr(e.args[2])
+                if len(e.args) == 4:
+                    self.expr(e.args[3])
+                else:
+                    self.op("PUSH 0", e, "no width: just the digits")
+                self.op("SYS TEXT_PRINT_NUMBER", e)
+            return
+        if name == "spawn":
+            obj = _strip(e.args[0]).sym
+            self.expr(e.args[1], FIXED)
+            self.expr(e.args[2], FIXED)
+            self.op(f"SPAWN {obj.listing}", e)
+            if discard:
+                self.op("DROP", e, "the entity isn't used")
+            return
+        params, result, operation = ENGINE[name]
+        for arg, want in zip(e.args, params):
+            self.expr(arg, want)
+        self.op(operation, e)
+        if discard and result is not None:
+            self.op("DROP", e, "the result isn't used")
+
+    def math_call(self, e, name):
+        ty = e.ty
+        if name == "floor":
+            self.expr(e.args[0])
+            if e.args[0].ty == FIXED:
+                self.op("PUSH 8", e)
+                self.op("SHR", e, "math.floor: the whole part")
+            return
+        if name == "abs":
+            (done,) = self.labels("abs", "")
+            self.expr(e.args[0])
+            self.op("DUP", e)
+            self.op("PUSH 0", e)
+            self.op("LT", e)
+            self.op(f"JZ {done}", e)
+            self.op("NEG", e)
+            self.label(done, e)
+            return
+        # math.min, math.max: Lua keeps the first value unless a later one is
+        # smaller (min) or larger (max).
+        mark = self.next_slot
+        best = self.alloc(f"(math.{name})")
+        self.expr(e.args[0], ty)
+        self.op(f"STL {best}", e)
+        for arg in e.args[1:]:
+            (keep,) = self.labels(name, "")
+            other = self.alloc(f"(math.{name})")
+            self.expr(arg, ty)
+            self.op(f"STL {other}", arg)
+            first, second = (best, other) if name == "max" else (other, best)
+            self.op(f"LDL {first}", arg)
+            self.op(f"LDL {second}", arg)
+            self.op("LT", arg)
+            self.op(f"JZ {keep}", arg)
+            self.op(f"LDL {other}", arg)
+            self.op(f"STL {best}", arg)
+            self.label(keep, arg)
+            self.next_slot = other
+        self.op(f"LDL {best}", e)
+        self.next_slot = mark
+
+
+# --- The tool ----------------------------------------------------------------
+
+
+class Compiled:
+    """What compile_program() returns: the listing and the warnings, each
+    (file, line, column, message)."""
+
+    def __init__(self, listing, warnings, program):
+        self.listing = listing
+        self.warnings = warnings
+        self.program = program
+
+
+def compile_program(text, filename="script.lua"):
+    """Compiles a script. Returns a Compiled; raises CompileError."""
+    program = check(text, filename)
+    listing = CodeGen(program, text).generate()
+    warnings = [(filename, line, column, message) for line, column, message in program.warnings]
+    return Compiled(listing, warnings, program)
+
+
+def compile_source(text, filename="script.lua"):
+    """The listing (.svm text) for a script; raises CompileError with the
+    file, line and column of the first problem."""
+    return compile_program(text, filename).listing
+
+
+def check_source(text, filename="script.lua"):
+    """Checks a script without generating code. Returns the warnings;
+    raises CompileError."""
+    program = check(text, filename)
+    return [(filename, line, column, message) for line, column, message in program.warnings]
+
+
+def _print_warnings(warnings):
+    for file, line, column, message in warnings:
+        print(f"{file}:{line}:{column}: warning: {message}", file=sys.stderr)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
+                                     epilog="Run with a command and --help for its options.")
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    comp = commands.add_parser("compile", help="compile a script to a listing")
+    comp.add_argument("script", help="the script (.lua)")
+    comp.add_argument("-o", "--output", metavar="OUT.svm",
+                      help="write the listing (default: standard output)")
+    comp.add_argument("--check", action="store_true",
+                      help="check the script (names, types, waits) without writing a listing")
+    args = parser.parse_args(argv)
+    try:
+        with open(args.script, encoding="utf-8") as f:
+            text = f.read()
+        if args.check:
+            _print_warnings(check_source(text, args.script))
+            return 0
+        compiled = compile_program(text, args.script)
+        _print_warnings(compiled.warnings)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(compiled.listing)
+        else:
+            sys.stdout.write(compiled.listing)
+        return 0
+    except CompileError as e:
+        print(e, file=sys.stderr)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"error: {e}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
