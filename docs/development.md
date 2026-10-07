@@ -91,9 +91,9 @@ Frame numbers don't line up exactly with an emulator's. The page counts `frame_e
 | `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
 | `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; and `consumer/` (a minimal game project built against the release archive, with a script listing, plus a game that saves) |
-| `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`, `fireflies`; `build-all.sh` builds them all into `roms/` and `html/` |
+| `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`, `fireflies`; `build-all.sh` builds them all into `roms/` and `html/`; `gallery.toml` describes them for the [documentation site](#documentation-site) |
 | `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` and `serval_add_script()` (`Serval.cmake`, with the web variant of the former in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
-| `tools/` | ROM header fixer (`gbafix.py`), the script assembler and disassembler (`svm.py`, tested by `svm_test.py`; [vm.md](vm.md#tools)), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`), the logo PNGs and GitHub's social preview card (`logo-png.py`: compiles the splash's own drawing code for the host and writes `docs/images/`; CTest `logo_png` fails when `splash_art.c` changes until they are regenerated) |
+| `tools/` | ROM header fixer (`gbafix.py`), the script assembler and disassembler (`svm.py`, tested by `svm_test.py`; [vm.md](vm.md#tools)), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`), the logo PNGs and GitHub's social preview card (`logo-png.py`: compiles the splash's own drawing code for the host and writes `docs/images/`; CTest `logo_png` fails when `splash_art.c` changes until they are regenerated), the documentation site's generator (`site/`, [below](#documentation-site)) |
 
 ## Building a game
 
@@ -213,6 +213,22 @@ Tests check state (OAM, VRAM, registers), not what the screen looks like or what
 - `snake_case`; public API names follow the docs (`frame_begin`, `entity_create`); GBA-only API is prefixed `gba_`; macros are `SERVAL_*` or the documented short names (`MAX_ENT`, `C_*`).
 - Engine code builds warning-free with `-Wall -Wextra -Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes`.
 
+## Documentation site
+
+The docs and the examples are also a website, published on GitHub Pages: <https://stevengann.github.io/Serval-Engine/>. `tools/site/build.py` makes it: every `docs/*.md` as a page (links between docs become links between pages, links to other files in the repository become GitHub links, `mermaid` blocks become diagrams), a gallery in which every example runs in the browser next to its description (from its `main.c` header comment) and its source, and a front page. Search over the docs is Pagefind's. To build it and look at it (Python 3.11 or later):
+
+```sh
+python3 -m venv build/site-venv && build/site-venv/bin/pip install -r tools/site/requirements.txt  # once
+cmake --preset web-release && cmake --build --preset web-release   # the examples' pages
+build/site-venv/bin/python tools/site/build.py                     # -> build/site/
+build/site-venv/bin/python -m pagefind --site build/site            # the search index
+python3 -m http.server -d build/site                               # http://localhost:8000/
+```
+
+The generator, its page template, styles and scripts are in `tools/site/`, with its pinned requirements (Markdown, syntax highlighting, Pagefind). It takes each example's thumbnail with `tools/web-shots.py`, so it needs Chrome or Chromium, and it fails rather than publish a broken site: an example directory without an entry in `examples/gallery.toml`, a doc missing from the sidebar (`NAV` in `build.py`), a link to a file that doesn't exist, or any local link or `#anchor` in its output that doesn't resolve (it lists them). Every link in the site is relative, so it works at any path. Diagrams use Mermaid from jsDelivr, at the version pinned in `build.py`.
+
+`examples/gallery.toml` describes each example for the gallery: its title (the ROM's `TITLE`), a one-line summary, tags from the vocabulary at the top of the file, a level (one to four stars: how much the example asks of a reader) and how to take its thumbnail (a frame and scripted buttons, as for `web-shots.py`: real gameplay, not the splash or a title screen). **A new example needs an entry**, or the site's build fails.
+
 ## CI/CD
 
 **CI** (`.github/workflows/ci.yml`), on pushes to `main`, pull requests and manual runs:
@@ -222,7 +238,9 @@ Tests check state (OAM, VRAM, registers), not what the screen looks like or what
 - GBA: `gba-ci` (RelWithDebInfo, debug checks on) built with warnings as errors and tested (test ROM in mGBA, ROM checks); a check that the release archive builds on its own; `tools/check-consumer.sh` (a game built against the archive and run in mGBA); Release (debug checks compiled out) and Debug (`-O0`) builds with warnings as errors, each tested; every example built; the bunnymark benchmark (result in the job summary); and the ROMs uploaded as artifacts.
 - Web: the `web` preset (warnings as errors); every example run headless in Chrome for 300 frames with `tools/web-shots.py --require-picture`, after checking that its page loads no other file; `tools/check-consumer-web.sh` (a game project built for the web against the release archive, run and checked the same way); the pages uploaded as artifacts.
 
-The ARM toolchain and mGBA versions are set in `.github/actions/setup-gba/action.yml`; `mgba-rom-test` is built once and cached. The Emscripten version is set in the web job.
+The ARM toolchain and mGBA versions are set in `.github/actions/setup-gba/action.yml`; `mgba-rom-test` is built once and cached. The Emscripten version is set in the web job (and in `pages.yml`).
+
+**Pages** (`.github/workflows/pages.yml`), on pushes to `main` and manual runs: builds the examples with the `web-release` preset, then the [documentation site](#documentation-site) and its search index, and deploys it to GitHub Pages (the repository's Pages source must be set to GitHub Actions).
 
 **Release** (`.github/workflows/release.yml`):
 

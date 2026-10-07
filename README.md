@@ -2,6 +2,8 @@
 
 An open-source Game Boy Advance game runtime written in C on top of [libtonc](https://github.com/gbadev-org/libtonc).
 
+**Website:** [stevengann.github.io/Serval-Engine](https://stevengann.github.io/Serval-Engine/), with the docs and an [examples gallery](https://stevengann.github.io/Serval-Engine/examples/) where every example runs in your browser.
+
 Serval Engine is the code linked into every game ROM built with Studio Advance, the commercial editor, but it is designed to be usable on its own by anyone writing GBA homebrew in C.
 
 It is designed as three layers:
