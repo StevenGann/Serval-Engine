@@ -1,40 +1,24 @@
 // Shared declarations of the fireflies example: what main.c (the C glue),
-// script.c (the bytecode listing), art.c and sound.c all name. In a project
-// made with Studio Advance this is the generated header that ties the C glue
-// to the script blob: the object, global and asset numbers both sides use.
+// fireflies.svm (the bytecode listing, through serval_add_script's HEADERS),
+// art.c and sound.c all name. In a project made with Studio Advance this is
+// the generated header that ties the C glue to the script blob: the asset
+// numbers both sides use, plus the object, string and global numbers the
+// assembler writes into fireflies_script.h from the listing.
 
 #ifndef FIREFLIES_GAME_H
 #define FIREFLIES_GAME_H
 
 #include "serval/serval.h"
 
-// --- The scripts' objects and globals ------------------------------------------
+// --- The script blob (fireflies.svm) -------------------------------------------
 
-// Objects of the script blob. Room and Spawner run as threads with no entity
-// (main.c starts their Room Start handlers); the others are entities SPAWNed
-// by the scripts.
-enum {
-    OBJ_ROOM,    // the round: HUD, timer, music, the end and the restart request
-    OBJ_SPAWNER, // a new firefly every 40-90 frames, at most 8 at once
-    OBJ_PLAYER,  // the serval, walked with the D-pad
-    OBJ_FIREFLY, // wanders, blinks, fades out after a while; caught on touch
-    OBJ_SPARKLE, // the burst where a firefly was caught
-    OBJ_RESTING, // the serval sitting down when time is up (no longer catches)
-    OBJ_COUNT
-};
-
-// Globals (vm_global): the scripts' shared state. C reads G_RESTART only.
-enum {
-    G_SCORE,     // fireflies caught this round
-    G_TIME,      // seconds left
-    G_LIVE,      // fireflies alive (their Create and Destroy keep count)
-    G_PLAYING,   // 1 while the round runs
-    G_RESTART,   // set by the Room when START is pressed after the round
-    G_SPAWN_MIN, // the Spawner's delay range, in frames; shrinks every 10 points
-    G_SPAWN_MAX, //
-    G_PLAYER,    // the serval's entity handle
-    G_COUNT
-};
+// Generated at build time by tools/svm.py: OBJ_* (ROOM, SPAWNER, PLAYER,
+// FIREFLY, SPARKLE, RESTING), STR_*, G_* (SCORE, TIME, LIVE, PLAYING,
+// RESTART, SPAWN_MIN, SPAWN_MAX, PLAYER), their counts, and the blob itself:
+// fireflies_script and fireflies_script_size. Room and Spawner run as
+// threads with no entity (main.c starts their Room Start handlers); the
+// others are entities SPAWNed by the scripts. C reads G_RESTART only.
+#include "fireflies_script.h"
 
 // Game components in the objects' masks, so the C glue can find the pairs
 // to test for collisions.
@@ -84,11 +68,5 @@ extern const PsgSound* const sound_table[SOUND_COUNT];
 
 enum { SONG_DUSK, SONG_COUNT };
 extern const PsgSong* const songs[SONG_COUNT];
-
-// --- The script blob (script.c) ----------------------------------------------------
-
-// Assembles the scripts into an EWRAM buffer. Returns the blob's size and
-// sets *blob, or returns 0 and sets *error if the listing is broken.
-u32 script_build(const u8** blob, const char** error);
 
 #endif // FIREFLIES_GAME_H

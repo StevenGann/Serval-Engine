@@ -5,7 +5,7 @@
 // Demonstrates:
 //   - The bytecode VM (vm.h) running a whole game. The split between the two
 //     halves is the point of the example:
-//       * Scripts (script.c) decide everything that happens: they spawn the
+//       * Scripts (fireflies.svm) decide everything that happens: they spawn the
 //         serval and the fireflies, walk the serval with the D-pad, fly the
 //         fireflies, count the score, run the 60-second timer, draw the HUD,
 //         play every sound and the music, fade the screen, end the round
@@ -22,17 +22,17 @@
 //         brightness, paths).
 //       * C (this file) does only what Studio Advance generates as C for a
 //         game made in its editor: main(), the art, sound and path tables
-//         (art.c, sound.c), building the script blob, vm_bind, the frame
-//         loop in vm.h's order, the collision pairs (the player's body
-//         against each firefly's with body_overlap, reported to the firefly
-//         as a Collision event) and a full restart when the scripts set
+//         (art.c, sound.c), vm_load of the blob, vm_bind, the frame loop in
+//         vm.h's order, the collision pairs (the player's body against each
+//         firefly's with body_overlap, reported to the firefly as a
+//         Collision event) and a full restart when the scripts set
 //         G_RESTART. No game rule is in C.
-//   - The blob built at boot by an example-local mini assembler (asm.c:
-//     labels with forward references, rel16 jumps, absolute CALL targets, the
-//     header, object and string tables, strings after the code). A real
-//     project's blob is ROM data emitted by Studio Advance's script compiler;
-//     building it here keeps the example self-contained, as blackjack builds
-//     its art at boot.
+//   - The blob assembled at build time from the listing by the engine's
+//     assembler (tools/svm.py, run by serval_add_script in
+//     examples/CMakeLists.txt) into fireflies_script, ROM data, with
+//     fireflies_script.h giving C the object, string and global numbers. A
+//     real project's blob is ROM data emitted by Studio Advance's script
+//     compiler in the same format (docs/vm.md).
 //   - Entities with bodies kept on screen by the physics bounds, paths
 //     (path.h) mirrored at random, animated sprites that loop and play once
 //     (sys_animate, SPRITE_ASSET_ANIM_ONCE), depth sorting, two map layers
@@ -68,22 +68,23 @@
 //     new round begins from the start: score 0, time 60.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, START = Enter.)
 //
-// Uses only Serval Engine's API; no third-party headers. The files: script.c
-// (all the game's logic, as a listing), asm.c (the mini assembler), art.c
-// (graphics and flight paths, built at boot), sound.c, game.h (the numbers
-// both sides share).
+// Uses only Serval Engine's API; no third-party headers. The files:
+// fireflies.svm (all the game's logic, as a listing), art.c (graphics and
+// flight paths, built at boot), sound.c, game.h (the numbers both sides
+// share, and the generated fireflies_script.h).
 
 #include "game.h"
 
-static const u8* blob;
-static u32 blob_size;
+// The Collision handler in the listing ORs a comparison (0 or 1) into the
+// serval's flags to face it left or right.
+_Static_assert(SPRITE_FLIP_H == 1, "fireflies.svm relies on SPRITE_FLIP_H being 1");
 
 // A new round, from scratch: no entities, the blob loaded afresh (zeroed
 // globals, no scripts running), and the Room and Spawner threads started.
 // Their Room Start handlers run in the next vm_step().
 static void start_round(void) {
     ecs_reset();
-    vm_load(blob, blob_size);
+    vm_load(fireflies_script, fireflies_script_size);
     vm_start(OBJ_ROOM, VM_EV_ROOM_START);
     vm_start(OBJ_SPAWNER, VM_EV_ROOM_START);
 }
@@ -118,19 +119,6 @@ int main(void) {
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);
     vm_bind(&(VmBindings){
         .songs = songs, .song_count = SONG_COUNT, .paths = paths, .path_count = PATH_COUNT});
-
-    const char* error;
-    blob_size = script_build(&blob, &error);
-    if (!blob_size) { // a broken listing: say so, and do nothing else
-        screen_set_brightness(0);
-        text_print(0, 0, "SCRIPT BUILD FAILED:");
-        text_print(0, 1, error);
-        debug_log(error);
-        for (;;) {
-            frame_begin();
-            frame_end();
-        }
-    }
     start_round();
 
     for (;;) {

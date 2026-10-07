@@ -1,0 +1,612 @@
+; The game's logic: every rule of fireflies, as a listing for Serval Engine's
+; VM (docs/vm.md), assembled at build time by tools/svm.py (serval_add_script
+; in examples/CMakeLists.txt) into fireflies_script, ROM data that main.c
+; loads. One op per line; the comment after each op is the value stack after
+; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value).
+; Handlers end in HALT; subroutines in RET.
+;
+; In a game made with Studio Advance, the editor's script compiler emits the
+; blob from event blocks instead; this file is what such a compiler's output
+; reads like, written by hand.
+;
+; Objects (declared below; the generated fireflies_script.h gives C their
+; numbers as OBJ_*, the strings as STR_* and the globals as G_*):
+;   Room (thread, Room Start)  sets the round up, fades in, counts 60 seconds
+;                              down on the HUD, then: TIME UP, the score,
+;                              PRESS START, a fade out and G_RESTART for C
+;   Spawner (thread)           a firefly every 40-90 frames, at most 8 alive,
+;                              never right on the serval
+;   Player: Create, Step       the D-pad sets its velocity; walk or stand
+;   Firefly: Create            wanders along random paths until its time is
+;                              up, then fades out; Collision: caught (score,
+;                              chime, sparkle, a jingle every 10); Destroy:
+;                              one fewer alive
+;   Sparkle: Create, Anim End  a burst that removes itself when it's done
+;   Resting: Create            the serval sitting down when time is up
+;
+; Sprite, sound, song, path, layout and component names come from game.h and
+; the engine's headers (HEADERS in serval_add_script). Locals per handler are
+; named below.
+
+; --- Objects ---------------------------------------------------------------------
+
+; Room and Spawner run as threads with no entity (main.c starts their Room
+; Start handlers); the others are entities SPAWNed by the scripts, with the
+; components and sprite given here.
+.object ROOM    mask=0 sprite=0 ; the round: HUD, timer, music, the end and the restart request
+.object SPAWNER mask=0 sprite=0 ; a new firefly every 40-90 frames, at most 8 at once
+.object PLAYER  mask=C_POS|C_VEL|C_SPR|C_ANIM|C_BODY|C_PLAYER  sprite=SPR_SERVAL_IDLE ; the serval, walked with the D-pad
+.object FIREFLY mask=C_POS|C_VEL|C_SPR|C_ANIM|C_BODY|C_FIREFLY sprite=SPR_FIREFLY     ; wanders, blinks, fades out after a while; caught on touch
+.object SPARKLE mask=C_POS|C_SPR|C_ANIM sprite=SPR_SPARKLE    ; the burst where a firefly was caught
+.object RESTING mask=C_POS|C_SPR|C_ANIM sprite=SPR_SERVAL_SIT ; the serval sitting down when time is up (no longer catches)
+
+; --- Strings ---------------------------------------------------------------------
+
+.string SCORE       "SCORE"
+.string TIME        "TIME"
+.string BLANK2      "  "                   ; clears the time before it is printed again (9 after 10)
+.string BLANK3      "   "                  ; the same for the score (0 after the last round's 23)
+.string BLANK_LINE  "                    "
+.string HINT        "CATCH THE FIREFLIES!"
+.string TIME_UP     "TIME UP!"
+.string CAUGHT      "CAUGHT"
+.string PRESS_START "PRESS START"
+
+; --- Globals: the scripts' shared state. C reads G_RESTART only. ------------------
+
+.globals SCORE     ; fireflies caught this round
+.globals TIME      ; seconds left
+.globals LIVE      ; fireflies alive (their Create and Destroy keep count)
+.globals PLAYING   ; 1 while the round runs
+.globals RESTART   ; set by the Room when START is pressed after the round
+.globals SPAWN_MIN ; the Spawner's delay range, in frames; shrinks every 10 points
+.globals SPAWN_MAX ;
+.globals PLAYER    ; the serval's entity handle
+
+; --- Numbers the listing uses ------------------------------------------------------
+
+.const SPEED FX(3) / 2 ; the serval: 1.5 pixels per frame
+
+; HUD and messages: text cells (30 x 20).
+.const SCORE_COL 7 ; "SCORE" at 1
+.const TIME_COL 28 ; "TIME" at 23
+.const HINT_COL 5  ; 20 characters, centered
+.const HINT_ROW 6  ; above the serval's ears
+.const TIME_UP_ROW 8
+.const CAUGHT_ROW 10
+.const START_ROW 12
+
+.const PLAYER_X (SCREEN_W - SERVAL_BODY_W) / 2
+.const PLAYER_Y (FIELD_TOP + SCREEN_H - SERVAL_BODY_H) / 2
+
+; Where fireflies appear (their top-left, in pixels).
+.const SPAWN_LEFT 8
+.const SPAWN_RIGHT SCREEN_W - 16
+.const SPAWN_TOP FIELD_TOP + 16
+.const SPAWN_BOTTOM SCREEN_H - 32
+.const SPAWN_CLEAR 40 ; pixels between a new firefly and the serval, at least
+
+; The Spawner's delay, in frames: 40-90 at first; every 10 points both ends
+; come down, until the longest is at most SPAWN_MAX_FLOOR.
+.const SPAWN_MIN_START 40
+.const SPAWN_MAX_START 90
+.const SPAWN_MIN_STEP 5
+.const SPAWN_MAX_STEP 12
+.const SPAWN_MAX_FLOOR 42
+
+.const FLIGHTS_MIN 3 ; a firefly's life, in flights (about 2.3 s each with its hover)
+.const FLIGHTS_MAX 4
+
+.const DEPTH_SERVAL 10 ; sys_render_by_depth: higher in front
+.const DEPTH_FIREFLY 20
+.const DEPTH_SPARKLE 30
+
+.const FADE_STEP 2 ; brightness change per frame in fades
+
+; The Collision handler ORs a comparison (0 or 1) into flags, which relies on
+; SPRITE_FLIP_H being 1; main.c checks that at compile time.
+
+; --- Room ------------------------------------------------------------------------
+
+; Room Start, run as a thread. Local 0: the brightness while fading.
+.handler ROOM ROOM_START
+    ; A new round: every global set, whatever the last round left.
+    PUSH 0               ; 0
+    STG SCORE            ;
+    PUSH 0               ; 0
+    STG LIVE             ;
+    PUSH 0               ; 0
+    STG RESTART          ;
+    PUSH ROUND_SECONDS   ; 60
+    STG TIME             ;
+    PUSH 1               ; 1
+    STG PLAYING          ;
+    PUSH SPAWN_MIN_START ; 40
+    STG SPAWN_MIN        ;
+    PUSH SPAWN_MAX_START ; 90
+    STG SPAWN_MAX        ;
+    PUSH SND_START       ; sound
+    SYS PSG_PLAY         ;
+    PUSH SONG_DUSK       ; song
+    SYS MUSIC_PLAY       ;
+    ; The HUD, and the last round's messages cleared.
+    PUSH 1               ; col
+    PUSH 0               ; col row
+    PUSH STR_SCORE       ; col row str
+    SYS TEXT_PRINT       ;
+    PUSH TIME_COL - 5    ; col
+    PUSH 0               ; col row
+    PUSH STR_TIME        ; col row str
+    SYS TEXT_PRINT       ;
+    CALL print_score     ;
+    CALL print_time      ;
+    PUSH HINT_COL        ; col
+    PUSH TIME_UP_ROW     ; col row
+    PUSH STR_BLANK_LINE  ; col row str
+    SYS TEXT_PRINT       ;
+    PUSH HINT_COL        ; col
+    PUSH CAUGHT_ROW      ; col row
+    PUSH STR_BLANK_LINE  ; col row str
+    SYS TEXT_PRINT       ;
+    PUSH HINT_COL        ; col
+    PUSH START_ROW       ; col row
+    PUSH STR_BLANK_LINE  ; col row str
+    SYS TEXT_PRINT       ;
+    PUSH HINT_COL        ; col
+    PUSH HINT_ROW        ; col row
+    PUSH STR_HINT        ; col row str
+    SYS TEXT_PRINT       ;
+    ; The serval, in the middle of the meadow.
+    PUSH FX(PLAYER_X)    ; x
+    PUSH FX(PLAYER_Y)    ; x y
+    SPAWN PLAYER         ; e
+    STG PLAYER           ;
+    ; Fade in from black (where the last round, or the boot, left it).
+    PUSH SCREEN_BRIGHTNESS_MIN ; -16
+    STL 0                      ;
+fade_in:
+    LDL 0            ; level
+    SYS BRIGHTNESS   ;
+    LDL 0            ; level
+    JZ faded_in      ;
+    LDL 0            ; level
+    PUSH FADE_STEP   ; level 2
+    ADD              ; level+2
+    STL 0            ;
+    PUSH 1           ; 1
+    WAIT             ;
+    JMP fade_in      ;
+faded_in:
+
+    ; Once a second: one second less on the HUD.
+tick:
+    PUSH 60              ; 60
+    WAIT                 ;
+    LDG TIME             ; time
+    PUSH 1               ; time 1
+    SUB                  ; time-1
+    STG TIME             ;
+    CALL print_time      ;
+    LDG TIME             ; time
+    PUSH ROUND_SECONDS - 3 ; time 57
+    NE                   ; time!=57
+    JNZ hint_stays       ;
+    PUSH HINT_COL        ; col: the hint goes after 3 seconds
+    PUSH HINT_ROW        ; col row
+    PUSH STR_BLANK_LINE  ; col row str
+    SYS TEXT_PRINT       ;
+hint_stays:
+    LDG TIME         ; time
+    PUSH 10          ; time 10
+    GT               ; time>10
+    JNZ no_tick      ;
+    LDG TIME         ; time
+    JZ no_tick       ;
+    PUSH SND_TICK    ; sound: the last ten seconds tick
+    SYS PSG_PLAY     ;
+no_tick:
+    LDG TIME         ; time
+    JNZ tick         ;
+
+    ; Time is up. The Spawner and the fireflies see G_PLAYING and stop.
+    PUSH 0           ; 0
+    STG PLAYING      ;
+    SYS MUSIC_STOP   ;
+    PUSH SND_TIME_UP ; sound
+    SYS PSG_PLAY     ;
+    ; The serval sits down where it stands, facing the same way: a resting
+    ; serval takes its place. It isn't a player (no C_PLAYER), so fireflies
+    ; drifting into it are no longer caught.
+    LDG PLAYER       ; player
+    GETP X           ; x
+    LDG PLAYER       ; x player
+    GETP Y           ; x y
+    SPAWN RESTING    ; rest
+    LDG PLAYER       ; rest player
+    GETP FLAGS       ; rest flags
+    SETP FLAGS       ;
+    LDG PLAYER       ; player
+    KILL             ;
+    PUSH 11          ; col
+    PUSH TIME_UP_ROW ; col row
+    PUSH STR_TIME_UP ; col row str
+    SYS TEXT_PRINT   ;
+    PUSH 10          ; col
+    PUSH CAUGHT_ROW  ; col row
+    PUSH STR_CAUGHT  ; col row str
+    SYS TEXT_PRINT   ;
+    PUSH 17          ; col
+    PUSH CAUGHT_ROW  ; col row
+    LDG SCORE        ; col row score
+    SYS TEXT_PRINT_NUMBER ;
+    PUSH 90          ; 90
+    WAIT             ;
+    PUSH 9           ; col
+    PUSH START_ROW   ; col row
+    PUSH STR_PRESS_START ; col row str
+    SYS TEXT_PRINT   ;
+wait_start:
+    PUSH 1             ; 1
+    WAIT               ;
+    PUSH BUTTON_START  ; button
+    SYS BUTTON_PRESSED ; pressed
+    JZ wait_start      ;
+    ; Fade out, then ask C for a new round.
+    PUSH 0 ; 0
+    STL 0  ;
+fade_out:
+    LDL 0                      ; level
+    PUSH FADE_STEP             ; level 2
+    SUB                        ; level-2
+    DUP                        ; level-2 level-2
+    STL 0                      ; level-2
+    SYS BRIGHTNESS             ;
+    PUSH 1                     ; 1
+    WAIT                       ;
+    LDL 0                      ; level
+    PUSH SCREEN_BRIGHTNESS_MIN ; level -16
+    GT                         ; level>-16
+    JNZ fade_out               ;
+    PUSH 1                     ; 1
+    STG RESTART                ; main.c restarts after this frame
+    HALT                       ;
+
+; --- Spawner -----------------------------------------------------------------------
+
+; Room Start, run as a second thread. Locals: 0 x, 1 y (pixels).
+.handler SPAWNER ROOM_START
+loop:
+    LDG SPAWN_MIN      ; min
+    LDG SPAWN_MAX      ; min max
+    SYS RANDOM_RANGE   ; frames
+    WAIT               ;
+    LDG PLAYING        ; playing
+    JZ done            ;
+    LDG LIVE           ; live
+    PUSH MAX_FIREFLIES ; live 8
+    GE                 ; live>=8
+    JNZ loop           ; enough of them: try again later
+pick:
+    PUSH SPAWN_LEFT    ; lo
+    PUSH SPAWN_RIGHT   ; lo hi
+    SYS RANDOM_RANGE   ; x
+    STL 0              ;
+    PUSH SPAWN_TOP     ; lo
+    PUSH SPAWN_BOTTOM  ; lo hi
+    SYS RANDOM_RANGE   ; y
+    STL 1              ;
+    ; Not on the serval, which would catch it at once: the distance between
+    ; their middles, squared, must be at least SPAWN_CLEAR squared.
+    LDL 0                         ; x
+    LDG PLAYER                    ; x player
+    GETP X                        ; x fx
+    PUSH 8                        ; x fx 8
+    SHR                           ; x px
+    SUB                           ; x-px
+    PUSH SERVAL_BODY_W / 2 - 4    ; x-px 8
+    SUB                           ; dx
+    DUP                           ; dx dx
+    MUL                           ; dx²
+    LDL 1                         ; dx² y
+    LDG PLAYER                    ; dx² y player
+    GETP Y                        ; dx² y fy
+    PUSH 8                        ; dx² y fy 8
+    SHR                           ; dx² y py
+    SUB                           ; dx² y-py
+    PUSH SERVAL_BODY_H / 2 - 4    ; dx² y-py 6
+    SUB                           ; dx² dy
+    DUP                           ; dx² dy dy
+    MUL                           ; dx² dy²
+    ADD                           ; d²
+    PUSH SPAWN_CLEAR * SPAWN_CLEAR ; d² 1600
+    LT                            ; too close
+    JNZ retry                     ;
+    LDL 0                         ; x
+    PUSH 8                        ; x 8
+    SHL                           ; fx
+    LDL 1                         ; fx y
+    PUSH 8                        ; fx y 8
+    SHL                           ; fx fy
+    SPAWN FIREFLY                 ; e
+    DROP                          ;
+    JMP loop                      ;
+retry:                            ; somewhere else, next frame
+    PUSH 1                        ; 1
+    WAIT                          ;
+    LDG PLAYING                   ; playing
+    JNZ pick                      ;
+done:
+    HALT ;
+
+; --- Player ------------------------------------------------------------------------
+
+.handler PLAYER CREATE
+    SELF                 ; e
+    PUSH SPR_SERVAL_IDLE ; e spr
+    SETP SPR             ;
+    SELF                 ; e
+    PUSH SERVAL_BODY_W   ; e 24
+    SETP BODY_W          ;
+    SELF                 ; e
+    PUSH SERVAL_BODY_H   ; e 20
+    SETP BODY_H          ;
+    SELF                 ; e
+    PUSH DEPTH_SERVAL    ; e depth
+    SETP DEPTH           ;
+    HALT                 ;
+
+; Step, every frame. Locals: 0 vx, 1 vy (both start at 0), 2 sprite.
+.handler PLAYER STEP
+    PUSH BUTTON_LEFT   ; button
+    SYS BUTTON_DOWN    ; down
+    JZ not_left        ;
+    PUSH -SPEED        ; -fx
+    STL 0              ;
+    SELF               ; e
+    SELF               ; e e
+    GETP FLAGS         ; e flags
+    PUSH SPRITE_FLIP_H ; e flags flip
+    OR                 ; e flags|flip: face left
+    SETP FLAGS         ;
+not_left:
+    PUSH BUTTON_RIGHT   ; button
+    SYS BUTTON_DOWN     ; down
+    JZ not_right        ;
+    PUSH SPEED          ; fx
+    STL 0               ;
+    SELF                ; e
+    SELF                ; e e
+    GETP FLAGS          ; e flags
+    PUSH ~SPRITE_FLIP_H ; e flags ~flip
+    AND                 ; e flags&~flip: face right
+    SETP FLAGS          ;
+not_right:
+    PUSH BUTTON_UP  ; button
+    SYS BUTTON_DOWN ; down
+    JZ not_up       ;
+    PUSH -SPEED     ; -fx
+    STL 1           ;
+not_up:
+    PUSH BUTTON_DOWN ; button (0x80: a PUSH16)
+    SYS BUTTON_DOWN  ; down
+    JZ not_down      ;
+    PUSH SPEED       ; fx
+    STL 1            ;
+not_down:
+    SELF    ; e
+    LDL 0   ; e vx
+    SETP VX ;
+    SELF    ; e
+    LDL 1   ; e vy
+    SETP VY ;
+    ; Walking or standing. The sprite changes only when that changes, so
+    ; its animation plays (and starts from its first frame).
+    LDL 0                ; vx
+    LDL 1                ; vx vy
+    OR                   ; moving
+    JZ standing          ;
+    PUSH SPR_SERVAL_WALK ; spr
+    STL 2                ;
+    JMP chosen           ;
+standing:
+    PUSH SPR_SERVAL_IDLE ; spr
+    STL 2                ;
+chosen:
+    SELF       ; e
+    GETP SPR   ; current
+    LDL 2      ; current spr
+    EQ         ; same
+    JNZ same   ;
+    SELF       ; e
+    LDL 2      ; e spr
+    SETP SPR   ;
+    SELF       ; e
+    PUSH 0     ; e 0
+    SETP FRAME ;
+same:
+    HALT ;
+
+; --- Firefly -------------------------------------------------------------------------
+
+; Create, then its whole life. Local 0: flights left.
+.handler FIREFLY CREATE
+    SELF                   ; e
+    PUSH 8                 ; e 8
+    SETP BODY_W            ;
+    SELF                   ; e
+    PUSH 8                 ; e 8
+    SETP BODY_H            ;
+    SELF                   ; e
+    PUSH DEPTH_FIREFLY     ; e depth
+    SETP DEPTH             ;
+    SELF                   ; e
+    PUSH 0                 ; e lo
+    PUSH FIREFLY_FRAMES - 1 ; e lo hi
+    SYS RANDOM_RANGE       ; e frame: blinks out of step with the others
+    SETP FRAME             ;
+    LDG LIVE               ; live
+    PUSH 1                 ; live 1
+    ADD                    ; live+1
+    STG LIVE               ;
+    PUSH FLIGHTS_MIN       ; lo
+    PUSH FLIGHTS_MAX       ; lo hi
+    SYS RANDOM_RANGE       ; flights
+    STL 0                  ;
+    ; From here on a catch (Collision) may cut into this handler's waits:
+    ; without it, the event would be dropped, since the firefly's script is
+    ; always waiting (one script per entity).
+    PUSH 1        ; 1
+    INTERRUPTIBLE ;
+wander:
+    LDG PLAYING                       ; playing
+    JZ fade                           ; the round is over
+    LDL 0                             ; flights
+    JZ fade                           ; its time is up
+    LDL 0                             ; flights
+    PUSH 1                            ; flights 1
+    SUB                               ; flights-1
+    STL 0                             ;
+    SELF                              ; e
+    PUSH 0                            ; e lo
+    PUSH PATH_COUNT - 1               ; e lo hi
+    SYS RANDOM_RANGE                  ; e path
+    PUSH 0                            ; e path lo
+    PUSH PATH_MIRROR_X | PATH_MIRROR_Y ; e path lo hi
+    SYS RANDOM_RANGE                  ; e path flags: mirrored at random
+    SYS PATH_START                    ;
+    WAIT_MOVE                         ; until the path ends (it slows to a stop)
+    PUSH 10                           ; lo
+    PUSH 40                           ; lo hi
+    SYS RANDOM_RANGE                  ; frames
+    WAIT                              ; hover a moment
+    JMP wander                        ;
+fade:
+    SELF                  ; e
+    PUSH SPR_FIREFLY_FADE ; e spr
+    SETP SPR              ;
+    SELF                  ; e
+    PUSH 0                ; e 0
+    SETP FRAME            ;
+    WAIT_ANIM             ; until the glow is gone
+    SELF                  ; e
+    KILL                  ;
+    HALT                  ;
+
+; Collision: the serval (OTHER) caught it.
+.handler FIREFLY COLLISION
+    LDG SCORE        ; score
+    PUSH 1           ; score 1
+    ADD              ; score+1
+    STG SCORE        ;
+    CALL print_score ;
+    PUSH SND_CHIME   ; sound
+    SYS PSG_PLAY     ;
+    ; A sparkle where it was: 16x16, centered on the 8x8 firefly.
+    SELF          ; e
+    GETP X        ; x
+    PUSH FX(4)    ; x 4
+    SUB           ; sx
+    SELF          ; sx e
+    GETP Y        ; sx y
+    PUSH FX(4)    ; sx y 4
+    SUB           ; sx sy
+    SPAWN SPARKLE ; spark
+    DROP          ;
+    ; The serval turns to face it: flipped (facing left) if the firefly's
+    ; middle is left of the serval's.
+    OTHER                           ; o
+    OTHER                           ; o o
+    GETP FLAGS                      ; o flags
+    PUSH ~SPRITE_FLIP_H             ; o flags ~flip
+    AND                             ; o unflipped
+    SELF                            ; o unflipped e
+    GETP X                          ; o unflipped x
+    PUSH FX(4 - SERVAL_BODY_W / 2)  ; o unflipped x -8
+    ADD                             ; o unflipped x-8
+    OTHER                           ; o unflipped x-8 o
+    GETP X                          ; o unflipped x-8 ox
+    LT                              ; o unflipped left
+    OR                              ; o flags
+    SETP FLAGS                      ;
+    ; Every tenth: a jingle, and fireflies come a little faster.
+    LDG SCORE           ; score
+    PUSH 10             ; score 10
+    MOD                 ; score%10
+    JNZ caught          ;
+    PUSH SND_JINGLE     ; sound
+    SYS PSG_PLAY        ;
+    LDG SPAWN_MAX       ; max
+    PUSH SPAWN_MAX_FLOOR ; max floor
+    LE                  ; max<=floor
+    JNZ caught          ;
+    LDG SPAWN_MIN       ; min
+    PUSH SPAWN_MIN_STEP ; min 5
+    SUB                 ; min-5
+    STG SPAWN_MIN       ;
+    LDG SPAWN_MAX       ; max
+    PUSH SPAWN_MAX_STEP ; max 12
+    SUB                 ; max-12
+    STG SPAWN_MAX       ;
+caught:
+    SELF ; e
+    KILL ; its Destroy runs in this phase
+    HALT ;
+
+; Destroy (caught or faded): one fewer alive.
+.handler FIREFLY DESTROY
+    LDG LIVE ; live
+    PUSH 1   ; live 1
+    SUB      ; live-1
+    STG LIVE ;
+    HALT     ;
+
+; --- Sparkle and the resting serval ---------------------------------------------------
+
+.handler SPARKLE CREATE
+    SELF                              ; e
+    PUSH DEPTH_SPARKLE                ; e depth
+    SETP DEPTH                        ;
+    SELF                              ; e
+    PUSH 0                            ; e lo
+    PUSH SPRITE_FLIP_H | SPRITE_FLIP_V ; e lo hi
+    SYS RANDOM_RANGE                  ; e flips: no two bursts alike
+    SETP FLAGS                        ;
+    HALT                              ;
+
+; Animation End: its one-shot animation finished.
+.handler SPARKLE ANIM_END
+    SELF ; e
+    KILL ;
+    HALT ;
+
+.handler RESTING CREATE
+    SELF              ; e
+    PUSH DEPTH_SERVAL ; e depth
+    SETP DEPTH        ;
+    HALT              ;
+
+; --- Subroutines -----------------------------------------------------------------
+
+; print_score ( -- ): the score on the HUD.
+print_score:
+    PUSH SCORE_COL        ; col
+    PUSH 0                ; col row
+    PUSH STR_BLANK3       ; col row str
+    SYS TEXT_PRINT        ;
+    PUSH SCORE_COL        ; col
+    PUSH 0                ; col row
+    LDG SCORE             ; col row score
+    SYS TEXT_PRINT_NUMBER ;
+    RET                   ;
+
+; print_time ( -- ): the seconds left on the HUD.
+print_time:
+    PUSH TIME_COL         ; col
+    PUSH 0                ; col row
+    PUSH STR_BLANK2       ; col row str
+    SYS TEXT_PRINT        ;
+    PUSH TIME_COL         ; col
+    PUSH 0                ; col row
+    LDG TIME              ; col row time
+    SYS TEXT_PRINT_NUMBER ;
+    RET                   ;
