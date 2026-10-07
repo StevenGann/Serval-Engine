@@ -1,5 +1,7 @@
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/map.h"
+#include "serval/path.h"
 #include "serval/physics.h"
 #include "serval/sprites.h"
 #include "test.h"
@@ -282,6 +284,32 @@ static void alive_bit_in_create_mask_warns(void) {
     CHECK(C_GAME(14) == (1u << 30));
 }
 
+// Bits 7-15 are reserved for engine components of later versions:
+// entity_create() leaves them out (warning once in debug builds), so no
+// entity has one before a version gives it a meaning. The engine's own bits
+// (0-6) and the game's (16-30) are kept.
+static void reserved_engine_bits_are_left_out(void) {
+    ecs_reset();
+    const u32 engine = C_POS | C_VEL | C_SPR | C_BODY | C_MAPBODY | C_ANIM | C_PATH;
+    CHECK(engine == 0x7Fu); // bits 0-6: none in the reserved range
+    u32 warnings = debug_warning_count();
+    for (u32 bit = 7; bit <= 15; bit++) {
+        Entity e = entity_create(C_POS | (1u << bit));
+        CHECK(ent_mask[entity_index(e)] == (C_POS | C_ALIVE));
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1); // reported once
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    Entity all = entity_create(~C_ALIVE); // every bit but C_ALIVE
+    CHECK(ent_mask[entity_index(all)] == (0x7FFF0000u | engine | C_ALIVE));
+    CHECK(ecs_count(1u << 7) == 0 && ecs_count(1u << 15) == 0);
+    Entity game = entity_create(C_SPR | C_GAME(0) | C_GAME(14));
+    CHECK(ent_mask[entity_index(game)] == (C_SPR | C_GAME(0) | C_GAME(14) | C_ALIVE));
+    ecs_reset();
+}
+
 static void count_matches_live_entities(void) {
     ecs_reset();
     CHECK(ecs_count(0) == 0);
@@ -425,6 +453,7 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"cleared_alive_bit", cleared_alive_bit},
            {"freed_slots_are_reused_oldest_first", freed_slots_are_reused_oldest_first},
            {"alive_bit_in_create_mask_warns", alive_bit_in_create_mask_warns},
+           {"reserved_engine_bits_are_left_out", reserved_engine_bits_are_left_out},
            {"gather_lists_matches_in_order", gather_lists_matches_in_order},
            {"gather_with_no_matches_writes_nothing", gather_with_no_matches_writes_nothing},
            {"gather_a_full_pool", gather_a_full_pool},

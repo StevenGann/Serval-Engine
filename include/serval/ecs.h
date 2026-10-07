@@ -11,11 +11,20 @@
 
 #define MAX_ENT 128
 
-// Component bits. Bits 0-15 belong to the engine, bits 16-30 to games
-// (C_GAME(0) to C_GAME(14)). Bit 31 (C_ALIVE) marks a slot as alive, so free
-// slots never match any system; there is no C_GAME(15). A constant n outside
-// 0-14 is a compile error ("size of array is negative"); entity_create() warns
-// in debug builds if a mask includes C_ALIVE.
+// Component bits, in ent_mask and the masks entity_create(), ent_has(),
+// ECS_FOR_EACH, ecs_count() and ecs_gather() take:
+//   - Bits 0-6, the engine's components: C_POS, C_VEL, C_SPR, C_BODY and
+//     C_ANIM here, C_MAPBODY (bit 4) in map.h, C_PATH (bit 6) in path.h.
+//   - Bits 7-15, reserved for engine components of later versions. Never use
+//     them: entity_create() leaves them out (warning once in debug builds),
+//     and nothing checks them in ent_mask, where a later engine version would
+//     give them a meaning.
+//   - Bits 16-30, the game's: C_GAME(0) to C_GAME(14), 15 of them; there is
+//     no C_GAME(15). A constant n outside 0-14 is a compile error ("size of
+//     array is negative").
+//   - Bit 31, C_ALIVE, marks a slot as alive, so free slots never match any
+//     system. entity_create() adds it (warning once in debug builds if the
+//     mask passed in has it already).
 #define C_POS (1u << 0)  // pos_x, pos_y
 #define C_VEL (1u << 1)  // vel_x, vel_y
 #define C_SPR (1u << 2)  // spr_id, spr_frame, spr_flags, spr_depth, spr_angle, spr_scale
@@ -39,9 +48,13 @@ typedef u16 Entity;
 #define ENTITY_NONE ((Entity)0)
 
 // Component mask per slot, including C_ALIVE. Systems read this directly.
-// Games may add and remove their components here (ent_mask[i] |= C_SPR), but
-// must keep C_ALIVE: a slot without it matches no system and no ent_has().
-// Create and destroy entities only with entity_create() and entity_destroy().
+// Games may add and remove components here, engine or their own
+// (ent_mask[i] |= C_SPR; ent_mask[i] &= ~C_SHIELD): a permanent part of the
+// API, which later versions may wrap in helpers but never take away. Keep
+// C_ALIVE: a slot without it matches no system and no ent_has(). Leave bits
+// 7-15 clear (reserved, above), and add C_PATH only through path_start()
+// (path.h). Create and destroy entities only with entity_create() and
+// entity_destroy().
 extern u32 ent_mask[MAX_ENT];
 
 // Engine component pools, indexed by entity_index(). Zeroed by entity_create().
@@ -83,7 +96,11 @@ static inline bool ent_has(u32 i, u32 mask) {
 void ecs_reset(void);
 
 // Creates an entity with the given component bits (C_ALIVE is added). Its
-// components are zeroed. Returns ENTITY_NONE if the pool is full.
+// components are zeroed. Returns ENTITY_NONE if the pool is full (warning
+// once in debug builds). Reserved bits 7-15 in `components` are left out of
+// its mask (warning once in debug builds), so no entity has one before an
+// engine version gives it a meaning. The warnings are reported again after
+// ecs_reset().
 Entity entity_create(u32 components);
 
 // Destroys the entity. Does nothing if the handle is stale or ENTITY_NONE.
