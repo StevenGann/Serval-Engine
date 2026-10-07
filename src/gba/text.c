@@ -189,12 +189,19 @@ static __attribute__((noinline)) void print(int col, int row, const char* s, u32
     print_within(col, row, s, 0, TEXT_COLS, base);
 }
 
-// A string to print: NULL, or a number passed for one, is refused (nothing
-// changes, not even the layer's setup), so no garbage is printed from
-// whatever it points at.
+// A string to print: NULL is refused (nothing changes, not even the layer's
+// setup), so no garbage is printed from whatever address 0 holds. Debug
+// builds also refuse a number passed for one (serval_plausible_pointer);
+// release builds test only for NULL, which is what keeps the call safe and
+// costs bunnymark, whose HUD prints three lines a frame, almost nothing.
 static bool valid_string(const char* function, const char* s) {
+#ifdef SERVAL_DEBUG
     if (serval_plausible_pointer(s))
         return true;
+#else
+    if (s)
+        return true;
+#endif
 #ifdef SERVAL_DEBUG
     if (!warned_string) {
         warned_string = true;

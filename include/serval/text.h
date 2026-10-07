@@ -15,8 +15,9 @@
 // Writes a string starting at a character cell. Clipped at the screen's edges;
 // characters outside ASCII 32-127 are shown as '?' (127 is blank). The first
 // call that prints or clears sets up the font and turns layer 0 on. A NULL
-// string (on the GBA, also a number passed for one) prints nothing and
-// changes nothing (warning in debug builds), in every print function here.
+// string (in debug builds on the GBA, also a number passed for one) prints
+// nothing and changes nothing (warning in debug builds), in every print
+// function here.
 void text_print(int col, int row, const char* s);
 
 // Like text_print, then blanks the rest of the row, so text that got shorter
@@ -94,8 +95,8 @@ void text_set_shadow(bool on);
 // Not checked by the compiler like printf, since its integer rules differ. A
 // NULL %s prints "(null)"; on the GBA, debug builds also catch a %s argument
 // that isn't a pointer at all (usually a number), printing "(?)" and warning.
-// A NULL fmt (on the GBA, also a number passed for one) returns "" (warning
-// in debug builds).
+// A NULL fmt (in debug builds on the GBA, also a number passed for one)
+// returns "" (warning in debug builds).
 #define TEXT_FORMAT_MAX 128
 const char* text_format(const char* fmt, ...);
 

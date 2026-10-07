@@ -277,7 +277,15 @@ const char* text_format(const char* fmt, ...) {
     static u32 next;
     char* out = buffers[next];
     next = (next + 1) % 4;
+    // Release builds test only for NULL, which keeps the call safe; debug
+    // builds also catch a number passed as the format. (The range test runs
+    // on every call, several a frame in a HUD: bunnymark paid about 200
+    // cycles a frame for it with text_print's.)
+#ifdef SERVAL_DEBUG
     if (!serval_plausible_pointer(fmt)) {
+#else
+    if (!fmt) {
+#endif
 #ifdef SERVAL_DEBUG
         static bool warned_format;
         if (!warned_format) {
