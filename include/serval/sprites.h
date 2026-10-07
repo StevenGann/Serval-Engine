@@ -7,9 +7,14 @@
 // Advance's build. Games refer to sprites by ID: an index into the sprite table
 // registered with sprite_table_set(). A sprite can be drawn once a group
 // containing it has been loaded into VRAM.
+//
+// Some names here are planned (SERVAL_PLANNED, docs/releases.md#planned-api):
+// declared so that games and tools can target them, implemented in a later
+// 1.x version. Each one's comment says what it will do and what it does now.
 
 #include "serval/fixed.h"
 #include "serval/platform.h"
+#include "serval/screen.h" // Color, for sprite_set_colors()
 
 // SpriteAsset.size: the sprite's dimensions in pixels (width x height). These
 // are the sizes the hardware supports.
@@ -26,12 +31,28 @@
 #define SPRITE_16x32 11
 #define SPRITE_32x64 12
 
-// SpriteAsset.flags
-#define SPRITE_ASSET_STREAMED (1 << 0)   // not supported yet
+// SpriteAsset.flags, combinable with |. sprite_group_load() refuses a group
+// with a sprite that has any other bit set (warning in debug builds): bits 0
+// and 4-7 are reserved for later versions. (Bit 0 was SPRITE_ASSET_STREAMED
+// before 1.0; streaming is a group's choice: SPRITE_GROUP_STREAMED.)
 #define SPRITE_ASSET_METASPRITE (1 << 1) // made of other sprites: .pieces (SpritePiece below)
 #define SPRITE_ASSET_ANIM_ONCE                                                                     \
-    (1 << 2) // sys_animate stops on the last frame (or
-             // frame_order step) instead of looping
+    (1 << 2) // sys_animate stops on the last frame (or frame_order
+             // step) instead of looping
+enum {
+    // Planned: .tiles holds the sprite's frame_count x tiles_per_frame tiles
+    // LZ77-compressed, as the GBA BIOS's LZ77UnCompVram reads them (type
+    // 0x10: a header word with the unpacked size in bytes, which must be
+    // frame_count x tiles_per_frame x 32; compressors call this their
+    // VRAM-safe mode). They are unpacked into VRAM when the group loads, so
+    // the sprite takes less ROM and the same VRAM. Ordinary sprites in
+    // resident groups only: a metasprite with it, or a streamed group holding
+    // such a sprite (streaming copies frames straight from ROM), will be
+    // refused. Until implemented, sprite_group_load() refuses a group holding
+    // a sprite with this flag (returns false, warning in debug builds).
+    SPRITE_ASSET_LZ77 SERVAL_PLANNED("LZ77-compressed sprites, docs/sprites.md#lz77-compression") =
+        1 << 3,
+};
 
 // SpriteAsset.frame_order entries: a frame index (0-63), optionally drawn
 // flipped, e.g. {0, 1, 2, 1 | SPRITE_FRAME_FLIP_H}.
@@ -47,8 +68,12 @@
 typedef struct {
     s16 x, y;   // the piece's center, relative to the pivot (unflipped, unrotated)
     u16 sprite; // sprite ID of an ordinary sprite (not a metasprite)
-    u16 flags;  // SPRITE_FLIP_H, SPRITE_FLIP_V and SPRITE_PALETTE(n) for this piece
+    u16 flags;  // for this piece: SPRITE_FLIP_H, SPRITE_FLIP_V, SPRITE_PALETTE(n) and
+                // SPRITE_BLEND (planned), a subset of the draw flags below. Anything
+                // else (a layer, SPRITE_HIDDEN, ...: those are the whole draw's) makes
+                // sprite_group_load() refuse the metasprite's group (warns)
     u8 frame;   // the frame of that sprite
+    // (One byte of padding follows on the GBA: reserved, leave it zero.)
 } SpritePiece;
 
 // A sprite: its pixels and how to draw them. Fields left out of an
@@ -90,9 +115,27 @@ typedef struct {
                            // 0 to frame_count - 1 in order
 } SpriteAsset;
 
-// SpriteGroup.flags
-#define SPRITE_GROUP_RESIDENT 0        // all frames copied to VRAM on load (the default)
-#define SPRITE_GROUP_STREAMED (1 << 0) // not supported yet
+// SpriteGroup.flags. sprite_group_load() refuses a group with any other bit
+// set (warning in debug builds): bits 1-7 are reserved for later versions.
+#define SPRITE_GROUP_RESIDENT 0 // all frames copied to VRAM on load (the default)
+enum {
+    // Planned: a streamed group. Its sprites keep their frames in ROM, and
+    // each distinct frame drawn in a frame (sprite and frame number) takes
+    // one of the group's .slots in VRAM, copied there in VBlank by
+    // frame_end() unless it is there already, in the same VBlank as the OAM,
+    // so it shows on time. Big, many-framed art (a boss, a character with
+    // dozens of frames) then costs VRAM for the frames on screen, not for all
+    // of them. Drawing is unchanged: sprite_draw*(), the render systems,
+    // metasprite pieces and sys_animate work as with resident sprites.
+    // Frames past the slots in one frame are not drawn (counted in
+    // sprite_stats().dropped, warning in debug builds). Each new frame is a
+    // copy in VBlank (about 64 cycles per tile), so keep it to a few new
+    // frames per frame. Slots are taken from the top of sprite VRAM when the
+    // group loads and freed with it. Until implemented, sprite_group_load()
+    // refuses a group with this flag (returns false, warning in debug builds).
+    SPRITE_GROUP_STREAMED SERVAL_PLANNED(
+        "streamed sprite groups, docs/sprites.md#residency-modes") = 1 << 0,
+};
 
 // Sprites loaded and unloaded together, with the palettes they share.
 typedef struct {
@@ -101,14 +144,19 @@ typedef struct {
     const u16* palettes;   // palette_count banks of 16 colors (color 0 transparent)
     u8 sprite_count;
     u8 palette_count;
-    u8 flags; // SPRITE_GROUP_*
+    u8 flags; // SPRITE_GROUP_* (0: resident)
+    u8 slots; // SPRITE_GROUP_STREAMED (planned): how many distinct frames of its sprites
+              // can be on screen at once, each slot the size of the group's largest frame;
+              // 0 means 1. Must be 0 in a resident group (refused otherwise, warns)
 } SpriteGroup;
 
 // Most sprite IDs a sprite table may hold.
 #define SPRITE_MAX 512
 
-// sprite_draw() flags, combinable with |: flips, a layer, SPRITE_HIDDEN and
-// SPRITE_PALETTE(n) below.
+// sprite_draw() flags, combinable with |: flips, a layer, SPRITE_HIDDEN,
+// SPRITE_PALETTE(n) and SPRITE_BLEND below. The same 16 bits are the
+// entities' spr_flags (ecs.h), which add SPRITE_ANIM_FLIP_H/V, SPRITE_SCALED
+// and SPRITE_SCREEN. Every bit has an owner; bits 13 and 14 are reserved.
 #define SPRITE_FLIP_H (1 << 0)
 #define SPRITE_FLIP_V (1 << 1)
 
@@ -154,22 +202,95 @@ typedef struct {
 // palette the group doesn't have draws with the sprite's own (warning in
 // debug builds). To change it on an entity:
 // spr_flags[i] = (spr_flags[i] & ~SPRITE_PALETTE_MASK) | SPRITE_PALETTE(n).
+// (n = 15 does not exist: it would spill into SPRITE_BLEND's bit.)
 #define SPRITE_PALETTE(n) ((u16)(((n) + 1) << 8))
 #define SPRITE_PALETTE_MASK (15u << 8)
 
+// Bits 12-14 of the draw flags (sprite_draw*() flags, spr_flags and
+// SpritePiece.flags) are the engine's: bit 12 is SPRITE_BLEND, and 13 and 14
+// are reserved for later draw flags (mosaic and the object window). Games
+// must not store anything in them: drawing doesn't check them (it is the hot
+// path), so a stray bit is ignored today and gets a meaning in a later
+// version. (SpritePiece.flags are checked at load: see SpritePiece.)
+enum {
+    // Planned: drawn semi-transparent. Where the sprite is drawn over one of
+    // the `bottom` layers of screen_set_blend() (screen.h), it is mixed with
+    // them with that call's weights, whether or not its `top` layers include
+    // the sprites; elsewhere, and while blending is off (the default), it is
+    // drawn opaque. For shadows, ghosts, glass. In sprite_draw*() flags,
+    // spr_flags and SpritePiece.flags (a metasprite's piece blends when the
+    // draw or the piece has it). The render systems draw these sprites on
+    // their out-of-line path, as they do SPRITE_PALETTE ones (about 60 cycles
+    // more per sprite; sprites without either pay nothing). Until
+    // implemented: drawn opaque, with a warning in debug builds (once until
+    // sprite_groups_reset()).
+    SPRITE_BLEND SERVAL_PLANNED("alpha blending, docs/sprites.md#alpha-blending") = 1 << 12,
+};
+
 // Registers the game's sprite table: table[id] is the sprite with that ID.
-// Unloads all sprite groups.
+// The table and the sprites it points to must stay valid while it is
+// registered (normally they are const data in ROM). Unloads all sprite groups
+// and forgets every mark, as sprite_groups_reset() does.
 void sprite_table_set(const SpriteAsset* const* table, u16 count);
 
-// Copies a group's tiles and palettes to VRAM so its sprites can be drawn.
-// Returns false, leaving nothing loaded from this group, if sprite VRAM or
-// palette banks would run out, the group uses an unsupported feature, or its
-// data is incomplete (e.g. a missing .tiles or .palettes; reported in debug
-// builds).
+// Copies a group's tiles and palettes to VRAM so its sprites can be drawn,
+// after the groups loaded before it: tiles in sprite VRAM (1024 tiles of 4bpp
+// 8x8) and each of its palettes in the next free sprite palette bank (16).
+// Copies at once, so load while changing rooms (e.g. while the screen is
+// faded out): a sprite drawn this frame from tiles being replaced may tear
+// for a frame. The group itself need not stay valid afterwards; the sprite
+// table must. A sprite already loaded (its ID in another loaded group, or the
+// same group loaded twice) is drawn from the newest copy.
+//
+// Returns false, leaving nothing loaded from this group (warning in debug
+// builds), if sprite VRAM or palette banks would run out, its data is
+// incomplete (a NULL or invalid .tiles, .pieces or .palettes, no .size, a
+// palette_slot past palette_count, a metasprite piece naming a missing
+// sprite or frame), it has a value this version doesn't know (a reserved bit
+// in SpriteGroup.flags, SpriteAsset.flags or a piece's flags; nonzero .slots
+// in a resident group), or it needs a planned feature
+// (SPRITE_GROUP_STREAMED, SPRITE_ASSET_LZ77).
 bool sprite_group_load(const SpriteGroup* group);
 
-// Unloads every sprite group, freeing all sprite VRAM and palette banks.
+// Unloads every sprite group, freeing all sprite VRAM and palette banks, and
+// forgets every mark (sprite_groups_mark()).
 void sprite_groups_reset(void);
+
+// --- Loading in layers: marks ---
+//
+// Groups load one after another (sprite_group_load()), and a mark is a point
+// in that order. For room changes: load what every room uses (the player, the
+// HUD, effects) once, take a mark, and release to it before loading each
+// room's groups, so the room's VRAM and palette banks are reused and the
+// shared groups stay:
+//
+//     sprite_group_load(&common);
+//     u32 common_mark = sprite_groups_mark();
+//     ...
+//     sprite_groups_release(common_mark); // on every room change
+//     sprite_group_load(&room_group);
+
+// Returns a mark: an opaque value naming the point after the groups loaded
+// so far, for sprite_groups_release(). Taken again before anything more
+// loads, it returns the same mark. Marks nest: a mark taken after more loads
+// is a new one, kept with the earlier ones, up to 16 of them; past that it
+// returns the newest one (warning in debug builds), so releasing to it also
+// unloads the groups loaded since that one was taken.
+u32 sprite_groups_mark(void);
+
+// Unloads every group loaded since `mark` was taken, keeping the groups
+// loaded before it: their sprites are no longer loaded (drawing them does
+// nothing, with a warning in debug builds, until a group with them loads
+// again), and their sprite VRAM and palette banks go to the next loads.
+// Takes effect at once, like sprite_group_load(). The marks taken after
+// `mark` are forgotten; `mark` itself stays valid, so a game releases to the
+// same mark on every room change. Ignored (warning in debug builds) for a
+// value that isn't a current mark: one forgotten by releasing to an earlier
+// mark, one from before the last sprite_groups_reset() or sprite_table_set(),
+// or one sprite_groups_mark() never returned. A sprite ID loaded both before
+// and after the mark is drawn from the newest copy, so releasing unloads it:
+// keep each sprite in one group.
+void sprite_groups_release(u32 mark);
 
 // Draws a frame of a sprite this frame. Does nothing if the sprite is not
 // loaded, the frame does not exist, it is fully off screen, or all hardware
@@ -238,5 +359,54 @@ SpriteStats sprite_stats(void);
 // counted in frame_cpu_cycles(): a tool for finding the problem, e.g. in a
 // debug readout, not for every frame of a finished game.
 void sprite_stats_scanlines(bool on);
+
+// --- Changing a loaded sprite (planned) ---
+
+// Planned: replaces the pixels of frame `frame` of a loaded sprite with
+// tiles_per_frame tiles from `tiles` (8 words each, as in SpriteAsset.tiles),
+// e.g. a card face composed at run time into a RAM buffer and drawn as one
+// hardware sprite. Every draw of that frame changes, from the frame after the
+// copy: it happens in VBlank at the next frame_end(), so `tiles` must stay
+// valid until then. Up to SPRITE_MAX_TILE_UPDATES calls per frame; a later
+// call for the same sprite and frame replaces the earlier one. Ignored
+// (warning in debug builds) for a sprite that isn't loaded, a metasprite, a
+// sprite of a streamed group, a frame the sprite doesn't have, a NULL
+// `tiles`, or a full queue. sprite_groups_release() and sprite_groups_reset()
+// drop the copies queued for the sprites they unload. The VRAM for frames
+// composed later comes from loading sprites whose .tiles are a blank frame in
+// RAM, which they can all share (each sprite ID gets its own copy in VRAM).
+// The mirror of tileset_set_tiles() (map.h) for sprites. Until implemented:
+// does nothing (the sprite keeps its tiles), with a warning in debug builds
+// (once).
+SERVAL_PLANNED("runtime sprite tiles, docs/sprites.md#runtime-tiles")
+void sprite_set_tiles(u16 sprite_id, u8 frame, const u32* tiles);
+enum {
+    // Planned: sprite_set_tiles() calls queued per frame.
+    SPRITE_MAX_TILE_UPDATES SERVAL_PLANNED("runtime sprite tiles, docs/sprites.md#runtime-tiles") =
+        8,
+};
+
+// Planned: changes `count` colors of the palettes of the group `sprite_id`
+// was loaded with, from color `index` on: index = palette * 16 + color, with
+// palettes numbered as SPRITE_PALETTE(n) numbers them (0 to the group's
+// palette_count - 1), so one call can run across several of its palettes.
+// For a hit flash, a palette cycle, colors faded with color_mix() (screen.h).
+// The colors are copied at once (`colors` may be a temporary) into a shadow
+// of the palettes, which reaches the screen in VBlank at the next
+// frame_end(). Copy-on-write: the change belongs to that group's sprites
+// only. A later version may share a bank between groups whose palettes are
+// identical; writing to a shared bank then first gives the group its own copy
+// of it, so the other groups keep their colors. If no free bank is left for
+// that copy, the write goes to the shared bank and every group sharing it
+// changes (warning in debug builds). Color 0 of each palette is transparent:
+// a write to it is kept but not shown. The colors stay until changed again or
+// the group is unloaded; to put the ROM colors back, write them again from the
+// group's .palettes. Ignored (warning in debug builds) for a sprite that isn't
+// loaded, a metasprite (its pieces' groups hold the colors), a NULL `colors`,
+// or colors past the group's palettes (index + count > palette_count * 16).
+// Until implemented: does nothing (the colors stay as loaded), with a warning
+// in debug builds (once).
+SERVAL_PLANNED("palette writes, docs/sprites.md#palettes")
+void sprite_set_colors(u16 sprite_id, u32 index, const Color* colors, u32 count);
 
 #endif // SERVAL_SPRITES_H

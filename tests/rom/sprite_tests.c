@@ -179,12 +179,9 @@ static void load_fails_when_out_of_vram_or_palettes(void) {
     CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 0);
 }
 
+// (Groups needing a planned feature, SPRITE_GROUP_STREAMED or
+// SPRITE_ASSET_LZ77, are tested in tests/planned_sprites_tests.c.)
 static void load_rejects_unsupported_groups(void) {
-    sprite_table_set(table, SPRITE_COUNT);
-    SpriteGroup streamed = first;
-    streamed.flags = SPRITE_GROUP_STREAMED;
-    CHECK(!sprite_group_load(&streamed));
-
     static const SpriteAsset no_size = {.tiles = small_tiles};
     static const SpriteAsset* const no_size_table[] = {&no_size};
     static const SpriteGroup no_size_group = {
@@ -198,6 +195,75 @@ static void load_rejects_unsupported_groups(void) {
     bad_id.sprite_count = 1;
     bad_id.sprite_ids = bad_ids;
     CHECK(!sprite_group_load(&bad_id));
+}
+
+// Values this version doesn't know are refused, each with a warning, so a
+// later version can give them a meaning (docs/releases.md): reserved bits of
+// SpriteAsset.flags and SpriteGroup.flags, slots in a resident group, and
+// piece flags other than flips, SPRITE_PALETTE and SPRITE_BLEND.
+static void load_refuses_reserved_values(void) {
+    static const SpriteAsset reserved_assets[] = {
+        {.size = SPRITE_8x8, .tiles = small_tiles, .flags = 1 << 0}, // was STREAMED
+        {.size = SPRITE_8x8, .tiles = small_tiles, .flags = 1 << 4},
+        {.size = SPRITE_8x8, .tiles = small_tiles, .flags = 1 << 7},
+        {.size = SPRITE_8x8, .tiles = small_tiles, .flags = SPRITE_ASSET_ANIM_ONCE | 1 << 5},
+    };
+    static const SpritePiece bad_pieces[][1] = {
+        {{.sprite = SPR_SMALL, .flags = SPRITE_ABOVE_HUD}},
+        {{.sprite = SPR_SMALL, .flags = SPRITE_HIDDEN}},
+        {{.sprite = SPR_SMALL, .flags = SPRITE_SCALED}},
+        {{.sprite = SPR_SMALL, .flags = 1 << 13}}, // reserved: mosaic
+        {{.sprite = SPR_SMALL, .flags = 1 << 14}}, // reserved: the object window
+        {{.sprite = SPR_SMALL, .flags = SPRITE_SCREEN}},
+    };
+    enum { ASSETS = 4, PIECES = 6 };
+    static SpriteAsset bad_metas[PIECES];
+    static const SpriteAsset* reserved_table[SPRITE_COUNT + ASSETS + PIECES];
+    for (u32 k = 0; k < SPRITE_COUNT; k++)
+        reserved_table[k] = table[k];
+    for (u32 k = 0; k < ASSETS; k++)
+        reserved_table[SPRITE_COUNT + k] = &reserved_assets[k];
+    for (u32 k = 0; k < PIECES; k++) {
+        bad_metas[k] = (SpriteAsset){
+            .flags = SPRITE_ASSET_METASPRITE, .pieces = bad_pieces[k], .piece_count = 1};
+        reserved_table[SPRITE_COUNT + ASSETS + k] = &bad_metas[k];
+    }
+    sprite_table_set(reserved_table, SPRITE_COUNT + ASSETS + PIECES);
+    u32 before = debug_warning_count();
+    for (u32 k = 0; k < ASSETS + PIECES; k++) {
+        u16 id = (u16)(SPRITE_COUNT + k);
+        SpriteGroup g = {
+            .sprite_ids = &id, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+        CHECK(!sprite_group_load(&g));
+    }
+    for (u32 bit = 1; bit < 8; bit++) {
+        SpriteGroup g = first;
+        g.flags = (u8)(1u << bit);
+        CHECK(!sprite_group_load(&g));
+    }
+    SpriteGroup slotted = first;
+    slotted.slots = 1; // only streamed groups have slots
+    CHECK(!sprite_group_load(&slotted));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + ASSETS + PIECES + 7 + 1);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+    // What a piece may carry loads, and nothing was consumed before it.
+    static const SpritePiece good_piece[] = {
+        {.sprite = SPR_SMALL, .flags = SPRITE_FLIP_H | SPRITE_FLIP_V | SPRITE_PALETTE(14)}};
+    static const SpriteAsset good_meta = {
+        .flags = SPRITE_ASSET_METASPRITE, .pieces = good_piece, .piece_count = 1};
+    static const SpriteAsset* const good_table[] = {&small, &good_meta};
+    static const SpriteGroup good = {.palettes = palettes, .sprite_count = 2, .palette_count = 1};
+    sprite_table_set(good_table, 2);
+    CHECK(sprite_group_load(&good));
+    frame_begin();
+    sprite_draw(1, 0, 10, 10, 0);
+    frame_end();
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 0);
+    CHECK((oam_mem[0].attr1 & (ATTR1_HFLIP | ATTR1_VFLIP)) == (ATTR1_HFLIP | ATTR1_VFLIP));
+    sprite_table_set(table, SPRITE_COUNT);
 }
 
 static void reset_unloads_everything(void) {
@@ -787,6 +853,150 @@ static void metasprites_need_valid_pieces(void) {
     sprite_table_set(table, SPRITE_COUNT);
 }
 
+// --- Marks: loading in layers ------------------------------------------------------
+
+// Whether sprite `id` frame 0 is drawn now (a fresh frame, drawn alone).
+static bool drawn(u16 id) {
+    frame_begin();
+    sprite_draw(id, 0, 50, 50, 0);
+    frame_end();
+    return !(oam_mem[0].attr0 & ATTR0_HIDE);
+}
+
+static void release_unloads_the_groups_loaded_since_the_mark(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first)); // tiles 0-2, banks 0-1
+    u32 mark = sprite_groups_mark();
+    CHECK(sprite_group_load(&second)); // tiles 3-4, bank 2
+    CHECK(sprite_group_load(&meta_group));
+    CHECK(drawn(SPR_WIDE) && drawn(SPR_META));
+    u32 before = debug_warning_count();
+    sprite_groups_release(mark);
+    CHECK(debug_warning_count() == before);
+    CHECK(!drawn(SPR_WIDE) && !drawn(SPR_META));
+    CHECK(drawn(SPR_SMALL) && drawn(SPR_ANIM)); // loaded before the mark
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 1 && OAM_BANK(0) == 1);
+    // The mark stays, and the next loads reuse the released VRAM and banks.
+    CHECK(sprite_groups_mark() == mark);
+    CHECK(sprite_group_load(&second));
+    frame_begin();
+    sprite_draw(SPR_WIDE, 0, 0, 0, 0);
+    frame_end();
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 3 && OAM_BANK(0) == 2);
+    sprite_groups_release(mark); // again: every room change
+    CHECK(!drawn(SPR_WIDE) && drawn(SPR_SMALL));
+}
+
+static void marks_nest(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    u32 outer = sprite_groups_mark(); // nothing loaded yet
+    CHECK(sprite_group_load(&first));
+    u32 middle = sprite_groups_mark();
+    CHECK(middle != outer);
+    CHECK(sprite_groups_mark() == middle); // nothing loaded since: the same mark
+    CHECK(sprite_group_load(&second));
+    u32 inner = sprite_groups_mark();
+    CHECK(sprite_group_load(&meta_group)); // no VRAM, but loaded after `inner`
+    CHECK(inner != middle);
+    sprite_groups_release(inner);
+    CHECK(!drawn(SPR_META) && drawn(SPR_WIDE) && drawn(SPR_SMALL));
+    sprite_groups_release(middle);
+    CHECK(!drawn(SPR_WIDE) && drawn(SPR_SMALL));
+    sprite_groups_release(outer);
+    CHECK(!drawn(SPR_SMALL));
+    CHECK(sprite_group_load(&second)); // from tile 0 and bank 0 again
+    frame_begin();
+    sprite_draw(SPR_WIDE, 0, 0, 0, 0);
+    frame_end();
+    CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 0 && OAM_BANK(0) == 0);
+}
+
+// A load that fails consumes nothing, a group with no VRAM of its own (only
+// metasprites) still counts as loaded, and a sprite loaded twice is drawn
+// from the newest copy, so releasing that one unloads it.
+static void marks_follow_loads_not_vram(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));
+    u32 mark = sprite_groups_mark();
+    SpriteGroup too_many = first;
+    too_many.palette_count = 17;
+    CHECK(!sprite_group_load(&too_many));
+    CHECK(sprite_groups_mark() == mark);
+    CHECK(sprite_group_load(&meta_group));
+    u32 after_meta = sprite_groups_mark();
+    CHECK(after_meta != mark);
+    sprite_groups_release(after_meta);
+    CHECK(drawn(SPR_META));           // loaded before after_meta
+    CHECK(sprite_group_load(&first)); // SPR_SMALL and SPR_ANIM again, from tile 3
+    CHECK(drawn(SPR_SMALL) && (oam_mem[0].attr2 & ATTR2_ID_MASK) == 3);
+    // Releasing the second copy unloads them, though the first copy is still
+    // in VRAM (sprites.h: keep each sprite in one group).
+    sprite_groups_release(after_meta);
+    CHECK(!drawn(SPR_SMALL) && !drawn(SPR_ANIM));
+}
+
+// Marks that are no longer current are ignored, with a warning each time:
+// forgotten by releasing to an earlier mark, from before a reset or
+// sprite_table_set(), or never returned.
+static void stale_marks_are_ignored(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));
+    u32 outer = sprite_groups_mark();
+    CHECK(sprite_group_load(&second));
+    u32 inner = sprite_groups_mark();
+    CHECK(sprite_group_load(&meta_group));
+    sprite_groups_release(outer); // forgets `inner`
+    CHECK(sprite_group_load(&second));
+    u32 before = debug_warning_count();
+    sprite_groups_release(inner);
+    CHECK(drawn(SPR_WIDE));
+    u32 unknown = sprite_groups_mark() + 1000;
+    sprite_groups_release(unknown);
+    sprite_groups_release(0);
+    sprite_groups_reset();
+    CHECK(sprite_group_load(&first));
+    sprite_groups_release(outer); // from before the reset
+    CHECK(drawn(SPR_SMALL));
+    u32 now = sprite_groups_mark();
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));
+    sprite_groups_release(now); // from before sprite_table_set()
+    CHECK(drawn(SPR_SMALL));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 5);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+}
+
+// Up to 16 nested marks; past that, sprite_groups_mark() returns the newest
+// (warning), which releases the groups loaded since that one too.
+static void sixteen_marks_nest(void) {
+    sprite_table_set(table, SPRITE_COUNT);
+    CHECK(sprite_group_load(&first));
+    u32 marks[16];
+    for (u32 k = 0; k < 16; k++) {
+        marks[k] = sprite_groups_mark();
+        CHECK(sprite_group_load(&meta_group)); // no VRAM: as many as needed
+    }
+    bool distinct = true;
+    for (u32 k = 1; k < 16; k++)
+        distinct &= marks[k] != marks[k - 1];
+    CHECK(distinct);
+    u32 before = debug_warning_count();
+    CHECK(sprite_groups_mark() == marks[15]);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 1);
+#else
+    CHECK(debug_warning_count() == before);
+#endif
+    sprite_groups_release(marks[15]);
+    CHECK(!drawn(SPR_META));
+    sprite_groups_release(marks[0]);
+    CHECK(drawn(SPR_SMALL) && !drawn(SPR_META));
+    CHECK(sprite_groups_mark() == marks[0]);
+}
+
 // sprite_stats_scanlines(true): the per-scanline budget, by GBATEK's rules
 // (1,210 cycles; 10 + 2 x the box's width for an affine sprite).
 static void scanline_budget_is_counted_when_asked(void) {
@@ -897,6 +1107,7 @@ TEST_SUITE(
     {"groups_are_allocated_one_after_another", groups_are_allocated_one_after_another},
     {"load_fails_when_out_of_vram_or_palettes", load_fails_when_out_of_vram_or_palettes},
     {"load_rejects_unsupported_groups", load_rejects_unsupported_groups},
+    {"load_refuses_reserved_values", load_refuses_reserved_values},
     {"reset_unloads_everything", reset_unloads_everything},
     {"misuse_is_reported_once_in_debug_builds", misuse_is_reported_once_in_debug_builds},
     {"defaults_and_computed_tile_counts", defaults_and_computed_tile_counts},
@@ -927,5 +1138,10 @@ TEST_SUITE(
     {"metasprite_entities_are_drawn_and_sorted_as_one",
      metasprite_entities_are_drawn_and_sorted_as_one},
     {"metasprites_need_valid_pieces", metasprites_need_valid_pieces},
+    {"release_unloads_the_groups_loaded_since_the_mark",
+     release_unloads_the_groups_loaded_since_the_mark},
+    {"marks_nest", marks_nest}, {"marks_follow_loads_not_vram", marks_follow_loads_not_vram},
+    {"stale_marks_are_ignored", stale_marks_are_ignored},
+    {"sixteen_marks_nest", sixteen_marks_nest},
     {"scanline_budget_is_counted_when_asked", scanline_budget_is_counted_when_asked},
     {"render_costs_are_logged", render_costs_are_logged});

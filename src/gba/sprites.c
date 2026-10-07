@@ -11,10 +11,13 @@
 #include "../core/warn.h"
 #include "internal.h"
 
-// Resident sprite groups only, for now. Tiles are bump-allocated in OBJ VRAM
-// and palettes in OBJ palette banks; sprite_groups_reset() frees everything.
-// Not yet implemented from docs/sprites.md: streamed sprites, LZ77 groups,
-// metasprites, palette sharing, and the global/room watermark.
+// Resident sprite groups (docs/sprites.md). Tiles are bump-allocated in OBJ
+// VRAM and palettes in OBJ palette banks, in load order;
+// sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
+// the start. Planned (declared in sprites.h, stubs or refusals here):
+// streamed groups, LZ77 sprites, runtime tiles (sprite_set_tiles), palette
+// writes (sprite_set_colors) and SPRITE_BLEND (drawn opaque). Palette sharing
+// comes after 1.0.
 
 // Rare paths (building a matrix, drawing a metasprite's pieces) are out of
 // line, in ROM on the GBA, so IWRAM code calls them with a long call.
@@ -52,6 +55,7 @@ typedef struct {
     u8 first_palette; // the group's first palette bank, for SPRITE_PALETTE
     u8 palette_count; // the group's palettes
     u8 meta_frames;   // a loaded metasprite's frames, otherwise 0
+    u8 segment;       // the mark segment its group loaded in (see Marks below)
 } SpriteDraw;
 
 static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
@@ -66,6 +70,7 @@ static bool warned_matrices;
 static bool warned_palette;
 static bool warned_scale_flag;
 static bool warned_scale;
+static bool warned_blend;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
@@ -106,13 +111,25 @@ static __attribute__((noinline, cold)) void warn_palette(u32 id, u32 palette) {
                 "own palette",
                 palette, id, sprite_draws[id < SPRITE_MAX ? id : 0].palette_count);
 }
+// SPRITE_BLEND is planned: until alpha blending is implemented, a blended
+// sprite is drawn opaque, and this says so once (until sprite_groups_reset()).
+static __attribute__((noinline, cold)) void warn_blend(u32 id) {
+    if (warned_blend)
+        return;
+    warned_blend = true;
+    SERVAL_WARN("SPRITE_BLEND on sprite %u: alpha blending is planned, not implemented in this "
+                "engine version; drawn opaque",
+                id);
+}
 #define DRAW_REJECTED(id, frame) warn_draw(id, frame)
 #define OAM_FULL() (serval_sprites_dropped++, warn_oam_full())
 #define BAD_PALETTE(id, palette) warn_palette(id, palette)
+#define BLEND_PLANNED(id) warn_blend(id)
 #else
 #define DRAW_REJECTED(id, frame) ((void)(id), (void)(frame))
 #define OAM_FULL() ((void)serval_sprites_dropped++)
 #define BAD_PALETTE(id, palette) ((void)(id), (void)(palette))
+#define BLEND_PLANNED(id) ((void)(id))
 #endif
 
 // SpriteAsset.size values, 1-12, in hardware terms: shape (square, wide,
@@ -142,10 +159,41 @@ static u32 group_sprite_id(const SpriteGroup* group, u32 i) {
     return group->sprite_ids ? group->sprite_ids[i] : i;
 }
 
+// --- Marks (sprite_groups_mark/release) ---
+//
+// Groups load in order, and the groups loaded between two marks are always
+// released together, so only the marks are recorded: a stack of segments,
+// segment k holding the groups loaded after mark k was taken (segment 0:
+// after the last reset), each with where the allocator stood when it began.
+// Every loaded sprite's draw record names its segment, so releasing to mark
+// k clears the records of segments k and up and rolls the allocator back to
+// segment k's start. A mark's value is a serial number, never reused, so a
+// mark that is no longer on the stack (released past, or from before a reset)
+// is recognized and ignored. All of it is touched only by loads, marks and
+// releases, so it lives in EWRAM.
+#define MAX_MARKS 16 // sprites.h promises 16 nested marks
+
+typedef struct {
+    u32 mark;         // the value sprite_groups_mark() returns for it
+    u16 first_tile;   // next_tile when the segment began
+    u8 first_palette; // next_palette_bank when it began
+    bool loaded;      // a group has loaded in it since
+} Segment;
+
+static EWRAM_BSS Segment segments[MAX_MARKS + 1];
+static EWRAM_BSS u32 top_segment; // the segment loads go into
+static EWRAM_BSS u32 last_mark;   // the last serial handed out
+
+// A segment index fits SpriteDraw.segment.
+_Static_assert(MAX_MARKS < 256, "SpriteDraw.segment is a u8");
+
 void sprite_groups_reset(void) {
     next_tile = 0;
     next_palette_bank = 0;
     memset32(sprite_draws, 0, sizeof(sprite_draws) / 4);
+    // A new serial for segment 0, so marks from before the reset are stale.
+    top_segment = 0;
+    segments[0] = (Segment){.mark = ++last_mark};
 #ifdef SERVAL_DEBUG
     memset32(warned_ids, 0, sizeof(warned_ids) / 4);
     warned_oam_full = false;
@@ -153,7 +201,46 @@ void sprite_groups_reset(void) {
     warned_palette = false;
     warned_scale_flag = false;
     warned_scale = false;
+    warned_blend = false;
 #endif
+}
+
+u32 sprite_groups_mark(void) {
+    Segment* top = &segments[top_segment];
+    if (!top->loaded)
+        return top->mark; // nothing loaded since it was taken: the same point
+    if (top_segment == MAX_MARKS) {
+        SERVAL_WARN("sprite_groups_mark: more than %u nested marks; returning the newest, which "
+                    "releases more",
+                    MAX_MARKS);
+        return top->mark;
+    }
+    segments[++top_segment] =
+        (Segment){.mark = ++last_mark, .first_tile = next_tile, .first_palette = next_palette_bank};
+    return last_mark;
+}
+
+void sprite_groups_release(u32 mark) {
+    u32 k = 0;
+    while (k <= top_segment && segments[k].mark != mark)
+        k++;
+    if (k > top_segment) {
+        SERVAL_WARN("sprite_groups_release: %u is not a current mark (released past, or from "
+                    "before a reset); ignored",
+                    mark);
+        return;
+    }
+    // Rare (room changes), so a pass over the table rather than a list of
+    // each segment's sprites. Records not loaded are all zero (segment 0),
+    // which only k = 0 clears again.
+    for (u32 id = 0; id < serval_sprite_count; id++) {
+        if (sprite_draws[id].segment >= k)
+            sprite_draws[id] = (SpriteDraw){0};
+    }
+    next_tile = segments[k].first_tile;
+    next_palette_bank = segments[k].first_palette;
+    segments[k].loaded = false;
+    top_segment = k;
 }
 
 void sprite_table_set(const SpriteAsset* const* table, u16 count) {
@@ -165,8 +252,14 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count) {
     sprite_groups_reset();
 }
 
+// The flags a SpritePiece may carry: a subset of the draw flags, since the
+// layer and the rest belong to the whole draw. Anything else is refused, so
+// that a later version can give the other bits a meaning (docs/releases.md).
+#define PIECE_FLAGS (SPRITE_FLIP_H | SPRITE_FLIP_V | SPRITE_PALETTE_MASK | SPRITE_BLEND)
+
 // Checks a metasprite's pieces: each names an ordinary sprite of the table
-// and one of its frames. Reports the first problem (in debug builds).
+// and one of its frames, with piece flags only. Reports the first problem (in
+// debug builds).
 static bool metasprite_ok(u32 id, const SpriteAsset* sprite) {
     (void)id; // only in warnings
     if (!serval_plausible_pointer(sprite->pieces) || sprite->piece_count == 0) {
@@ -187,6 +280,12 @@ static bool metasprite_ok(u32 id, const SpriteAsset* sprite) {
                         id, k, p->sprite, p->frame);
             return false;
         }
+        if (p->flags & ~PIECE_FLAGS) {
+            SERVAL_WARN("sprite_group_load: metasprite %u, piece %u: flags 0x%x; a piece takes "
+                        "only flips, SPRITE_PALETTE, SPRITE_BLEND",
+                        id, k, p->flags);
+            return false;
+        }
     }
     return true;
 }
@@ -198,8 +297,23 @@ static int group_tiles(const SpriteGroup* group) {
         SERVAL_WARN("sprite_group_load: the group pointer is NULL or not valid");
         return -1;
     }
+    // Planned features first, so their warning names them; then any bit or
+    // value this version doesn't know (docs/releases.md: loaders refuse them,
+    // so that giving them a meaning later breaks no game).
     if (group->flags & SPRITE_GROUP_STREAMED) {
-        SERVAL_WARN("sprite_group_load: streamed groups are not supported yet");
+        SERVAL_WARN("sprite_group_load: SPRITE_GROUP_STREAMED is planned, not implemented in this "
+                    "engine version; not loaded");
+        return -1;
+    }
+    if (group->flags) {
+        SERVAL_WARN("sprite_group_load: the group's flags 0x%x hold reserved bits; not loaded",
+                    group->flags);
+        return -1;
+    }
+    if (group->slots) {
+        SERVAL_WARN("sprite_group_load: .slots is %u, but only a streamed group has slots; not "
+                    "loaded",
+                    group->slots);
         return -1;
     }
     if (group->palette_count && !serval_plausible_pointer(group->palettes)) {
@@ -226,8 +340,16 @@ static int group_tiles(const SpriteGroup* group) {
                         id);
             return -1;
         }
-        if (sprite->flags & SPRITE_ASSET_STREAMED) {
-            SERVAL_WARN("sprite_group_load: sprite %u is streamed, which is not supported yet", id);
+        if (sprite->flags & SPRITE_ASSET_LZ77) {
+            SERVAL_WARN("sprite_group_load: sprite %u: SPRITE_ASSET_LZ77 is planned, not "
+                        "implemented in this engine version",
+                        id);
+            return -1;
+        }
+        // Bit 0 (SPRITE_ASSET_STREAMED before 1.0) and bits 4-7 are reserved.
+        if (sprite->flags & ~(SPRITE_ASSET_METASPRITE | SPRITE_ASSET_ANIM_ONCE)) {
+            SERVAL_WARN("sprite_group_load: sprite %u has flags 0x%x, with reserved bits", id,
+                        sprite->flags);
             return -1;
         }
         if (sprite->flags & SPRITE_ASSET_METASPRITE) {
@@ -287,7 +409,7 @@ bool sprite_group_load(const SpriteGroup* group) {
         const SpriteAsset* sprite = serval_sprite_table[id];
         SpriteDraw* d = &sprite_draws[id];
         if (sprite->flags & SPRITE_ASSET_METASPRITE) {
-            *d = (SpriteDraw){.meta_frames = (u8)frames_of(sprite)};
+            *d = (SpriteDraw){.meta_frames = (u8)frames_of(sprite), .segment = (u8)top_segment};
             continue;
         }
         const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
@@ -307,6 +429,7 @@ bool sprite_group_load(const SpriteGroup* group) {
         d->tiles_per_frame = (u8)per_frame;
         d->first_palette = next_palette_bank;
         d->palette_count = group->palette_count;
+        d->segment = (u8)top_segment;
         tile += frames * per_frame;
     }
 
@@ -314,6 +437,7 @@ bool sprite_group_load(const SpriteGroup* group) {
 
     next_tile = (u16)tile;
     next_palette_bank = (u8)(next_palette_bank + group->palette_count);
+    segments[top_segment].loaded = true;
     return true;
 }
 
@@ -416,6 +540,20 @@ static inline SERVAL_ARM __attribute__((always_inline)) u32 palette_attr2(u32 id
     return (attr2 & ~ATTR2_PALBANK_MASK) | ((d->first_palette + n) << 12);
 }
 
+// attr2 for a draw whose flags hold SPRITE_PALETTE or SPRITE_BLEND (the
+// callers test both with one mask). SPRITE_BLEND is planned: the sprite is
+// drawn opaque, with a warning; implementing it sets attr0's semi-transparent
+// mode for these draws.
+static inline SERVAL_ARM __attribute__((always_inline)) u32 special_attr2(u32 id,
+                                                                          const SpriteDraw* d,
+                                                                          u32 attr2, u32 flags) {
+    if (flags & SPRITE_BLEND)
+        BLEND_PLANNED(id);
+    if (flags & SPRITE_PALETTE_MASK)
+        attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
+    return attr2;
+}
+
 static ROM_CALL void draw_meta(u32 id, u32 frame, int x, int y, u32 flags, u32 angle, s32 scale_x,
                                s32 scale_y);
 
@@ -433,9 +571,9 @@ static ROM_CALL void draw_rejected(u32 which, int x, int y, u32 flags) {
 
 // Appends a sprite to the shadow OAM. Shared by sprite_draw, sys_render and
 // sys_render_by_depth, which all run as ARM code from IWRAM, the fastest place
-// to run code on the GBA. `palettes`: whether flags may hold SPRITE_PALETTE
-// (the render loops send those sprites to draw_transformed, keeping the test
-// out of the usual case).
+// to run code on the GBA. `palettes`: whether flags may hold SPRITE_PALETTE or
+// SPRITE_BLEND (the render loops send those sprites to draw_transformed,
+// keeping the test out of the usual case).
 static inline SERVAL_ARM __attribute__((always_inline)) void
 draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palettes) {
     // Also rejects sprites that are not loaded, and metasprites.
@@ -462,8 +600,8 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palet
     obj->attr0 = (u16)(d->attr0 | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)x & ATTR1_X_MASK) | ((flags & 3) << 12));
     u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
-    if (palettes && (flags & SPRITE_PALETTE_MASK))
-        attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
+    if (palettes && (flags & (SPRITE_PALETTE_MASK | SPRITE_BLEND)))
+        attr2 = special_attr2(id, d, attr2, flags);
     obj->attr2 = (u16)attr2;
 }
 
@@ -512,16 +650,16 @@ draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32
     obj->attr0 = (u16)(d->attr0 | mode | ((u32)y & ATTR0_Y_MASK));
     obj->attr1 = (u16)(d->attr1 | ((u32)matrix << 9) | ((u32)x & ATTR1_X_MASK));
     u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
-    if (flags & SPRITE_PALETTE_MASK)
-        attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
+    if (flags & (SPRITE_PALETTE_MASK | SPRITE_BLEND))
+        attr2 = special_attr2(id, d, attr2, flags);
     obj->attr2 = (u16)attr2;
     return true;
 }
 
 // The out-of-line path for everything but plain sprites: rotated or scaled
 // sprites, and the render loops' hidden sprites (SPRITE_HIDDEN, dropped here)
-// and sprites with SPRITE_PALETTE (drawn untransformed when there is no
-// transform). Kept out of line (but in IWRAM) so the render loops stay as fast
+// and sprites with SPRITE_PALETTE or SPRITE_BLEND (drawn untransformed when
+// there is no transform). Kept out of line (but in IWRAM) so the render loops stay as fast
 // as before for the usual plain sprites. Scales are 8.8 with 256 normal size;
 // 0 draws nothing.
 static SERVAL_IWRAM_TEXT __attribute__((noinline)) void
@@ -562,10 +700,11 @@ static ROM_CALL void draw_meta(u32 id, u32 frame, int x, int y, u32 flags, u32 a
             dy = (int)((sn * sx + c * sy + 0x8000) >> 16);
         }
         // The piece's flips on top of the whole's; the whole's palette, or
-        // the piece's own if the whole has none; the whole's layer.
+        // the piece's own if the whole has none; blended if either is; the
+        // whole's layer.
         u32 palette = (flags & SPRITE_PALETTE_MASK) ? flags : p->flags;
         u32 piece_flags = (flags & ~(3u | SPRITE_PALETTE_MASK)) | ((flags ^ p->flags) & 3) |
-                          (palette & SPRITE_PALETTE_MASK);
+                          (palette & SPRITE_PALETTE_MASK) | (p->flags & SPRITE_BLEND);
         u32 piece = p->sprite;
         const SpriteDraw* d = &sprite_draws[piece];
         // Centered on (x + dx, y + dy): the drawing paths subtract the origin
@@ -602,6 +741,16 @@ static __attribute__((noinline, cold)) void warn_scale_flag(u32 i) {
 #define SCALE_WITHOUT_FLAG(i, flags) ((void)0)
 #endif
 
+// The spr_flags bits that a plain draw handles: flips, layer and
+// sys_animate's flips. Of bits 0-12, the others are SPRITE_HIDDEN,
+// SPRITE_SCALED, SPRITE_PALETTE and SPRITE_BLEND, which send an entity to the
+// transformed path (draw_entity).
+#define PLAIN_DRAW_FLAGS                                                                           \
+    (SPRITE_FLIP_H | SPRITE_FLIP_V | (3u << 2) | SPRITE_ANIM_FLIP_H | SPRITE_ANIM_FLIP_V)
+_Static_assert((((0xFFFFu & ~PLAIN_DRAW_FLAGS) << 19) >> 19) ==
+                   (SPRITE_HIDDEN | SPRITE_SCALED | SPRITE_PALETTE_MASK | SPRITE_BLEND),
+               "draw_entity's test sends exactly these flags to the transformed path");
+
 // Draws entity i (known to have C_POS and C_SPR) at its position minus the
 // camera's (or at its position with SPRITE_SCREEN), rotated if it has an
 // angle.
@@ -622,14 +771,28 @@ static inline SERVAL_ARM __attribute__((always_inline)) void draw_entity(u32 i, 
         camera_x = camera_y = 0;
     SCALE_WITHOUT_FLAG(i, flags);
     int x = fx_to_int(pos_x[i]) - camera_x, y = fx_to_int(pos_y[i]) - camera_y;
-    // Rotated, scaled (SPRITE_SCALED) and hidden sprites and sprites with
-    // another palette take the rare transformed path, which drops hidden
-    // ones and draws the others: one test (the mask is one ARM immediate)
-    // keeps the usual case as fast as before. spr_scale is read only there:
-    // loading it for every sprite cost ~1,000 cycles for 128 sprites.
-    // The call takes four arguments, all in registers: passing the sprite's
-    // fields from here spilled to the stack and slowed the usual path too.
-    if (spr_angle[i] | (flags & (SPRITE_HIDDEN | SPRITE_SCALED | SPRITE_PALETTE_MASK)))
+    // Rotated, scaled (SPRITE_SCALED), hidden and blended (SPRITE_BLEND)
+    // sprites and sprites with another palette take the rare transformed
+    // path, which drops hidden ones and draws the others: one test keeps the
+    // usual case as fast as before. Those four are bits 4 and 7-12 of the
+    // flags, which no single ARM immediate covers (the mask before
+    // SPRITE_BLEND, 0xF90, was one). So the test clears the plain bits (BIC
+    // #0x6F) and ORs what is left, shifted above the angle's 16 bits, with
+    // the angle (ORRS with a shifted operand, which also drops bits 13-15:
+    // SPRITE_SCREEN and two reserved): two instructions, as before, and no
+    // cycles more (bunnymark). Left to itself, GCC folds the mask into the
+    // shift ((flags << 19) & 0xFC800000), a constant it must load from
+    // memory: +400 cycles for 128 sprites. The empty asm makes `special` a
+    // value GCC can't see through, so the BIC stays. spr_scale is read only
+    // on the transformed path: loading it for every sprite cost ~1,000
+    // cycles for 128 sprites. The call takes four arguments, all in
+    // registers: passing the sprite's fields from here spilled to the stack
+    // and slowed the usual path too.
+    u32 special = flags & ~PLAIN_DRAW_FLAGS;
+#ifdef SERVAL_GBA
+    __asm__("" : "+r"(special));
+#endif
+    if (spr_angle[i] | special << 19)
         draw_entity_transformed(i, x, y, flags);
     else
         draw(id, &sprite_draws[id], spr_frame[i], x, y, flags, false);
@@ -833,4 +996,41 @@ SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
     for (u32 k = 0; k < n; k++) {
         draw_entity(order[k], camera_x, camera_y);
     }
+}
+
+// --- Planned (sprites.h): stubs that change nothing and say so once ---
+
+#ifdef SERVAL_DEBUG
+static bool warned_set_tiles, warned_set_colors;
+#endif
+
+// Runtime sprite tiles (docs/sprites.md#runtime-tiles). Implementing it
+// queues the copy for frame_end()'s VBlank, as tileset_set_tiles() does.
+void sprite_set_tiles(u16 sprite_id, u8 frame, const u32* tiles) {
+    (void)sprite_id;
+    (void)frame;
+    (void)tiles;
+#ifdef SERVAL_DEBUG
+    if (!warned_set_tiles) {
+        warned_set_tiles = true;
+        SERVAL_WARN("sprite_set_tiles: runtime sprite tiles is planned, not implemented in this "
+                    "engine version; tiles unchanged");
+    }
+#endif
+}
+
+// Palette writes (docs/sprites.md#palettes). Implementing it writes a shadow
+// of the sprite palette banks that frame_end() copies in VBlank.
+void sprite_set_colors(u16 sprite_id, u32 index, const Color* colors, u32 count) {
+    (void)sprite_id;
+    (void)index;
+    (void)colors;
+    (void)count;
+#ifdef SERVAL_DEBUG
+    if (!warned_set_colors) {
+        warned_set_colors = true;
+        SERVAL_WARN("sprite_set_colors: palette writes is planned, not implemented in this engine "
+                    "version; colors unchanged");
+    }
+#endif
 }
