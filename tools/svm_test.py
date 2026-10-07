@@ -458,6 +458,13 @@ class Arrays(unittest.TestCase):
                     svm.disassemble(blob, VM)
         svm.disassemble(good, VM)
 
+    def test_dis_names_the_kinds(self):
+        good = asm(".rom A u8 1, 2\n" + Errors.OK).blob
+        record = 16 + 32
+        bad = good[:record + 2] + bytes([VM.kind_count]) + good[record + 3:]
+        with self.assertRaisesRegex(svm.SvmError, rf"the kinds are 0 to {VM.kind_count - 1};"):
+            svm.disassemble(bad, VM)
+
     def test_dis_refuses_overlapping_data(self):
         good = asm(".rom A u8 1, 2\n.rom B u8 3\n" + Errors.OK).blob
         b_record = 16 + 32 + 8

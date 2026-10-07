@@ -1104,8 +1104,9 @@ class Assembler:
             self.error(f"no array {text} ({len(self.arrays)} declared so far; "
                        "arrays must be declared before use)")
         elif names == "global" and value >= len(self.globals):
-            self.warn(f"global {value} is past the {len(self.globals)} declared "
-                      "(the header's count only matters to vm_reload)")
+            self.warn(f"global {value} is past the {len(self.globals)} declared (the header's "
+                      "count sizes the globals' initial values, so this one starts at 0, and "
+                      "vm_reload compares it)")
         elif names == "prop" and not (value < self.vm.prop_count or
                                       0 <= value - self.vm.field0 < self.vm.fields):
             self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1}, "
@@ -1337,7 +1338,7 @@ def validate(data, vm):
         length, kind, where = le16(record), data[record + 2], le32(record + 4)
         if kind >= vm.kind_count or data[record + 3]:
             raise SvmError(f"array {index} has kind {kind} and reserved byte {data[record + 3]} "
-                           "(the kinds are 0 to {vm.kind_count - 1}; the reserved byte must be 0)")
+                           f"(the kinds are 0 to {vm.kind_count - 1}; the reserved byte must be 0)")
         if kind == vm.array_ram:
             if where + length > vm.array_cells:
                 raise SvmError(f"array {index} (cells {where} to {where + length - 1}) is outside "
