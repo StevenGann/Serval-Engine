@@ -58,9 +58,11 @@ A script file is a sequence of top-level statements, compiled once into one blob
 
 - **Objects:** `Name = object { components = expr, sprite = expr }`. Both fields are constant integer expressions (component bits `C_*` and sprite IDs come from the game's C headers, below). The object's number is its order of declaration.
 - **Handlers:** `function Name:create()`, `:step()`, `:destroy()`, `:collision(other)`, `:anim_end()`, `:room_start()`, the six `VM_EV_*` events. `create` and `room_start` are *behaviours* and may wait; the rest are *reactions* and run to completion ([vm.md](vm.md#behaviours-and-reactions)). `self` is the instance; `collision`'s parameter is the other entity. A Room Start handler on an object with no components is a *thread*, started from C with `vm_start`.
-- **Globals:** top-level assignments and top-level `local` declarations become VM globals (`VM_GLOBALS` scalars). Their initial values must be constants; the compiler emits a hidden Room Start initializer only if a game asks for one (an object named `Init` with a `room_start`, say), so C code still controls when scripts start.
+- **Globals:** top-level assignments and top-level `local` declarations become VM globals (`VM_GLOBALS` scalars). Their initial values must be constants, and they travel in the blob: `vm_load` sets them (a table the header's flag bit 0 announces; [vm.md](vm.md#header-16-bytes)), so a script starts with `playing = true` already true and C does nothing extra.
 - **Arrays:** `name = array(n)` (RAM, n cells, zeroed) or `name = { 3, 5, 8, ... }` (ROM, a constant table of integers, stored in the narrowest kind that holds every element). Top level only.
 - **Functions:** `function name(a, b) ... end` and `local function name(...)`, top level only.
+
+**Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two names that differ only in case are an error). `local NAME <const> = "text"` names a string for `print`, and a constant table of fixed values is a ROM array of their 256ths.
 
 Names in ALL_CAPS that the script doesn't define are **constants from the game's C headers**, passed to the assembler ([`svm.py`](../tools/svm.py) `--header`), which knows the engine's and the game's `#define`s and enumerators. They are integers.
 
@@ -78,7 +80,7 @@ The compiler infers a static type for every expression and variable; mixing type
 | array | a top-level array | an array number |
 
 - **Integers** wrap on overflow, as Lua's do with `LUA_32BITS`.
-- **Fixed** values come from number literals with a decimal point (`1.5`), from the fixed-point properties (`x`, `y`, `vx`, `vy`), and from arithmetic on fixed values. Mixing an integer into fixed arithmetic converts it (`self.x - 4` subtracts four pixels). `/` always produces fixed (`7 / 2` is `3.5`, as in Lua), `math.floor(f)` turns fixed into an integer, and `math.tointeger` is not supported. **This is the one approximation:** a fixed value has 1/256 precision where Lua's float has more, so arithmetic on fixed values agrees with Lua to within 1/256 per operation, not exactly. Integer and boolean results are exact.
+- **Fixed** values come from number literals with a decimal point (`1.5`), from the fixed-point properties (`x`, `y`, `vx`, `vy`, and `scale`, whose 8.8 storage has the same 256-is-one scaling: `self.scale = 1.5` is one and a half times the size), and from arithmetic on fixed values. Mixing an integer into fixed arithmetic converts it (`self.x - 4` subtracts four pixels). `/` always produces fixed (`7 / 2` is `3.5`, as in Lua), `math.floor(f)` turns fixed into an integer, and `math.tointeger` is not supported. **This is the one approximation:** a fixed value is a multiple of 1/256. Each literal is rounded to the nearest 1/256 and each operation rounds its result, and later operations can scale those roundings (`0.1 * 10` is 1.015625), so fixed results approximate Lua's floats with no general bound. Integer and boolean results are exact; a script that needs exact arithmetic uses integers (pixels times 256, say). Tests against real Lua compare fixed values within a tolerance each test states.
 - **Variables** take the type of their first assignment; **function parameters and results** take the types their uses and call sites agree on, inferred over the whole program (a function called with both an integer and a fixed argument is an error: write two).
 
 **Conditions must be booleans.** Lua treats `0` as true and the VM as false, so an integer in `if`, `while`, `repeat ... until` or `not` is a compile error with the hint `x ~= 0`. `and` and `or` take booleans and short-circuit; the `a and b or c` idiom on other types is an error.
@@ -107,7 +109,9 @@ The compiler infers a static type for every expression and variable; mixing type
 
 **Fields.** The engine's properties are fields by these names: `x y vx vy sprite frame flags angle depth scale body_w body_h tags anim_time anim_step`. Any other field name is an instance field; each distinct name gets one of the `VM_FIELDS` slots for the whole program (so `other.hp` means the same slot whatever `other` is), and more than `VM_FIELDS` distinct names is an error.
 
-**Waits** are allowed only in behaviours and in functions called only from behaviours; the compiler checks the call graph, so a wait can never reach a reaction.
+**Waits** are allowed only in behaviours and in functions called only from behaviours; the compiler checks the call graph, so a wait can never reach a reaction. The rule is static, so it is stricter than the VM: `wait(0)` in a reaction, which would continue at once, is rejected too.
+
+**Numeric `for`** loops run exactly Lua 5.4's iteration count (the limit and step evaluated once, no overflow at the integer limits). A constant step of 0 is a compile error; one that is 0 at run time, an error in Lua, logs `'for' step is zero` (`TRACE`) and ends the handler. **Header constants** are folded only where the assembler's integers compute what Lua does; anything else runs in code, and where a constant is required (an object's components, an array's length, a global's initial value) it is an error.
 
 ## Engine functions
 
@@ -124,7 +128,7 @@ The compiler infers a static type for every expression and variable; mixing type
 | `path_start(e, path, flags)`, `path_stop(e)` | the path calls (paths by binding index) |
 | `none` | the entity 0 |
 
-**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library beyond `math.floor`, `math.abs`, `math.min`, `math.max`, coroutines (handlers already are), `nil` (use `none` for entities), and floats beyond the fixed-point rules.
+**Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), and floats beyond the fixed-point rules.
 
 ## The tool
 
@@ -140,14 +144,5 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 
 ## Open questions
 
-- Whether globals' initial values come from a generated initializer or stay the game's job. The prototype: a global must start at 0, false or none (what `vm_load` leaves) unless the script declares an object named `Init`; then `Init:room_start` (the script's, or a generated one) first sets every global to its initial value, and C starts it with `vm_start`. RAM arrays are left to `vm_load`'s zeroing.
-- Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment checked at `other.field` uses is the alternative. The prototype gives slots in order of first appearance; `fireflies.lua` uses none.
-- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every line of the prototype's listing ends in `; file:line`, so `svm.py` could build the table from them.
-- The names C sees: the prototype upper-cases objects, globals and arrays in the listing (`Firefly` is `OBJ_FIREFLY`, `score` is `G_SCORE`), as C names its constants and as the hand-written `fireflies` listing does, so `main.c` runs either; two names that differ only in case are an error. The alternative is the script's names as they are (`OBJ_Firefly`).
-- `scale` is 8.8 fixed point in the engine (256 is normal size), but the field list above makes it an integer; the prototype follows the list (`self.scale = 384`, not `1.5`).
-- The compiler doesn't read the C headers, so it folds header constants only where the assembler's integers compute what Lua does (`+ - * & | ~`, `<<` by a constant, `//` and `%` by powers of two); `>>`, `//` and `%` by other numbers and comparisons of header constants run in code, and in places that need a constant (an object's components, an array's length, a global's initial value) they are errors.
-- Rounding a float literal to 1/256 is an error that operations scale: `0.1 * 10` is 1.015625. "Within 1/256 per operation" holds for each operation on the values as stored, not against Lua's exact decimals.
-- A `for` step of 0 at run time: Lua raises an error; the prototype's loop logs `'for' step is zero` (`TRACE`, debug builds) and ends the handler (`HALT`), the nearest the VM has. A constant step of 0 is a compile error.
-- The wait rule is static and stricter than the VM: `wait(0)` in a reaction, which the VM allows, is rejected.
-- `-2147483648` is a float in Lua (the literal overflows before the minus applies), so it doesn't fit fixed point; a script writes `-2147483647 - 1`. `math.mininteger` and `math.maxinteger` would help, but the standard library stops at `floor`, `abs`, `min` and `max`.
-- The prototype accepts two things this document doesn't list: `<const>` strings (literals by another name, for `print`) and constant tables of fixed values (stored scaled by 256, in the narrowest kind).
+- Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment, checked wherever `other.field` is used, is the alternative. The prototype gives slots in order of first appearance.
+- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every line of the compiler's listing ends in `; file:line`, so `svm.py` could build the table from them.

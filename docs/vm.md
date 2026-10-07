@@ -105,7 +105,7 @@ One **script blob** holds every object, handler and string for a game (or room s
 | 0 | 4 | Magic `"SVMB"` |
 | 4 | 1 | Format version = 1 |
 | 5 | 1 | Cell width in bytes = 4 |
-| 6 | 2 | Flags: must be 0 (the loader rejects anything else, so a later version can give them meaning) |
+| 6 | 2 | Flags. Bit 0: a [globals' initial values](#array-table) table follows the array table. Every other bit must be 0 (the loader rejects them, so a later version can give them meaning) |
 | 8 | 2 | Object count |
 | 10 | 2 | String count |
 | 12 | 2 | Global count used (≤ `VM_GLOBALS`) |
@@ -138,6 +138,8 @@ After the string table: array count × 8-byte records. A blob with no arrays has
 | 2 | 1 | Kind: 0 RAM cells; ROM data: 1 `s8`, 2 `u8`, 3 `s16`, 4 `u16`, 5 `s32` |
 | 3 | 1 | Reserved: must be 0 |
 | 4 | 4 | RAM: the first cell in the VM's array pool (`VM_ARRAY_CELLS` cells). ROM: the blob offset of the elements, little-endian, packed |
+
+**Globals' initial values.** With flag bit 0 set, the global count × s32 values (little-endian) follow the array table, and `vm_load` sets the globals to them instead of zeroing them; `vm_reload` keeps the old values as usual when the global count matches. Without it, globals start at 0.
 
 RAM arrays are cells the scripts read and write, zeroed by `vm_load`; RAM ranges may overlap (the compiler's concern, never a memory-safety one). ROM arrays are constant data read in place: level tables, wave lists, lookup tables, in the narrowest kind that holds them.
 
