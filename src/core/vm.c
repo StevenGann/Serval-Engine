@@ -300,6 +300,9 @@ static void bind(Entity e, u32 object) {
 
 static const u32 prop_component[VM_P_COUNT] = {C_POS, C_POS, C_VEL, C_VEL, C_SPR,  C_SPR,
                                                C_SPR, C_SPR, C_SPR, C_SPR, C_BODY, C_BODY};
+// A property appended to vm.h without a row here would silently get component 0
+// (no warning when it's missing) and fall into set_prop's default case.
+_Static_assert(VM_P_COUNT == 12, "add the new property to prop_component, get_prop and set_prop");
 
 // The slot of the entity in `cell` for GETP or SETP of `prop`, or -1 (warning)
 // for an unknown property or a dead entity.
@@ -443,8 +446,12 @@ static bool anim_waitable(Entity e) {
 
 // --- Engine calls ------------------------------------------------------------
 
-// Arguments per VM_SYS_* call, and the calls that push a result.
+// Arguments per VM_SYS_* call (at most SYS_MAX_ARGS), and the calls that push a
+// result. A call appended to vm.h without an entry here would silently take no
+// arguments.
+#define SYS_MAX_ARGS 3
 static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 3};
+_Static_assert(VM_SYS_COUNT == 13, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 #define SYS_RETURNS                                                                                \
     (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
 
@@ -836,7 +843,7 @@ static u32 execute(Context* c, bool must_finish) {
             }
             u32 n = sys_arity[fn];
             NEED(n);
-            s32 args[3] = {0, 0, 0};
+            s32 args[SYS_MAX_ARGS] = {0, 0, 0};
             sp -= n;
             for (u32 k = 0; k < n; k++)
                 args[k] = st[sp + k];

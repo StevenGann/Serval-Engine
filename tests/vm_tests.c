@@ -2375,6 +2375,36 @@ static void properties_of_dead_entities(void) {
 
 // vm.md "Entities": a property whose component the entity lacks warns (once,
 // for SETP and GETP alike), but still reads and writes the array.
+// vm.md "Entity cells": a cell is an entity only within 0..0xFFFF, and a handle
+// whose low byte names a slot past MAX_ENT (128) is no entity either:
+// entity_alive() bounds-checks the slot, so GETP and SETP never index the
+// pools out of range (ASan would catch it on the host).
+static void properties_of_handles_past_the_pool(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_ROOM_START);
+    push32(0x01FF);    // generation 1, slot 255
+    getp(VM_P_X);      // warns: 0
+    stg(0);            // glob[0] = 0
+    push32(0x01FF);    // the handle again
+    push8(5);          // handle 5
+    setp(VM_P_X);      // dropped
+    push32(0x7F80);    // generation 127, slot 128: the first past the pool
+    getp(VM_P_BODY_W); // 0
+    stg(1);            // glob[1] = 0
+    store(2, 1);       // carried on
+    op(VM_OP_HALT);    //
+    CHECK(load());
+    vm_set_global(0, 99);
+    vm_set_global(1, 99);
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_ROOM_START) >= 0);
+    vm_step();
+    CHECK(vm_global(0) == 0 && vm_global(1) == 0 && vm_global(2) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
 static void property_without_its_component_warns(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -3514,6 +3544,7 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"self_and_other", self_and_other},
            {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
            {"properties_of_dead_entities", properties_of_dead_entities},
+           {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
            {"property_without_its_component_warns", property_without_its_component_warns},
            {"body_size_properties", body_size_properties},
            {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
