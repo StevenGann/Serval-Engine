@@ -51,9 +51,8 @@
 //
 // What to expect when booting the ROM:
 //   - The Serval Engine splash: "made with" and the engine's logo (about 3
-//     seconds; any button but L and R skips it once the logo is in, L and R
-//     cycle the logo's variations), a moment of black while the art is
-//     built, then the title
+//     seconds; any button skips it once the logo is in), a moment of black
+//     while the art is built, then the title
 //     fades in over swirling plum paint: "BLACKJACK" in gold letters that
 //     drop in one by one and then wave, "A SERVAL ENGINE CARD TABLE", three
 //     cards (ace of spades, king of hearts, jack of diamonds) flying up from

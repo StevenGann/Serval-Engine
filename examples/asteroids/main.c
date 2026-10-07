@@ -32,8 +32,7 @@
 //   - First the Serval Engine splash: "made with" and the engine's logo (a
 //     serval's head beside "SERVAL ENGINE" in chunky gold and cream letters)
 //     fade in on black, a coin-like jingle plays, and they fade out (about 3
-//     seconds; any button but L and R skips it once the logo is in; L and R
-//     cycle the logo's four variations while the final one is picked).
+//     seconds; any button skips it once the logo is in).
 //   - Four large brown, cratered rocks drift and spin across a dark blue
 //     screen behind "A S T E R O I D S", "PRESS START" and the controls.
 //   - After START (a rising chime): a silver arrowhead ship in the center,

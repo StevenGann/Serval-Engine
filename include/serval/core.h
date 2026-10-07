@@ -23,16 +23,14 @@
 void serval_init(void);
 
 // Shows the "made with Serval Engine" splash screen, then returns: about three
-// seconds of the logo fading in on a black backdrop, a jingle, and fading out.
-// Pressing any button but L and R once it has faded in skips the rest. (While
-// the logo's final variation is being chosen, four are built in and R and L
-// show the next and previous one; a switch restarts the hold. See
-// docs/core-api.md.) Call it after serval_init(), before loading your game's
-// graphics. Puts back the backdrop color (so the screen then shows the game's
-// backdrop, black by default), background 0's control register and on/off
-// state, the blend control register and the brightness
+// seconds of the logo (a serval's head beside "SERVAL ENGINE") fading in on a
+// black backdrop, a jingle, and fading out. Pressing any button once it has
+// faded in skips the rest. Call it after serval_init(), before loading your
+// game's graphics. Puts back the backdrop color (so the screen then shows the
+// game's backdrop, black by default), background 0's control register and
+// on/off state, the blend control register and the brightness
 // (screen_set_brightness), the palette entries it uses (one in BG bank 14 and
-// colors 1-15 of banks 10-13), whether the text layer was set up and the text
+// colors 1-15 of bank 13), whether the text layer was set up and the text
 // shadow setting; silences square channel 1. Not restored: the text layer's
 // map (text_print output is cleared), charblock 1 (the logo's tiles), and if
 // the text layer wasn't set up, charblock 0's first 96 tiles (overwritten by
