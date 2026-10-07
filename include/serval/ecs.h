@@ -166,9 +166,9 @@ void sys_render(void);
 // a top-down look, set spr_depth to the entity's y each frame so sprites lower
 // on screen overlap those above, or give each kind of entity its own depth
 // (bricks behind balls). The extra cost depends on the depths: about 400
-// cycles over sys_render for 128 sprites whose depths never decrease from one
-// slot to the next (all equal, or each kind created in front of the ones
-// before: no sort), one counting pass for depths within 256 of each other
+// cycles over sys_render for 128 sprites whose depths never increase from one
+// slot to the next (all equal, or each kind created behind the ones before:
+// no sort), one counting pass for depths within 256 of each other
 // (two depths, 88 sprites: about 4,100; depth = y, 128 sprites: about
 // 8,200), two passes for wider ranges.
 void sys_render_by_depth(void);

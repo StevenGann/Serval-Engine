@@ -55,8 +55,8 @@ extern u8 body_friction[MAX_ENT];
 // stored in a u16 (0 = no limit, up to just under 256): body_max_fall[i] =
 // FX(5), or FX(3) / 2 for 1.5. After gravity is added, the velocity in the
 // direction gravity pulls is limited to this, on each axis gravity acts on.
-// Speeds the game sets beyond it (a jump against gravity, a dive) are kept
-// until gravity is next applied.
+// A speed the game sets beyond it in that direction (a dive) is kept until
+// gravity is next applied; speed against gravity (a jump) is never limited.
 extern u16 body_max_fall[MAX_ENT];
 // How strongly gravity pulls this body, as a scale in 16ths written with
 // BODY_GRAVITY(): BODY_GRAVITY(16) is normal gravity, BODY_GRAVITY(8) half,
