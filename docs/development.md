@@ -160,7 +160,7 @@ tools/bench.sh            # optional preset argument, default gba-release
 # bunnymark: 128 bunnies, 600 frames: avg 73360 cycles (26.1%), peak 77491 (gba-release)
 ```
 
-The result is deterministic for a given build, so any change in the number comes from the code. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it in every run of its GBA job and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
+The result is deterministic for a given build, so any change in the number comes from the code. `tools/bench.sh gba-debug` runs the unoptimized build (-O0): avg 266,094 cycles (94.7%), peak 308,729, at `393c36f`, so a debug build of a game as busy as bunnymark drops frames at its peaks. When bunnymark itself changes, the workload changes: record a new baseline row and say so. CI runs it in every run of its GBA job and shows the result in the job summary. For a performance change, run it before and after and put both numbers in the commit message.
 
 | Date | Commit | avg cycles | % of frame | Change |
 | --- | --- | --- | --- | --- |
@@ -190,22 +190,23 @@ The result is deterministic for a given build, so any change in the number comes
 | 2026-10-07 | `9911e93` | 73,426 | 26.1% | API freeze, sprites: `SPRITE_BLEND` joins the render loops' out-of-line test (before: avg 73,426, peak 78,643; after: the same). The flags that take the out-of-line path are now bits 4 and 7-12, past one ARM immediate, so the test is `BIC #0x6F` then `ORRS` with the angle and the flags shifted left; an empty `asm` keeps GCC from folding the mask into a constant load (\~+400). IWRAM +24 bytes for games that draw sprites |
 | 2026-10-07 | `cf9d54b` | 73,412 | 26.1% | API freeze, ECS: `body_bounce` 255 is a perfect bounce (before: avg 73,426, peak 78,643; after: peak 77,647). A body resting on its floor is recognized before the bounce's multiply, so it pays neither that nor the 255 test; the perfect bounce's computation is inlined (as a call to ROM it cost \~2,600). The map bodies' perfect bounce (`8801ead`) measured the same |
 | 2026-10-07 | `4d9f0e1` | 73,360 | 26.1% | Warnings get a 248-byte buffer of their own (before: avg 73,412, peak 77,647; after: peak 77,491). Release builds have no warnings; the change is `text_format`, which now shares its formatter with them: its padding and copying write through a pointer instead of indexing the buffer (\~−50, bunnymark's three HUD lines a frame) |
+| 2026-10-07 | `393c36f` | 73,360 | 26.1% | Debug builds' physics (before: avg 73,360, peak 77,491; after: the same; optimized code is byte for byte the same). Unoptimized GBA builds bounce bodies through `hit_wall_call()` in the fast loop too and call the perfect-bounce solver in ROM, which brings `sys_physics()`' IWRAM code from 13,644 bytes to 6,128 (6,288 in release builds), so debug builds link again ([Debug builds](#debug-builds)). Debug bunnymark: avg 266,094, peak 308,729 |
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the release `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not), at `8801ead`, the API freeze's last code change:
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not): release builds at `8801ead`, the API freeze's last code change (the same at `393c36f`), and debug builds (the `gba-debug` preset: CMake's Debug configuration, -O0) at `393c36f`. A ROM may use up to 30,464 bytes ([below](#debug-builds)):
 
-| Example | IWRAM used |
-| --- | --- |
-| `hello` | 9,564 bytes |
-| `shmup` | 16,300 bytes |
-| `blackjack` | 17,840 bytes |
-| `pong` | 18,220 bytes |
-| `bunnymark` | 18,356 bytes |
-| `asteroids` | 18,992 bytes |
-| `fireflies` | 20,232 bytes |
-| `platformer` | 21,328 bytes |
-| `breakout` | 21,800 bytes |
+| Example | Release | Debug |
+| --- | --- | --- |
+| `hello` | 9,564 bytes | 14,576 bytes |
+| `shmup` | 16,300 bytes | 22,280 bytes |
+| `blackjack` | 17,840 bytes | 23,208 bytes |
+| `pong` | 18,220 bytes | 23,200 bytes |
+| `bunnymark` | 18,356 bytes | 23,324 bytes |
+| `asteroids` | 18,992 bytes | 24,480 bytes |
+| `fireflies` | 20,232 bytes | 25,828 bytes |
+| `platformer` | 21,328 bytes | 26,592 bytes |
+| `breakout` | 21,800 bytes | 27,292 bytes |
 
 At `01fd31b` they were within 300 bytes of these (`hello` 9,536, `breakout` 21,852). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
 
@@ -215,7 +216,13 @@ Bouncing bodies' `body_gravity` and `body_contact` pools add 256 bytes to games 
 
 Games that load map layers add about 2.2 KB: the streaming loops (1.4 KB of ARM code, [tilemaps.md](tilemaps.md#streaming)), the runtime cell change table (384 bytes, read by every collision query) and the per-background state. The screenblock copies (6 KB) and the redraw list are in EWRAM.
 
-The linker script reserves 2 KB below the stack and fails the build if IWRAM overflows. Large engine buffers live in EWRAM (256 KB) instead.
+The linker script reserves 2 KB below the stack and fails the build if IWRAM overflows: `.iwram` and `.bss` together may use up to 30,464 bytes (they must end 2 KB below `0x03007F00`, where the stack starts; the 256 bytes above it hold the interrupt stacks and the BIOS's variables). Large engine buffers live in EWRAM (256 KB) instead.
+
+### Debug builds
+
+Debug builds (-O0) use more IWRAM than release builds of the same game, 4,968 to 5,980 bytes more for the examples (the table above), nearly all of it the engine's IWRAM code, which is larger unoptimized: drawing sprites takes 8,452 bytes instead of 3,548 (every game that draws sprites), the ECS queries 60-656 bytes more, the map streaming loops 272 and the linker's veneers for calls between IWRAM and ROM 72-108; the debug checks' warn-once flags add up to 92 bytes of `.bss`. `sys_physics()`' code takes 160 bytes less (6,128 instead of 6,288), since unoptimized it bounces bodies through calls rather than inlined copies ([runtime-systems.md](runtime-systems.md#physics)). Before `393c36f` it took 13,644 bytes (since `cf9d54b` inlined the perfect bounce), and at `3aebd4e` none of the six examples with bodies, nor the test ROM, linked in Debug.
+
+So a game's own budget is up to 6,000 bytes smaller in a Debug build: one that uses more than about 24,400 bytes of IWRAM in release (30,464 less 6,000) may not link in Debug. RelWithDebInfo (-O2 with the debug checks on, the `gba-ci` preset) uses about as much as release (within 1.2 KB: games with bodies 750-1,120 bytes less, the others 150-500 more), so such a game can debug with it. The test ROM (`serval_tests`), which links most of the engine, uses 27,468 bytes in Debug and 21,640 in release; its largest fixtures are in EWRAM to leave that room.
 
 ## Checking what a game shows and plays
 
