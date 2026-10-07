@@ -11,10 +11,37 @@ Serval Engine is versioned independently of Studio Advance. Each game project se
 | Bump | When |
 | --- | --- |
 | Major | A breaking change to the public C API, the ROM data formats ([sprites.md](sprites.md#rom-data-format), [tilemaps.md](tilemaps.md#rom-data-format)), the bytecode format ([vm.md](vm.md)) or the [debug link](debug-link.md) |
-| Minor | New features that remain compatible |
+| Minor | New features that remain compatible, including implementing [planned API](#planned-api) |
 | Patch | Fixes only |
 
 The editor does not currently check compatibility between its own version and an engine version; every release is selectable. The version number is the signal to users that an upgrade may break a project, so breaking changes must bump the major version.
+
+**What breaks a data format.** A new field whose zero keeps today's behaviour, or a meaning for a value today's engine refuses, is a minor change. Changing what an existing field, value or default means is major. Adding a field is compatible because data is written with designated initializers (Studio Advance emits them, and [sprites.md](sprites.md#rom-data-format) and [tilemaps.md](tilemaps.md#rom-data-format) ask for them in hand-written data too), so data that predates the field leaves it zero. The rule has a consequence for loaders: they must refuse values they don't understand today (a flag bit no feature uses yet, a reserved collision type). A loader that ignored them would accept data with a stray bit, and that data would change meaning the day the bit is assigned.
+
+## Planned API
+
+Planned API is declared in this version but not implemented yet, so that the API is complete and games and Studio Advance can target it now; a later minor version implements it. In the headers each planned function or constant carries `SERVAL_PLANNED` (`platform.h`), and its documentation says it is planned.
+
+**The warning.** Every use of a planned name compiles with a warning at the use, at any optimization level, in dead code too:
+
+```
+main.c:12:5: warning: 'music_play' is deprecated: Serval: planned, not implemented in
+this version: tracker music, docs/audio.md [-Wdeprecated-declarations]
+```
+
+"Deprecated" is the compiler's fixed wording: nothing is being removed. The warning means the call is in the API, and this engine version does nothing useful with it yet. Games built with `-Werror` stop at it.
+
+**Silencing it on purpose**, to write code against planned API that starts working in the engine version implementing it:
+
+| Scope | How |
+| --- | --- |
+| Whole game | `-DSERVAL_NO_PLANNED_WARNINGS` (CMake: `target_compile_definitions(game PRIVATE SERVAL_NO_PLANNED_WARNINGS)`), or `#define SERVAL_NO_PLANNED_WARNINGS` before the first Serval include (it has no effect after one) |
+| One region | `#pragma GCC diagnostic push`, `#pragma GCC diagnostic ignored "-Wdeprecated-declarations"`, then `#pragma GCC diagnostic pop` (GCC and Clang both honour it) |
+| Keep the warning, but not as an error under `-Werror` | `-Wno-error=deprecated-declarations` |
+
+**At run time**, planned API does nothing harmful. A planned function returns 0, `false` or its type's "none" (e.g. `SFX_NONE`) and changes nothing; a loader refuses data that needs a planned feature, as it refuses any data it doesn't understand. Debug builds warn once per problem, e.g. `serval: music_play: tracker music is planned, not implemented in this engine version; nothing plays`.
+
+**Lifecycle.** A planned name is part of the API from the version that declares it, with the same compatibility promise as the rest. A minor version implements it: the marker goes, the signature stays, so code written against it compiles without the warning and starts working. If a planned design proves wrong, the fix is additive: a new function, with the old one documented as superseded and kept as a stub. Changing a planned name's signature or meaning after its release is a major change, like any API change.
 
 ## Manifest
 

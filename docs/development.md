@@ -11,7 +11,7 @@
 | CMake | ≥ 3.25 | Uses presets (`CMakePresets.json`) |
 | Ninja | any recent | Generator for all presets |
 | ARM GNU Toolchain | 15.3.Rel1 (what CI uses) | Any `arm-none-eabi-gcc` should work, including devkitARM; CMake warns if it is older than `toolchain.gcc` in `serval.json`. Found on `PATH` or via `ARM_GNU_TOOLCHAIN=<toolchain root>` |
-| Python 3 | 3.11 or later | Runs `tools/gbafix.py` after each ROM link, `tools/svlua.py` and `tools/svm.py` for scripts (`serval_add_script()`), and `tools/check-rom.py`, `tools/svm_test.py`, `tools/svlua_test.py`, `tools/svlua_difftest.py` and `tools/logo-png.py` in the tests |
+| Python 3 | 3.11 or later | Runs `tools/gbafix.py` after each ROM link, `tools/svlua.py` and `tools/svm.py` for scripts (`serval_add_script()`), and `tools/check-rom.py`, `tools/svm_test.py`, `tools/svlua_test.py`, `tools/svlua_difftest.py`, `tools/logo-png.py` and `tools/check-planned.py` in the tests (the last also in web builds) |
 | Host C compiler | GCC or Clang | Only for host unit tests |
 | Emscripten | 6.0.11 (what CI uses) | Only for [web builds](#web-builds). Install with [emsdk](https://emscripten.org/docs/getting_started/downloads.html); the toolchain file finds it through `EMSDK` alone (set it, or `source emsdk_env.sh`, which also puts emsdk's own tools on `PATH`), or `emcc` on `PATH` |
 | Chrome or Chromium | any recent | Only for `tools/web-shots.py` (found on `PATH`, or set `SERVAL_CHROME`) |
@@ -87,14 +87,14 @@ Frame numbers don't line up exactly with an emulator's. The page counts `frame_e
 | --- | --- |
 | `include/serval/` | Public headers: `serval.h` (umbrella: includes everything), `core.h` (init, splash, frames, buttons), `screen.h`, `sprites.h`, `ecs.h`, `physics.h`, `map.h` (tilemaps, camera, map collision), `audio.h`, `text.h`, `math.h`, `fixed.h`, `random.h`, `save.h` (save slots), `debug.h`, `platform.h`; `gba.h` holds GBA-only escape hatches. No third-party includes |
 | `src/ecs/` | Platform-neutral systems: entities, `ecs_count`/`ecs_gather` and `sys_movement` (`ecs.c`), bouncing bodies, `sys_physics`, `body_overlap`, `body_hit_side` (`physics.c`, with `physics_internal.h`, state shared with map bodies), map bodies and `sys_map_movement` (`map_movement.c`), `sys_animate` (`animate.c`) |
-| `src/core/` | Platform-neutral modules: map layers as data, the camera, runtime cell changes and collision queries (`map.c`, with `map_internal.h`), held-button repeat (`input.c`), random numbers and `random_entropy` (`random.c`), text formatting (`text_format.c`), trigonometry, `angle_of` and `fx_length` (`trig.c`), paths and `sys_path` (`path.c`), the PSG music sequencer (`psg_sequencer.c`), the registered sprite table, so `sys_animate` can read assets (`sprite_table.c`), save slots on a byte-addressed save memory (`save.c`, with `save_internal.h`, the memory each platform supplies), and `warn.h` (the warning macro) |
+| `src/core/` | Platform-neutral modules: color math (`color.c`), map layers as data, the camera, runtime cell changes and collision queries (`map.c`, with `map_internal.h`), held-button repeat (`input.c`), random numbers and `random_entropy` (`random.c`), text formatting (`text_format.c`), trigonometry, `angle_of` and `fx_length` (`trig.c`), paths and `sys_path` (`path.c`), the PSG music sequencer (`psg_sequencer.c`), the registered sprite table, so `sys_animate` can read assets (`sprite_table.c`), save slots on a byte-addressed save memory (`save.c`, with `save_internal.h`, the memory each platform supplies), and `warn.h` (the warning macro) |
 | | `src/ecs/` and `src/core/` compile on the host (no libtonc, no hardware access). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` (stderr output, clock-based entropy, save memory in RAM) |
-| `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
+| `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), tracker music and sampled sound effects (`sampled_audio.c`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
-| `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; `svlua/` (the Lua compiler's golden listings, `runner.c` (`svlua_runner`: a blob run on the VM, its state printed), `stub.lua` (the engine's API in Lua) and `diff/` (the differential test's programs)); `svm/` (the hand-written fireflies listing, the assembler's fixture); and `consumer/` (a minimal game project built against the release archive, with a Lua script, plus a game that saves) |
+| `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`, `color_tests.c`, and the [planned API](#planned-api)'s run-time suites `planned_audio_tests.c`, `planned_sprites_tests.c`, `planned_map_tests.c` and `planned_screen_tests.c`); `planned/` (every planned name used once, for `tools/check-planned.py`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; `svlua/` (the Lua compiler's golden listings, `runner.c` (`svlua_runner`: a blob run on the VM, its state printed), `stub.lua` (the engine's API in Lua) and `diff/` (the differential test's programs)); `svm/` (the hand-written fireflies listing, the assembler's fixture); and `consumer/` (a minimal game project built against the release archive, with a Lua script, plus a game that saves) |
 | `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`, `fireflies`; `build-all.sh` builds them all into `roms/` and `html/`; `gallery.toml` describes them for the [documentation site](#documentation-site) |
 | `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` and `serval_add_script()` (`Serval.cmake`, with the web variant of the former in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
-| `tools/` | ROM header fixer (`gbafix.py`), the Lua-subset compiler (`svlua.py`, tested by `svlua_test.py` and `svlua_difftest.py`; [lua.md](lua.md)), the script assembler and disassembler (`svm.py`, tested by `svm_test.py`; [vm.md](vm.md#tools)), a 32-bit Lua's build (`build-lua32.sh`), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`), the logo PNGs and GitHub's social preview card (`logo-png.py`: compiles the splash's own drawing code for the host and writes `docs/images/`; CTest `logo_png` fails when `splash_art.c` changes until they are regenerated), the documentation site's generator (`site/`, [below](#documentation-site)) |
+| `tools/` | ROM header fixer (`gbafix.py`), the Lua-subset compiler (`svlua.py`, tested by `svlua_test.py` and `svlua_difftest.py`; [lua.md](lua.md)), the script assembler and disassembler (`svm.py`, tested by `svm_test.py`; [vm.md](vm.md#tools)), a 32-bit Lua's build (`build-lua32.sh`), ROM checker (`check-rom.py`), the [planned API](#planned-api)'s check (`check-planned.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`), the logo PNGs and GitHub's social preview card (`logo-png.py`: compiles the splash's own drawing code for the host and writes `docs/images/`; CTest `logo_png` fails when `splash_art.c` changes until they are regenerated), the documentation site's generator (`site/`, [below](#documentation-site)) |
 
 ## Building a game
 
@@ -147,6 +147,8 @@ Compile-only checks keep third-party libraries behind the API ([core-api.md](cor
 - **Host build:** `tests/public_headers.c`, every example's sources (`examples/*/*.c`, found automatically) and `tests/consumer/*.c` compile without libtonc on the include path (`serval_api_only_check`).
 - **Each public header on its own:** every `include/serval/*.h` compiles alone, with only `include/` on the include path, on the host and for the GBA (`serval_header_check`, `serval_gba_header_check`).
 - **Test ROM:** `tests/rom/compat_*.c` include `<tonc.h>` and Serval's headers in both orders.
+
+Planned API has a compile-time check of its own, CTest `planned_api` ([below](#planned-api)).
 
 ## Benchmark
 
@@ -220,6 +222,48 @@ Tests check state (OAM, VRAM, registers), not what the screen looks like or what
 - `snake_case`; public API names follow the docs (`frame_begin`, `entity_create`); GBA-only API is prefixed `gba_`; macros are `SERVAL_*` or the documented short names (`MAX_ENT`, `C_*`).
 - Engine code builds warning-free with `-Wall -Wextra -Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes`.
 
+## Planned API
+
+Planned API is declared but not implemented yet; [releases.md](releases.md#planned-api) has the policy as games see it. Each planned function or constant is marked with `SERVAL_PLANNED("what, doc")` (`platform.h`), naming the feature and the doc that describes it, both of which the warning quotes:
+
+```c
+SERVAL_PLANNED("tracker music, docs/audio.md")
+void music_play(u16 music_id, bool loop);
+
+enum {
+    SPRITE_GROUP_STREAMED SERVAL_PLANNED("streamed sprite groups, docs/sprites.md") = 1 << 0,
+};
+```
+
+**Where the marker may go:**
+
+- **Only on functions and enumerators**: before a function's declaration, or after an enumerator's name. A planned constant is an enumerator, never a `#define`: enumerators are `int` constants, usable in initializers, `case` labels and constant expressions, so games see no difference.
+- **Never on struct fields.** GCC ignores the attribute in designated initializers (`.slots = 4` doesn't warn; with Clang it does), so a field that only matters for a planned feature is a plain field. Its flag is the planned enumerator, and data that uses a planned feature always names that flag, which warns.
+- **Never on typedefs.** A planned type used in any declaration that isn't itself planned warns inside the header, in every game that includes it, breaking every `-Werror` build. Planned types stay plain; only the functions using them are planned.
+
+The `planned_api` test fails on a `SERVAL_PLANNED` anywhere else (a field, a typedef, a variable).
+
+**Engine code names planned API freely.** `serval`, `serval_portable` and the `serval_save_*` objects define `SERVAL_NO_PLANNED_WARNINGS` privately (`CMakeLists.txt`), for the stubs and for loaders that refuse planned flags; being private, it never reaches games. A stub does nothing harmful and says so once: it returns 0, `false` or its type's "none", changes nothing, and reports with `SERVAL_WARN` once per problem, naming the function, the feature and what happens instead (`"music_play: tracker music is planned, not implemented in this engine version; nothing plays"`). A loader refuses data that needs a planned feature, naming the planned flag in its warning.
+
+**Tests that use planned API on purpose** define `SERVAL_NO_PLANNED_WARNINGS` at their top, before any include: the run-time suites below, and any suite checking that a loader refuses a planned flag. Examples, `tests/public_headers.c` and `serval_api_only_check` keep the warnings, so with CI's `-Werror` no example can use planned API.
+
+**Two tests keep every planned name honest:**
+
+- **At compile time, CTest `planned_api`.** `tests/planned/<header>.c` (one file per header: `audio.c`, `sprites.c`, `map.c`, `screen.c`, `vm.c`) uses every planned name of its header once, each on a line ending `// planned`:
+
+  ```c
+  void planned_audio(void) {
+      music_play(0, true);                // planned
+      static const u8 channel = PSG_WAVE; // planned
+      (void)channel;
+  }
+  ```
+
+  `tools/check-planned.py` compiles each file at `-O0` and `-O2` with the engine's warning flags, and fails unless every marked line warns with the Serval message, no other line and no header does, and every `SERVAL_PLANNED` name in `include/serval/` warns in one of the files; each file must also compile silently with `-DSERVAL_NO_PLANNED_WARNINGS -Werror`. So a planned name declared without a use fails, a use without the marker fails, and so does a marked use of a name that is no longer planned. It runs with each preset's compiler: in the `host` and `gba-*` test presets (with `-DSERVAL_GBA` and the toolchain's flags), and in web builds, which run no tests, as part of the build with `emcc` (target `serval_planned_api_check`). By hand: `tools/check-planned.py` (with `cc`), or `tools/check-planned.py -- arm-none-eabi-gcc -mcpu=arm7tdmi -mthumb -DSERVAL_GBA`.
+- **At run time, `tests/planned_<area>_tests.c`** (`audio`, `sprites`, `map`, `screen`; shared suites): each planned function is called twice, its safe result checked (`SFX_NONE`, `false`, state unchanged; loaders refuse), and in debug builds `debug_warning_count()` rises by exactly one on the first call and not on the second. This also shows the stubs link. Stubs in `src/gba/` link only into the test ROM, so their cases go inside `#ifdef SERVAL_GBA`.
+
+**Implementing a planned item** (a minor version): drop its `SERVAL_PLANNED` and keep the signature, implement it, remove its line from `tests/planned/`, turn its stub cases into feature tests, and drop "planned" from its docs.
+
 ## Documentation site
 
 The docs and the examples are also a website, published on GitHub Pages: <https://stevengann.com/Serval-Engine/>. `tools/site/build.py` makes it: every `docs/*.md` as a page (links between docs become links between pages, links to other files in the repository become GitHub links, `mermaid` blocks become diagrams), a gallery in which every example runs in the browser next to its description (from its `main.c` header comment) and its source, and a front page. Search over the docs is Pagefind's. To build it and look at it (Python 3.11 or later):
@@ -243,7 +287,7 @@ The generator, its page template, styles and scripts are in `tools/site/`, with 
 - `clang-format` check.
 - Host tests with sanitizers, the Lua differential test included: the job builds Lua 5.4.8 with 32-bit integers (`tools/build-lua32.sh`, which checks lua.org's SHA-256; cached by the script's hash) and runs CTest with `SERVAL_LUA32`.
 - GBA: `gba-ci` (RelWithDebInfo, debug checks on) built with warnings as errors and tested (test ROM in mGBA, ROM checks); a check that the release archive builds on its own; `tools/check-consumer.sh` (a game built against the archive and run in mGBA); Release (debug checks compiled out) and Debug (`-O0`) builds with warnings as errors, each tested; every example built; the bunnymark benchmark (result in the job summary); and the ROMs uploaded as artifacts.
-- Web: the `web` preset (warnings as errors); every example run headless in Chrome for 300 frames with `tools/web-shots.py --require-picture`, after checking that its page loads no other file; `tools/check-consumer-web.sh` (a game project built for the web against the release archive, run and checked the same way); the pages uploaded as artifacts.
+- Web: the `web` preset (warnings as errors; its build also runs the [planned-API check](#planned-api) with `emcc`); every example run headless in Chrome for 300 frames with `tools/web-shots.py --require-picture`, after checking that its page loads no other file; `tools/check-consumer-web.sh` (a game project built for the web against the release archive, run and checked the same way); the pages uploaded as artifacts.
 
 The ARM toolchain and mGBA versions are set in `.github/actions/setup-gba/action.yml`; `mgba-rom-test` is built once and cached. The Emscripten version is set in the web job (and in `pages.yml`).
 
