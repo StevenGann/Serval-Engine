@@ -1,7 +1,13 @@
-; The game's logic: every rule of fireflies, as a listing for Serval Engine's
-; VM (docs/vm.md), assembled at build time by tools/svm.py (serval_add_script
-; in examples/CMakeLists.txt) into fireflies_script, ROM data that main.c
-; loads. One op per line; the comment after each op is the value stack after
+; The fireflies example's logic as it was written first: every rule of the
+; game, by hand, as a listing for Serval Engine's VM (docs/vm.md). The example
+; is now written in the Lua subset (examples/fireflies/fireflies.lua, which
+; serval_add_script compiles); this listing stays as the assembler's largest
+; fixture: tools/svm_test.py assembles it with the game's headers and checks
+; that it disassembles and reassembles to the same bytes, and
+; tests/svm/CMakeLists.txt builds it through serval_add_script. It still runs
+; the game: main.c's numbers (objects, globals, components) are the same.
+;
+; One op per line; the comment after each op is the value stack after
 ; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value),
 ; leaving out the handler's locals, which ENTER puts at the bottom of its
 ; stack. Handlers end in HALT; subroutines in RET.

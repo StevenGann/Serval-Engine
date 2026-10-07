@@ -1403,12 +1403,14 @@ class Tool(unittest.TestCase):
 
 
 class Fireflies(unittest.TestCase):
-    """tests/svlua/fireflies.lua, the whole fireflies game, against what the
-    example's C glue and hand-written listing expect."""
+    """examples/fireflies/fireflies.lua, the whole fireflies game, against
+    what the example's C glue expects, and the hand-written listing it
+    replaced (tests/svm/fireflies.svm)."""
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(FIXTURES, "fireflies.lua"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "examples", "fireflies", "fireflies.lua"),
+                  encoding="utf-8") as f:
             cls.source = f.read()
         cls.compiled = svlua.compile_program(cls.source, "fireflies.lua")
         cls.listing = cls.compiled.listing
@@ -1429,9 +1431,7 @@ class Fireflies(unittest.TestCase):
         """The objects, their components and sprites, and the globals, in
         the same order: what main.c and game.h rely on (OBJ_ROOM,
         OBJ_SPAWNER, G_RESTART, C_PLAYER, C_FIREFLY)."""
-        path = os.path.join(ROOT, "examples", "fireflies", "fireflies.svm")
-        if not os.path.exists(path):
-            self.skipTest("no examples/ (a release archive)")
+        path = os.path.join(ROOT, "tests", "svm", "fireflies.svm")
         with open(path, encoding="utf-8") as f:
             hand = f.read()
 

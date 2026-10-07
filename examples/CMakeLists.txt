@@ -34,10 +34,11 @@ target_link_libraries(blackjack PRIVATE serval_warnings)
 
 serval_add_rom(fireflies SOURCES fireflies/main.c fireflies/art.c fireflies/sound.c
                TITLE "FIREFLIES" GAME_CODE "SVFF")
-# The game's logic is a script listing, assembled at build time (tools/svm.py)
-# into fireflies_script.c and fireflies_script.h; the listing uses the game's
-# and the engine's names through these headers.
-serval_add_script(fireflies fireflies/fireflies.svm
+# The game's logic is a script in the Lua subset (docs/lua.md), compiled and
+# assembled at build time (tools/svlua.py, tools/svm.py) into
+# fireflies_script.c and fireflies_script.h; its names in ALL_CAPS come from
+# these headers, the game's and the engine's.
+serval_add_script(fireflies fireflies/fireflies.lua
                   HEADERS fireflies/game.h serval/ecs.h serval/core.h serval/sprites.h
                           serval/path.h serval/screen.h)
 target_link_libraries(fireflies PRIVATE serval_warnings)

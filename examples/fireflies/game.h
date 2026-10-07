@@ -1,23 +1,23 @@
 // Shared declarations of the fireflies example: what main.c (the C glue),
-// fireflies.svm (the bytecode listing, through serval_add_script's HEADERS),
-// art.c and sound.c all name. In a project made with Studio Advance this is
-// the generated header that ties the C glue to the script blob: the asset
-// numbers both sides use, plus the object, string and global numbers the
-// assembler writes into fireflies_script.h from the listing.
+// fireflies.lua (the game's logic in the Lua subset, through
+// serval_add_script's HEADERS), art.c and sound.c all name. In a project made
+// with Studio Advance this is the generated header that ties the C glue to
+// the script blob: the asset numbers both sides use, plus the object, string
+// and global numbers the tools write into fireflies_script.h from the script.
 
 #ifndef FIREFLIES_GAME_H
 #define FIREFLIES_GAME_H
 
 #include "serval/serval.h"
 
-// --- The script blob (fireflies.svm) -------------------------------------------
+// --- The script blob (fireflies.lua) -------------------------------------------
 
-// Generated at build time by tools/svm.py: OBJ_* (ROOM, SPAWNER, PLAYER,
-// FIREFLY, SPARKLE, RESTING), STR_*, G_* (SCORE, TIME, LIVE, PLAYING,
-// RESTART, SPAWN_MIN, SPAWN_MAX, PLAYER), their counts, and the blob itself:
-// fireflies_script and fireflies_script_size. Room and Spawner run as
-// threads with no entity (main.c starts their Room Start handlers); the
-// others are entities SPAWNed by the scripts. C reads G_RESTART only.
+// Generated at build time by tools/svlua.py and tools/svm.py: OBJ_* (ROOM,
+// SPAWNER, PLAYER, FIREFLY, SPARKLE, RESTING), STR_*, G_* (SCORE, TIME, LIVE,
+// PLAYING, RESTART, SPAWN_MIN, SPAWN_MAX, PLAYER), their counts, and the blob
+// itself: fireflies_script and fireflies_script_size. Room and Spawner run as
+// threads with no entity (main.c starts their room_start handlers); the
+// others are entities the script spawns. C reads G_RESTART only.
 #include "fireflies_script.h"
 
 // Game components in the objects' masks, so the C glue can find the pairs

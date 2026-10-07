@@ -99,7 +99,7 @@ thumbnail = { frame = 520, keys = ["200:S:2", "400:A:2"] }
 
 [examples.fireflies]
 title = "FIREFLIES"
-summary = "A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely bytecode for the VM, in a listing (`fireflies.svm`) assembled at build time"
+summary = "A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely a script in the Lua subset (`fireflies.lua`), compiled to bytecode for the VM at build time"
 tags = ["vm", "paths", "animation", "music"]
 level = 4
 thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:30"] }

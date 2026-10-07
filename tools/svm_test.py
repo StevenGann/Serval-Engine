@@ -743,9 +743,7 @@ class RoundTrip(unittest.TestCase):
     def test_fireflies(self):
         """The example's listing, through the real headers and back."""
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-        listing = os.path.join(root, "examples", "fireflies", "fireflies.svm")
-        if not os.path.exists(listing):
-            self.skipTest("no examples/ (a release archive)")
+        listing = os.path.join(root, "tests", "svm", "fireflies.svm")
         headers = svm.HeaderNames(VM.names)
         headers.load(os.path.join(root, "examples", "fireflies", "game.h"))
         for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h"):

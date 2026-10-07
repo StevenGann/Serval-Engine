@@ -46,7 +46,7 @@ from mdit_py_plugins.gfm import gfm_plugin
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexer import RegexLexer, bygroups
-from pygments.lexers import BashLexer, CLexer, CMakeLexer, JsonLexer
+from pygments.lexers import BashLexer, CLexer, CMakeLexer, JsonLexer, LuaLexer
 from pygments.token import Comment, Keyword, Name, Number, Operator, Punctuation, String, Text, Whitespace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -155,7 +155,8 @@ class SvmLexer(RegexLexer):
     }
 
 
-LEXERS = {"c": CLexer, "h": CLexer, "sh": BashLexer, "cmake": CMakeLexer, "json": JsonLexer, "svm": SvmLexer}
+LEXERS = {"c": CLexer, "h": CLexer, "sh": BashLexer, "cmake": CMakeLexer, "json": JsonLexer, "lua": LuaLexer,
+          "svm": SvmLexer}
 FORMATTER = HtmlFormatter(nowrap=True)
 
 
@@ -584,7 +585,7 @@ def take_thumbnails(manifest, web_build, out):
 
 def source_files(name):
     directory = ROOT / "examples" / name
-    files = [p for p in directory.iterdir() if p.suffix in (".c", ".h", ".svm")]
+    files = [p for p in directory.iterdir() if p.suffix in (".c", ".h", ".lua", ".svm")]
     return sorted(files, key=lambda p: (p.name != "main.c", p.name))
 
 
@@ -602,7 +603,7 @@ def example_article(name, entry, tags, controls, page):
         selected = "true" if i == 0 else "false"
         tabs.append(f'<button type="button" role="tab" id="{ident}-tab" aria-controls="{ident}" '
                     f'aria-selected="{selected}" tabindex="{0 if i == 0 else -1}">{esc(path.name)}</button>')
-        lang = "svm" if path.suffix == ".svm" else "c"
+        lang = {".svm": "svm", ".lua": "lua"}.get(path.suffix, "c")
         code = path.read_text(encoding="utf-8")
         panels.append(f'<div role="tabpanel" id="{ident}" aria-labelledby="{ident}-tab" tabindex="0"'
                       f'{"" if i == 0 else " hidden"}>{code_block(code, lang)}</div>')

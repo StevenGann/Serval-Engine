@@ -1,17 +1,19 @@
--- fireflies.lua: the fireflies example's game logic in the Lua subset
--- (docs/lua.md), translated from the hand-written listing
--- examples/fireflies/fireflies.svm. tools/svlua.py compiles it to a listing
--- that examples/fireflies/main.c runs unchanged: the same objects in the same
--- order (main.c starts OBJ_ROOM and OBJ_SPAWNER as threads), the same
--- globals in the same order (main.c reads G_RESTART), the same component
--- tags (C_PLAYER and C_FIREFLY from game.h, which main.c's collision pairs
--- look for), and the random numbers drawn in the same order, so a round
--- plays out frame for frame as the listing's does.
+-- fireflies.lua: every rule of the fireflies game, in the Lua subset
+-- (docs/lua.md). serval_add_script (examples/CMakeLists.txt) compiles it with
+-- tools/svlua.py and assembles the result with tools/svm.py into
+-- fireflies_script, the blob main.c loads; the generated fireflies_script.h
+-- gives C the objects and globals by name (main.c starts OBJ_ROOM and
+-- OBJ_SPAWNER as threads and reads G_RESTART). C_PLAYER and C_FIREFLY, the
+-- component tags main.c's collision pairs look for, come from game.h.
+--
+-- The game was first written by hand as a listing (tests/svm/fireflies.svm,
+-- now a test of the assembler). This port keeps its objects, globals and
+-- components in the same order and draws the random numbers in the same
+-- order, so a round plays out frame for frame as the listing's did.
 --
 -- Names in ALL_CAPS that this file doesn't define come from the game's C
 -- headers: game.h and the engine's ecs.h, core.h, sprites.h, path.h and
--- screen.h (svm.py asm --header, as serval_add_script's HEADERS for the
--- listing).
+-- screen.h (serval_add_script's HEADERS).
 
 -- Objects -------------------------------------------------------------------
 
