@@ -5,14 +5,15 @@
 // every engine module.
 //
 // SERVAL_GBA is defined when building for the Game Boy Advance. Without it
-// (host builds for unit tests), the placement macros expand to nothing, so
-// platform-neutral modules compile natively.
+// (host builds for unit tests, and web builds, which define SERVAL_WEB
+// instead), the placement macros expand to nothing, so platform-neutral
+// modules compile natively.
 //
 // Public engine headers never include third-party headers. The typedefs below
 // are identical to libtonc's, so games may still include <tonc.h> alongside
-// (tests/rom/compat_*.c check this). The C headers here are the compiler's
-// own freestanding ones (no C library): bool, the fixed-width integers, and
-// NULL, size_t and offsetof.
+// (tests/rom/compat_*.c check this). The C headers here are freestanding
+// ones, types and macros only (nothing from a C library is linked): bool, the
+// fixed-width integers, and NULL, size_t and offsetof.
 
 #include <stdbool.h>
 #include <stddef.h>
