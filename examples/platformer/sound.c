@@ -162,6 +162,7 @@ const PsgSound* const sound_table[SOUND_COUNT] = {
     [SND_START] = &sounds[SND_START],
     [SND_GAME_OVER] = &sounds[SND_GAME_OVER],
     STAGE_SOUND_IDS(STAGE_OVERWORLD, overworld_sounds),
+    STAGE_SOUND_IDS(STAGE_UNDERGROUND, underground_sounds),
 };
 
 // The fanfare as the serval hops off the goal pole, or walks into a stage's

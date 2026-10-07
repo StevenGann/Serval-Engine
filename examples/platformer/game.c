@@ -6,6 +6,7 @@
 // The stages, played in this order.
 static const StageDef* const stages[] = {
     &stage_overworld,
+    &stage_underground,
 };
 #define STAGES ((int)(sizeof stages / sizeof stages[0]))
 
@@ -208,6 +209,8 @@ static void update_camera(void) {
 static void load_stage(int index) {
     stage_index = index;
     stage = stages[index];
+    if (stage->load)
+        stage->load();
     sprite_groups_release(stage_group_mark);
     sprite_group_load(stage->sprites);
     tileset_load(stage->tileset);
@@ -389,11 +392,16 @@ static void update_playing(void) {
         player_control();
         objects_spawn_ahead();
         objects_update();
+        if (stage->update)
+            stage->update();
+        sys_path();         // velocities of the stage's objects on paths
         sys_map_movement(); // the serval, enemies, the fish, gems
         sys_movement();     // everything else...
         sys_physics();      // ...and gravity for the debris
         player_after_move();
         objects_after_move();
+        if (stage->after_move)
+            stage->after_move();
         sys_animate();
         update_time();
     } else {
@@ -444,6 +452,7 @@ void goal_start_exit(void) {
 
 static void update_goal_walk(void) {
     player_auto_walk();
+    sys_path();
     sys_map_movement();
     sys_movement();
     sys_physics();

@@ -412,6 +412,7 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_BLOCK] = &sprites[SPR_BLOCK],
     [SPR_DEBRIS] = &sprites[SPR_DEBRIS],
     STAGE_SPRITE_IDS(STAGE_OVERWORLD, overworld_sprites),
+    STAGE_SPRITE_IDS(STAGE_UNDERGROUND, underground_sprites),
 };
 
 // The sprites every stage uses, loaded once: IDs 0 to SPR_GLOBAL_COUNT - 1.

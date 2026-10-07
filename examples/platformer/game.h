@@ -56,6 +56,11 @@ typedef struct {
     const PsgSong* song;
     u16 hurry_tempo;
 
+    // The stage is about to load (on the black stage card, or behind the
+    // title), before its tileset and sprite group: builds data its art
+    // needs at run time, e.g. palettes mixed with color_mix() into RAM that
+    // its tileset points at.
+    void (*load)(void);
     // Turns a character of the level text that level.c's legend doesn't
     // know into a metatile of the playfield (returned) and of the foreground
     // (*front, MT_EMPTY unless set). It may also add spawns of the stage's
