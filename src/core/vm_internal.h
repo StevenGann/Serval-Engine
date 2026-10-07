@@ -20,6 +20,15 @@
 // calls without one.
 s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr);
 
+// For tools that inspect a running VM from C (the host's script runner,
+// tests/svlua/runner.c; the engine never calls them): the object entity e is
+// attached to, or -1 if it is not attached; its instance field n (0 if it is
+// not attached or n >= VM_FIELDS); cell n of the RAM arrays' pool (0 if n >=
+// VM_ARRAY_CELLS). Read only: no warnings, no stale-binding cleanup.
+int serval_vm_attached_object(Entity e);
+s32 serval_vm_field(Entity e, u32 n);
+s32 serval_vm_array_cell(u32 n);
+
 // Host build only (src/host/platform.c): what serval_vm_platform_call saw,
 // for the tests. Not defined in GBA or web builds.
 typedef struct {

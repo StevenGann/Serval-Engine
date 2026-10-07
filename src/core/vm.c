@@ -1761,6 +1761,23 @@ void vm_set_global(u16 index, s32 value) {
     globals[index] = value;
 }
 
+int serval_vm_attached_object(Entity e) {
+    u32 slot = entity_index(e);
+    if (e == ENTITY_NONE || slot >= MAX_ENT || bound[slot] != e || !entity_alive(e))
+        return -1;
+    return bound_object[slot];
+}
+
+s32 serval_vm_field(Entity e, u32 n) {
+    if (n >= VM_FIELDS || serval_vm_attached_object(e) < 0)
+        return 0;
+    return fields[entity_index(e)][n];
+}
+
+s32 serval_vm_array_cell(u32 n) {
+    return n < VM_ARRAY_CELLS ? array_cells[n] : 0;
+}
+
 u32 vm_ops_this_frame(void) {
     return ops_frame;
 }

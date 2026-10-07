@@ -115,10 +115,16 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # Runs a script blob on the VM and prints what it did (tests/svlua/runner.c),
+    # for the compiler's tests: compiled Lua run on the real VM.
+    add_executable(svlua_runner svlua/runner.c)
+    target_link_libraries(svlua_runner PRIVATE serval_portable serval_warnings)
     # The Lua-subset compiler (tools/svlua.py, docs/lua.md): the lexer and
-    # parser, every rejected construct, types, golden listings, fireflies.lua.
+    # parser, every rejected construct, types, golden listings, compiled
+    # programs run on the VM by svlua_runner, fireflies.lua.
     add_test(NAME svlua_tool
-        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_test.py")
+        COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
+                "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_test.py")
     # The logo PNGs in docs/images are the splash's own drawing, made by
     # tools/logo-png.py; this fails when splash_art.c changes until they are
     # regenerated.
