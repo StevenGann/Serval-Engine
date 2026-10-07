@@ -57,7 +57,9 @@
 //     generators, paused with the game (psg_music_pause), the boss tune sped
 //     up in its last phase (psg_music_set_tempo), a fanfare played once; sound
 //     effects over it with priorities (sound.c)
-//   - Save data (save.h): a top-5 high-score table with initials (scores.c)
+//   - Save data (save.h): a top-5 high-score table with initials (scores.c),
+//     entered with held-button repeat (button_repeat), and button_repeat_reset
+//     so a direction held from the game doesn't run through the letters
 //   - random_entropy(): the same input plays the same game on the GBA and
 //     the web
 //   - In debug builds, SELECT shows the CPU load (frame_cpu_permille: this
@@ -126,9 +128,10 @@
 //   - With no ships left: "GAME OVER" with a falling tune.
 //   - After either, the screen fades; a score that makes the table brings
 //     "NEW HIGH SCORE" and three letters: UP and DOWN change the letter
-//     (a blip; held, they run through the letters), A moves on, B back, START
-//     (or A on the last) saves it with a chime and shows the table with the
-//     new entry in yellow.
+//     (a blip; held, they run through the letters; one still held from the
+//     game does nothing until pressed again), A moves on, B back, START (or
+//     A on the last) saves it with a chime and shows the table with the new
+//     entry in yellow.
 //   - START pauses ("PAUSED", a tick; the music stops) and resumes (it
 //     carries on where it stopped).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,

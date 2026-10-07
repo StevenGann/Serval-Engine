@@ -93,6 +93,9 @@ void entry_begin(int score, bool cleared) {
     entry_rank = scores_rank(score);
     cursor = 0;
     choice[0] = choice[1] = choice[2] = 0;
+    // UP or DOWN may still be held from the game: it changes no letter until
+    // it is released and pressed again.
+    button_repeat_reset();
     text_clear();
     text_print_centered(3, "NEW HIGH SCORE");
     text_print_centered(5, text_format("%d   PLACE %d", score, entry_rank + 1));
