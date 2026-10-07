@@ -3,10 +3,10 @@ description: Installs CMake, Ninja, the ARM GNU toolchain and mgba-rom-test.
 
 inputs:
   gcc-release:
-    description: ARM GNU Toolchain release. Keep serval.json's toolchain.gcc in sync.
+    description: ARM GNU Toolchain release. Keep serval.json's toolchain.gcc and tools/setup-dev.sh in sync.
     default: "15.3.Rel1"
   mgba-version:
-    description: mGBA version to build mgba-rom-test from.
+    description: mGBA version to build mgba-rom-test from. Keep tools/setup-dev.sh in sync.
     default: "0.10.5"
 
 runs:

@@ -4,6 +4,8 @@
 
 ## Requirements
 
+**On Linux, `tools/setup-dev.sh` sets all of this up** (x86_64 or aarch64): the system packages it needs through `apt` (with `sudo`, only those missing), the ARM GNU Toolchain (checksum-verified), `mgba-rom-test` built from source, and Emscripten through emsdk, at the versions CI uses, into `~/opt` (`--prefix` to change). It writes `~/opt/serval-env.sh`, which sets `ARM_GNU_TOOLCHAIN`, `MGBA_ROM_TEST_DIR` and `EMSDK`; `--add-to-shell` sources that from `~/.profile` and the top of `~/.bashrc` (before its "not interactive" return, so scripts and tools see it too). Running it again only checks what is there. `--no-web`, `--no-rom-tests` and `--no-system` skip parts; `--help` lists them. Its version pins must match CI's (`.github/actions/setup-gba/action.yml`, `.github/workflows/ci.yml`). On other systems, install the tools below by hand.
+
 | Tool | Version | Notes |
 | --- | --- | --- |
 | CMake | ≥ 3.25 | Uses presets (`CMakePresets.json`) |
@@ -11,7 +13,7 @@
 | ARM GNU Toolchain | 15.3.Rel1 (what CI uses) | Any `arm-none-eabi-gcc` should work, including devkitARM; CMake warns if it is older than `toolchain.gcc` in `serval.json`. Found on `PATH` or via `ARM_GNU_TOOLCHAIN=<toolchain root>` |
 | Python 3 | any recent | Runs `tools/gbafix.py` after each ROM link, and `tools/check-rom.py` in the tests |
 | Host C compiler | GCC or Clang | Only for host unit tests |
-| Emscripten | 6.0.11 (what CI uses) | Only for [web builds](#web-builds). Install with [emsdk](https://emscripten.org/docs/getting_started/downloads.html) and `source emsdk_env.sh` (the toolchain file finds it through `EMSDK`, or `emcc` on `PATH`) |
+| Emscripten | 6.0.11 (what CI uses) | Only for [web builds](#web-builds). Install with [emsdk](https://emscripten.org/docs/getting_started/downloads.html); the toolchain file finds it through `EMSDK` alone (set it, or `source emsdk_env.sh`, which also puts emsdk's own tools on `PATH`), or `emcc` on `PATH` |
 | Chrome or Chromium | any recent | Only for `tools/web-shots.py` (found on `PATH`, or set `SERVAL_CHROME`) |
 | `mgba-rom-test` | mGBA 0.10.5 | Runs the test ROM. Optional locally (without it the ROM tests are built but not run), unless `SERVAL_REQUIRE_ROM_TESTS` is ON (as in `gba-ci`), which makes configuration fail without it. Build it with `tools/build-mgba-rom-test.sh <dir>` and set `MGBA_ROM_TEST_DIR=<dir>` |
 
@@ -21,8 +23,7 @@ Download the ARM GNU Toolchain from <https://developer.arm.com/downloads/-/arm-g
 
 ```sh
 # GBA: engine library, example ROMs and the test ROM
-export ARM_GNU_TOOLCHAIN=~/opt/arm-gnu-toolchain-15.3.rel1-x86_64-arm-none-eabi
-export MGBA_ROM_TEST_DIR=~/opt/mgba-rom-test
+. ~/opt/serval-env.sh             # from tools/setup-dev.sh; or export ARM_GNU_TOOLCHAIN and MGBA_ROM_TEST_DIR
 cmake --preset gba-debug
 cmake --build --preset gba-debug
 ctest --preset gba-debug          # runs the test ROM in mGBA, and checks every ROM (check-rom.py)
@@ -59,7 +60,7 @@ It builds for the GBA and, with Emscripten set up ([Web builds](#web-builds)), f
 The `web` and `web-release` presets build every example as one self-contained HTML page ([platforms.md](platforms.md#web) explains how it works):
 
 ```sh
-source ~/opt/emsdk/emsdk_env.sh
+. ~/opt/serval-env.sh             # sets EMSDK; or source ~/opt/emsdk/emsdk_env.sh
 cmake --preset web-release
 cmake --build --preset web-release
 # -> build/web-release/examples/hello.html, bunnymark.html, pong.html, asteroids.html,

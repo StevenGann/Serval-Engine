@@ -6,10 +6,11 @@ Write a GBA game in C with Serval Engine. This covers building the examples, the
 
 ## 1. Build the examples
 
-Install CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). Details: [development.md](development.md#requirements).
+Install CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). On Linux, `tools/setup-dev.sh` installs everything at the versions CI uses. Details: [development.md](development.md#requirements).
 
 ```sh
-export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain   # or put arm-none-eabi-gcc on PATH
+tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
+                                                             # export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain
 cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
@@ -69,7 +70,7 @@ To experiment inside the engine's own tree instead, add the same `serval_add_rom
 The same project builds into one self-contained web page with Emscripten ([development.md](development.md#web-builds)). Use the web toolchain file in a separate build directory:
 
 ```sh
-source /path/to/emsdk/emsdk_env.sh
+export EMSDK=/path/to/emsdk   # set by setup-dev.sh's serval-env.sh; or source emsdk_env.sh
 cmake -S . -B build-web -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE="$PWD/serval-engine/cmake/web-toolchain.cmake"
 cmake --build build-web

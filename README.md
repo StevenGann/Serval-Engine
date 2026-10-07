@@ -57,10 +57,11 @@ Each example's `main.c` starts by describing what it demonstrates and what you s
 
 ## Building
 
-Requires CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC ([ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses).
+Requires CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC ([ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses). On Linux, `tools/setup-dev.sh` installs all of it, plus mGBA's test runner and Emscripten, at the versions CI uses ([details](docs/development.md#requirements)).
 
 ```sh
-export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain   # or put arm-none-eabi-gcc on PATH
+tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
+                                                             # export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain
 cmake --preset gba-release
 cmake --build --preset gba-release
 # -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,

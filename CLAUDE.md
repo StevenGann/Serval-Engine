@@ -9,10 +9,11 @@ Pre-alpha, no release yet: build system, startup code, frame loop, input, sprite
 ## Commands
 
 ```sh
-export ARM_GNU_TOOLCHAIN=~/opt/arm-gnu-toolchain-15.3.rel1-x86_64-arm-none-eabi MGBA_ROM_TEST_DIR=~/opt/mgba-rom-test
+tools/setup-dev.sh                # Linux: installs every tool below at CI's versions; writes ~/opt/serval-env.sh
+. ~/opt/serval-env.sh             # ARM_GNU_TOOLCHAIN, MGBA_ROM_TEST_DIR, EMSDK
 cmake --preset gba-ci && cmake --build --preset gba-ci && ctest --preset gba-ci   # GBA build + test ROM in mGBA
 cmake --preset host && cmake --build --preset host && ctest --preset host         # host tests, ASan/UBSan
-source ~/opt/emsdk/emsdk_env.sh && cmake --preset web && cmake --build --preset web   # web pages (Emscripten 6.0.11)
+cmake --preset web && cmake --build --preset web                                  # web pages (Emscripten 6.0.11, via EMSDK)
 tools/web-shots.py build/web/examples/pong.html 400 /tmp/pong shot=400                 # run a page headless, save frames
 git ls-files '*.c' '*.h' ':!:third_party/**' | xargs clang-format -i              # clang-format 18
 ```
