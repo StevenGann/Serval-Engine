@@ -1061,7 +1061,7 @@ class Listing(unittest.TestCase):
                 "PUSH (A_BIT | B_BIT) & ~C_BIT", "f = MAX": "PUSH FX(MAX)",
             "f = MAX + 0.5": "PUSH FX(MAX) + 128", "n = MAX // 4": "PUSH MAX >> 2",
             "n = MAX % 8": "PUSH MAX & 7", "n = MAX << 2": "PUSH MAX << 2",
-            "n = C_GAME(3)": "PUSH C_GAME(3)",
+            "n = C_GAME(3)": "PUSH C_GAME(3)", "n = 5 * (3 ~ 3)": "PUSH 0",
         }
         for stat, op in cases.items():
             with self.subTest(stat=stat):
@@ -1078,7 +1078,12 @@ class Listing(unittest.TestCase):
                           "n = MAX // 3": ["PUSH MAX", "PUSH 3", "IDIV"],
                           "n = MAX % 3": ["PUSH MAX", "PUSH 3", "IMOD"],
                           "b = MAX > 3": ["PUSH MAX", "PUSH 3", "GT"],
-                          "n = MAX ~ 3": ["PUSH (MAX | 3) - (MAX & 3)"]}.items():
+                          "n = MAX ~ 3": ["PUSH (MAX | 3) - (MAX & 3)"],
+                          # a product of header constants may pass 32 bits, which the
+                          # assembler wouldn't wrap: shifts and divisions of it run in code
+                          "n = (MAX * MAX) // 2": ["PUSH MAX * MAX", "PUSH 2", "IDIV"],
+                          "n = math.floor(MAX * 1.5)": ["PUSH MAX * 384", "PUSH 8", "SHR"],
+                          "n = (MAX + 1) // 2": ["PUSH (MAX + 1) >> 1"]}.items():
             with self.subTest(stat=stat):
                 code = self.code(OBJ + f"n = 0\nb = false\nfunction A:step() {stat} end")
                 start = code.index(".handler A STEP")

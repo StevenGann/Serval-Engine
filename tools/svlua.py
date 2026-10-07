@@ -1979,6 +1979,15 @@ def _promote(c, node, file):
     return Const(FIXED, None, f"FX({c.text})")
 
 
+def _may_wrap(c):
+    """Whether only the assembler knows c and its text could have grown
+    past 32 bits (a product or a left shift of header constants). The
+    assembler's integers don't wrap, so + - * << & | ~ on such a value
+    still give Lua's result modulo 2^32 (or an assembler error), but a
+    shift right or a division would not: those run in code instead."""
+    return c.value is None and c.text is not None and ("*" in c.text or "<<" in c.text)
+
+
 def _log2(value):
     """k if value is 2**k (k >= 0), else None."""
     if value is not None and value > 0 and value & (value - 1) == 0:
@@ -2779,7 +2788,14 @@ class Checker:
                 self.fail(e.right, "division by zero (Lua's result, inf or nan, doesn't fit "
                           "fixed point)")
             if ty == INT:
-                exact = {"+": x + y, "-": x - y, "*": x * y, "//": x // y, "%": x % y}[op]
+                if op == "+":
+                    exact = x + y
+                elif op == "-":
+                    exact = x - y
+                elif op == "*":
+                    exact = x * y
+                else:
+                    exact = x // y if op == "//" else x % y
                 value = wrap32(exact)
             else:
                 if op in ("+", "-"):
@@ -2818,6 +2834,9 @@ class Checker:
             if ty == FIXED and a.ty == FIXED and b.ty == FIXED:
                 return f"({a.group(P_MUL)} * {b.group(P_MUL + 1)}) >> 8", P_SHIFT
             return f"{a.group(P_MUL)} * {b.group(P_MUL + 1)}", P_MUL
+        if op in ("*", "/", "//", "%") and (_may_wrap(a) or _may_wrap(b)) and not (
+                op == "*" and INT in (a.ty, b.ty)):
+            return None
         if op == "/":  # FXDIV: (a * 256) / b, rounding toward zero like C's /
             return f"{a.group(P_MUL)} * {FX_ONE} / {b.group(P_MUL + 1)}", P_MUL
         if op in ("//", "%") and ty == INT:
@@ -3035,7 +3054,7 @@ class Checker:
                     elif c.value is not None:
                         text = f"{c.clear(P_SHIFT)} >> 8" if c.text is not None else None
                         e.const = Const(INT, c.value >> 8, text, P_SHIFT)
-                    else:
+                    elif not _may_wrap(c):
                         e.const = Const(INT, None, f"{c.clear(P_SHIFT)} >> 8", P_SHIFT)
                 return INT
             if c is not None and c.value is not None:
