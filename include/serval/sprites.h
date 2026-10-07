@@ -101,6 +101,7 @@ typedef struct {
     };
     u8 frame_count;        // animation frames; 0 means 1
     u8 order_length;       // frame_order entries (steps); at least 1 if frame_order is set
+                           // (0 ignores it); nonzero without a frame_order: nothing plays
     u8 palette_slot;       // which of its group's palettes it uses
     s8 origin_x, origin_y; // drawn position = (x, y) - origin (metasprites: where the
                            // pivot is drawn; negative puts it right of / below (x, y))
@@ -199,7 +200,7 @@ typedef struct {
 // Draws the sprite with palette n (0-14) of its sprite group instead of its
 // own (SpriteAsset.palette_slot), e.g. a white hit flash or another color of
 // the same art: SPRITE_PALETTE(2). No SPRITE_PALETTE: the sprite's own
-// palette. In spr_flags and sprite_draw()/sprite_draw_rotated() flags. A
+// palette. In spr_flags and sprite_draw*() flags. A
 // palette the group doesn't have draws with the sprite's own (warning in
 // debug builds). To change it on an entity:
 // spr_flags[i] = (spr_flags[i] & ~SPRITE_PALETTE_MASK) | SPRITE_PALETTE(n).
@@ -245,12 +246,13 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count);
 //
 // Returns false, leaving nothing loaded from this group (warning in debug
 // builds), if sprite VRAM or palette banks would run out, its data is
-// incomplete (a NULL or invalid .tiles, .pieces or .palettes, no .size, a
-// palette_slot past palette_count, a metasprite piece naming a missing
-// sprite or frame), it has a value this version doesn't know (a reserved bit
-// in SpriteGroup.flags, SpriteAsset.flags or a piece's flags; nonzero .slots
-// in a resident group), or it needs a planned feature
-// (SPRITE_GROUP_STREAMED, SPRITE_ASSET_LZ77).
+// incomplete (a sprite ID not in the sprite table, a NULL or invalid .tiles,
+// .pieces or .palettes, no .size, a tiles_per_frame smaller than the size
+// needs, a palette_slot past palette_count, a metasprite piece naming a
+// missing sprite or frame), it has a value this version doesn't know (a
+// .size past 12, a reserved bit in SpriteGroup.flags, SpriteAsset.flags or a
+// piece's flags; nonzero .slots in a resident group), or it needs a planned
+// feature (SPRITE_GROUP_STREAMED, SPRITE_ASSET_LZ77).
 bool sprite_group_load(const SpriteGroup* group);
 
 // Unloads every sprite group, freeing all sprite VRAM and palette banks, and
