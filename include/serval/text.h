@@ -30,14 +30,16 @@ void text_print_centered(int row, const char* s);
 // Like text_print_centered within `width` columns starting at `col` (say a
 // field beside a HUD panel): blanks those cells of the row and writes the
 // string in their middle. Nothing outside the columns changes; a string wider
-// than `width` loses characters at both ends.
+// than `width` loses characters at both ends. A negative width is ignored
+// (warning in debug builds).
 void text_print_centered_in(int col, int width, int row, const char* s);
 
 // Clears every character cell.
 void text_clear(void);
 
 // Clears a rectangle of `width` x `height` character cells from (col, row).
-// Cells off the screen are skipped.
+// Cells off the screen are skipped. A negative width or height is ignored
+// (warning in debug builds).
 void text_clear_area(int col, int row, int width, int height);
 
 // Text styles: TEXT_STYLES pairs of text and shadow colors, so a few lines can
@@ -50,10 +52,12 @@ void text_clear_area(int col, int row, int width, int height);
 #define TEXT_HIGHLIGHT 1 // yellow text, black shadow by default
 
 // The style of text printed from now on (0 to TEXT_STYLES - 1). Default:
-// TEXT_NORMAL. Styles 2 and 3 default to light red and grey text.
+// TEXT_NORMAL. Styles 2 and 3 default to light red and grey text. Another
+// value is ignored (warning in debug builds).
 void text_set_style(int style);
 
-// The text and shadow colors of a style, for all text shown in it.
+// The text and shadow colors of a style, for all text shown in it. A style
+// outside 0 to TEXT_STYLES - 1 is ignored (warning in debug builds).
 void text_set_style_color(int style, Color text, Color shadow);
 
 // The text color and the shadow color of TEXT_NORMAL, the style all text has
@@ -69,17 +73,18 @@ void text_set_shadow(bool on);
 
 // printf-style formatting without a C library. Supports %d %i %u %x %s %c %%,
 // the '-' (left-align) and '0' (zero-pad, numbers only) flags, a field width
-// (e.g. "%5d", "%03u", "%-10s"; capped at TEXT_FORMAT_MAX) and, for %s only, a
-// precision: "%.3s" prints at most 3 characters and reads no further, so a
-// char[3] without a terminating zero prints as is ("%.*s" takes the count as
-// an int argument before the string). %d, %i, %u and %x take any 32-bit
-// integer: int, unsigned, s32 or u32 (on the GBA, u32 is an unsigned long,
-// which printf's %u would reject). The h and l length modifiers are accepted
-// (%ld reads a long); %lld prints only the low 32 bits. Other conversions
-// (such as %f) are printed as written, and a precision on anything but %s is
-// ignored, with a warning in debug builds. Returns one of four rotating
-// static buffers of TEXT_FORMAT_MAX characters (the terminating zero
-// included), so a few results can be used together; longer output is
+// (e.g. "%5d", "%03u", "%-10s"; the output stops at TEXT_FORMAT_MAX - 1
+// characters, padding included, so a right-aligned field that wide shows only
+// its padding) and, for %s only, a precision: "%.3s" prints at most 3
+// characters and reads no further, so a char[3] without a terminating zero
+// prints as is ("%.*s" takes the count as an int argument before the string).
+// %d, %i, %u and %x take any 32-bit integer: int, unsigned, s32 or u32 (on the
+// GBA, u32 is an unsigned long, which printf's %u would reject). The h and l
+// length modifiers are accepted (%ld reads a long); %lld prints only the low 32
+// bits. Other conversions (such as %f) are printed as written, and a precision
+// on anything but %s is ignored, with a warning in debug builds. Returns one of
+// four rotating static buffers of TEXT_FORMAT_MAX characters (the terminating
+// zero included), so a few results can be used together; longer output is
 // truncated.
 //
 // Not checked by the compiler like printf, since its integer rules differ. A

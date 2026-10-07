@@ -22,9 +22,10 @@ void random_seed(u32 seed);
 //
 //     random_seed(random_entropy());
 //
-// Called before any input (such as right at boot), it returns the same value
-// every time. It changes only from frame to frame (frame_begin() records the
-// input), not between calls within a frame.
+// Called before any input (such as right at boot), it depends on the frame
+// count alone: it differs from frame to frame but is the same on every boot,
+// so it seeds the same game every time. It changes only from frame to frame
+// (frame_begin() records the input), not between calls within a frame.
 u32 random_entropy(void);
 
 // Next 32 random bits.

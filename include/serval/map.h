@@ -155,9 +155,9 @@ bool tileset_load(const Tileset* tileset);
 // must stay valid until then (normally it is const data in ROM). Up to
 // MAP_MAX_TILE_UPDATES calls per frame; a later call for the same `first`
 // replaces the earlier one. Ignored (warning in debug builds) without a
-// tileset, for tiles past the tileset's tile_count, or when the frame's
-// queue is full. Keep it to a few dozen tiles per frame: VBlank is short.
-// tileset_load() drops updates still queued.
+// tileset, for tiles past the tileset's tile_count, for a NULL or invalid
+// `tiles`, or when the frame's queue is full. Keep it to a few dozen tiles
+// per frame: VBlank is short. tileset_load() drops updates still queued.
 void tileset_set_tiles(u16 first, const u32* tiles, u16 count);
 #define MAP_MAX_TILE_UPDATES 8
 
@@ -232,7 +232,8 @@ int camera_x(void);
 int camera_y(void);
 
 // The metatile index of the playfield (background 2) at metatile coordinates
-// (mx, my), including runtime changes (map_set_cell); 0 outside the map.
+// (mx, my), including runtime changes (map_set_cell); 0 outside the map, or
+// when no playfield is loaded.
 u16 map_cell(int mx, int my);
 
 // Changes a cell of the playfield at runtime: a broken block, a used bonus

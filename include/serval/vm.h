@@ -11,13 +11,19 @@
 // every other event is a reaction that runs to completion, on top of the
 // behaviour if it waits (docs/vm.md "Behaviours and reactions").
 //
-//     vm_load(game_scripts, sizeof game_scripts);
+//     #define C_PLAYER C_GAME(0) // the game's components
+//     #define C_COIN C_GAME(1)
+//
+//     vm_bind(&(VmBindings){.psg_songs = songs, .psg_song_count = SONG_COUNT,
+//                           .paths = paths, .path_count = PATH_COUNT});
 //     vm_collide(C_PLAYER, C_COIN); // vm_events() raises their Collision events
-//     Entity e = entity_create(C_POS | C_SPR);
+//     vm_load(game_scripts, sizeof game_scripts);
+//     Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BODY | C_PLAYER);
 //     vm_attach(e, OBJ_PLAYER); // its Create handler runs in the next phase
 //     for (;;) {
 //         frame_begin();
 //         vm_step();            // waits, queued events, Step reactions
+//         sys_path();           // paths the scripts started
 //         sys_movement();
 //         sys_physics();
 //         vm_events();          // queued events, then vm_collide's collisions
@@ -254,8 +260,8 @@ void vm_detach(Entity e);
 void vm_kill(Entity e);
 // Starts an object's handler as a thread with no entity (self is
 // ENTITY_NONE), a behaviour. It first runs in the next vm_step(). Returns the
-// context index, or -1 (and warns) if there is no such handler or no free
-// context.
+// context index, or -1 (and warns) if no blob is loaded, the blob has no such
+// object, the object has no handler for the event, or no context is free.
 int vm_start(u16 object, u8 event);
 // Queues an event for an entity, with `other` as the handler's OTHER; it runs
 // in the next drain (vm_step or vm_events). Game code can report collisions

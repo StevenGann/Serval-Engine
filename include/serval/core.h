@@ -33,8 +33,10 @@ void serval_init(void);
 // colors 1-15 of bank 13), whether the text layer was set up and the text
 // shadow setting; silences square channel 1. Not restored: the text layer's
 // map (text_print output is cleared), charblock 1 (the logo's tiles), and if
-// the text layer wasn't set up, charblock 0's first 96 tiles (overwritten by
-// the font) and background 0's scroll (reset to 0).
+// the text layer wasn't set up, what setting it up writes: charblock 0's
+// first 96 tiles (the font) and the 96 of a style chosen with
+// text_set_style() beforehand, the text colors (colors 1-8 of BG bank 15)
+// and background 0's scroll (reset to 0).
 void serval_splash(void);
 
 // Starts a frame: polls input and clears the sprite draw list.

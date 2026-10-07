@@ -464,7 +464,8 @@ static u32 matrix_scale[32];
 // scaled sprite.
 
 // 1 / scale in 8.8 fixed point, for a scale in 8.8 (not 0), limited to what
-// a matrix entry holds. One division per new matrix.
+// a matrix entry holds. One division per scaled axis of a new matrix (none,
+// one or two).
 static s32 inverse_scale(s32 scale) {
     s32 inv = (s32)(65536 / scale);
     return inv > 32767 ? 32767 : inv < -32767 ? -32767 : inv;
@@ -825,7 +826,8 @@ static __attribute__((noinline, cold)) void warn_scale(FIXED scale_x, FIXED scal
     if (warned_scale)
         return;
     warned_scale = true;
-    SERVAL_WARN("sprite_draw_ex: scale %d/256 x %d/256 is outside -128 to 128; limited to it",
+    SERVAL_WARN("sprite_draw_ex: scale %d/256 x %d/256 is not between -128 and 128 (exclusive); "
+                "limited to +-32767/256",
                 scale_x, scale_y);
 }
 #define BAD_SCALE(x, y) warn_scale(x, y)
@@ -927,8 +929,8 @@ SERVAL_IWRAM_CODE void sys_render(void) {
 // sys_render_by_depth's draw order, rebuilt every call with a stable
 // counting sort of the renderable entities by depth. What it costs depends on
 // the depths, not only on the number of sprites:
-//   - depths that never decrease from one slot to the next (all the same, or
-//     each kind of entity created in front of the ones before) are already in
+//   - depths that never increase from one slot to the next (all the same, or
+//     each kind of entity created behind the ones before) are already in
 //     order: no sort at all;
 //   - depths within 256 of each other (screen y coordinates, or a few depths
 //     for kinds of entities): one pass with one bucket per depth in that

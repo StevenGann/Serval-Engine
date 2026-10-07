@@ -18,7 +18,7 @@
 //   then need 0xF0 written to 0x5555 to end the command.
 // - "Reading anything (data or status) can be done only by opcodes executed
 //   in WRAM, not from opcodes in ROM": every routine that reads the chip runs
-//   from EWRAM (FLASH_RAM_CODE: about 300 bytes, copied there at startup by
+//   from EWRAM (FLASH_RAM_CODE: 384 bytes, copied there at startup by
 //   crt0.s, in ROMs that use Flash saves only). Writes may run from ROM.
 // - The chip's ID (manufacturer, device) picks the timeouts. Atmel chips
 //   (ID 0x3D1F) write 128-byte pages instead of bytes and are not supported:

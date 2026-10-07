@@ -133,11 +133,14 @@ void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight);
 // and raster_clear(), take effect at the next frame_end() too.
 //
 // GBA: DMA channel 0, started by each horizontal blank (HBlank DMA). DMA 0
-// and the HBlank interrupt are reserved for raster effects: games must not
-// use them, also before this is implemented (docs/core-api.md). The web
-// build will apply the table line by line as it draws (it draws each frame
-// at once, from the state at VBlank, so it needs the per-line values rather
-// than the hardware's mid-frame writes).
+// can read only internal memory, not ROM, so it never reads the game's table:
+// each frame_end() copies the table into a buffer in RAM, for both effects
+// (raster_scroll adds the layer's scroll as it copies), and a table in ROM
+// works like one in RAM. DMA 0 and the HBlank interrupt are reserved for
+// raster effects: games must not use them, also before this is implemented
+// (docs/core-api.md). The web build will apply the table line by line as it
+// draws (it draws each frame at once, from the state at VBlank, so it needs
+// the per-line values rather than the hardware's mid-frame writes).
 // Until implemented, these functions do nothing and warn once each in debug
 // builds: layers scroll as a whole and the backdrop is one color.
 
@@ -160,7 +163,7 @@ void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight);
 // furthest out (warning in debug builds). The effect belongs to the
 // background: it stays when the layer there is unloaded or replaced.
 // Ignored (warning in debug builds) for a background outside 1-3 or a NULL
-// table.
+// table. The table can be const data in ROM: frame_end() copies it to RAM.
 SERVAL_PLANNED("raster effects, docs/runtime-systems.md#raster-effects")
 void raster_scroll(u32 bg, bool vertical, const s16* offsets);
 
@@ -168,7 +171,8 @@ void raster_scroll(u32 bg, bool vertical, const s16* offsets);
 // instead of screen_set_backdrop()'s one color (e.g. a sky gradient behind
 // the layers). When the effect ends, the backdrop is screen_set_backdrop()'s
 // color again: the one last set, also if set while the effect was on.
-// Ignored (warning in debug builds) for a NULL table.
+// Ignored (warning in debug builds) for a NULL table. The table can be const
+// data in ROM: frame_end() copies it to RAM.
 SERVAL_PLANNED("raster effects, docs/runtime-systems.md#raster-effects")
 void raster_backdrop(const Color* colors);
 

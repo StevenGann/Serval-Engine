@@ -318,10 +318,11 @@ void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 f
 // and scale_y are FIXED factors along the art's own axes (FX_ONE is normal
 // size, FX(2) twice as big, FX_ONE / 2 half; negative mirrors along that
 // axis, so a card flip runs scale_x from FX_ONE through 0 to -FX_ONE). A
-// scale of 0 draws nothing. Scales beyond +-128 are limited to it (warning in
-// debug builds). Shares the 32 matrices with sprite_draw_rotated: draws with
-// the same angle, flips and scales share one, so animate a scale in a few
-// steps rather than giving every sprite its own.
+// scale of 0 draws nothing. Scales of +-128 (FX(128)) or beyond are limited
+// to just inside it, +-32767/256 (warning in debug builds). Shares the 32
+// matrices with sprite_draw_rotated: draws with the same angle, flips and
+// scales share one, so animate a scale in a few steps rather than giving
+// every sprite its own.
 //
 // The hardware draws a rotated or enlarged sprite inside a box twice its size
 // (double-size mode), centered on it: art that grows past that box is cut

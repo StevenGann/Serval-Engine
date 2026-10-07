@@ -114,7 +114,9 @@ void psg_table_set(const PsgSound* const* table, u16 count);
 // Plays a sound, replacing whatever its channel was playing, unless that is a
 // sound of higher priority still playing (then it does nothing). On a channel
 // the music uses, the sound plays if its priority is at least the song's, and
-// the music comes back on that channel when it ends.
+// the music comes back on that channel when it ends. An ID outside the table,
+// and a sound that can't play (a NULL entry, an invalid channel, a
+// .note_count without .notes, a melody with .frames 0), are ignored (warns).
 void psg_play(u16 sound_id);
 
 // Silences every PSG channel: sound effects and music. Tracker music and
@@ -156,9 +158,10 @@ void psg_waves_set(const u32* waves, u8 count);
 //     static const PsgSong tune = {.tempo = 140, .tracks = tracks, .track_count = 2};
 //     psg_music_play(&tune);
 
-// PsgNote.note: a rest, and the notes from C0 (16 Hz) to B10 (31.6 kHz).
-// Square channels play C2 (65 Hz) and up; the wave channel (planned) will play
-// C1 (33 Hz) and up.
+// PsgNote.note: a rest, and the notes from C0 (16 Hz) to B10 (31.6 kHz);
+// higher numbers play as PSG_B10 (warns). Square channels play C2 (65 Hz) and
+// up, lower notes as 64 Hz (warns); the wave channel (planned) will play C1
+// (33 Hz) and up.
 #define PSG_REST 0
 #define SERVAL_PSG_OCTAVE_(o)                                                                      \
     PSG_C##o = 12 * ((o) + 1), PSG_CS##o, PSG_D##o, PSG_DS##o, PSG_E##o, PSG_F##o, PSG_FS##o,      \
@@ -200,7 +203,8 @@ typedef struct {
     const PsgNote* notes; // played in turn, then from notes[loop] again
     u16 note_count;
     u16 loop; // index of the note the track loops back to (0, the default: the
-              // start); PSG_NO_LOOP plays it once
+              // start); PSG_NO_LOOP plays it once. Past the last note: loops
+              // from the start (warns)
 } PsgTrack;
 
 // A song: up to one track per channel, played together. Each track loops on

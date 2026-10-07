@@ -20,7 +20,8 @@
 // Byte i of a block is bits 8i to 8i + 7 of the stream, most significant
 // first: the order mGBA keeps in its .sav files, so they hold the slots byte
 // for byte as on SRAM. Blocks that already hold what save.c writes are
-// skipped (a read costs about 0.1 ms, a write 6.5 ms and wear).
+// skipped (a block read costs 0.12-0.19 ms by build, a write 6.5 ms and
+// wear).
 //
 // Timeouts count scanlines (VCOUNT), so no timer is taken from the game.
 
