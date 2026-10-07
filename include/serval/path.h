@@ -36,10 +36,10 @@
 // added by hand); sys_path() removes it when a path ends.
 #define C_PATH (1u << 6)
 
-// Caveat: write steps with designated initializers, as above. A positional
-// initializer that leaves fields out, such as {40, 0, FX(2)}, triggers
-// -Wmissing-field-initializers under -Wextra (an error with warnings as
-// errors); positional ones must give all four fields.
+// Caveat: write steps with designated initializers, as above, because a
+// positional initializer that leaves fields out, such as {40, 0, FX(2)},
+// trips the compiler's -Wmissing-field-initializers (part of -Wextra; an
+// error with warnings as errors), as it would for any C struct.
 typedef struct {
     u16 frames;  // how long the step lasts, in frames; 0: forever (the path never ends)
     s32 turn;    // heading change per frame, in u16 angle units, clockwise on screen

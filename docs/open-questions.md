@@ -47,7 +47,7 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 
 Not bugs, but surprises a game developer hit while writing the examples (details in [api-reference.md](api-reference.md)); each could be smoothed by an API change. Decide for each whether to change the API or keep the caveat.
 
-- [ ] `PathStep` needs designated initializers: a positional initializer that leaves fields out trips `-Wmissing-field-initializers` ([runtime-systems.md](runtime-systems.md#paths)).
+- [x] `PathStep` needs designated initializers: a positional initializer that leaves fields out trips `-Wmissing-field-initializers` ([runtime-systems.md](runtime-systems.md#paths)). Kept: a C rule; the docs use designated initializers everywhere.
 - [ ] `camera_set()` clamps silently: with a playfield smaller than the screen it stays at 0, so moving a small layer with the camera does nothing (Blackjack's swirl; use `map_set_scroll()`) ([runtime-systems.md](runtime-systems.md#camera)).
 - [x] `body_max_fall` was whole pixels per frame (`u8`), so a top speed of 1.5 was not possible (Breakout's capsules went from 1.5 to 2). Changed: a `u16` in fixed point (`FX(3) / 2`); the capsules fall at 1.5 again.
 - [x] `SPRITE_SCREEN` bodies and world bodies: `body_overlap()` compared positions as they are, so testing a screen-space entity against a world-space one needed the camera added by hand. Changed: `body_overlap()` and `body_hit_side()` add the camera for such pairs (Shmup's shots against turrets).

@@ -355,7 +355,7 @@ Per-entity state, indexed by slot and set by `path_start()`: `u16 path_heading[]
 
 **Caveats**
 
-- Write `PathStep` tables with designated initializers, as in the example. A positional initializer that leaves fields out, such as `{40, 0, FX(2)}`, triggers `-Wmissing-field-initializers` under `-Wextra`, an error with warnings as errors; a positional one must give all four fields (`{40, 0, FX(2), 0}`).
+- Write `PathStep` tables with designated initializers, as in the example, because a positional initializer that leaves fields out, such as `{40, 0, FX(2)}`, trips the compiler's `-Wmissing-field-initializers` (part of `-Wextra`; an error with warnings as errors), as it would for any C struct.
 
 ## random.h
 
