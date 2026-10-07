@@ -1,7 +1,7 @@
 // Stage 1-4, the castle: grey stone halls over lava, with fire bars turning
 // about their blocks, embers leaping out of the lava, salamanders and stone
-// ledges; at the end the dragon on its bridge (boss.c). After it, the ending
-// (a placeholder for now).
+// ledges; at the end the dragon on its bridge (boss.c). After it, the ending:
+// the serval home in its den under the night sky.
 
 #include "stage_castle.h"
 
@@ -428,22 +428,71 @@ static void draw(void) {
     draw_fire_bars();
 }
 
-// --- The ending (placeholder) --------------------------------------------------
+// --- The ending ------------------------------------------------------------------------
+//
+// The savanna at night (the ending's two layers): the serval runs in from
+// the left and into its den under the acacia, and the story's last lines
+// appear over the stars, which twinkle (tileset_set_tiles). START ends it
+// once the serval is home; otherwise the title comes back by itself.
 
-#define ENDING_FRAMES 600
+#define ENDING_FRAMES 1080 // 18 seconds
+#define ENDING_WALK_SPEED 1
+#define TWINKLE_FRAMES 20
 
-static int ending_timer;
+static struct {
+    int timer;
+    int serval_x; // the left of its body, on the screen
+    bool home;
+} ending SERVAL_EWRAM_BSS;
 
 static void ending_start(void) {
-    ending_timer = 0;
-    text_print_centered(6, "THE END");
-    text_print_centered(9, "THE SERVAL IS HOME AGAIN");
-    text_print_centered(12, "THANK YOU FOR PLAYING");
-    psg_music_play(&goal_song);
+    ending.timer = 0;
+    ending.serval_x = -TILE;
+    ending.home = false;
+    screen_set_backdrop(NIGHT_SKY);
+    camera_set(0, 0);
+    map_load(&ending_far_layer);
+    map_load(&ending_near_layer);
+    psg_music_play(&ending_song);
 }
 
+// The story's lines, each shown from its frame on.
+static const struct {
+    u16 frame;
+    u8 row;
+    const char* text;
+} ending_lines[] = {
+    {40, 1, "THE BRIDGE FELL,"},        {80, 2, "AND THE DRAGON SANK"}, {120, 3, "INTO THE LAVA."},
+    {260, 5, "THE SERVAL IS HOME,"},    {300, 6, "SAFE IN ITS DEN."},   {480, 10, "THE END"},
+    {600, 18, "THANK YOU FOR PLAYING"},
+};
+
 static bool ending_update(void) {
-    return ++ending_timer >= ENDING_FRAMES || (ending_timer > 60 && button_pressed(BUTTON_START));
+    int t = ++ending.timer;
+    for (u32 k = 0; k < sizeof ending_lines / sizeof ending_lines[0]; k++) {
+        if (t == ending_lines[k].frame)
+            text_print_centered(ending_lines[k].row, ending_lines[k].text);
+    }
+    if (t % TWINKLE_FRAMES == 0) {
+        static const u8 order[4] = {0, 1, 0, 2};
+        tileset_set_tiles(STAR_TILE, star_tiles[order[(t / TWINKLE_FRAMES) % 4]], STAR_TILE_COUNT);
+    }
+    // The serval, behind the near layer: the den's opening hides it.
+    if (!ending.home) {
+        ending.serval_x += ENDING_WALK_SPEED;
+        u8 frame = (ending.serval_x / 6) % 2 ? SERVAL_RUN2 : SERVAL_RUN1;
+        sprite_draw(SPR_SERVAL_SMALL, frame, ending.serval_x, ENDING_GROUND_Y - 15,
+                    SPRITE_BEHIND_PLAYFIELD);
+        ending.home = ending.serval_x + 6 >= ENDING_DEN_X;
+    } else if (t % 30 == 0) {
+        // Asleep: a "z" over the den, now small, now big.
+        text_print(ENDING_DEN_X / 8 + 2, 13, (t / 30) % 2 ? "Z" : "z");
+    }
+    if (t >= ENDING_FRAMES || (ending.home && button_pressed(BUTTON_START))) {
+        psg_music_stop();
+        return true;
+    }
+    return false;
 }
 
 const StageDef stage_castle = {

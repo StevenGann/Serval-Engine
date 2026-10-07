@@ -133,8 +133,10 @@
 //   - camera_stop_x holding the camera at the boss's arena, and a bridge
 //     falling one metatile at a time (map_set_cell: 12 of the 64 changes
 //     MAP_MAX_CHANGES allows), its pieces tumbling away as debris
-//   - The ending hooks (StageDef.ending_start, ending_update): a placeholder
-//     for now, a message on a black screen
+//   - The ending hooks (StageDef.ending_start, ending_update): a screen of two
+//     map layers, the serval running between them into its den (behind the
+//     near one), twinkling stars (tileset_set_tiles), a tune played once
+//     (PSG_NO_LOOP)
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
@@ -284,10 +286,15 @@
 //     out through a gateway, its portcullis raised, into the moonlit night,
 //     with the fanfare.
 //   After the last stage:
-//   - "STAGE CLEAR!", then a fade to a black screen: "THE END", "THE SERVAL
-//     IS HOME AGAIN", "THANK YOU FOR PLAYING" with the fanfare, for ten
-//     seconds (START after the first second skips it), then the title, which
-//     now shows the best score and lets SELECT pick any stage.
+//   - "STAGE CLEAR!" and the score, then a fade to the savanna at night: a
+//     full moon, twinkling stars, an acacia on a rise and under it a mound
+//     with a dark opening, the serval's den. A gentle tune in E flat plays
+//     once. The serval runs in from the left and into its den, and a "z" over
+//     the mound grows and shrinks; "THE BRIDGE FELL, / AND THE DRAGON SANK /
+//     INTO THE LAVA.", "THE SERVAL IS HOME, / SAFE IN ITS DEN.", "THE END" and
+//     "THANK YOU FOR PLAYING" appear one after another. After 18 seconds (or
+//     START, once the serval is home) the title comes back, showing the best
+//     score saved and letting SELECT pick any stage.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   START = Enter, SELECT = Backspace.)
 //

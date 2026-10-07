@@ -2,6 +2,7 @@
 // all three channels, as the other stages' does: melody on square 2, bass on
 // square 1, drums on noise. When time runs low the game speeds it up from
 // 120 to 150 beats per minute where it is (stage_castle.c's hurry_tempo).
+// The ending has a tune of its own, played once.
 
 #include "stage_castle.h"
 
@@ -180,3 +181,65 @@ static const PsgTrack tracks[] = {
 };
 
 const PsgSong castle_song = {.tempo = 120, .tracks = tracks, .track_count = 3};
+
+// "Home Under the Acacia", the ending's tune (written for this example): E
+// flat major, 120 beats per minute, 8 bars played once, 16 seconds; slow
+// and warm after the castle, a melody over a bass in half notes. It rises
+// to the high B flat in bar 7 and comes to rest on G over E flat.
+static const PsgNote ending_melody[] = {
+    // Eb, Ab, Eb, Bb
+    {PSG_G4, 4},
+    {PSG_AS4, 4},
+    {PSG_DS5, 6},
+    {PSG_D5, 2},
+    {PSG_C5, 4},
+    {PSG_DS5, 4},
+    {PSG_GS4, 8},
+    {PSG_G4, 4},
+    {PSG_AS4, 4},
+    {PSG_DS5, 4},
+    {PSG_G5, 4},
+    {PSG_F5, 8},
+    {PSG_D5, 4},
+    {PSG_AS4, 4},
+    // Cm, Ab, Bb, Eb
+    {PSG_DS5, 4},
+    {PSG_G5, 4},
+    {PSG_C5, 6},
+    {PSG_D5, 2},
+    {PSG_DS5, 4},
+    {PSG_C5, 4},
+    {PSG_GS4, 6},
+    {PSG_AS4, 2},
+    {PSG_D5, 4},
+    {PSG_F5, 4},
+    {PSG_AS5, 6},
+    {PSG_GS5, 2},
+    {PSG_G5, 12},
+    {PSG_REST, 4},
+};
+
+static const PsgNote ending_bass[] = {
+    {PSG_DS3, 8}, {PSG_AS2, 8}, {PSG_GS2, 8},  {PSG_C3, 8},   {PSG_DS3, 8}, {PSG_G2, 8},
+    {PSG_AS2, 8}, {PSG_F2, 8},  {PSG_C3, 8},   {PSG_G2, 8},   {PSG_GS2, 8}, {PSG_DS2, 8},
+    {PSG_AS2, 8}, {PSG_D3, 8},  {PSG_DS3, 12}, {PSG_REST, 4},
+};
+
+static const PsgTrack ending_tracks[] = {
+    {.channel = PSG_SQUARE2,
+     .duty = PSG_DUTY_12,
+     .volume = 10,
+     .fade = -5,
+     .notes = ending_melody,
+     .note_count = sizeof ending_melody / sizeof ending_melody[0],
+     .loop = PSG_NO_LOOP},
+    {.channel = PSG_SQUARE1,
+     .duty = PSG_DUTY_50,
+     .volume = 7,
+     .fade = -5,
+     .notes = ending_bass,
+     .note_count = sizeof ending_bass / sizeof ending_bass[0],
+     .loop = PSG_NO_LOOP},
+};
+
+const PsgSong ending_song = {.tempo = 120, .tracks = ending_tracks, .track_count = 2};

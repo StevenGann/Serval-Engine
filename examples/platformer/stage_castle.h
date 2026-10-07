@@ -81,25 +81,35 @@ enum { SPAWN_EMBER = SPAWN_STAGE, SPAWN_DRAGON };
 #define SND_SPLASH (SND_STAGE(STAGE_CASTLE) + 6)  // into the lava
 #define SND_LEAP (SND_STAGE(STAGE_CASTLE) + 7)    // an ember leaps
 
-// Animated tiles (tileset_set_tiles): the bonus block's first tile, and the
-// lava's surface and the torches' flames (two tiles each).
+// Animated tiles (tileset_set_tiles): the bonus block's first tile, the
+// lava's surface and the torches' flames (two tiles each), and the ending's
+// twinkling stars.
 #define CASTLE_BONUS_TILE 1
 #define LAVA_TILE 5
 #define LAVA_FRAMES 4
 #define TORCH_TILE 7
 #define TORCH_FRAMES 3
+#define STAR_TILE 104
+#define STAR_TILE_COUNT 8
+#define STAR_FRAMES 3
 extern const u32 lava_tiles[LAVA_FRAMES][2 * 8];
 extern const u32 torch_tiles[TORCH_FRAMES][2 * 8];
+extern const u32 star_tiles[STAR_FRAMES][STAR_TILE_COUNT * 8];
 
 // The hall's dark air, and the lava's glow it pulses toward.
 #define CASTLE_BACKDROP COLOR_RGB(30, 8, 10)
 #define CASTLE_GLOW COLOR_RGB(96, 26, 12)
+// The ending's night sky, and where the den's opening is on that screen.
+#define NIGHT_SKY COLOR_RGB(16, 22, 56)
+#define ENDING_GROUND_Y 128
+#define ENDING_DEN_X 150
 
 extern const Tileset castle_tileset;
 extern const Metatile castle_metatiles[CASTLE_MT_COUNT];
 extern const MapLayer castle_far_layer; // the far colonnade, on background 3
 extern const SpriteGroup castle_group;
-extern const PsgSong castle_song;
+extern const MapLayer ending_far_layer, ending_near_layer; // the ending's night
+extern const PsgSong castle_song, ending_song;
 // Fills the tileset's and the sprite group's palettes in RAM: the far wall
 // and the dragon's flash mixed with color_mix().
 void castle_load_palettes(void);
