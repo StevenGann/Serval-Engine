@@ -1,14 +1,15 @@
-# Shared build settings and the serval_add_rom() helper.
+# Shared build settings and the serval_add_rom() and serval_add_script()
+# helpers.
 #
 # This file is included from the engine's top-level CMakeLists.txt, which a
-# game project may reach through add_subdirectory(). Everything
-# serval_add_rom() needs must therefore work from any directory: paths come
-# from CMAKE_CURRENT_FUNCTION_LIST_DIR and settings from cache variables or
-# target properties, never from variables of the engine's directory scope.
+# game project may reach through add_subdirectory(). Everything the helpers
+# need must therefore work from any directory: paths come from
+# CMAKE_CURRENT_FUNCTION_LIST_DIR and settings from cache variables or target
+# properties, never from variables of the engine's directory scope.
 
-# Python runs tools/gbafix.py after each ROM link and tools/svm.py, the script
-# assembler, in every kind of build (GBA, web and host). Cached so that
-# serval_add_rom() finds it when called from a game's own directory.
+# Python runs tools/gbafix.py after each ROM link and tools/svm.py for script
+# listings, in every kind of build (GBA, web and host). Cached so that the
+# helpers find it when called from a game's own directory.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(SERVAL_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE INTERNAL
     "Python interpreter that runs the engine's tools (gbafix.py, svm.py)")
@@ -134,6 +135,86 @@ function(serval_add_rom target)
                 --title "${ARG_TITLE}" --game-code "${ARG_GAME_CODE}"
         COMMENT "Creating ${target}.gba"
         VERBATIM)
+endfunction()
+
+# serval_add_script(<target> <listing.svm> [SYMBOL <name>] [PREFIX <p>]
+#                   [HEADERS <h1> <h2> ...])
+#
+# Assembles a script listing (docs/vm.md, tools/svm.py) for a target made by
+# serval_add_rom() (or any target) at build time: <basename>_script.c, which
+# defines the blob as `const unsigned char <symbol>[]` and `<symbol>_size`,
+# and <basename>_script.h with the listing's objects, strings and globals as
+# <PREFIX>OBJ_*, <PREFIX>STR_* and <PREFIX>G_* defines, their counts and the
+# two externs. Both go in the target's binary directory; the .c joins the
+# target's sources and the directory its include path, so the game includes
+# the header and calls vm_load(<symbol>, <symbol>_size).
+#
+# SYMBOL defaults to <basename>_script. HEADERS are C headers whose integer
+# constants the listing may use (the game's, and the engine's: a path relative
+# to the current source directory, or to the engine's include/ as the game
+# would #include it, e.g. serval/ecs.h). The listing is reassembled when it,
+# a header, svm.py or vm.h changes. Call it from the directory that defined
+# the target, after serval_add_rom().
+function(serval_add_script target listing)
+    cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
+    if(NOT TARGET ${target})
+        message(FATAL_ERROR "serval_add_script(${target}): no such target; call it after "
+                            "serval_add_rom(${target} ...).")
+    endif()
+    set(engine_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
+    set(svm "${engine_dir}/tools/svm.py")
+    set(vm_h "${engine_dir}/include/serval/vm.h")
+    foreach(file IN ITEMS "${svm}" "${vm_h}")
+        if(NOT EXISTS "${file}")
+            message(FATAL_ERROR "serval_add_script(${target}): ${file} is missing.")
+        endif()
+    endforeach()
+    if(NOT SERVAL_PYTHON_EXECUTABLE)
+        message(FATAL_ERROR "serval_add_script(${target}): Python 3 is needed to assemble "
+                            "${listing} (SERVAL_PYTHON_EXECUTABLE is empty).")
+    endif()
+    cmake_path(ABSOLUTE_PATH listing BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
+    if(NOT EXISTS "${listing}")
+        message(FATAL_ERROR "serval_add_script(${target}): ${listing} does not exist.")
+    endif()
+    cmake_path(GET listing STEM base)
+    if(NOT ARG_SYMBOL)
+        set(ARG_SYMBOL "${base}_script")
+    endif()
+    set(header_args "")
+    set(headers "")
+    foreach(header IN LISTS ARG_HEADERS)
+        if(NOT IS_ABSOLUTE "${header}" AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${header}"
+           AND EXISTS "${engine_dir}/include/${header}")
+            set(header "${engine_dir}/include/${header}")
+        endif()
+        cmake_path(ABSOLUTE_PATH header BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
+        if(NOT EXISTS "${header}")
+            message(FATAL_ERROR "serval_add_script(${target}): header ${header} does not exist.")
+        endif()
+        list(APPEND headers "${header}")
+        list(APPEND header_args --header "${header}")
+    endforeach()
+    set(prefix_args "")
+    if(ARG_PREFIX)
+        set(prefix_args --prefix "${ARG_PREFIX}")
+    endif()
+
+    get_target_property(out_dir ${target} BINARY_DIR)
+    set(c_file "${out_dir}/${base}_script.c")
+    set(h_file "${out_dir}/${base}_script.h")
+    add_custom_command(
+        OUTPUT "${c_file}" "${h_file}"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svm}" asm "${listing}" ${header_args}
+                --c "${c_file}" --symbol "${ARG_SYMBOL}" --defs "${h_file}" ${prefix_args}
+        DEPENDS "${listing}" ${headers} "${svm}" "${vm_h}"
+        COMMENT "Assembling ${base}.svm"
+        VERBATIM)
+    # The header is listed as a source too, so every object of the target is
+    # built after it exists (CMake orders a target's objects after its
+    # generated sources).
+    target_sources(${target} PRIVATE "${c_file}" "${h_file}")
+    target_include_directories(${target} PRIVATE "${out_dir}")
 endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/ServalWeb.cmake")

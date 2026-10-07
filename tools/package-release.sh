@@ -18,7 +18,8 @@ name="serval-engine-$version"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-files=(include src cmake third_party CMakeLists.txt CMakePresets.json serval.json LICENSE tools/gbafix.py)
+files=(include src cmake third_party CMakeLists.txt CMakePresets.json serval.json LICENSE
+       tools/gbafix.py tools/svm.py)
 copy() {
     mkdir -p "$stage/$name/$(dirname "$1")"
     cp -R "$root/$1" "$stage/$name/$1"

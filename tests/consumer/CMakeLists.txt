@@ -17,6 +17,8 @@ endif()
 add_subdirectory("${SERVAL_ENGINE_DIR}" serval-engine)
 
 serval_add_rom(consumer SOURCES main.c TITLE "CONSUMER" GAME_CODE "SVCO")
+# A script listing assembled at build time into consumer_script.c and .h.
+serval_add_script(consumer consumer.svm)
 # A game that saves, with a save type other than the default SRAM.
 serval_add_rom(consumer_save SOURCES save.c TITLE "CONSUMER SV" GAME_CODE "SVCS" SAVE EEPROM8K)
 

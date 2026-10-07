@@ -125,6 +125,9 @@ else()
     target_include_directories(serval_api_only_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
     target_link_libraries(serval_api_only_check PRIVATE serval_warnings)
     add_dependencies(serval_host_tests serval_api_only_check)
+    # The script listings those games include the generated headers of are
+    # assembled for this check too, which also runs the assembler on them.
+    serval_add_script(serval_api_only_check consumer/consumer.svm)
 
     # Every public header compiles on its own (includes what it uses).
     serval_add_header_check(serval_header_check)
