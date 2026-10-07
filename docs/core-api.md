@@ -6,7 +6,7 @@ The lowest engine layer is a raylib-style flat C API over libtonc. It is also th
 
 ```c
 void serval_init(void);               // once at startup: wait states, interrupts, display, ECS, sound
-void serval_splash(void);             // optional: the "Made with Serval Engine" splash
+void serval_splash(void);             // optional: the "made with Serval Engine" splash
 
 void frame_begin(void);               // poll buttons, empty the sprite draw list
 void frame_end(void);                 // VBlank sync, copy shadow OAM, stream maps, step sound and music
@@ -63,13 +63,13 @@ serval: sprite_group_load: needs 1025 tiles, but only 1024 of 1024 are free
 serval: entity_create: all 128 entities are in use; returning ENTITY_NONE
 ```
 
-Each problem is reported once rather than every frame, as one line of at most 247 characters after the `serval:` prefix (mGBA's log line holds 255; on the web it goes to the browser's console as a warning). Release builds compile the checks out entirely, so they cost nothing; the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
+Each problem is reported once rather than every frame, as one line of at most 247 characters after the prefix (`serval:` and a space; mGBA's log line holds 255; on the web it goes to the browser's console as a warning). Release builds compile the warnings out, with the checks that exist only to warn, so they cost nothing; the checks that keep a call safe stay, and the API still fails safely (nothing is drawn, `false` or `ENTITY_NONE` is returned). Games can use `SERVAL_DEBUG` for their own debug code too. [api-reference.md](api-reference.md) marks which calls warn.
 
 ## Hardware the engine uses
 
-On the GBA the engine programs the hardware itself, and what it takes is part of the API: a later version that took a timer, a DMA channel, an interrupt or a piece of VRAM that a 1.0 game was using would break that game. So everything the planned features will need is reserved now, before they are implemented ([api-freeze.md](api-freeze.md#principles)), and claiming anything more is a breaking change. Below, *in use* is what this version programs, *reserved* is what a named planned feature will take, and *free* is the game's. Games may program free hardware themselves, through libtonc (which stays on the include path) or its registers; the engine's, in use or reserved, they leave alone and reach only through Serval API. This is the GBA's hardware: the web build runs the same code on virtual GBA hardware with no interrupts, timers or DMA ([platforms.md](platforms.md#what-is-faked-or-missing)), so what a game programs itself works only on the GBA.
+On the GBA the engine programs the hardware itself, and what it takes is part of the API: a later version that took a timer, a DMA channel, an interrupt or a piece of VRAM that a 1.0 game was using would break that game. So everything the planned features will need is reserved now, before they are implemented ([api-freeze.md](api-freeze.md#principles)), and claiming anything more is a breaking change. Below, *in use* is what this version programs, *reserved* is what a named planned feature, or a later engine feature the row names, will take, and *free* is the game's. Games may program free hardware themselves, through libtonc (which stays on the include path) or its registers; the engine's, in use or reserved, they leave alone and reach only through Serval API. This is the GBA's hardware: the web build runs the same code on virtual GBA hardware with no interrupts, timers or DMA ([platforms.md](platforms.md#what-is-faked-or-missing)), so what a game programs itself works only on the GBA.
 
-**What `serval_init()` sets up:** `WAITCNT` to the standard 3/1 ROM wait states with prefetch and 8 for save RAM (power-on default: 4/2 without prefetch), which speeds up all code and data in ROM, including the game's; libtonc's interrupt dispatcher, with the VBlank interrupt enabled and no handler; display mode 0 with sprites on and 1D sprite tile mapping, every hardware sprite hidden; sound on, with the tone generators at full volume on both speakers; and the cycle counter (timers 2 and 3).
+**What `serval_init()` sets up:** `WAITCNT` to the standard 3/1 ROM wait states with prefetch and 8 for save RAM (power-on default: 4/2 without prefetch), which speeds up all code and data in ROM, including the game's; libtonc's interrupt dispatcher, with the VBlank interrupt enabled and no handler; display mode 0 with sprites on and 1D sprite tile mapping, every hardware sprite hidden; sound on, with tone generators 1, 2 and 4 (the squares and noise) at full volume on both speakers; and the cycle counter (timers 2 and 3).
 
 **Timers**
 
@@ -103,7 +103,7 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 | --- | --- | --- |
 | `SOUNDCNT_X` (master enable) | In use: sound on since `serval_init()` | Leave it on |
 | `SOUNDCNT_L` | In use: the tone generators' master volume (full) and speaker enables, set by `serval_init()` for channels 1, 2 and 4 on both speakers (bits 8, 9, 11, 12, 13 and 15). Bits 10 and 14, channel 3 on each speaker, are reserved for the wave channel (*planned*) | Must not write it (`psg_music_set_volume()` sets the music's volume) |
-| `SOUNDCNT_H` | In use: bits 0-1, the tone generators' share of the output (100%). Bits 2-15, Direct Sound A and B, are reserved for the mixer (*planned*), which writes the whole register; the engine then sets bits 0-1 back | Must not write it |
+| `SOUNDCNT_H` | In use: bits 0-1, the tone generators' share of the output (100%). Bits 2-3 and 8-15, Direct Sound A and B (bits 4-7 are unused), are reserved for the mixer (*planned*), which writes the whole register; the engine then sets bits 0-1 back | Must not write it |
 | PSG channels 1, 2 and 4: square 1, square 2, noise | In use: `audio.h`'s sound effects and music; `serval_splash()`'s jingle on square 1 | Play them through `audio.h` |
 | PSG channel 3 (`SOUND3CNT_L`/`_H`/`_X`, 0x4000070-0x4000075) and wave RAM (0x4000090-0x400009F, both banks) | Reserved: the wave channel (`PSG_WAVE`, `psg_waves_set()`, *planned*, [audio.md](audio.md#wave-channel)); off today | Must not use them |
 | Direct Sound A and B, FIFOs A and B (0x40000A0-0x40000A7) | Reserved: tracker music and sampled sound effects (*planned*), mixed by Maxmod; A plays left, B right | Must not use them |
@@ -123,7 +123,7 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 
 | Region | Status | Games |
 | --- | --- | --- |
-| BG charblock 0 (16 KB, tiles 0-511) | The text layer's: tiles 0-383 hold the font, 96 for each text style used, written the first time a style is used. Tiles 384-511 are unused today and reserved for the text layer (larger fonts, dialogue boxes, after 1.0) | Through `text.h` |
+| BG charblock 0 (16 KB, tiles 0-511) | The text layer's: tiles 0-383 hold the font, 96 for each text style, written the first time the style is used (style 0's when the text layer is set up, whatever the style). Tiles 384-511 are unused today and reserved for the text layer (larger fonts, dialogue boxes, after 1.0) | Through `text.h` |
 | BG charblocks 1-2 (tiles 0-1023 at character base 1) | In use: the tileset (`tileset_load()`, `tileset_set_tiles()`); `serval_splash()` draws its logo into charblock 1 and leaves it there (games load their tilesets after it) | Through `map.h` |
 | Screenblocks 24-27 (the first 8 KB of charblock 3) | Unused today; reserved for the text layer and the engine | Must not use them |
 | Screenblocks 28, 29, 30 | In use once a map layer is loaded: the maps of BG1, BG2, BG3, streamed around the camera ([tilemaps.md](tilemaps.md#vram-layout)) | Through `map.h` |
@@ -166,10 +166,12 @@ Every bit and value of the data formats and flag words that this version doesn't
 | Draw flags (`sprite_draw*()` flags, `spr_flags`) | Bits 13 and 14 (mosaic and the object window, later) | Bit 12, `SPRITE_BLEND` ([blending](sprites.md#alpha-blending)) | Not checked per draw (the hot path): games must never set 13 and 14. Bit 12 is drawn opaque and warns | [sprites.md](sprites.md#alpha-blending) |
 | `Tileset.flags` | Bit 1 (8bpp tilesets, later), bits 2-7 | Bit 0, `TILESET_LZ77` ([LZ77](tilemaps.md#tilesets)) | `tileset_load()` refuses the tileset | [tilemaps.md](tilemaps.md#tilesets) |
 | `MapLayer.flags` | Bits 2-7 | | `map_load()` refuses the layer | [tilemaps.md](tilemaps.md#rom-data-format) |
-| Collision types (`Metatile.collision`, bits 0-3) | 10-15 (ceiling slopes, for one) | 3, `MAP_LADDER`; 4-9, the `MAP_SLOPE_*` ([ladders and slopes](tilemaps.md#collision-types)) | Load, with a warning once per kind, and collide: 3 and 10-15 as `MAP_EMPTY`, 4-9 as `MAP_SOLID` | [tilemaps.md](tilemaps.md#collision-types) |
+| Collision types (`Metatile.collision`, bits 0-3) | 10-15 (ceiling slopes, for one) | 3, `MAP_LADDER`; 4-9, the `MAP_SLOPE_*` ([ladders and slopes](tilemaps.md#collision-types)) | Load (`map_load()` of the playfield warns once per kind) and collide: 3 and 10-15 as `MAP_EMPTY`, 4-9 as `MAP_SOLID` | [tilemaps.md](tilemaps.md#collision-types) |
 | `body_contact` | Bits 4 and 7 | Bit 6, `MAP_CONTACT_LADDER` ([ladders](tilemaps.md#collision-types)) | Never set (the engine writes it; games read it) | [ecs.md](ecs.md#bodies) |
 | `ent_mask` and component masks | Bits 7-15 (engine components of later versions) | | `entity_create()` leaves them out (warns); nothing checks them in `ent_mask`: games must never set them | [ecs.md](ecs.md#component-bits) |
 | `PathStep` | The 2 bytes of padding after `frames` (a step flag, later) | | Not read: leave them zero | [runtime-systems.md](runtime-systems.md#paths), [api-freeze.md](api-freeze.md#later-additively-no-api-now) |
+| Padding of the other data formats (GBA offsets) | `Tileset` bytes 6-7 and 14-15, `Metatile` byte 9, `Path` bytes 7 and 10-11, `PsgSound` bytes 10-11 and 18-19, `PsgTrack` bytes 5-7, `PsgSong` bytes 9-11: new fields go there | | Not read: leave them zero, as initializers do | [releases.md](releases.md#versioning) |
+| `path_start()` flags, `physics_set_open_edges()` edges | Bits 2-31 (past `PATH_MIRROR_X`/`_Y`); bits 4-31 (past `PHYSICS_EDGE_*`) | | Not checked: games must leave them clear | [runtime-systems.md](runtime-systems.md#paths), [physics.h](api-reference.md#physicsh) |
 | `PsgSound.channel`, `PsgTrack.channel` | 4-255 are invalid | 3, `PSG_WAVE` ([wave channel](audio.md#wave-channel)) | Refused: `psg_play()` skips the sound, `psg_music_play()` leaves the track out (warns) | [audio.md](audio.md#wave-channel) |
 | VM blob header flags | Bit 1 (an extended handler table), bits 2-15 | | `vm_load()` refuses the blob | [vm.md](vm.md#header-16-bytes) |
 | VM blob reserved fields | Bytes 6-7 of an object record, byte 3 of an array record: must be 0 | | Refused | [vm.md](vm.md#blob-format) |
@@ -182,7 +184,7 @@ Every bit and value of the data formats and flag words that this version doesn't
 
 The logo is the mark-and-wordmark design chosen after three rounds of candidates ([open-questions.md](open-questions.md)): a front-on serval's head with big green eyes, whisker dots and enormous ears (the left upright with a notch bitten from its edge, the right swivelled out as if listening), outlined in a deep warm brown, with light from above on the ear rims and the top of the forehead and a touch of shade inside the ears and under the chin, beside "SERVAL" over "ENGINE" in chunky gold and cream letters whose bottom edge is a shade darker than their bevel; "made with" sits above. It is drawn when the splash starts, from ASCII pictures and a few rules in `src/gba/splash_art.c`, into charblock 1 (BG0 keeps charblock 0 as its base; a 10-bit tile index reaches both; tiles with nothing drawn take no VRAM) and BG palette bank 13, and shown on the text layer's map, once, before the fade-in. The timing and the buttons are the portable `src/core/splash_logic.c`, tested natively (`tests/splash_logic_tests.c`).
 
-It borrows the backdrop, BG0 (control register and on/off state), the text layer (drawing without the text shadow), one color in BG palette bank 14 and colors 1-15 of bank 13, the color effect's `BLDCNT` and `BLDY` (the game's `screen_set_brightness` level) and PSG square 1, and puts them back, so the screen then shows the game's backdrop (black by default). Not restored: text already on the layer (cleared), charblock 1 (the logo's tiles stay, as a game loads its tilesets after the splash) and, if the game hadn't used text yet, charblock 0 tiles 0-95 (the font) and BG0's scroll. Every example except `hello` and `bunnymark` calls it.
+It borrows the backdrop, BG0 (control register and on/off state), the text layer (drawing without the text shadow), one color in BG palette bank 14 and colors 1-15 of bank 13, the color effect's `BLDCNT` and `BLDY` (the game's `screen_set_brightness` level) and PSG square 1, and puts them back, so the screen then shows the game's backdrop (black by default). Not restored: text already on the layer (cleared), charblock 1 (the logo's tiles stay, as a game loads its tilesets after the splash) and, if the game hadn't used text yet, the font in charblock 0 (tiles 0-95, and those of a style chosen with `text_set_style()` beforehand), the text colors (BG bank 15, colors 1-8) and BG0's scroll. Every example except `hello` and `bunnymark` calls it.
 
 ## Dependencies stay behind the API
 
@@ -201,7 +203,7 @@ Sprites are retained by the hardware (the PPU reads OAM every scanline), but the
 - Priority among same-priority sprites is OAM order, so depth sorting is just sorting the draw list.
 - Anything not submitted disappears, so there are no stale sprites.
 - Flicker multiplexing and metasprites need no slot management.
-- Cost: rebuilding 1 KB of OAM in ARM-mode IWRAM code is a few thousand cycles out of about 280,000 per frame.
+- Cost: about 170-190 cycles per sprite drawn, in ARM-mode IWRAM code (`sys_render` of 128 sprites: about 22,000 of the frame's 280,896, Release build), plus the 1 KB copy to OAM in VBlank.
 
 ## Persistently managed resources
 
