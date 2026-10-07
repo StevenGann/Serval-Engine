@@ -80,11 +80,11 @@ static inline FIXED too_big(FIXED lo) {
 }
 #endif
 
-// The speed a perfect floor bounce (body_bounce SERVAL_BOUNCE_PERFECT) leaves
-// the floor with, before this frame's gravity is added: the one that brings
-// the body back up exactly as high as it fell from. The body hit the floor at
-// `speed` (at least 2 * g) and ended `past` (>= 0) beyond it; g is gravity's
-// magnitude along the axis (> 0).
+// A perfect floor bounce (body_bounce SERVAL_BOUNCE_PERFECT) in sys_physics():
+// the speed the body leaves the floor with, before this frame's gravity is
+// added, so that it comes back up exactly as high as it fell from. The body
+// hit the floor at `speed` (at least 2 * g) and ended `past` (>= 0) beyond it;
+// g is gravity's magnitude along the axis (> 0).
 //
 // Keeping the speed, as walls other than floors do, isn't enough. Moved by
 // sys_movement() and then pulled by sys_physics(), a falling body keeps
@@ -99,11 +99,11 @@ static inline FIXED too_big(FIXED lo) {
 // rests. Instead the body is mirrored back inside as for any bounce and leaves
 // rising at w after gravity, with
 //     w * w + g * w = speed * speed + g * speed - 4 * g * past,
-// which keeps that value: w rounded to the nearest, found by bisection (no
-// divide; one step per bit of the speed, about a dozen). Returns w + g; less
-// than 2 * g (w < g: it would hardly leave the floor) means the caller makes
-// it a rest, as for any bounce that slow (a body that started the frame inside
-// the bounds rests this way only if it hit slower than about 3.6 times g).
+// which keeps that value: serval_perfect_rebound() with 2 * past lost (the
+// overshoot, travelled past the floor and back). Returns w + g; less than
+// 2 * g (w < g: it would hardly leave the floor) means the caller makes it a
+// rest, as for any bounce that slow (a body that started the frame inside the
+// bounds rests this way only if it hit slower than about 3.6 times g).
 //
 // Inlined: called out of line, from ROM, it cost bunnymark (which never
 // bounces perfectly) 2,600 cycles a frame, since sys_physics' fast loop is out
@@ -111,22 +111,7 @@ static inline FIXED too_big(FIXED lo) {
 // before (docs/runtime-systems.md#physics has the numbers).
 static inline __attribute__((always_inline)) FIXED perfect_rebound(FIXED speed, FIXED past,
                                                                    FIXED g) {
-    const int64_t target = (int64_t)speed * (speed + g) - (int64_t)4 * g * past;
-    if (target < (int64_t)2 * g * g)
-        return 0;
-    // The largest w in [g, speed] with w * (w + g) <= target: for g it is at
-    // most target (checked above), for speed at least (past >= 0).
-    FIXED lo = g, hi = speed;
-    while (lo < hi) {
-        FIXED mid = lo + ((hi - lo + 1) >> 1);
-        if ((int64_t)mid * (mid + g) <= target)
-            lo = mid;
-        else
-            hi = mid - 1;
-    }
-    if (lo < speed && (int64_t)(lo + 1) * (lo + 1 + g) - target < target - (int64_t)lo * (lo + g))
-        lo++;
-    return lo + g;
+    return serval_perfect_rebound(speed, 2 * past, g);
 }
 
 // A body that reached a wall on one axis (moving into it, or resting

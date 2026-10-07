@@ -816,20 +816,78 @@ static void map_bodies_bounce_and_come_to_rest(void) {
     reset();
 }
 
-// body_bounce 255 is a perfect bounce: the body rebounds to the same height
-// every time, never higher (it was dropped from y 0) and never lower, so it
-// never comes to rest, while 254 loses a little height on every bounce. A
-// body already resting on a floor stays at rest, whatever its bounce.
+// Drops map body i, at rest, toward a floor on one axis (axis 0: x, 1: y; dir
+// +1 or -1: the way gravity pulls along it) and returns how far its peaks get
+// from where it started, along that axis: the largest difference, in either
+// direction, over `bounces` rebounds (-1 if it made fewer in `frames`).
+static FIXED perfect_drop_error(u32 i, int axis, int dir, int bounces, int frames) {
+    FIXED* pos = axis ? pos_y : pos_x;
+    FIXED* vel = axis ? vel_y : vel_x;
+    const u32 floor = axis ? (dir > 0 ? MAP_CONTACT_FLOOR : MAP_CONTACT_CEILING)
+                           : (dir > 0 ? MAP_CONTACT_RIGHT : MAP_CONTACT_LEFT);
+    const FIXED start = pos[i] * dir;
+    FIXED worst = 0;
+    bool rising = false;
+    int n = 0;
+    for (int f = 0; f < frames && n < bounces; f++) {
+        step(1);
+        if ((body_contact[i] & floor) && vel[i] * dir < 0)
+            rising = true;
+        if (rising && vel[i] * dir >= 0) { // the top of the rebound
+            rising = false;
+            FIXED error = pos[i] * dir - start;
+            error = error < 0 ? -error : error;
+            worst = error > worst ? error : worst;
+            n++;
+        }
+    }
+    return n == bounces ? worst : -1;
+}
+
+// body_bounce 255 is a perfect bounce: off a floor, the body rebounds exactly
+// to the height it fell from (to within a pixel: the frame steps), every time,
+// so it never comes to rest, while 254 loses a little height on every bounce.
+// Keeping the speed instead stops the body flush against the floor short of
+// where the frame would have taken it and rebounds it lower, by up to a
+// frame's fall (13 pixels at 1 pixel per frame per frame). Drops of several
+// heights under several gravities, onto the floor, onto a ceiling with the
+// body's gravity reversed, and onto a wall with gravity sideways. A body
+// already resting on a floor stays at rest, whatever its bounce.
 static void map_bodies_bounce_perfectly_at_255(void) {
+    static const struct {
+        FIXED gravity;
+        int height;
+    } drops[] = {{FX_ONE / 16, 100}, {FX_ONE / 16, 9}, {FX_ONE / 4, 57},
+                 {FX_ONE / 4, 120},  {FX_ONE, 33},     {FX_ONE, 104}};
+    const FIXED tolerance = FX(14) / 10;
+    for (u32 d = 0; d < sizeof(drops) / sizeof(drops[0]); d++) {
+        reset();
+        LOAD(room);
+        physics_set_gravity(0, drops[d].gravity);
+        u32 i = make_body(60, 120 - drops[d].height, 8, 8); // floor at 128: rests at y 120
+        body_bounce[i] = 255;
+        FIXED error = perfect_drop_error(i, 1, 1, 4, 1200);
+        CHECK(error >= 0 && error <= tolerance);
+    }
+    // Up into the block at (7, 4) (y 64-79) with reversed gravity, and left
+    // onto the wall at column 2 (x 32-47) with gravity to the left.
     reset();
     LOAD(room);
     physics_set_gravity(0, FX_ONE / 4);
-    u32 perfect = make_body(60, 0, 8, 8); // floor at 128: rests at y 120
-    body_bounce[perfect] = 255;
+    u32 up = make_body(116, 80 + 37, 8, 8);
+    body_gravity[up] = BODY_GRAVITY(-16);
+    body_bounce[up] = 255;
+    FIXED error = perfect_drop_error(up, 1, -1, 4, 600);
+    CHECK(error >= 0 && error <= tolerance);
+    reset();
+    LOAD(room);
+    physics_set_gravity(-FX_ONE / 2, 0);
+    u32 side = make_body(48 + 70, 100, 8, 8);
+    body_bounce[side] = 255;
+    error = perfect_drop_error(side, 0, -1, 4, 600);
+    CHECK(error >= 0 && error <= tolerance);
+
     FIXED apex[8];
-    CHECK(bounce_apexes(perfect, apex, 8, 1000) == 8);
-    for (int k = 0; k < 8; k++)
-        CHECK(apex[k] == apex[0] && apex[k] >= 0);
     reset();
     LOAD(room);
     physics_set_gravity(0, FX_ONE / 4);
@@ -857,6 +915,15 @@ static void map_bodies_bounce_perfectly_at_255(void) {
     vel_y[j] = -FX(3);
     CHECK(step_contacts(j, 4) == MAP_CONTACT_CEILING);
     CHECK(vel_y[j] == FX(3));
+    // Under gravity too, a ceiling is no floor: the speed it hit at, reversed.
+    reset();
+    LOAD(room);
+    physics_set_gravity(0, FX_ONE / 4);
+    u32 k = make_body(116, 90, 8, 8);
+    body_bounce[k] = 255;
+    vel_y[k] = -FX(3);
+    CHECK(step_contacts(k, 5) == MAP_CONTACT_CEILING); // hit on the 5th frame, at -1.75
+    CHECK(vel_y[k] == FX(7) / 4);
     reset();
 }
 

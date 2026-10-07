@@ -38,6 +38,53 @@ static inline FIXED serval_fx_abs(FIXED v) {
 // bounce fast enough not to be a rest (a resting body never reaches the test).
 #define SERVAL_BOUNCE_PERFECT 255
 
+// The rebound speed of a perfect floor bounce (body_bounce
+// SERVAL_BOUNCE_PERFECT), shared by sys_physics() and sys_map_movement(): the
+// one that brings the body back up exactly as high as it fell from. The body
+// hit the floor at `speed` (at least 2 * g) and `lost` (>= 0) is what the
+// floor took from its fall in this integration's terms (below); g is
+// gravity's magnitude along the axis (> 0). Returns u + g, with u the largest
+// of g to `speed` (rounded to the nearer) for which
+//     u * u + g * u <= speed * speed + g * speed - 2 * g * lost,
+// or 0 when even u = g is too much (the caller then makes it a rest).
+//
+// Each system's integration keeps a quantity the same from frame to frame
+// while a body falls freely, which is its height in that integration; the
+// bounce returns the speed that keeps it.
+//   - sys_physics() moves first and adds gravity after (sys_movement(), then
+//     sys_physics()): v * v - g * v - 2 * g * x is kept (v the velocity after
+//     gravity, x the position, both along gravity). It mirrors the overshoot
+//     `past` back inside the floor, so lost = 2 * past, and the result is the
+//     speed it leaves with before this frame's gravity (physics.c).
+//   - sys_map_movement() adds gravity first and moves after: v * v + g * v -
+//     2 * g * x is kept (v the velocity the body moved at). It stops the body
+//     flush against the floor, `past` short of where the frame's movement
+//     would have taken it, so lost = past, and the result is the rebound
+//     velocity's magnitude, to which the next frame adds gravity
+//     (map_movement.c).
+// Found by bisection (no divide): one step per bit of the speed, about a
+// dozen, on the bounce frame only. always_inline: in sys_physics' fast loop a
+// call cost bunnymark 2,600 cycles a frame (physics.c).
+static inline __attribute__((always_inline)) FIXED serval_perfect_rebound(FIXED speed, FIXED lost,
+                                                                          FIXED g) {
+    const int64_t target = (int64_t)speed * (speed + g) - (int64_t)2 * g * lost;
+    if (target < (int64_t)2 * g * g)
+        return 0;
+    // The largest u in [g, speed] with u * (u + g) <= target: for g it is at
+    // most target (checked above), for speed at least (lost >= 0).
+    FIXED lo = g, hi = speed;
+    while (lo < hi) {
+        FIXED mid = lo + ((hi - lo + 1) >> 1);
+        if ((int64_t)mid * (mid + g) <= target)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    if (lo < speed && (int64_t)(lo + 1) * (lo + 1 + g) - target < target - (int64_t)lo * (lo + g))
+        lo++;
+    return lo + g;
+}
+
 // Takes friction/256 of the speed away, rounding the loss up on the
 // magnitude: any friction slows a body in either direction until it stops
 // (rounding toward zero would let slow bodies creep forever).

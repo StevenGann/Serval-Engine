@@ -8,8 +8,9 @@
 // column of metatiles per step, and only those need checking. A step that
 // would take the leading edge into a blocking metatile instead puts the body
 // flush against it (on a whole pixel), records the contact and bounces the
-// velocity on that axis (rebound()); the rest of that axis's movement this
-// frame is dropped.
+// velocity on that axis (rebound(), which for a perfect bounce off a floor
+// needs how much of the frame's movement was cut short); the rest of that
+// axis's movement this frame is dropped.
 //
 // Only metatiles the leading edge newly enters block it, so a body already
 // overlapping a solid metatile (spawned inside, or a cell changed under it)
@@ -99,22 +100,41 @@ static FIXED clamp_step(FIXED v) {
 }
 
 // The velocity of a body that hit the map moving at `vel` on an axis: reversed,
-// keeping body_bounce/256 of the speed (0, the default, stops it), or all of
-// it for 255: a u8 can't hold 256, so its largest value means a perfect
-// bounce (as in sys_physics()); otherwise even the bounciest body would lose
-// a little height on every bounce. On a floor (the side `gravity` pulls
-// toward on this axis) a rebound too slow to clear twice one frame's gravity
-// is a rest instead, as in sys_physics(), whatever the bounce: a body
-// standing on a floor, which gravity pulls into it every frame, stays there
-// with zero speed rather than hopping a fraction of a pixel forever.
-static FIXED rebound(FIXED vel, u32 bounce, FIXED gravity) {
+// keeping body_bounce/256 of the speed (0, the default, stops it). On a floor
+// (the side `gravity` pulls toward on this axis) a rebound too slow to clear
+// twice one frame's gravity is a rest instead, as in sys_physics(), whatever
+// the bounce: a body standing on a floor, which gravity pulls into it every
+// frame, stays there with zero speed rather than hopping a fraction of a
+// pixel forever.
+//
+// 255 is a perfect bounce (a u8 can't hold 256; otherwise even the bounciest
+// body would lose a little height on every bounce). Off walls and ceilings
+// it keeps the speed. Off a floor, keeping the speed isn't enough: the body
+// stops flush against the floor `past` short of where this frame's movement
+// would have taken it, and with the speed kept it would rebound lower than it
+// fell from by up to a frame's fall (always the same, so later bounces repeat
+// the first). So a body that hit at least twice one frame's gravity fast
+// rebounds at the speed that brings it back exactly to the height it fell
+// from (serval_perfect_rebound(), physics_internal.h, with `past` lost), or
+// rests if that is slower than twice one frame's gravity.
+static FIXED rebound(FIXED vel, u32 bounce, FIXED gravity, FIXED past) {
     FIXED speed = serval_fx_abs(vel);
-    if (bounce != 255)
+    const bool floor = (gravity > 0 && vel > 0) || (gravity < 0 && vel < 0);
+    const FIXED slowest = 2 * serval_fx_abs(gravity);
+    if (bounce != SERVAL_BOUNCE_PERFECT)
         speed = (FIXED)(((u32)speed * bounce) >> 8);
-    bool floor = (gravity > 0 && vel > 0) || (gravity < 0 && vel < 0);
-    if (floor && speed < 2 * serval_fx_abs(gravity))
+    else if (floor && speed >= slowest)
+        speed = serval_perfect_rebound(speed, past, slowest >> 1);
+    if (floor && speed < slowest)
         return 0;
     return vel > 0 ? -speed : speed;
+}
+
+// How far short of a frame's movement a body stopped: `remaining` is what was
+// left of it before the step that hit (that step included), and the body
+// moved from `from` to `flush` to touch the map. The same sign throughout.
+static FIXED short_by(FIXED remaining, FIXED from, FIXED flush) {
+    return serval_fx_abs(remaining - (flush - from));
 }
 
 static u32 move_x(u32 i, u32 w, u32 h, FIXED gravity) {
@@ -126,15 +146,19 @@ static u32 move_x(u32 i, u32 w, u32 h, FIXED gravity) {
         if (step > 0) {
             int from = last_pixel(pos_x[i], w) >> 4, to = last_pixel(x, w) >> 4;
             if (to != from && column_blocked(to, top, bottom)) {
-                pos_x[i] = FX(to * 16 - (int)w);
-                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity);
+                FIXED flush = FX(to * 16 - (int)w);
+                FIXED past = short_by(left + step, pos_x[i], flush);
+                pos_x[i] = flush;
+                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity, past);
                 return MAP_CONTACT_RIGHT;
             }
         } else {
             int from = first_pixel(pos_x[i]) >> 4, to = first_pixel(x) >> 4;
             if (to != from && column_blocked(to, top, bottom)) {
-                pos_x[i] = FX(to * 16 + 16);
-                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity);
+                FIXED flush = FX(to * 16 + 16);
+                FIXED past = short_by(left + step, pos_x[i], flush);
+                pos_x[i] = flush;
+                vel_x[i] = rebound(vel_x[i], body_bounce[i], gravity, past);
                 return MAP_CONTACT_LEFT;
             }
         }
@@ -152,15 +176,19 @@ static u32 move_y(u32 i, u32 w, u32 h, FIXED gravity) {
         if (step > 0) {
             int from = last_pixel(pos_y[i], h) >> 4, to = last_pixel(y, h) >> 4;
             if (to != from && row_blocked(to, left_px, right_px, true)) {
-                pos_y[i] = FX(to * 16 - (int)h);
-                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity);
+                FIXED flush = FX(to * 16 - (int)h);
+                FIXED past = short_by(left + step, pos_y[i], flush);
+                pos_y[i] = flush;
+                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity, past);
                 return MAP_CONTACT_FLOOR;
             }
         } else {
             int from = first_pixel(pos_y[i]) >> 4, to = first_pixel(y) >> 4;
             if (to != from && row_blocked(to, left_px, right_px, false)) {
-                pos_y[i] = FX(to * 16 + 16);
-                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity);
+                FIXED flush = FX(to * 16 + 16);
+                FIXED past = short_by(left + step, pos_y[i], flush);
+                pos_y[i] = flush;
+                vel_y[i] = rebound(vel_y[i], body_bounce[i], gravity, past);
                 return MAP_CONTACT_CEILING;
             }
         }

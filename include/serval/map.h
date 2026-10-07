@@ -305,14 +305,20 @@ enum {
 // the reserved types 10-15 are MAP_EMPTY. The velocity into each side they
 // touch becomes -velocity * body_bounce / 256: 0 (the default) stops them, as
 // for a player character; a gem, power-up or knocked-out enemy can bounce
-// instead. 255 keeps the whole speed: a perfect bounce, so a body dropped
-// onto a floor rebounds to the same height every time. Unlike sys_physics'
-// bounds, every side of the map (walls and ceilings too) uses body_bounce. On
-// a floor (the side gravity pulls toward), a rebound too slow to clear twice
-// one frame's gravity is a rest (zero speed), whatever the bounce, and a body
-// touching it loses body_friction/256 of its speed along it each frame
-// (rounded up, so any friction stops it). Fast bodies move in
-// steps of at most 7 pixels, so they don't pass through metatiles. Only
+// instead. 255 (a u8 can't hold 256) is a perfect bounce: off a wall or a
+// ceiling it keeps the whole speed, and off a floor the body rebounds at the
+// speed that brings it back up to the height it fell from (to within a
+// pixel), every time, so it bounces for ever. (Keeping the speed would
+// rebound it lower, by up to a frame's fall: the body stops flush against the
+// floor, short of where the frame's movement would have taken it.) Unlike
+// sys_physics' bounds, every side of the map (walls and ceilings too) uses
+// body_bounce. On a floor (the side gravity pulls toward), a rebound too slow
+// to clear twice one frame's gravity is a rest (zero speed), whatever the
+// bounce (a perfect one rebounds that slowly only when the body hit the floor
+// slower than that), and a body touching it loses body_friction/256 of its
+// speed along it each frame (rounded up, so any friction stops it). Fast
+// bodies move in steps of at most 7 pixels, so they don't pass through
+// metatiles. Only
 // metatiles a body's edge moves into stop it, so a body overlapping a solid
 // metatile (placed there, or a cell changed under it) can move out of it. Run
 // once per frame, where sys_movement() runs.

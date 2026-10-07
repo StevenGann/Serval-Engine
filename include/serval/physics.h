@@ -46,7 +46,8 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 // slower than about 3.6 times one frame's gravity). Only floor bounces read
 // it: off walls gravity doesn't pull toward, sys_physics() keeps all of the
 // speed whatever body_bounce is. Map bodies use it on every side of the map
-// they hit (sys_map_movement(), map.h).
+// they hit, 255 being a perfect bounce off their floors too
+// (sys_map_movement(), map.h).
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
 extern u8 body_friction[MAX_ENT];
