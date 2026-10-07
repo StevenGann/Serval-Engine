@@ -230,11 +230,12 @@ Tests check state (OAM, VRAM, registers), not what the screen looks like or what
 Planned API is declared but not implemented yet; [releases.md](releases.md#planned-api) has the policy as games see it. Each planned function or constant is marked with `SERVAL_PLANNED("what, doc")` (`platform.h`), naming the feature and the doc that describes it, both of which the warning quotes:
 
 ```c
-SERVAL_PLANNED("tracker music, docs/audio.md")
+SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_play(u16 music_id, bool loop);
 
 enum {
-    SPRITE_GROUP_STREAMED SERVAL_PLANNED("streamed sprite groups, docs/sprites.md") = 1 << 0,
+    SPRITE_GROUP_STREAMED SERVAL_PLANNED(
+        "streamed sprite groups, docs/sprites.md#residency-modes") = 1 << 0,
 };
 ```
 
