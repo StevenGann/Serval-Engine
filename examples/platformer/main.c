@@ -53,8 +53,9 @@
 //     is pressed: the same input plays the same game on the GBA and the web
 //
 // What to expect when booting the ROM:
-//   - First the Serval Engine splash (about 3 seconds; any button skips it
-//     once the text is in).
+//   - First the Serval Engine splash: "made with" and the engine's logo (about
+//     3 seconds; any button but L and R skips it once the logo is in, L and R
+//     cycle the candidate logo styles).
 //   - The title fades in: the start of the level under a blue sky, rolling
 //     green hills and pale blue mountains behind, white clouds, an orange
 //     spotted serval on the grass, "S E R V A L   D A S H", a blinking "PRESS

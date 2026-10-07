@@ -34,7 +34,7 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Flash (64 and 128 KiB) and EEPROM (8 KiB and 512 bytes) save types, picked per game with `serval_add_rom(... SAVE <type>)`; slot count and capacity per type (`save_slot_count()`, `save_slot_capacity()`), tested in mGBA ([runtime-systems.md](runtime-systems.md#save-types)).
 - [ ] Testing saves on real cartridges and flash carts, for every save type ([runtime-systems.md](runtime-systems.md#real-cart-testing)).
 - [ ] Maxmod music and sampled sound effects ([audio.md](audio.md)); the PSG wave channel is unused (no wave-channel music).
-- [ ] A logo for `serval_splash()` ([core-api.md](core-api.md#splash-screen)).
+- [ ] A logo for `serval_splash()`: pick one of the four candidate styles (L/R during the splash cycles them); then remove the other three and the cycling ([core-api.md](core-api.md#splash-screen)).
 - [ ] Add the mGBA capture tool to the repository and use it for screenshot tests in CI ([development.md](development.md#checking-what-a-game-shows-and-plays)).
 - [ ] First release (`v0.1.0`).
 - [x] Choose the toolchain: the ARM GNU Toolchain (`arm-none-eabi-gcc`) 15.3, which CI uses and `serval.json`'s `toolchain.gcc` names as the minimum; devkitARM should also work but isn't tested ([development.md](development.md#requirements)).

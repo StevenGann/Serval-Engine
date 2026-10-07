@@ -21,6 +21,10 @@ static void splash_runs_and_restores_state(void) {
     REG_BG0CNT = game_bg0cnt;
     REG_DISPCNT |= DCNT_BG0;
     bool text_before = serval_text_active();
+    // A game's colors in the logo's palette banks (10-13) and the grey's (14).
+    for (u32 bank = 10; bank <= 14; bank++)
+        for (u32 c = 1; c < 16; c++)
+            pal_bg_bank[bank][c] = RGB15(bank - 10, c, 7);
 
     u32 start = frame_count();
     serval_splash();
@@ -33,7 +37,18 @@ static void splash_runs_and_restores_state(void) {
     CHECK(pal_bg_mem[0] == RGB15(3, 6, 9));
     CHECK(REG_BLDCNT == 0); // (BLDY is write-only: can't be checked)
     CHECK(serval_text_active() == text_before);
-    CHECK(se_mem[31][8 * 32 + 10] == 0); // the splash text is gone
+    // The logo and its text are gone from the map (the splash uses rows
+    // 0-19 of screenblock 31)...
+    bool map_clear = true;
+    for (u32 i = 0; i < 20 * 32; i++)
+        map_clear = map_clear && se_mem[31][i] == 0;
+    CHECK(map_clear);
+    // ...and the logo's palette banks hold the game's colors again.
+    bool banks_restored = true;
+    for (u32 bank = 10; bank <= 14; bank++)
+        for (u32 c = 1; c < 16; c++)
+            banks_restored = banks_restored && pal_bg_bank[bank][c] == RGB15(bank - 10, c, 7);
+    CHECK(banks_restored);
     CHECK(REG_BG0CNT == game_bg0cnt);
     CHECK(REG_DISPCNT & DCNT_BG0);
     REG_DISPCNT &= ~DCNT_BG0;

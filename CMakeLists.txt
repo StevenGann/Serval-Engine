@@ -63,6 +63,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/psg_sequencer.c
     src/core/random.c
     src/core/save.c
+    src/core/splash_logic.c
     src/core/sprite_table.c
     src/core/text_format.c
     src/core/trig.c
@@ -90,6 +91,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/psg.c
         src/gba/screen.c
         src/gba/splash.c
+        src/gba/splash_art.c
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c
@@ -118,6 +120,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/psg.c
         src/gba/screen.c
         src/gba/splash.c
+        src/gba/splash_art.c
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c

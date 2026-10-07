@@ -68,8 +68,9 @@
 //     the bottom of the panel
 //
 // What to expect when booting the ROM:
-//   - First the Serval Engine splash (about 3 seconds; any button skips it
-//     once the text is in).
+//   - First the Serval Engine splash: "made with" and the engine's logo (about
+//     3 seconds; any button but L and R skips it once the logo is in, L and R
+//     cycle the candidate logo styles).
 //   - The title fades in over a slowly scrolling starfield with purple
 //     nebula wisps: "S T A R   V E L D T", a blinking "PRESS START", the
 //     controls, the high score and the ship, a silver dart with orange ear

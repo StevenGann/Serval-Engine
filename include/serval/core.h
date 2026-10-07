@@ -22,17 +22,21 @@
 // subsystems. Call once at the start of main().
 void serval_init(void);
 
-// Shows the "Made with Serval Engine" splash screen, then returns: about three
-// seconds of fading in on a black backdrop, a jingle, and fading out. Pressing
-// any button once it has faded in skips the rest. Call it after serval_init(),
-// before loading your game's graphics. Puts back the backdrop color (so the
-// screen then shows the game's backdrop, black by default), background 0's
-// control register and on/off state, the blend control register and the
-// brightness (screen_set_brightness), the two palette entries it uses, whether
-// the text layer was set up and the text shadow setting; silences square
-// channel 1. Not restored: the text layer's map (text_print output is
-// cleared), and if the text layer wasn't set up, charblock 0's first 96 tiles
-// (overwritten by the font) and background 0's scroll (reset to 0).
+// Shows the "made with Serval Engine" splash screen, then returns: about three
+// seconds of the logo fading in on a black backdrop, a jingle, and fading out.
+// Pressing any button but L and R once it has faded in skips the rest. (While
+// the logo is being chosen, four candidate styles are built in and R and L
+// show the next and previous one; a switch restarts the hold. See
+// docs/core-api.md.) Call it after serval_init(), before loading your game's
+// graphics. Puts back the backdrop color (so the screen then shows the game's
+// backdrop, black by default), background 0's control register and on/off
+// state, the blend control register and the brightness
+// (screen_set_brightness), the palette entries it uses (one in BG bank 14 and
+// colors 1-15 of banks 10-13), whether the text layer was set up and the text
+// shadow setting; silences square channel 1. Not restored: the text layer's
+// map (text_print output is cleared), charblock 1 (the logo's tiles), and if
+// the text layer wasn't set up, charblock 0's first 96 tiles (overwritten by
+// the font) and background 0's scroll (reset to 0).
 void serval_splash(void);
 
 // Starts a frame: polls input and clears the sprite draw list.
