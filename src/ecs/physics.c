@@ -108,7 +108,8 @@ static inline FIXED too_big(FIXED lo) {
 // Inlined: called out of line, from ROM, it cost bunnymark (which never
 // bounces perfectly) 2,600 cycles a frame, since sys_physics' fast loop is out
 // of registers and a call clobbers them; inlined, bunnymark costs the same as
-// before (docs/runtime-systems.md#physics has the numbers).
+// before (docs/runtime-systems.md#physics has the numbers). Unoptimized GBA
+// builds call serval_perfect_rebound() in ROM (physics_internal.h).
 static inline __attribute__((always_inline)) FIXED perfect_rebound(FIXED speed, FIXED past,
                                                                    FIXED g) {
     return serval_perfect_rebound(speed, 2 * past, g);
@@ -185,9 +186,13 @@ static inline __attribute__((always_inline)) bool hit_wall(FIXED* pos, FIXED* ve
     return on_floor;
 }
 
-// hit_wall() out of line, for the general loop: inlined, its copies made that
-// loop 4.6 KB of IWRAM instead of 2.7 KB; out of line it costs a call per
-// wall contact.
+// hit_wall() out of line, for the general loop (and, in unoptimized GBA
+// builds, the fast one: SERVAL_PHYSICS_UNOPTIMIZED). It costs a call per wall
+// contact. When it was moved out of line (6ba7de7), inlining its copies made
+// the general loop 4.6 KB of IWRAM instead of 2.7 KB. With GCC 15.3 at -O3
+// (Release), physics_general() is 2,616 bytes and this function 576, against
+// 3,300 for physics_general() with them inlined; at -O2 (RelWithDebInfo)
+// 1,468 and 576, against 3,316.
 // at_lo and on_floor come in bits 8 and 9 of `bounce`.
 static SERVAL_IWRAM_CODE bool hit_wall_call(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi,
                                             FIXED gravity, u32 bounce) {
@@ -200,6 +205,8 @@ static SERVAL_IWRAM_CODE bool hit_wall_call(FIXED* pos, FIXED* vel, FIXED lo, FI
 // pulls toward (its floor), bouncing or resting. In the general loop
 // (`general`, a constant), adds the side of the body that touched a wall
 // (lo_side or hi_side) to its body_contact while contacts are on.
+// Unoptimized GBA builds (SERVAL_PHYSICS_UNOPTIMIZED) call hit_wall_call()
+// from the fast loop too: the same bounce, without the written-out copy.
 static inline __attribute__((always_inline)) bool update_axis(FIXED* pos, FIXED* vel, FIXED lo,
                                                               FIXED hi, FIXED gravity, u32 bounce,
                                                               u32 index, u32 lo_side, u32 hi_side,
@@ -209,8 +216,8 @@ static inline __attribute__((always_inline)) bool update_axis(FIXED* pos, FIXED*
     bool on_floor = (at_lo && gravity < 0) || (at_hi && gravity > 0);
 
     if (at_lo || at_hi) {
-        if (general) {
-            if (contacts_on)
+        if (general || SERVAL_PHYSICS_UNOPTIMIZED) {
+            if (general && contacts_on)
                 body_contact[index] |= (u8)(at_lo ? lo_side : hi_side);
             return hit_wall_call(pos, vel, lo, hi, gravity,
                                  bounce | (u32)at_lo << 8 | (u32)on_floor << 9);

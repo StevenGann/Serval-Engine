@@ -7,6 +7,22 @@
 #include "serval/fixed.h"
 #include "serval/platform.h"
 
+// 1 in unoptimized GBA builds (-O0: CMake's Debug configuration, as in the
+// gba-debug preset or a game's own Debug build), 0 otherwise. GCC still
+// inlines always_inline functions at -O0 but folds no constants into the
+// copies, so every copy keeps all of its branches: the specialized copies
+// that make sys_physics() fast when optimized only filled IWRAM (physics.c's
+// IWRAM code was 13,644 bytes at -O0, 6,288 at -O3). These builds call shared
+// code instead: physics.c's fast loop bounces through hit_wall_call(), and
+// serval_perfect_rebound() is out of line in ROM, which brings physics.c's
+// IWRAM code to 6,128 bytes (docs/development.md#debug-builds). Host builds,
+// also -O0, keep the optimized builds' structure, so the unit tests run it.
+#if defined(SERVAL_GBA) && !defined(__OPTIMIZE__)
+#define SERVAL_PHYSICS_UNOPTIMIZED 1
+#else
+#define SERVAL_PHYSICS_UNOPTIMIZED 0
+#endif
+
 // physics_set_gravity()'s acceleration, in pixels per frame per frame.
 extern FIXED serval_gravity_x, serval_gravity_y;
 
@@ -64,9 +80,16 @@ static inline FIXED serval_fx_abs(FIXED v) {
 //     (map_movement.c).
 // Found by bisection (no divide): one step per bit of the speed, about a
 // dozen, on the bounce frame only. always_inline: in sys_physics' fast loop a
-// call cost bunnymark 2,600 cycles a frame (physics.c).
-static inline __attribute__((always_inline)) FIXED serval_perfect_rebound(FIXED speed, FIXED lost,
-                                                                          FIXED g) {
+// call cost bunnymark 2,600 cycles a frame (physics.c). Unoptimized GBA builds
+// (SERVAL_PHYSICS_UNOPTIMIZED) call it instead, in ROM (a long call from
+// IWRAM): GCC inlines nothing but always_inline functions at -O0, and inlined
+// there, its 64-bit arithmetic took 1,012 bytes of IWRAM.
+#if SERVAL_PHYSICS_UNOPTIMIZED
+#define SERVAL_REBOUND_INLINE __attribute__((long_call))
+#else
+#define SERVAL_REBOUND_INLINE __attribute__((always_inline))
+#endif
+static inline SERVAL_REBOUND_INLINE FIXED serval_perfect_rebound(FIXED speed, FIXED lost, FIXED g) {
     const int64_t target = (int64_t)speed * (speed + g) - (int64_t)2 * g * lost;
     if (target < (int64_t)2 * g * g)
         return 0;
