@@ -2,7 +2,7 @@
 
 GBA is the baseline: every Serval game is a GBA game first, and other targets run it with the GBA's limits. The planned order after 1.0 is GB/GBC, then DS. The web is a secondary target that runs any game unchanged.
 
-**Status:** GBA is implemented. The [web target](#web) is implemented: every example runs in a browser, with sound, saves and input; Direct Sound, interrupts, timers and DMA are not emulated ([known limits](#what-is-faked-or-missing)). GB/GBC and DS are post-1.0 plans. Platform-neutral modules (`src/ecs/`, `src/core/`) also build natively for unit tests ([development.md](development.md#tests)), which keeps them free of hardware access.
+**Status:** GBA is implemented. The [web target](#web) is implemented: every example runs in a browser, with sound, saves and input; Direct Sound, interrupts, timers and DMA are not emulated ([known limits](#what-is-faked-or-missing)), and each planned feature that needs them on the GBA has a web path of its own ([below](#planned-features-on-the-web)). GB/GBC and DS are post-1.0 plans. Platform-neutral modules (`src/ecs/`, `src/core/`) also build natively for unit tests ([development.md](development.md#tests)), which keeps them free of hardware access.
 
 ## Portability rules
 
@@ -17,14 +17,14 @@ These keep future targets possible without a rewrite:
 
 | Target | Runtime base | Emulator | Key challenges |
 | --- | --- | --- | --- |
-| GBA (1.0) | libtonc + Maxmod | mGBA fork (MPL) | Baseline |
+| GBA (1.0) | libtonc; Maxmod from BlocksDS for tracker music and sampled sound (*planned*, [audio.md](audio.md#maxmod-blocksds)) | mGBA fork (MPL) | Baseline |
 | Web | The GBA backend on virtual GBA hardware, compiled with Emscripten | A browser | Faking the GBA's hardware closely enough ([below](#web)) |
 | GB/GBC | GBDK-2020 | mGBA already supports it | The VM on the 8-bit SM83 must be very lean; study GBVM (MIT) |
 | DS | BlocksDS (libnds-based) | melonDS or DeSmuME, both GPL | GPL emulator must run as a separate process over the [debug link](debug-link.md). Two screens, touch, 3D |
 
 ## Web
 
-**Status:** implemented. Every example runs in a browser: graphics (sprites, map layers, text, fades), PSG sound effects and music, keyboard, gamepad and touch input, and saves in `localStorage`. Not emulated: Direct Sound (needed by the planned Maxmod audio), interrupts, timers, DMA and mid-frame changes ([below](#what-is-faked-or-missing)).
+**Status:** implemented. Every example runs in a browser: graphics (sprites, map layers, text, fades), PSG sound effects and music, keyboard, gamepad and touch input, and saves in `localStorage`. Not emulated: Direct Sound, interrupts, timers, DMA and mid-frame changes ([below](#what-is-faked-or-missing)); the planned features that use them on the GBA get web paths of their own ([below](#planned-features-on-the-web)).
 
 The web build turns a game into **one self-contained HTML file**: the game, the engine and the WebAssembly are all inside it, so it can be opened from disk or put on any static host (e.g. GitHub Pages) as is. Build it with the `web` preset ([development.md](development.md#web-builds)); `serval_add_rom()` then produces `<target>.html` instead of a ROM. No game code changes.
 
@@ -36,7 +36,7 @@ The web build doesn't port the engine's API to the browser. It compiles the GBA 
 - **Video.** At every VBlank (`frame_end()`), `src/web/ppu.c` draws what the GBA's video hardware would show for that memory: tiled backgrounds, sprites (with rotation and double size), priorities and color effects. The page shows it on a canvas scaled by whole multiples, without smoothing.
 - **Sound.** `src/web/apu.c` emulates the PSG channels from the sound registers (so sound effects and PSG music play as on the GBA), one frame's worth of samples per VBlank, played through an AudioWorklet.
 - **Frame loop.** A game's main loop never returns, which a browser can't allow. Emscripten's Asyncify lets the VBlank wait hand control back to the browser and resume the game on the next frame, paced at the GBA's 59.73 Hz whatever the display's refresh rate. Hidden tabs pause.
-- **The rest of the hardware.** `src/web/platform.c` stands in for the BIOS calls Serval uses (`VBlankIntrWait`, `BitUnPack`), libtonc's assembly routines (fast copies, the `sys8` font the text layer uses) and the debug output, which goes to the browser console. Debug builds report warnings there too.
+- **The rest of the hardware.** `src/web/platform.c` stands in for the BIOS calls Serval uses (`VBlankIntrWait`, `BitUnPack`), libtonc's assembly copy and fill routines, and the debug output, which goes to the browser console (debug builds report warnings there too). The `sys8` font the text layer uses is assembly data in libtonc; `cmake/ServalWeb.cmake` converts it to C at build time.
 - **Input.** Keyboard (arrows; X = A, Z = B, A/S = L/R, Enter = Start, Backspace = Select), gamepads (standard mapping, by position) and, on touch screens, an on-screen pad. KEYINPUT is written once per frame. F or a double-click toggles full screen.
 
 - **Saves.** The cartridge's save memory is a buffer (`src/web/save.c`) of the game's save type's size (`serval_add_rom()`'s `SAVE`: 32 KiB for SRAM, 64 or 128 KiB for Flash, 8 KiB or 512 bytes for EEPROM), with the GBA's slot layout, so the game gets the same slots and capacity as on the GBA. It is kept in `localStorage` under `serval-save:<title>:<game code>` (both from `serval_add_rom()`, so give each game its own `GAME_CODE`), as base64. It is loaded the first time the game uses its saves and stored after every `save_write()` and `save_erase()`; pages of games that never save don't touch `localStorage`. The contents are byte for byte an mGBA `.sav` file of that type (Flash sector erases are mimicked, so even the unused bytes match); a stored save shorter than the type's (mGBA keeps an 8 KiB EEPROM's `.sav` at 512 bytes until the game writes past them) is padded with `0xFF`, a longer one (another save type) is ignored with a warning. Writes are instant: none of Flash's or EEPROM's write times are imitated. Without `localStorage` (some privacy modes throw on access) the game runs normally, its saves last until the page closes, and the console gets one `serval:` warning. Storage is per origin: the same page served from another address, or opened from disk, has its own saves.
@@ -47,11 +47,27 @@ Since browsers only play sound after a click or key press, the page waits for on
 
 - **CPU time.** The game runs natively, much faster than on an ARM7TDMI. `frame_cpu_cycles()` reports real time converted to GBA cycles, which says nothing about how the game runs on hardware. **Performance is only measured on the GBA**, and a game that is smooth in a browser can still drop frames on hardware.
 - **Random seeds are not faked: they match.** `random_entropy()` hashes `frame_count()` and the button history, never CPU time, so the same input seeds the same game on the GBA and the web (and in every build). A game seeded from the player's timing replays identically from recorded input, which is how the web build is checked against mGBA frame by frame.
-- **Interrupts, timers, DMA and serial** are not emulated. Serval doesn't use them (frame timing comes from `VBlankIntrWait`); games that program them directly don't work on the web.
-- **Mid-frame changes** are not seen: each frame is drawn from the state at VBlank, so raster effects (scanline-timed writes) are not reproduced, and the boot frame (written while the GBA is drawing it) differs. Sound register writes take effect at the next frame boundary (at most one frame, about 17 ms, late).
+- **Interrupts, timers, DMA and serial** are not emulated. The implemented engine doesn't need them on the web: frame timing comes from `VBlankIntrWait`, and the CPU cycle count (timers 2 and 3 on the GBA) from the browser's clock. Games that program them directly don't work on the web. The planned features that will use them on the GBA (Maxmod's timer 0, DMA 1 and 2 and VBlank handler; raster effects' HBlank DMA 0) take another path on the web ([below](#planned-features-on-the-web)).
+- **Mid-frame changes** are not seen: each frame is drawn from the state at VBlank, so a game's own raster effects (scanline-timed writes) are not reproduced, and the boot frame (written while the GBA is drawing it) differs. The engine's planned raster effects are tables, which the renderer will apply line by line ([below](#planned-features-on-the-web)). Sound register writes take effect at the next frame boundary (at most one frame, about 17 ms, late).
 - **Video.** `ppu.c` implements all six display modes, regular and affine backgrounds, sprites (regular, affine, double size, 1D/2D mapping, the per-scanline sprite budget), windows and color effects, and matches mGBA pixel for pixel on the examples (fades follow the hardware's 5-bit arithmetic, where mGBA rounds differently). Not implemented: mosaic, the green-swap register; modes 6 and 7 show only the backdrop and sprites.
-- **Sound.** `apu.c` emulates all four PSG channels (squares with sweep, envelope and length; the wave channel with both banks; noise), matching mGBA's note timing and pitch. Not emulated: **Direct Sound** (the DMA-fed sample channels that Maxmod music and sampled sound effects will use), so Maxmod music and sampled sound will need their own web path when they are added (PSG music works today). Wave RAM written in one frame is attributed to the playing bank; loading both banks in one frame keeps only the last.
+- **Sound.** `apu.c` emulates all four PSG channels (squares with sweep, envelope and length; the wave channel with both banks; noise), matching mGBA's note timing and pitch. Not emulated: **Direct Sound** (the DMA-fed sample channels that tracker music and sampled sound effects will use on the GBA), so those take another path on the web ([below](#planned-features-on-the-web)); PSG music works today. Wave RAM written in one frame is attributed to the playing bank; loading both banks in one frame keeps only the last.
 - **libtonc assembly** other than the routines above (other BIOS calls, other TTE fonts) is not available: a game using it fails to link for the web.
+
+### Planned features on the web
+
+The planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) compiles for the web as for the GBA: the same stubs, the same warnings. When each is implemented, the web does this:
+
+| Feature | Names | On the web |
+| --- | --- | --- |
+| Tracker music, sampled sound effects, the sound bank | `music_*()`, `sfx_*()`, `audio_bank_set()` | Silent stubs that warn once, now and after the GBA plays them, until the web has a player of its own: Maxmod's player is C, so it can run with a C mixer writing straight into the page's audio output, from the same bank (BlocksDS's headless backend does this, unreleased so far). No API change ([audio.md](audio.md#web)) |
+| The PSG wave channel | `PSG_WAVE`, `psg_waves_set()` | Plays as on the GBA: `apu.c` already emulates the channel with both banks ([audio.md](audio.md#wave-channel)) |
+| Alpha blending | `screen_set_blend()`, `SPRITE_BLEND` | Drawn as on the GBA: `ppu.c` already has the hardware's blending and semi-transparent sprites ([runtime-systems.md](runtime-systems.md#alpha-blending)) |
+| Raster effects | `raster_scroll()`, `raster_backdrop()`, `raster_clear()` | The renderer keeps per-line state and applies the table's value for each line as it draws it, since it draws a frame at once and can't see writes between lines ([runtime-systems.md](runtime-systems.md#raster-effects)) |
+| LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | A C decoder for the BIOS's LZ77 format joins the BIOS stand-ins in `src/web/platform.c` ([sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets)) |
+| Streamed sprite groups, runtime sprite tiles, palette writes | `SPRITE_GROUP_STREAMED`, `sprite_set_tiles()`, `sprite_set_colors()`, `tileset_set_colors()` | Nothing web-specific: they are VRAM and palette RAM copies in `frame_end()`, which the web build runs unchanged ([frame-loop.md](frame-loop.md#vblank-flush)) |
+| Ladders and floor slopes | `MAP_LADDER`, `MAP_CONTACT_LADDER`, `MAP_SLOPE_*` | Nothing web-specific: map collision is portable code (`src/core/`, `src/ecs/`) |
+
+Portable code, the same on every target and host-tested: `vm_collide()` (the VM's collision pass), `map_tags_in()`, `color_mix()`, and the ladders and slopes above when they come.
 
 ### Testing
 
