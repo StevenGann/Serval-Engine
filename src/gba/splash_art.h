@@ -5,9 +5,10 @@
 // from ASCII pictures into charblock 1 and shown on the text layer's map.
 // Not part of the public API.
 //
-// The logo is the mark-and-wordmark design (a serval's head and "SERVAL
-// ENGINE" in chunky letters) in four variations while the final one is
-// picked (docs/open-questions.md); the splash cycles them with L and R.
+// The logo is the mark-and-wordmark design (the chosen serval's head beside
+// "SERVAL ENGINE" in chunky letters) in four variations of that head while
+// the final one is picked (docs/open-questions.md); the splash cycles them
+// with L and R.
 
 #include <tonc_types.h>
 
