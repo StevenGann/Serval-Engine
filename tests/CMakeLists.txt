@@ -115,6 +115,12 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # The logo PNGs in docs/images are the splash's own drawing, made by
+    # tools/logo-png.py; this fails when splash_art.c changes until they are
+    # regenerated.
+    add_test(NAME logo_png
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/logo-png.py"
+                --check "${PROJECT_SOURCE_DIR}/docs/images" --cc "${CMAKE_C_COMPILER}")
 
     # Games must never need a third-party header. libtonc is not on the host
     # include path, so these compile only if the public headers and the

@@ -1,4 +1,4 @@
-# Serval Engine
+<h1 align="center"><img src="docs/images/serval-engine-logo@4x.png" alt="Serval Engine" width="552"></h1>
 
 An open-source Game Boy Advance game runtime written in C on top of [libtonc](https://github.com/gbadev-org/libtonc).
 
