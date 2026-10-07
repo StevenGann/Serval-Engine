@@ -36,17 +36,17 @@ enum {
 };
 
 typedef struct {
-    u32 pc;              // blob offset of the next opcode
-    Entity self;         // bound entity, or ENTITY_NONE for a thread (vm_start)
-    Entity other;        // the event's other entity, else ENTITY_NONE
-    u8 state;            // CTX_*
-    u8 event;            // the VM_EV_* handler it runs
-    u16 wait_frames;     // CTX_WAIT_FRAMES: resume passes left
-    u8 sp, cp;           // value and call stack depths
-    u8 interruptible;    // INTERRUPTIBLE: an event for self may cut into its waits
-    s32 stack[VM_STACK]; // value stack
-    u32 calls[VM_CALLS]; // return offsets
-    s32 loc[VM_LOCALS];  // zeroed when the context starts
+    u32 pc;                // blob offset of the next opcode
+    Entity self;           // bound entity, or ENTITY_NONE for a thread (vm_start)
+    Entity other;          // the event's other entity, else ENTITY_NONE
+    u8 state;              // CTX_*
+    u8 event;              // the VM_EV_* handler it runs
+    u16 wait_frames;       // CTX_WAIT_FRAMES: resume passes left
+    u8 sp, fp, cp;         // stack top, frame start, call depth
+    u8 interruptible;      // INTERRUPTIBLE: an event for self may cut into its waits
+    s32 stack[VM_STACK];   // operands, and the locals of every frame
+    u32 call_pc[VM_CALLS]; // CALL's return points
+    u8 call_fp[VM_CALLS];  // and the callers' frames
 } Context;
 
 typedef struct {
@@ -80,6 +80,8 @@ static bool in_phase; // inside vm_step() or vm_events()
 _Static_assert(VM_CONTEXTS < 255, "bound_context holds a context index + 1 in a u8");
 _Static_assert(MAX_ENT <= 256, "an entity slot fits a handle's low byte");
 _Static_assert(VM_GLOBALS >= 256, "LDG and STG take any u8 global index");
+_Static_assert(VM_STACK <= 255, "sp and fp are u8");
+_Static_assert(VM_CALLS <= 255, "cp is a u8");
 
 // --- Warnings ----------------------------------------------------------------
 
@@ -248,10 +250,8 @@ static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 
         c->state = (u8)state;
         c->event = (u8)event;
         c->wait_frames = 0;
-        c->sp = c->cp = 0;
+        c->sp = c->fp = c->cp = 0;
         c->interruptible = 0;
-        for (u32 n = 0; n < VM_LOCALS; n++)
-            c->loc[n] = 0;
         if (self != ENTITY_NONE)
             bound_context[entity_index(self)] = (u8)(k + 1);
         return c;
@@ -502,6 +502,30 @@ static s32 sys_call(u32 fn, const s32* args) {
     }
 }
 
+// --- Arithmetic --------------------------------------------------------------
+
+// LSH: Lua's shift. Left by b, or logically right by -b; 32 or more either way
+// shifts everything out.
+static s32 lua_shift(s32 a, s32 b) {
+    if (b >= 32 || b <= -32)
+        return 0;
+    return b >= 0 ? (s32)((u32)a << b) : (s32)((u32)a >> (u32)-b);
+}
+
+// IDIV and IMOD: Lua's floored // and % (b not 0). The truncating results,
+// corrected toward negative infinity when the signs differ and the remainder
+// isn't 0.
+static s32 floored(u32 op, s32 a, s32 b) {
+    if (b == -1) // INT32_MIN / -1 overflows in C: wrap it here
+        return op == VM_OP_IDIV ? (s32)(0u - (u32)a) : 0;
+    s32 q = a / b, m = a % b;
+    if (m != 0 && (m ^ b) < 0) {
+        q -= 1;
+        m += b;
+    }
+    return op == VM_OP_IDIV ? q : m;
+}
+
 // --- Interpreter -------------------------------------------------------------
 
 // Runs the context until it halts or waits, or until it has run
@@ -514,6 +538,7 @@ static u32 execute(Context* c, bool must_finish) {
     s32* const st = c->stack;
     u32 pc = c->pc;
     u32 sp = c->sp;
+    u32 fp = c->fp;
     u32 ops = 0;
     u32 at = pc; // the current op's offset, for warnings
     (void)at;    // (release builds have none)
@@ -596,18 +621,22 @@ static u32 execute(Context* c, bool must_finish) {
             globals[code[pc]] = st[--sp];
             pc += 1;
             break;
+        // Locals are the frame's cells: fp + n, below the stack top.
         case VM_OP_LDL: {
             OPERAND(1);
             ROOM(1);
             u32 n = code[pc];
             pc += 1;
-            if (n >= VM_LOCALS) {
-                WARN_ONCE(WARN_LOCAL, "vm: LDL at 0x%x: no local %u (0 to %d); pushes 0", at, n,
-                          VM_LOCALS - 1);
-                st[sp++] = 0;
+            if (fp + n < sp) {
+                st[sp] = st[fp + n];
             } else {
-                st[sp++] = c->loc[n];
+                WARN_ONCE(WARN_LOCAL,
+                          "vm: LDL/STL at 0x%x: local %u is outside the frame (%d cells; ENTER "
+                          "makes locals); reads 0, writes nothing",
+                          at, n, (int)sp - (int)fp);
+                st[sp] = 0;
             }
+            sp++;
             break;
         }
         case VM_OP_STL: {
@@ -616,11 +645,13 @@ static u32 execute(Context* c, bool must_finish) {
             u32 n = code[pc];
             pc += 1;
             s32 value = st[--sp];
-            if (n >= VM_LOCALS)
-                WARN_ONCE(WARN_LOCAL, "vm: STL at 0x%x: no local %u (0 to %d); value dropped", at,
-                          n, VM_LOCALS - 1);
+            if (fp + n < sp)
+                st[fp + n] = value;
             else
-                c->loc[n] = value;
+                WARN_ONCE(WARN_LOCAL,
+                          "vm: LDL/STL at 0x%x: local %u is outside the frame (%d cells; ENTER "
+                          "makes locals); reads 0, writes nothing",
+                          at, n, (int)sp - (int)fp);
             break;
         }
 
@@ -637,16 +668,21 @@ static u32 execute(Context* c, bool must_finish) {
             break;
         case VM_OP_DIV:
         case VM_OP_MOD:
-        case VM_OP_FXDIV: {
+        case VM_OP_FXDIV:
+        case VM_OP_IDIV:
+        case VM_OP_IMOD: {
             NEED(2);
             s32 b = st[--sp], a = st[sp - 1];
             s32 r;
             if (b == 0) {
                 WARN_ONCE(WARN_DIV_ZERO,
-                          "vm: division by zero at 0x%x (DIV, MOD or FXDIV); gives 0", at);
+                          "vm: division by zero at 0x%x (DIV, MOD, FXDIV, IDIV or IMOD); gives 0",
+                          at);
                 r = 0;
             } else if (op == VM_OP_FXDIV) {
                 r = (s32)(u32)(uint64_t)((int64_t)a * 256 / b);
+            } else if (op == VM_OP_IDIV || op == VM_OP_IMOD) {
+                r = floored(op, a, b);
             } else if (b == -1) { // INT32_MIN / -1 overflows in C: wrap it here
                 r = op == VM_OP_DIV ? (s32)(0u - (u32)a) : 0;
             } else {
@@ -686,6 +722,9 @@ static u32 execute(Context* c, bool must_finish) {
             NEED(1);
             st[sp - 1] = st[sp - 1] == 0;
             break;
+        case VM_OP_LSH:
+            BINARY(lua_shift(a, b));
+            break;
         case VM_OP_EQ:
             BINARY(a == b);
             break;
@@ -721,18 +760,50 @@ static u32 execute(Context* c, bool must_finish) {
             pc = jump ? target : pc + 2;
             break;
         }
+        // Frames: CALL saves the return point and the caller's frame and
+        // starts the callee's at the stack top (its arguments just below);
+        // RET drops the whole frame. At the handler's own level (cp 0), RET
+        // and RETV end the handler, whatever the stack holds.
         case VM_OP_CALL:
             OPERAND(4);
             if (c->cp == VM_CALLS)
                 goto call_depth;
-            c->calls[c->cp++] = pc + 4;
+            c->call_pc[c->cp] = pc + 4;
+            c->call_fp[c->cp] = (u8)fp;
+            c->cp++;
+            fp = sp;
             pc = le32(code + pc);
             break;
         case VM_OP_RET:
+        case VM_OP_RETV: {
             if (c->cp == 0)
-                goto halted; // returning from the handler itself
-            pc = c->calls[--c->cp];
+                goto halted;
+            s32 value = 0;
+            if (op == VM_OP_RETV) {
+                NEED(1);
+                value = st[--sp];
+            }
+            sp = fp;
+            c->cp--;
+            pc = c->call_pc[c->cp];
+            fp = c->call_fp[c->cp];
+            if (op == VM_OP_RETV) {
+                ROOM(1);
+                st[sp++] = value;
+            }
             break;
+        }
+        case VM_OP_ENTER: {
+            OPERAND(2);
+            u32 p = code[pc], n = code[pc + 1];
+            pc += 2;
+            NEED(p); // the arguments
+            ROOM(n);
+            fp = sp - p;
+            for (u32 k = 0; k < n; k++)
+                st[sp++] = 0;
+            break;
+        }
 
         case VM_OP_WAIT: {
             NEED(1);
@@ -923,6 +994,7 @@ budget: // the op at `at` is not run
 suspend:
     c->pc = pc;
     c->sp = (u8)sp;
+    c->fp = (u8)fp;
     return ops;
 halted:
     halt(c);

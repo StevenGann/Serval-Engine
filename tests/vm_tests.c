@@ -16,6 +16,7 @@
 #include "serval/physics.h"
 #include "serval/random.h"
 #include "serval/sprites.h"
+#include "serval/text.h"
 #include "serval/vm.h"
 #include "test.h"
 
@@ -214,6 +215,14 @@ static void spawn(u32 obj) {
 
 static void trace(u32 str) {
     op16(VM_OP_TRACE, str);
+}
+
+// ENTER p, n: the top p cells become the frame's first locals, n zeroed ones
+// follow.
+static void enter(u32 p, u32 n) {
+    emit(VM_OP_ENTER);
+    emit(p);
+    emit(n);
 }
 
 static void label(u32 l) {
@@ -431,11 +440,13 @@ static void golden_example(void) {
 // --- Stack, variables, arithmetic --------------------------------------------
 
 // vm.md "Stack and variables": each op's stack effect, seen through STG; LDG
-// sees vm_set_global; locals start zeroed in every new context ("Contexts").
+// sees vm_set_global; ENTER's locals start zeroed in every new context
+// ("Frames").
 static void stack_and_variable_ops(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 8);    // locals 0-7, zeroed
     op(VM_OP_NOP);  //
     push8(-2);      // -2
     push16(1000);   // -2 1000
@@ -471,6 +482,7 @@ static void stack_and_variable_ops(void) {
     op(VM_OP_HALT); // ends the handler
     store(12, 1);   // never runs
     handler(1, VM_EV_CREATE);
+    enter(0, 8);    //
     ldl(0);         // 0
     stg(13);        // glob[13] = 0
     ldl(7);         // 0
@@ -574,7 +586,7 @@ static void check_rows(const OpRow* rows, u32 n) {
     CHECK(vm_idle());
     for (u32 r = 0; r < n; r++)
         if (vm_global((u16)r) != rows[r].expected)
-            test_fail(__FILE__, __LINE__, rows[r].what);
+            test_fail(__FILE__, __LINE__, text_format("%s [row %u]", rows[r].what, r));
     CHECK_WARNED(before, 0);
 }
 
@@ -674,6 +686,178 @@ static void bitwise_and_shift_ops(void) {
     check_rows(bitwise_rows, sizeof bitwise_rows / sizeof bitwise_rows[0]);
 }
 
+// vm.md "Arithmetic, logic, comparison" (LSH): Lua 5.4's shifts with 32-bit
+// integers. The Lua 5.4 manual (3.4.2): "Both right and left shifts fill the
+// vacant bits with zeros. Negative displacements shift to the other direction;
+// displacements with absolute values equal to or higher than the number of
+// bits in an integer result in zero." So for a count n from 0 to 31, a << n is
+// a times 2^n, modulo 2^32; from -31 to -1 it is the unsigned value of a
+// divided by 2^-n, rounded down; 32 or more either way gives 0. The values
+// below were worked out that way, for n = -33 to 33 in order.
+enum { SHIFT_MIN = -33, SHIFT_COUNTS = 67 };
+static const struct {
+    s32 a;
+    const char* what;
+    u32 expected[SHIFT_COUNTS]; // for n = SHIFT_MIN + index
+} shift_sweeps[] = {
+    {
+        1,
+        "LSH 1, n",
+        {
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000002,
+            0x00000004, 0x00000008, 0x00000010, 0x00000020, 0x00000040, 0x00000080, 0x00000100,
+            0x00000200, 0x00000400, 0x00000800, 0x00001000, 0x00002000, 0x00004000, 0x00008000,
+            0x00010000, 0x00020000, 0x00040000, 0x00080000, 0x00100000, 0x00200000, 0x00400000,
+            0x00800000, 0x01000000, 0x02000000, 0x04000000, 0x08000000, 0x10000000, 0x20000000,
+            0x40000000, 0x80000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        -1,
+        "LSH -1, n: right shifts are logical",
+        {
+            0x00000000, 0x00000000, 0x00000001, 0x00000003, 0x00000007, 0x0000000F, 0x0000001F,
+            0x0000003F, 0x0000007F, 0x000000FF, 0x000001FF, 0x000003FF, 0x000007FF, 0x00000FFF,
+            0x00001FFF, 0x00003FFF, 0x00007FFF, 0x0000FFFF, 0x0001FFFF, 0x0003FFFF, 0x0007FFFF,
+            0x000FFFFF, 0x001FFFFF, 0x003FFFFF, 0x007FFFFF, 0x00FFFFFF, 0x01FFFFFF, 0x03FFFFFF,
+            0x07FFFFFF, 0x0FFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF, 0xFFFFFFFF, 0xFFFFFFFE,
+            0xFFFFFFFC, 0xFFFFFFF8, 0xFFFFFFF0, 0xFFFFFFE0, 0xFFFFFFC0, 0xFFFFFF80, 0xFFFFFF00,
+            0xFFFFFE00, 0xFFFFFC00, 0xFFFFF800, 0xFFFFF000, 0xFFFFE000, 0xFFFFC000, 0xFFFF8000,
+            0xFFFF0000, 0xFFFE0000, 0xFFFC0000, 0xFFF80000, 0xFFF00000, 0xFFE00000, 0xFFC00000,
+            0xFF800000, 0xFF000000, 0xFE000000, 0xFC000000, 0xF8000000, 0xF0000000, 0xE0000000,
+            0xC0000000, 0x80000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        INT32_MIN,
+        "LSH INT32_MIN, n",
+        {
+            0x00000000, 0x00000000, 0x00000001, 0x00000002, 0x00000004, 0x00000008, 0x00000010,
+            0x00000020, 0x00000040, 0x00000080, 0x00000100, 0x00000200, 0x00000400, 0x00000800,
+            0x00001000, 0x00002000, 0x00004000, 0x00008000, 0x00010000, 0x00020000, 0x00040000,
+            0x00080000, 0x00100000, 0x00200000, 0x00400000, 0x00800000, 0x01000000, 0x02000000,
+            0x04000000, 0x08000000, 0x10000000, 0x20000000, 0x40000000, 0x80000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        0x12345678,
+        "LSH 0x12345678, n",
+        {
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000002,
+            0x00000004, 0x00000009, 0x00000012, 0x00000024, 0x00000048, 0x00000091, 0x00000123,
+            0x00000246, 0x0000048D, 0x0000091A, 0x00001234, 0x00002468, 0x000048D1, 0x000091A2,
+            0x00012345, 0x0002468A, 0x00048D15, 0x00091A2B, 0x00123456, 0x002468AC, 0x0048D159,
+            0x0091A2B3, 0x01234567, 0x02468ACF, 0x048D159E, 0x091A2B3C, 0x12345678, 0x2468ACF0,
+            0x48D159E0, 0x91A2B3C0, 0x23456780, 0x468ACF00, 0x8D159E00, 0x1A2B3C00, 0x34567800,
+            0x68ACF000, 0xD159E000, 0xA2B3C000, 0x45678000, 0x8ACF0000, 0x159E0000, 0x2B3C0000,
+            0x56780000, 0xACF00000, 0x59E00000, 0xB3C00000, 0x67800000, 0xCF000000, 0x9E000000,
+            0x3C000000, 0x78000000, 0xF0000000, 0xE0000000, 0xC0000000, 0x80000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        },
+    },
+};
+
+// Counts no sweep reaches: the most negative and positive cells (a >> b
+// compiles to LSH a, -b, and -INT32_MIN wraps to INT32_MIN: still 0, as in
+// Lua, whose >> negates the count the same way), and zero shifted.
+static const OpRow shift_edge_rows[] = {
+    {VM_OP_LSH, 1, INT32_MIN, 0, "LSH 1, INT32_MIN"},
+    {VM_OP_LSH, -1, INT32_MIN, 0, "LSH -1, INT32_MIN"},
+    {VM_OP_LSH, 1, INT32_MAX, 0, "LSH 1, INT32_MAX"},
+    {VM_OP_LSH, -1, 1000, 0, "LSH -1, 1000"},
+    {VM_OP_LSH, -1, -1000, 0, "LSH -1, -1000"},
+    {VM_OP_LSH, 0, 5, 0, "LSH 0, 5"},
+    {VM_OP_LSH, 0, -5, 0, "LSH 0, -5"},
+    {VM_OP_LSH, 0, 0, 0, "LSH 0, 0"},
+    {VM_OP_LSH, -7, -1, 0x7FFFFFFC, "LSH -7, -1: logical"},
+    {VM_OP_LSH, -7, 31, INT32_MIN, "LSH -7, 31"},
+    {VM_OP_LSH, INT32_MAX, 1, -2, "LSH INT32_MAX, 1 wraps"},
+};
+
+static void lua_shift_op(void) {
+    static OpRow rows[SHIFT_COUNTS];
+    for (u32 t = 0; t < sizeof shift_sweeps / sizeof shift_sweeps[0]; t++) {
+        for (u32 k = 0; k < SHIFT_COUNTS; k++)
+            rows[k] = (OpRow){VM_OP_LSH, shift_sweeps[t].a, SHIFT_MIN + (s32)k,
+                              (s32)shift_sweeps[t].expected[k], shift_sweeps[t].what};
+        check_rows(rows, SHIFT_COUNTS);
+    }
+    check_rows(shift_edge_rows, sizeof shift_edge_rows / sizeof shift_edge_rows[0]);
+}
+
+// vm.md "Arithmetic, logic, comparison" (IDIV, IMOD): Lua 5.4's // and % with
+// 32-bit integers. The manual (3.4.1): "Floor division (//) is a division
+// that rounds the quotient towards minus infinity", and modulo "is defined as
+// the remainder of a division that rounds the quotient towards minus
+// infinity": a % b = a - (a // b) * b, so a nonzero remainder has b's sign.
+// Integer arithmetic wraps around (3.4.1), so INT32_MIN // -1 is INT32_MIN
+// (2^31 wrapped) and INT32_MIN % -1 is 0, as vm.md says.
+static const OpRow floored_rows[] = {
+    {VM_OP_IDIV, 7, 2, 3, "IDIV 7 // 2"},
+    {VM_OP_IMOD, 7, 2, 1, "IMOD 7 % 2"},
+    {VM_OP_IDIV, -7, 2, -4, "IDIV -7 // 2 rounds down"},
+    {VM_OP_IMOD, -7, 2, 1, "IMOD -7 % 2 has the divisor's sign"},
+    {VM_OP_IDIV, 7, -2, -4, "IDIV 7 // -2 rounds down"},
+    {VM_OP_IMOD, 7, -2, -1, "IMOD 7 % -2 has the divisor's sign"},
+    {VM_OP_IDIV, -7, -2, 3, "IDIV -7 // -2"},
+    {VM_OP_IMOD, -7, -2, -1, "IMOD -7 % -2"},
+    {VM_OP_IDIV, 6, 3, 2, "IDIV 6 // 3"},
+    {VM_OP_IMOD, 6, 3, 0, "IMOD 6 % 3"},
+    {VM_OP_IDIV, -6, 3, -2, "IDIV -6 // 3: exact, no correction"},
+    {VM_OP_IMOD, -6, 3, 0, "IMOD -6 % 3: 0, no correction"},
+    {VM_OP_IDIV, 6, -3, -2, "IDIV 6 // -3"},
+    {VM_OP_IMOD, 6, -3, 0, "IMOD 6 % -3"},
+    {VM_OP_IDIV, -1, 2, -1, "IDIV -1 // 2 is -1"},
+    {VM_OP_IMOD, -1, 2, 1, "IMOD -1 % 2 is 1"},
+    {VM_OP_IDIV, 1, -2, -1, "IDIV 1 // -2 is -1"},
+    {VM_OP_IMOD, 1, -2, -1, "IMOD 1 % -2 is -1"},
+    {VM_OP_IDIV, 0, 5, 0, "IDIV 0 // 5"},
+    {VM_OP_IMOD, 0, 5, 0, "IMOD 0 % 5"},
+    {VM_OP_IDIV, 0, -5, 0, "IDIV 0 // -5"},
+    {VM_OP_IMOD, 0, -5, 0, "IMOD 0 % -5"},
+    {VM_OP_IDIV, INT32_MIN, -1, INT32_MIN, "IDIV INT32_MIN // -1 wraps"},
+    {VM_OP_IMOD, INT32_MIN, -1, 0, "IMOD INT32_MIN % -1"},
+    {VM_OP_IDIV, INT32_MIN, 1, INT32_MIN, "IDIV INT32_MIN // 1"},
+    {VM_OP_IMOD, INT32_MIN, 1, 0, "IMOD INT32_MIN % 1"},
+    {VM_OP_IDIV, INT32_MIN, 2, -1073741824, "IDIV INT32_MIN // 2"},
+    {VM_OP_IMOD, INT32_MIN, 2, 0, "IMOD INT32_MIN % 2"},
+    {VM_OP_IDIV, INT32_MIN, 3, -715827883, "IDIV INT32_MIN // 3 rounds down"},
+    {VM_OP_IMOD, INT32_MIN, 3, 1, "IMOD INT32_MIN % 3"},
+    {VM_OP_IDIV, INT32_MIN, INT32_MIN, 1, "IDIV INT32_MIN // INT32_MIN"},
+    {VM_OP_IMOD, INT32_MIN, INT32_MIN, 0, "IMOD INT32_MIN % INT32_MIN"},
+    {VM_OP_IDIV, INT32_MIN, INT32_MAX, -2, "IDIV INT32_MIN // INT32_MAX rounds down"},
+    {VM_OP_IMOD, INT32_MIN, INT32_MAX, 2147483646, "IMOD INT32_MIN % INT32_MAX"},
+    {VM_OP_IDIV, INT32_MAX, INT32_MIN, -1, "IDIV INT32_MAX // INT32_MIN"},
+    {VM_OP_IMOD, INT32_MAX, INT32_MIN, -1, "IMOD INT32_MAX % INT32_MIN"},
+    {VM_OP_IDIV, 1, INT32_MIN, -1, "IDIV 1 // INT32_MIN"},
+    {VM_OP_IMOD, 1, INT32_MIN, -2147483647, "IMOD 1 % INT32_MIN"},
+    {VM_OP_IDIV, -1, INT32_MIN, 0, "IDIV -1 // INT32_MIN"},
+    {VM_OP_IMOD, -1, INT32_MIN, -1, "IMOD -1 % INT32_MIN"},
+    {VM_OP_IDIV, INT32_MAX, -1, -INT32_MAX, "IDIV INT32_MAX // -1"},
+    {VM_OP_IMOD, INT32_MAX, -1, 0, "IMOD INT32_MAX % -1"},
+    {VM_OP_IDIV, INT32_MAX, 2, 1073741823, "IDIV INT32_MAX // 2"},
+    {VM_OP_IMOD, INT32_MAX, 2, 1, "IMOD INT32_MAX % 2"},
+    {VM_OP_IDIV, -2147483647, 2, -1073741824, "IDIV -INT32_MAX // 2 rounds down"},
+    {VM_OP_IMOD, -2147483647, 2, 1, "IMOD -INT32_MAX % 2"},
+    {VM_OP_IDIV, -3, INT32_MAX, -1, "IDIV -3 // INT32_MAX"},
+    {VM_OP_IMOD, -3, INT32_MAX, 2147483644, "IMOD -3 % INT32_MAX"},
+    {VM_OP_IDIV, 100, -7, -15, "IDIV 100 // -7"},
+    {VM_OP_IMOD, 100, -7, -5, "IMOD 100 % -7"},
+};
+
+static void floored_division_ops(void) {
+    check_rows(floored_rows, sizeof floored_rows / sizeof floored_rows[0]);
+}
+
 // vm.md "Arithmetic, logic, comparison": signed comparisons, a op b, pushing 1
 // or 0.
 static const OpRow comparison_rows[] = {
@@ -700,40 +884,36 @@ static void comparison_ops(void) {
     check_rows(comparison_rows, sizeof comparison_rows / sizeof comparison_rows[0]);
 }
 
-// vm.md "Arithmetic, logic, comparison": DIV, MOD and FXDIV by zero give 0
-// and warn once (one kind of problem: "Warnings repeat once per problem, per
-// loaded blob"); the context goes on.
+// vm.md "Arithmetic, logic, comparison": DIV, MOD, FXDIV, IDIV and IMOD by
+// zero give 0 and warn once (one kind of problem: "Warnings repeat once per
+// problem, per loaded blob"); the context goes on.
 static void division_by_zero(void) {
+    static const u8 divisions[] = {VM_OP_DIV, VM_OP_MOD, VM_OP_FXDIV, VM_OP_IDIV, VM_OP_IMOD};
+    enum { N = sizeof divisions };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
     for (u32 round = 0; round < 2; round++) {
-        push8(7);       // 7
-        push8(0);       // 7 0
-        op(VM_OP_DIV);  // 0
-        stg(3 * round); // glob[0 or 3] = 0
-        push8(-7);      // -7
-        push8(0);       // -7 0
-        op(VM_OP_MOD);  // 0
-        stg(3 * round + 1);
-        push32(FX(3));   // 3.0
-        push8(0);        // 3.0 0
-        op(VM_OP_FXDIV); // 0
-        stg(3 * round + 2);
+        for (u32 k = 0; k < N; k++) {
+            push8(k % 2 ? -7 : 7); // a
+            push8(0);              // a 0
+            op(divisions[k]);      // 0
+            stg(N * round + k);    // glob[N * round + k] = 0
+        }
     }
-    store(6, 1);    // carried on
-    op(VM_OP_HALT); //
+    store(2 * N, 1); // carried on
+    op(VM_OP_HALT);  //
     CHECK(load());
-    for (u16 g = 0; g < 7; g++)
+    for (u16 g = 0; g <= 2 * N; g++)
         vm_set_global(g, 99);
     start(0);
     u32 before = debug_warning_count();
     vm_step();
     u32 wrong = 0;
-    for (u16 g = 0; g < 6; g++)
+    for (u16 g = 0; g < 2 * N; g++)
         wrong += vm_global(g) != 0;
     CHECK(wrong == 0);
-    CHECK(vm_global(6) == 1);
+    CHECK(vm_global(2 * N) == 1);
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
 }
@@ -747,6 +927,7 @@ static void control_flow(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 1);             // local 0
     jump(VM_OP_JMP, L_OVER); // forward
     store(0, 99);            // skipped
     label(L_OVER);           //
@@ -839,19 +1020,197 @@ static void ret_with_empty_call_stack_halts(void) {
     CHECK_WARNED(before, 0);
 }
 
+// vm.md "Frames", "Exact semantics: Frames": ENTER p, n makes the top p
+// cells (the caller's arguments) the frame's first locals and pushes n zeroed
+// ones; RETV pops a value, drops the callee's whole frame (arguments, locals,
+// temporaries) and pushes the value; RET drops the frame. A callee without
+// ENTER has a frame that starts at the stack top, so RET leaves the caller's
+// arguments to the caller. The caller's locals and temporaries come through
+// untouched.
+static void frames_hold_arguments_and_locals(void) {
+    enum { L_ADD3, L_DROPS, L_KEEPS };
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    enter(0, 1);    // c0
+    push8(77);      //
+    stl(0);         // c0 = 77
+    push8(100);     // c0 100: a temporary
+    push8(3);       // c0 100 3
+    push8(4);       // c0 100 3 4: arguments
+    call(L_ADD3);   // c0 100 17
+    stg(0);         // glob[0] = 17
+    stg(1);         // glob[1] = 100
+    ldl(0);         //
+    stg(2);         // glob[2] = 77
+    push8(5);       // c0 5: an argument
+    call(L_DROPS);  // c0: RET dropped it with the frame
+    push8(9);       // c0 9
+    ldl(1);         // c0 9 9 (5 if the argument were still there)
+    stg(3);         // glob[3] = 9
+    op(VM_OP_DROP); // c0
+    push8(6);       // c0 6
+    call(L_KEEPS);  // c0 6: no ENTER, so the 6 was never the callee's
+    stg(4);         // glob[4] = 6
+    ldl(0);         //
+    stg(5);         // glob[5] = 77
+    op(VM_OP_HALT); //
+    label(L_ADD3);  // (a, b): a + b + 10
+    enter(2, 1);    // a b l2
+    ldl(2);         // a b l2 0
+    stg(6);         // glob[6] = 0: zeroed
+    push8(10);      //
+    stl(2);         // l2 = 10
+    ldl(0);         //
+    ldl(1);         //
+    op(VM_OP_ADD);  //
+    ldl(2);         //
+    op(VM_OP_ADD);  // a b l2 17
+    push8(55);      // a b l2 17 55: a temporary left behind
+    op(VM_OP_SWAP); // a b l2 55 17
+    op(VM_OP_RETV); //
+    label(L_DROPS); // (n)
+    enter(1, 2);    // n l1 l2
+    push8(1);       //
+    push8(2);       // n l1 l2 1 2
+    op(VM_OP_RET);  //
+    label(L_KEEPS); // a frame starting at the stack top
+    push8(1);       //
+    push8(2);       //
+    op(VM_OP_RET);  //
+    CHECK(load());
+    vm_set_global(6, 99);
+    u32 before = debug_warning_count();
+    start(0);
+    vm_step();
+    static const s32 expected[] = {17, 100, 77, 9, 6, 77, 0};
+    u32 wrong = 0;
+    for (u16 g = 0; g < sizeof expected / sizeof expected[0]; g++)
+        wrong += vm_global(g) != expected[g];
+    CHECK(wrong == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Frames": recursion works to the depth VM_CALLS and VM_STACK allow.
+// sum(n) = n + sum(n - 1), sum(0) = 0, is VM_CALLS calls deep for sum(VM_CALLS
+// - 1) and fits; one deeper overflows the call stack. A function whose frame
+// holds 8 locals runs out of stack after VM_STACK / 8 levels instead. Each
+// warns and halts only its own context.
+static void recursion_to_the_limits(void) {
+    enum { L_SUM, L_MORE, L_DEEP };
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(VM_CALLS - 1); // n
+    call(L_SUM);         // sum(n)
+    stg(0);              // glob[0]
+    op(VM_OP_HALT);      //
+    handler(1, VM_EV_CREATE);
+    store(1, 1);     //
+    push8(VM_CALLS); // one call deeper
+    call(L_SUM);     // overflows the call stack: warns, halts
+    store(1, 2);     // never runs
+    op(VM_OP_HALT);  //
+    handler(2, VM_EV_CREATE);
+    call(L_DEEP);   // overflows the stack: warns, halts
+    store(3, 1);    // never runs
+    op(VM_OP_HALT); //
+    label(L_SUM);   // (n)
+    enter(1, 0);    // n
+    ldl(0);         //
+    jump(VM_OP_JNZ, L_MORE);
+    push8(0);       // n 0
+    op(VM_OP_RETV); //
+    label(L_MORE);  //
+    ldl(0);         // n n
+    ldl(0);         //
+    push8(1);       //
+    op(VM_OP_SUB);  // n n n-1
+    call(L_SUM);    // n n sum(n-1)
+    op(VM_OP_ADD);  // n n+sum(n-1)
+    op(VM_OP_RETV); //
+    label(L_DEEP);  //
+    count(2);       // glob[2]: levels reached
+    enter(0, 8);    // 8 cells a level
+    call(L_DEEP);   //
+    op(VM_OP_RET);  //
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == (VM_CALLS - 1) * VM_CALLS / 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    start(1);
+    vm_step();
+    CHECK(vm_global(1) == 1 && vm_idle());
+    CHECK_WARNED(before, 1);
+    start(2);
+    vm_step();
+    CHECK(vm_global(2) == VM_STACK / 8); // the next level has no room left
+    CHECK(vm_global(3) == 0 && vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// vm.md "Exact semantics: Frames": RET and RETV at the handler's own level
+// end the handler, whatever its stack holds, without a warning (RETV's value
+// is discarded, and it needs none).
+static void handler_level_returns_end_the_handler(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);    //
+    push8(5);       //
+    push8(6);       // 5 6
+    op(VM_OP_RETV); // ends the handler
+    store(0, 2);    // never runs
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    store(1, 1);    //
+    op(VM_OP_RETV); // an empty stack: ends the handler all the same
+    store(1, 2);    // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    start(0);
+    start(1);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 1 && vm_global(1) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Control flow" (ENTER): fewer than p cells in the activation warns
+// and halts (a stack underflow), only that context.
+static void enter_needs_its_arguments(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    witness(0);
+    handler(1, VM_EV_CREATE);
+    store(1, 1);    //
+    push8(1);       // one cell
+    enter(2, 0);    // two arguments: warns, halts
+    store(1, 2);    // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    expect_faults_halt_only_themselves(1);
+    CHECK(vm_global(1) == 1);
+}
+
 // --- Runtime safety ----------------------------------------------------------
 
 // vm.md "Opcode reference": stack overflow on any op warns and halts the
-// context; VM_STACK cells fit.
+// context; VM_STACK cells fit (ENTER's included).
 static void stack_overflow_halts_only_its_context(void) {
     reset();
-    blob_begin(3, 0, GLOBALS);
+    blob_begin(4, 0, GLOBALS);
     witness(0);
     handler(1, VM_EV_CREATE);
     store(1, 1);                        //
     for (s32 v = 1; v <= VM_STACK; v++) //
-        push8(v);                       // a full stack: 1 .. 8
-    stg(3);                             // glob[3] = 8: they all fit
+        push8(v);                       // a full stack: 1 .. VM_STACK
+    stg(3);                             // glob[3] = VM_STACK: they all fit
     push8(9);                           // full again
     push8(10);                          // one too many: warns, halts
     store(1, 2);                        // never runs
@@ -863,9 +1222,15 @@ static void stack_overflow_halts_only_its_context(void) {
     op(VM_OP_DUP);                      // overflows too
     store(2, 2);                        // never runs
     op(VM_OP_HALT);                     //
+    handler(3, VM_EV_CREATE);
+    store(4, 1);            //
+    enter(0, VM_STACK - 1); // all but one cell: fits
+    enter(0, 2);            // one cell left: overflows
+    store(4, 2);            // never runs
+    op(VM_OP_HALT);         //
     CHECK(load());
-    expect_faults_halt_only_themselves(2);
-    CHECK(vm_global(1) == 1 && vm_global(2) == 1);
+    expect_faults_halt_only_themselves(3);
+    CHECK(vm_global(1) == 1 && vm_global(2) == 1 && vm_global(4) == 1);
     CHECK(vm_global(3) == VM_STACK);
 }
 
@@ -897,8 +1262,8 @@ static void stack_underflow_halts_only_its_context(void) {
     CHECK(vm_global(1) == 1 && vm_global(2) == 1 && vm_global(3) == 1);
 }
 
-// vm.md "Opcode reference": CALL deeper than VM_CALLS overflows the call
-// stack: warns, halts.
+// vm.md "Control flow": CALL deeper than VM_CALLS overflows the call stack:
+// warns, halts.
 static void call_depth_is_limited(void) {
     enum { L_F };
     reset();
@@ -911,7 +1276,7 @@ static void call_depth_is_limited(void) {
     op(VM_OP_HALT); //
     label(L_F);     //
     count(2);       // glob[2] = the depth reached
-    call(L_F);      // the fifth nested CALL overflows
+    call(L_F);      // nested call VM_CALLS + 1 overflows
     op(VM_OP_RET);  //
     CHECK(load());
     expect_faults_halt_only_themselves(1);
@@ -921,7 +1286,7 @@ static void call_depth_is_limited(void) {
 
 // vm.md "Opcode reference": an unknown opcode warns and halts the context.
 static void unknown_opcode_halts_only_its_context(void) {
-    static const u8 unknown[] = {0x0C, 0x1F, 0x41, 0xFF};
+    static const u8 unknown[] = {0x0F, 0x2F, 0x3F, 0x41, 0xFF};
     reset();
     blob_begin(1 + sizeof unknown, 0, GLOBALS);
     witness(0);
@@ -940,34 +1305,53 @@ static void unknown_opcode_halts_only_its_context(void) {
     CHECK(wrong == 0);
 }
 
-// vm.md "Stack and variables": LDL n >= VM_LOCALS warns and pushes 0, STL
-// warns and drops the value. Neither halts: the context goes on. Both are one
-// kind of problem (no such local): one warning.
+// vm.md "Stack and variables", "Exact semantics: Frames": LDL and STL n
+// need fp + n < sp (after STL's pop): the frame is ENTER's locals and anything
+// above them. Outside it, LDL warns and pushes 0, STL warns and drops the
+// value. Neither halts: the context goes on. Both are one kind of problem: one
+// warning.
 static void locals_out_of_range(void) {
+    enum { L_F };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
-    push8(5);           // 5
-    ldl(VM_LOCALS);     // warns: 5 0
-    stg(0);             // glob[0] = 0
-    stg(1);             // glob[1] = 5
-    push8(7);           // 7
-    push8(9);           // 7 9
-    stl(VM_LOCALS);     // warns, pops the 9: 7
-    stg(2);             // glob[2] = 7
-    push8(42);          // 42
-    stl(VM_LOCALS - 1); // the last local is fine
-    ldl(VM_LOCALS - 1); // 42
-    stg(3);             // glob[3] = 42
-    store(4, 1);        // carried on
-    op(VM_OP_HALT);     //
+    enter(0, 2);    // l0 l1: sp 2
+    push8(5);       // l0 l1 5
+    ldl(3);         // fp + 3 is sp: warns, l0 l1 5 0
+    stg(0);         // glob[0] = 0
+    stg(1);         // glob[1] = 5
+    push8(7);       // l0 l1 7
+    push8(9);       // l0 l1 7 9
+    stl(3);         // pops the 9; fp + 3 is sp again: warns (no repeat), dropped
+    stg(2);         // glob[2] = 7
+    push8(42);      // l0 l1 42
+    stl(1);         // local 1 = 42
+    ldl(1);         // l0 l1 42
+    stg(3);         // glob[3] = 42
+    push8(11);      // l0 l1 11: a cell above the locals is in the frame too
+    ldl(2);         // l0 l1 11 11
+    stg(4);         // glob[4] = 11
+    op(VM_OP_DROP); // l0 l1
+    push8(3);       // l0 l1 3: an argument
+    call(L_F);      //
+    store(8, 1);    // carried on
+    op(VM_OP_HALT); //
+    label(L_F);     // the callee's frame starts at the stack top
+    ldl(0);         // l0 l1 3 0: outside its frame (warns, no repeat)
+    stg(6);         // glob[6] = 0
+    enter(1, 0);    // the argument becomes local 0
+    ldl(0);         // l0 l1 3 3
+    stg(7);         // glob[7] = 3
+    op(VM_OP_RET);  // drops the frame, argument and all
     CHECK(load());
     vm_set_global(0, 99);
+    vm_set_global(6, 99);
     start(0);
     u32 before = debug_warning_count();
     vm_step();
     CHECK(vm_global(0) == 0 && vm_global(1) == 5 && vm_global(2) == 7);
-    CHECK(vm_global(3) == 42 && vm_global(4) == 1);
+    CHECK(vm_global(3) == 42 && vm_global(4) == 11);
+    CHECK(vm_global(6) == 0 && vm_global(7) == 3 && vm_global(8) == 1);
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
 }
@@ -3372,6 +3756,7 @@ static void run_spawners(s32* out) {
     blob_begin(2, 0, GLOBALS);
     object(1, C_POS | C_VEL, 0);
     handler(0, VM_EV_CREATE); // spawns 6 movers, a frame apart
+    enter(0, 1);              // loc[0]
     push8(6);                 // 6
     stl(0);                   // loc[0] = movers left
     label(L_NEXT);            //
@@ -3495,9 +3880,14 @@ TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
            {"stack_and_variable_ops", stack_and_variable_ops},
            {"push_sign_extension", push_sign_extension}, {"arithmetic_ops", arithmetic_ops},
            {"fixed_point_ops", fixed_point_ops}, {"bitwise_and_shift_ops", bitwise_and_shift_ops},
+           {"lua_shift_op", lua_shift_op}, {"floored_division_ops", floored_division_ops},
            {"comparison_ops", comparison_ops}, {"division_by_zero", division_by_zero},
            {"control_flow", control_flow},
            {"ret_with_empty_call_stack_halts", ret_with_empty_call_stack_halts},
+           {"frames_hold_arguments_and_locals", frames_hold_arguments_and_locals},
+           {"recursion_to_the_limits", recursion_to_the_limits},
+           {"handler_level_returns_end_the_handler", handler_level_returns_end_the_handler},
+           {"enter_needs_its_arguments", enter_needs_its_arguments},
            {"stack_overflow_halts_only_its_context", stack_overflow_halts_only_its_context},
            {"stack_underflow_halts_only_its_context", stack_underflow_halts_only_its_context},
            {"call_depth_is_limited", call_depth_is_limited},

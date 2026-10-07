@@ -32,7 +32,7 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        ANIM_END ROOM_START
   label:                               a label at the next byte (a jump or CALL
                                        target); it may precede an op on its line
-  MNEMONIC [operand]                   one opcode: a VM_OP_* name without the
+  MNEMONIC [operand, ...]              one opcode: a VM_OP_* name without the
                                        prefix; PUSH expr picks PUSH8, PUSH16 or
                                        PUSH32, the smallest that holds the value
   .byte expr, expr, ...                raw bytes, where they appear
@@ -40,10 +40,11 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        not yet placed) here instead of after the
                                        code
 
-Operands: GETP and SETP take a property (X, BODY_W, ...), SYS an engine call
-(TEXT_PRINT, ...), SPAWN an object, TRACE a string, LDG and STG a global, LDL
-and STL a number, JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an expression; a
-number or an expression works wherever a name does. In expressions, objects,
+Operands, separated by commas: GETP and SETP take a property (X, BODY_W,
+...), SYS an engine call (TEXT_PRINT, ...), SPAWN an object, TRACE a string,
+LDG and STG a global, LDL and STL a number, ENTER two numbers (ENTER 0, 3),
+JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an expression; a number or an
+expression works wherever a name does. In expressions, objects,
 strings and globals are named OBJ_NAME, STR_NAME and G_NAME, as the header
 --defs writes them. Expressions: integers (decimal or 0x hex, a trailing u
 ignored), names (the listing's, then --header constants in the order given,
@@ -74,63 +75,70 @@ MAGIC = b"SVMB"
 MAX_TABLE_ENTRIES = 0xFFFF  # objects and strings: 16-bit counts
 
 # The one hand-written table: each opcode's operand layout from docs/vm.md's
-# opcode reference, and what a name in that operand refers to. check_operands()
-# makes sure it matches vm.h's VM_OP_* list, so this is the only thing that can
-# drift and it can't drift silently.
+# opcode reference, a sequence of fields (kind, and what a name in that field
+# refers to). check_operands() makes sure it matches vm.h's VM_OP_* list, so
+# this is the only thing that can drift and it can't drift silently.
+NONE = ()
 OPERANDS = {
-    "NOP": ("none", None),
-    "HALT": ("none", None),
-    "PUSH8": ("s8", None),
-    "PUSH16": ("s16", None),
-    "PUSH32": ("s32", None),
-    "DUP": ("none", None),
-    "DROP": ("none", None),
-    "SWAP": ("none", None),
-    "LDG": ("u8", "global"),
-    "STG": ("u8", "global"),
-    "LDL": ("u8", None),
-    "STL": ("u8", None),
-    "ADD": ("none", None),
-    "SUB": ("none", None),
-    "MUL": ("none", None),
-    "DIV": ("none", None),
-    "MOD": ("none", None),
-    "NEG": ("none", None),
-    "FXMUL": ("none", None),
-    "FXDIV": ("none", None),
-    "AND": ("none", None),
-    "OR": ("none", None),
-    "XOR": ("none", None),
-    "BNOT": ("none", None),
-    "SHL": ("none", None),
-    "SHR": ("none", None),
-    "LNOT": ("none", None),
-    "EQ": ("none", None),
-    "NE": ("none", None),
-    "LT": ("none", None),
-    "LE": ("none", None),
-    "GT": ("none", None),
-    "GE": ("none", None),
-    "JMP": ("rel16", "label"),
-    "JZ": ("rel16", "label"),
-    "JNZ": ("rel16", "label"),
-    "CALL": ("u32", "label"),
-    "RET": ("none", None),
-    "WAIT": ("none", None),
-    "WAIT_ANIM": ("none", None),
-    "WAIT_MOVE": ("none", None),
-    "INTERRUPTIBLE": ("none", None),
-    "SELF": ("none", None),
-    "OTHER": ("none", None),
-    "GETP": ("u8", "prop"),
-    "SETP": ("u8", "prop"),
-    "SPAWN": ("u16", "object"),
-    "KILL": ("none", None),
-    "SYS": ("u8", "sys"),
-    "BRK": ("none", None),
-    "TRACE": ("u16", "string"),
+    "NOP": NONE,
+    "HALT": NONE,
+    "PUSH8": (("s8", None),),
+    "PUSH16": (("s16", None),),
+    "PUSH32": (("s32", None),),
+    "DUP": NONE,
+    "DROP": NONE,
+    "SWAP": NONE,
+    "LDG": (("u8", "global"),),
+    "STG": (("u8", "global"),),
+    "LDL": (("u8", None),),
+    "STL": (("u8", None),),
+    "ADD": NONE,
+    "SUB": NONE,
+    "MUL": NONE,
+    "DIV": NONE,
+    "MOD": NONE,
+    "NEG": NONE,
+    "FXMUL": NONE,
+    "FXDIV": NONE,
+    "AND": NONE,
+    "OR": NONE,
+    "XOR": NONE,
+    "BNOT": NONE,
+    "SHL": NONE,
+    "SHR": NONE,
+    "LNOT": NONE,
+    "LSH": NONE,
+    "EQ": NONE,
+    "NE": NONE,
+    "LT": NONE,
+    "LE": NONE,
+    "GT": NONE,
+    "GE": NONE,
+    "IDIV": NONE,
+    "IMOD": NONE,
+    "JMP": (("rel16", "label"),),
+    "JZ": (("rel16", "label"),),
+    "JNZ": (("rel16", "label"),),
+    "CALL": (("u32", "label"),),
+    "RET": NONE,
+    "RETV": NONE,
+    "ENTER": (("u8", None), ("u8", None)),  # p arguments, n locals
+    "WAIT": NONE,
+    "WAIT_ANIM": NONE,
+    "WAIT_MOVE": NONE,
+    "INTERRUPTIBLE": NONE,
+    "SELF": NONE,
+    "OTHER": NONE,
+    "GETP": (("u8", "prop"),),
+    "SETP": (("u8", "prop"),),
+    "SPAWN": (("u16", "object"),),
+    "KILL": NONE,
+    "SYS": (("u8", "sys"),),
+    "BRK": NONE,
+    "TRACE": (("u16", "string"),),
 }
-OPERAND_SIZE = {"none": 0, "s8": 1, "u8": 1, "s16": 2, "u16": 2, "rel16": 2, "s32": 4, "u32": 4}
+OPERAND_SIZE = {"s8": 1, "u8": 1, "s16": 2, "u16": 2, "rel16": 2, "s32": 4, "u32": 4}
+SIGNED = ("s8", "s16", "s32", "rel16")
 OPERAND_RANGE = {
     "s8": (-0x80, 0x7F),
     "s16": (-0x8000, 0x7FFF),
@@ -141,7 +149,12 @@ OPERAND_RANGE = {
     "rel16": (-0x8000, 0x7FFF),
 }
 # A handler that ends in one of these can't fall off the end of the blob.
-HANDLER_ENDS = ("HALT", "RET", "JMP")
+HANDLER_ENDS = ("HALT", "RET", "RETV", "JMP")
+
+
+def operand_size(mnemonic):
+    """The bytes after the opcode."""
+    return sum(OPERAND_SIZE[kind] for kind, _ in OPERANDS[mnemonic])
 
 
 class SvmError(Exception):
@@ -573,6 +586,21 @@ def _strip_comment(line):
     return line
 
 
+def _split_operands(text):
+    """An operand list's fields, split at the commas outside parentheses."""
+    fields, depth, start = [], 0, 0
+    for i, c in enumerate(text):
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "," and depth == 0:
+            fields.append(text[start:i].strip())
+            start = i + 1
+    fields.append(text[start:].strip())
+    return fields
+
+
 def _unescape_string(text):
     """The bytes of a .string literal: printable ASCII, with \\" and \\\\."""
     out = bytearray()
@@ -869,20 +897,27 @@ class Assembler:
             operand = str(value)
         if mnemonic not in self.vm.ops:
             self.error(f"unknown mnemonic {mnemonic}")
-        kind, names = OPERANDS[mnemonic]
-        if kind == "none":
-            if operand:
-                self.error(f"{mnemonic} takes no operand")
-            self.emit(self.vm.ops[mnemonic], kind, 0)
-        elif names == "label":
-            if not operand or not re.fullmatch(_IDENT, operand):
+        fields = OPERANDS[mnemonic]
+        texts = _split_operands(operand) if operand else []
+        if not fields and texts:
+            self.error(f"{mnemonic} takes no operand")
+        if fields and fields[0][1] == "label":
+            if len(texts) != 1 or not re.fullmatch(_IDENT, texts[0]):
                 self.error(f"{mnemonic} takes a label")
-            self.fixups.append((len(self.code) + 1, kind, operand, self.line))
-            self.emit(self.vm.ops[mnemonic], kind, 0)
+            self.fixups.append((len(self.code) + 1, fields[0][0], texts[0], self.line))
+            self.emit(self.vm.ops[mnemonic], [(fields[0][0], 0)])
+        elif fields:
+            if not texts:
+                self.error(f"{mnemonic} needs an operand" if len(fields) == 1
+                           else f"{mnemonic} needs {len(fields)} operands")
+            if len(texts) != len(fields) or not all(texts):
+                self.error(f"{mnemonic} takes {len(fields)} operand"
+                           f"{'s, separated by commas' if len(fields) > 1 else ''}")
+            values = [(kind, self.operand_value(text, kind, names))
+                      for (kind, names), text in zip(fields, texts)]
+            self.emit(self.vm.ops[mnemonic], values)
         else:
-            if not operand:
-                self.error(f"{mnemonic} needs an operand")
-            self.emit(self.vm.ops[mnemonic], kind, self.operand_value(operand, kind, names))
+            self.emit(self.vm.ops[mnemonic], [])
         self.emitted(mnemonic)
 
     def operand_value(self, text, kind, names):
@@ -918,10 +953,11 @@ class Assembler:
             self.warn(f"engine call {value} is not in vm.h's page (0 to {self.vm.sys_count - 1})")
         return value
 
-    def emit(self, opcode, kind, value):
+    def emit(self, opcode, fields):
+        """The opcode, then each (kind, value) operand field."""
         self.code.append(opcode)
-        size = OPERAND_SIZE[kind]
-        if size:
+        for kind, value in fields:
+            size = OPERAND_SIZE[kind]
             self.code.extend((value & ((1 << (8 * size)) - 1)).to_bytes(size, "little"))
 
     # --- The blob ---
@@ -944,7 +980,7 @@ class Assembler:
             elif handler.last_op is None:
                 self.warn(f"handler {handler.label} has no ops, only bytes", handler.line)
             elif handler.last_op not in HANDLER_ENDS:
-                self.warn(f"handler {handler.label} doesn't end in HALT or RET "
+                self.warn(f"handler {handler.label} doesn't end in HALT, RET or RETV "
                           f"(its last op is {handler.last_op})", handler.line)
         # The strings not placed by .strings go after the code, in order.
         for index in range(len(self.strings)):
@@ -1119,13 +1155,13 @@ def validate(data, vm):
 
 
 class _Item:
-    __slots__ = ("at", "size", "op", "value")
+    __slots__ = ("at", "size", "op", "values")
 
-    def __init__(self, at, size, op=None, value=None):
+    def __init__(self, at, size, op=None, values=None):
         self.at = at
         self.size = size
         self.op = op  # mnemonic, or None for a raw byte
-        self.value = value
+        self.values = values  # the operand fields' values
 
 
 def disassemble(data, vm, source="blob"):
@@ -1156,40 +1192,37 @@ def disassemble(data, vm, source="blob"):
         end = next(cut for cut in cuts if cut > pos)
         while pos < end:
             op = vm.op_names.get(data[pos]) if lowest is not None and pos >= lowest else None
-            length = 1 + OPERAND_SIZE[OPERANDS[op][0]] if op else 1
+            length = 1 + operand_size(op) if op else 1
             if op is None or pos + length > end:
                 items.append(_Item(pos, 1))
             else:
-                kind = OPERANDS[op][0]
-                raw = data[pos + 1:pos + length]
-                value = int.from_bytes(raw, "little", signed=kind in ("s8", "s16", "s32", "rel16"))
-                items.append(_Item(pos, length, op, value))
+                values, at = [], pos + 1
+                for kind, _ in OPERANDS[op]:
+                    n = OPERAND_SIZE[kind]
+                    values.append(int.from_bytes(data[at:at + n], "little", signed=kind in SIGNED))
+                    at += n
+                items.append(_Item(pos, length, op, values))
             boundaries.add(pos)
             pos += length
 
     # Jumps and calls whose target is an instruction boundary get a label;
     # the rest, and SPAWN or TRACE of a table entry that doesn't exist, are
     # kept as raw bytes, which always round-trip.
+    counts = {"object": len(blob.objects), "string": len(blob.strings)}
     targets = set()
     for item in items:
         if not isinstance(item, _Item) or item.op is None:
             continue
-        kind, names = OPERANDS[item.op]
-        target = None
-        if kind == "rel16":
-            target = item.at + item.size + item.value
-        elif names == "label":
-            target = item.value
-        elif names == "object" and item.value >= len(blob.objects):
-            item.op = None
-        elif names == "string" and item.value >= len(blob.strings):
-            item.op = None
-        if target is not None:
-            if target in boundaries:
-                item.value = target
-                targets.add(target)
-            else:
+        for (kind, names), value in zip(OPERANDS[item.op], item.values):
+            if names in counts and value >= counts[names]:
                 item.op = None
+            elif names == "label":
+                target = item.at + item.size + value if kind == "rel16" else value
+                if target in boundaries:
+                    item.values = [target]
+                    targets.add(target)
+                else:
+                    item.op = None
 
     # The assembler puts the strings after the code, in index order, unless the
     # listing places them: so .strings lines are needed only when the blob's
@@ -1215,15 +1248,14 @@ def disassemble(data, vm, source="blob"):
     for start in range(0, blob.globals, 16):
         out.append(".globals " + " ".join(str(g) for g in range(start, min(start + 16, blob.globals))))
 
-    def operand_text(item):
-        kind, names = OPERANDS[item.op]
+    def operand_text(names, value):
         if names == "label":
-            return f"L_{item.value}"
+            return f"L_{value}"
         if names == "prop":
-            return vm.prop_names.get(item.value, str(item.value))
+            return vm.prop_names.get(value, str(value))
         if names == "sys":
-            return vm.sys_names.get(item.value, str(item.value))
-        return str(item.value)
+            return vm.sys_names.get(value, str(value))
+        return str(value)
 
     raw = []  # consecutive raw bytes, flushed as .byte lines
 
@@ -1254,7 +1286,8 @@ def disassemble(data, vm, source="blob"):
             raw.extend(data[item.at:item.at + item.size])
         else:
             flush_raw()
-            text = operand_text(item) if OPERANDS[item.op][0] != "none" else ""
+            text = ", ".join(operand_text(names, value)
+                             for (_, names), value in zip(OPERANDS[item.op], item.values))
             out.append(f"    {item.op} {text}".rstrip())
     flush_raw()
     return "\n".join(out) + "\n"

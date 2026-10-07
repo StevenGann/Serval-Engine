@@ -217,6 +217,17 @@ class Errors(unittest.TestCase):
         "string placed twice": (".object X\n.string S \"s\"\n.handler X CREATE\n.strings S\n.strings S\n"
                                 "HALT\n", 5, "already placed"),
         "division by zero": (".const A 1 / 0\n" + OK, 1, "division by zero"),
+        "ENTER with one operand": (".object X\n.handler X CREATE\nENTER 1\nHALT\n", 3,
+                                   "ENTER takes 2 operands"),
+        "ENTER with three operands": (".object X\n.handler X CREATE\nENTER 1, 2, 3\nHALT\n", 3,
+                                      "ENTER takes 2 operands"),
+        "ENTER with an empty operand": (".object X\n.handler X CREATE\nENTER 1,\nHALT\n", 3,
+                                        "ENTER takes 2 operands"),
+        "ENTER with none": (".object X\n.handler X CREATE\nENTER\nHALT\n", 3,
+                            "ENTER needs 2 operands"),
+        "ENTER past a u8": (".object X\n.handler X CREATE\nENTER 0, 256\nHALT\n", 3, "fit"),
+        "an operand too many": (".object X\n.handler X CREATE\nLDG 1, 2\nHALT\n", 3,
+                                "LDG takes 1 operand"),
     }
 
     def test_each_error_names_its_line(self):
@@ -240,8 +251,9 @@ class Errors(unittest.TestCase):
         result = asm(".object X\n.handler X CREATE\nPUSH 1\n.handler X STEP\nHALT\n")
         self.assertEqual(len(result.warnings), 1)
         self.assertEqual(result.warnings[0][1], 2)
-        self.assertIn("HALT or RET", result.warnings[0][2])
+        self.assertIn("HALT, RET or RETV", result.warnings[0][2])
         self.assertEqual(asm(".object X\n.handler X CREATE\nJMP a\na:\nRET\n").warnings, [])
+        self.assertEqual(asm(".object X\n.handler X CREATE\nPUSH 1\nRETV\n").warnings, [])
 
     def test_shared_code_is_one_handler_group(self):
         result = asm(".object X\n.handler X CREATE\n.handler X STEP\nHALT\n")
@@ -331,7 +343,7 @@ class Headers(unittest.TestCase):
         for name in ("FUNC", "CAST", "EMPTY", "Named", "SOMETHING"):
             with self.subTest(name=name):
                 self.assertIsNone(h.lookup(name))
-        self.assertEqual(h.lookup("VM_STACK"), 8)  # vm.h's names, after the headers
+        self.assertEqual(h.lookup("VM_STACK"), 64)  # vm.h's names, after the headers
         self.assertEqual(h.constants()["DERIVED"], 22)
 
     def test_conflicting_redefinition(self):
@@ -346,7 +358,7 @@ class Headers(unittest.TestCase):
         # The listing's own names come first, then the headers, then vm.h.
         blob = asm(".const HEALTH 7\n.object X\n.handler X CREATE\nPUSH HEALTH\nPUSH VM_STACK\nHALT\n",
                    h).blob
-        self.assertEqual(blob[48:], bytes([2, 7, 2, 8, 1]))
+        self.assertEqual(blob[48:], bytes([2, 7, 2, 64, 1]))
 
     def test_real_headers(self):
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -381,6 +393,7 @@ start:
     STG TWO
     LDL 3
     STL 7
+    ENTER 2, 5
     ADD
     SUB
     MUL
@@ -396,17 +409,21 @@ start:
     SHL
     SHR
     LNOT
+    LSH
     EQ
     NE
     LT
     LE
     GT
     GE
+    IDIV
+    IMOD
     JMP ahead
     JZ start
     JNZ ahead
     CALL sub
     RET
+    RETV
 ahead:
     WAIT
     WAIT_ANIM
@@ -451,6 +468,7 @@ class RoundTrip(unittest.TestCase):
         self.assertIn("    PUSH8 -1\n    PUSH16 -300\n    PUSH32 70000\n", listing)
         self.assertIn("    GETP BODY_H\n    SETP 200\n", listing)
         self.assertIn("    SYS TEXT_PRINT_NUMBER\n    SYS 99\n", listing)
+        self.assertIn("    LDL 3\n    STL 7\n    ENTER 2, 5\n", listing)
         self.assertIn("    JZ L_", listing)
         self.assertIn("    CALL L_", listing)
 
@@ -500,10 +518,23 @@ class OperandTable(unittest.TestCase):
             svm.check_operands(svm.Vm(names))
 
     def test_every_row_has_a_size(self):
-        for mnemonic, (kind, names) in svm.OPERANDS.items():
+        for mnemonic, fields in svm.OPERANDS.items():
+            for kind, names in fields:
+                with self.subTest(mnemonic=mnemonic):
+                    self.assertIn(kind, svm.OPERAND_SIZE)
+                    self.assertIn(names, (None, "global", "prop", "sys", "object", "string",
+                                          "label"))
+                    if names == "label":
+                        self.assertEqual(len(fields), 1)  # the fixups assume it
+
+    def test_layouts_from_the_opcode_reference(self):
+        """The new operand layouts, byte by byte (vm.md's opcode reference)."""
+        sizes = {"ENTER": 2, "LSH": 0, "IDIV": 0, "IMOD": 0, "RETV": 0, "LDL": 1, "STL": 1,
+                 "CALL": 4}
+        for mnemonic, size in sizes.items():
             with self.subTest(mnemonic=mnemonic):
-                self.assertIn(kind, svm.OPERAND_SIZE)
-                self.assertIn(names, (None, "global", "prop", "sys", "object", "string", "label"))
+                self.assertEqual(svm.operand_size(mnemonic), size)
+        self.assertEqual(VM.ops["ENTER"], 0x2E)
 
 
 class GeneratedFiles(unittest.TestCase):

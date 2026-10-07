@@ -27,9 +27,8 @@
 // --- Limits ------------------------------------------------------------------
 
 #define VM_CONTEXTS 32       // scripts running or waiting at once
-#define VM_STACK 8           // value stack cells per context
-#define VM_CALLS 4           // CALL depth per context
-#define VM_LOCALS 8          // locals per context, zeroed when it starts
+#define VM_STACK 64          // cells per context: operands and every frame's locals
+#define VM_CALLS 16          // CALL depth per context
 #define VM_GLOBALS 256       // global cells shared by all scripts
 #define VM_EVENT_QUEUE 32    // events waiting for dispatch
 #define VM_OPS_PER_SLICE 256 // opcodes a context may run in one phase
@@ -64,7 +63,7 @@ enum {
     VM_OP_SWAP = 0x07,
     VM_OP_LDG = 0x08,
     VM_OP_STG = 0x09,
-    VM_OP_LDL = 0x0A,
+    VM_OP_LDL = 0x0A, // the frame's local n
     VM_OP_STL = 0x0B,
 
     VM_OP_ADD = 0x10,
@@ -82,6 +81,7 @@ enum {
     VM_OP_SHL = 0x1C,
     VM_OP_SHR = 0x1D,
     VM_OP_LNOT = 0x1E,
+    VM_OP_LSH = 0x1F, // Lua's << (and >> as LSH a, -b)
 
     VM_OP_EQ = 0x20,
     VM_OP_NE = 0x21,
@@ -89,12 +89,16 @@ enum {
     VM_OP_LE = 0x23,
     VM_OP_GT = 0x24,
     VM_OP_GE = 0x25,
+    VM_OP_IDIV = 0x26, // floored, as Lua's //
+    VM_OP_IMOD = 0x27, // floored, as Lua's %
 
     VM_OP_JMP = 0x28,
     VM_OP_JZ = 0x29,
     VM_OP_JNZ = 0x2A,
     VM_OP_CALL = 0x2B,
     VM_OP_RET = 0x2C,
+    VM_OP_RETV = 0x2D,
+    VM_OP_ENTER = 0x2E, // u8 p, u8 n: the frame's arguments and locals
 
     VM_OP_WAIT = 0x30,
     VM_OP_WAIT_ANIM = 0x31,

@@ -2,8 +2,9 @@
 ; VM (docs/vm.md), assembled at build time by tools/svm.py (serval_add_script
 ; in examples/CMakeLists.txt) into fireflies_script, ROM data that main.c
 ; loads. One op per line; the comment after each op is the value stack after
-; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value).
-; Handlers end in HALT; subroutines in RET.
+; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value),
+; leaving out the handler's locals, which ENTER puts at the bottom of its
+; stack. Handlers end in HALT; subroutines in RET.
 ;
 ; In a game made with Studio Advance, the editor's script compiler emits the
 ; blob from event blocks instead; this file is what such a compiler's output
@@ -110,6 +111,7 @@
 
 ; Room Start, run as a thread. Local 0: the brightness while fading.
 .handler ROOM ROOM_START
+    ENTER 0, 1           ; local 0
     ; A new round: every global set, whatever the last round left.
     PUSH 0               ; 0
     STG SCORE            ;
@@ -275,6 +277,7 @@ fade_out:
 
 ; Room Start, run as a second thread. Locals: 0 x, 1 y (pixels).
 .handler SPAWNER ROOM_START
+    ENTER 0, 2         ; locals 0 and 1
 loop:
     LDG SPAWN_MIN      ; min
     LDG SPAWN_MAX      ; min max
@@ -357,6 +360,7 @@ done:
 
 ; Step, every frame. Locals: 0 vx, 1 vy (both start at 0), 2 sprite.
 .handler PLAYER STEP
+    ENTER 0, 3         ; locals 0 to 2, zeroed
     PUSH BUTTON_LEFT   ; button
     SYS BUTTON_DOWN    ; down
     JZ not_left        ;
@@ -430,6 +434,7 @@ same:
 
 ; Create, then its whole life. Local 0: flights left.
 .handler FIREFLY CREATE
+    ENTER 0, 1             ; local 0
     SELF                   ; e
     PUSH 8                 ; e 8
     SETP BODY_W            ;
