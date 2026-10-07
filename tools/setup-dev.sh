@@ -28,8 +28,8 @@
 # Chromium (for tools/web-shots.py) is optional and not installed here.
 set -euo pipefail
 
-# Versions: keep in sync with CI (.github/actions/setup-gba/action.yml and
-# .github/workflows/ci.yml) and serval.json's toolchain.gcc.
+# Versions: keep in sync with CI (.github/actions/setup-gba/action.yml,
+# .github/workflows/ci.yml and pages.yml) and serval.json's toolchain.gcc.
 ARM_RELEASE=15.3.rel1
 ARM_SHA256_x86_64=563bebb2b97d53382b956d6ee1fe61e2cae26699901417234a37df505ef9b5fa
 ARM_SHA256_aarch64=06979e0c8171de58e5dc2a2b2019330a290f30930f27728af98a83e1a7369b3a
