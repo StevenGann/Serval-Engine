@@ -223,7 +223,7 @@ void player_update_mode(void) {
         if (mode_timer == DEATH_HOP_DELAY)
             vel_y[i] = -FX(5);
         if (mode_timer > DEATH_HOP_DELAY) {
-            vel_y[i] = int_min(vel_y[i] + GRAVITY, FX(MAX_FALL));
+            vel_y[i] = int_min(vel_y[i] + GRAVITY, MAX_FALL);
             pos_y[i] += vel_y[i];
         }
         break;

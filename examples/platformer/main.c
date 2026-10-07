@@ -1,8 +1,9 @@
 // platformer: "Serval Dash", a side-scroller in the classic style, in four
 // stages. Run and jump as a small serval through grassland (stage 1-1), a
 // cave (1-2), the treetops (1-3) and a castle (1-4): bonus blocks, bricks,
-// enemies to stomp, pits, one-way ledges and spikes, banner poles before the
-// den and exits back to daylight, then an ending. Lives, score and gems carry
+// enemies to stomp, pits, one-way ledges, spikes and lava, fire bars, banner
+// poles before the den and exits back to daylight, a dragon on a bridge at
+// the castle's end, then an ending. Lives, score and gems carry
 // from stage to stage; the furthest stage reached and the best score are
 // saved.
 //
