@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
-"""Builds Serval Engine's documentation site: the docs as pages, and a front
-page.
+"""Builds Serval Engine's documentation site: the docs, an examples gallery
+whose examples run in the browser, and a front page.
 
-Usage: tools/site/build.py [--out DIR] [--base-url URL]
+Usage: tools/site/build.py [--out DIR] [--base-url URL] [--web-build DIR]
 
   --out        where to write the site (default build/site; emptied first)
   --base-url   where the site is published (default the GitHub Pages URL);
                used only for canonical and social-preview links, since every
                link inside the site is relative
+  --web-build  the web build's examples directory, with one page per example
+               (default build/web-release/examples, from
+               `cmake --preset web-release && cmake --build --preset web-release`)
 
 Every docs/*.md becomes a page (docs/vm.md -> docs/vm/index.html; docs/README.md
 -> docs/index.html). Links between docs become links between pages; links to
-other files in the repository become GitHub links. After writing the site it
-checks every local link and anchor and fails listing the broken ones.
+other files in the repository become GitHub links. examples/gallery.toml lists
+the examples: each gets a card with a thumbnail taken by tools/web-shots.py
+(needs Chrome or Chromium), a page with its description and source, and its
+built web page. The build fails if an example directory has no entry in the
+manifest, and after writing the site it checks every local link and anchor
+and fails listing the broken ones.
 
 Search is a separate step: `python -m pagefind --site DIR` indexes the docs
 pages. Needs the packages in tools/site/requirements.txt.
 """
 
 import argparse
+import concurrent.futures
 import html
 import posixpath
 import re
 import shutil
 import string
+import subprocess
 import sys
+import tempfile
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote
@@ -34,7 +45,9 @@ from mdit_py_plugins.anchors import anchors_plugin
 from mdit_py_plugins.gfm import gfm_plugin
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
+from pygments.lexer import RegexLexer, bygroups
 from pygments.lexers import BashLexer, CLexer, CMakeLexer, JsonLexer
+from pygments.token import Comment, Keyword, Name, Number, Operator, Punctuation, String, Text, Whitespace
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -119,7 +132,29 @@ def esc(text):
 # --- Highlighting ----------------------------------------------------------------
 
 
-LEXERS = {"c": CLexer, "h": CLexer, "sh": BashLexer, "cmake": CMakeLexer, "json": JsonLexer}
+class SvmLexer(RegexLexer):
+    """Script listings for the VM's assembler (docs/vm.md#listing-syntax)."""
+
+    name = "Serval VM listing"
+    aliases = ["svm"]
+    tokens = {
+        "root": [
+            (r";.*$", Comment.Single),
+            (r'"(\\\\|\\"|[^"\\])*"', String),
+            (r"^(\s*)(\.[a-z]+)\b", bygroups(Whitespace, Keyword.Pseudo)),
+            (r"^(\s*)([A-Za-z_]\w*)(:)", bygroups(Whitespace, Name.Label, Punctuation)),
+            (r"^(\s*)([A-Z][A-Z0-9_]*)\b", bygroups(Whitespace, Keyword)),
+            (r"\b0x[0-9A-Fa-f]+\b|\b\d+\b", Number),
+            (r"\b[a-z]+(?==)", Name.Attribute),
+            (r"[A-Za-z_]\w*", Name),
+            (r"[-+*/|&~<>()=,]", Operator),
+            (r"\s+", Whitespace),
+            (r".", Text),
+        ],
+    }
+
+
+LEXERS = {"c": CLexer, "h": CLexer, "sh": BashLexer, "cmake": CMakeLexer, "json": JsonLexer, "svm": SvmLexer}
 FORMATTER = HtmlFormatter(nowrap=True)
 
 
@@ -363,6 +398,321 @@ def first_paragraph(markdown_text):
     return "Serval Engine documentation."
 
 
+# --- Examples --------------------------------------------------------------------
+
+
+def parse_header(main_c):
+    """Splits an example's opening // comment (CLAUDE.md: what it demonstrates,
+    what to expect when booting the ROM) into its intro paragraphs and the two
+    lists. Items are [text, sub-items, lines shown as they are]."""
+    lines = []
+    for line in main_c.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("//"):
+            break
+        lines.append(line[3:] if line.startswith("// ") else line[2:])
+    sections = {"intro": [], "Demonstrates": [], "What to expect when booting the ROM": []}
+    current = "intro"
+    intro, para = [], []
+    items = None
+    for line in lines + [""]:
+        stripped = line.strip()
+        if stripped in ("Demonstrates:", "What to expect when booting the ROM:"):
+            if para:
+                intro.append(" ".join(para))
+                para = []
+            current = stripped[:-1]
+            items = sections[current]
+            continue
+        if current == "intro":
+            if stripped:
+                para.append(stripped)
+            elif para:
+                intro.append(" ".join(para))
+                para = []
+            continue
+        indent = len(line) - len(line.lstrip())
+        if not stripped:
+            continue
+        if indent == 0:
+            current = "outro"  # the closing note (files, "Uses only Serval Engine's API")
+            continue
+        if current == "outro":
+            continue
+        if stripped.startswith("- "):
+            items.append([stripped[2:], [], []])
+        elif (items and indent >= 6 and not stripped.startswith("* ") and not items[-1][1]
+              and (items[-1][2] or items[-1][0].endswith(":"))):
+            # Lines set out under "...:", like the HUD's text in bunnymark.
+            items[-1][2].append(line[indent:].rstrip())
+        elif stripped.startswith("* ") and items:
+            items[-1][1].append(stripped[2:])
+        elif stripped.startswith("(In mGBA"):
+            # The emulator's key mapping: the site shows the browser's instead.
+            current = "mgba-note"
+            items = []
+        elif current == "mgba-note":
+            continue
+        elif items and items[-1][1] and indent > 6:
+            items[-1][1][-1] += " " + stripped
+        elif items:
+            items[-1][0] += " " + stripped
+    if intro:
+        # "fireflies: dusk in a meadow..." -> "Dusk in a meadow..."
+        first = re.sub(r"^\w+: ", "", intro[0], count=1)
+        intro[0] = first[:1].upper() + first[1:]
+    return intro, sections["Demonstrates"], sections["What to expect when booting the ROM"]
+
+
+CODE_WORD = re.compile(r"(?<![\w./-])(?:[\w./-]+\.(?:c|h|svm|py|md|txt)\b|"
+                       r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*(?:\(\))?|[a-z]\w*\(\))")
+
+
+def prose(text):
+    """Escapes text from a comment, setting identifiers and file names as code."""
+    out, pos = [], 0
+    for match in CODE_WORD.finditer(text):
+        out.append(esc(text[pos:match.start()]))
+        out.append(f"<code>{esc(match.group(0))}</code>")
+        pos = match.end()
+    out.append(esc(text[pos:]))
+    return "".join(out)
+
+
+def inline_md(text):
+    """`code` in a manifest summary."""
+    parts = text.split("`")
+    return "".join(f"<code>{esc(p)}</code>" if i % 2 else esc(p) for i, p in enumerate(parts))
+
+
+def item_list(items):
+    lis = []
+    for text, sub, lines in items:
+        sub_html = "<ul>" + "".join(f"<li>{prose(s)}</li>" for s in sub) + "</ul>" if sub else ""
+        lines_html = f'<pre class="as-shown">{esc(chr(10).join(lines))}</pre>' if lines else ""
+        lis.append(f"<li>{prose(text)}{lines_html}{sub_html}</li>")
+    return "<ul>" + "".join(lis) + "</ul>"
+
+
+def stars(level):
+    return (f'<span class="level" role="img" aria-label="Level {level} of 4" title="Level {level} of 4">'
+            + '<span class="star on">★</span>' * level + '<span class="star">★</span>' * (4 - level) + "</span>")
+
+
+def controls_line():
+    """The keyboard help line of the web page template (src/web/shell.html)."""
+    shell = (ROOT / "src/web/shell.html").read_text(encoding="utf-8")
+    match = re.search(r'<div id="help">(.*?)</div>', shell)
+    if not match:
+        fail("src/web/shell.html has no <div id=\"help\"> line for the gallery's controls")
+        return ""
+    parts = []
+    for item in html.unescape(match.group(1)).split("·"):
+        keys, _, action = item.strip().partition(": ")
+        key_html = "/".join(f"<kbd>{esc(k)}</kbd>" for k in keys.split("/"))
+        parts.append(f'<li>{key_html} <span>{esc(action)}</span></li>')
+    return '<ul class="controls">' + "".join(parts) + "</ul>"
+
+
+def load_manifest():
+    path = ROOT / "examples/gallery.toml"
+    with open(path, "rb") as f:
+        manifest = tomllib.load(f)
+    tags = manifest.get("tags", {})
+    examples = manifest.get("examples", {})
+    dirs = sorted(p.parent.name for p in (ROOT / "examples").glob("*/main.c"))
+    for name in dirs:
+        if name not in examples:
+            fail(f"examples/{name} has no entry in examples/gallery.toml: add [examples.{name}] "
+                 "(title, summary, tags, level, thumbnail)")
+    cmake = (ROOT / "examples/CMakeLists.txt").read_text(encoding="utf-8")
+    for name, entry in examples.items():
+        where = f"examples/gallery.toml [examples.{name}]"
+        if name not in dirs:
+            fail(f"{where}: there is no examples/{name}/main.c")
+            continue
+        for key in ("title", "summary", "tags", "level", "thumbnail"):
+            if key not in entry:
+                fail(f"{where}: missing {key}")
+        for tag in entry.get("tags", []):
+            if tag not in tags:
+                fail(f"{where}: tag {tag!r} is not in [tags]")
+        if entry.get("level") not in (1, 2, 3, 4):
+            fail(f"{where}: level must be 1 to 4")
+        rom = re.search(rf"serval_add_rom\({name}\s.*?TITLE\s+\"([^\"]*)\"", cmake, re.S)
+        if rom and entry.get("title") != rom.group(1):
+            fail(f"{where}: title {entry.get('title')!r} isn't the ROM's TITLE {rom.group(1)!r} "
+                 "in examples/CMakeLists.txt")
+        thumb = entry.get("thumbnail", {})
+        if not isinstance(thumb.get("frame"), int):
+            fail(f"{where}: thumbnail needs a frame number")
+    featured = manifest.get("featured")
+    if featured not in examples:
+        fail(f"examples/gallery.toml: featured = {featured!r} is not an example")
+    return manifest
+
+
+def take_thumbnails(manifest, web_build, out):
+    """Runs every example headless (tools/web-shots.py) and saves the chosen
+    frame as examples/<name>/thumb.png."""
+    examples = manifest["examples"]
+
+    def shoot(name):
+        thumb = examples[name]["thumbnail"]
+        frame = thumb["frame"]
+        with tempfile.TemporaryDirectory() as tmp:
+            command = [sys.executable, str(ROOT / "tools/web-shots.py"), "--require-picture",
+                       str(web_build / f"{name}.html"), str(frame), f"{tmp}/shot", f"shot={frame}"]
+            command += [f"key={k}" for k in thumb.get("keys", [])]
+            result = subprocess.run(command, capture_output=True, text=True)
+            shot = Path(tmp) / f"shot-{frame:05d}.png"
+            if result.returncode != 0 or not shot.exists():
+                return f"examples/{name}: tools/web-shots.py failed:\n{result.stdout}{result.stderr}"
+            shutil.copyfile(shot, out / "examples" / name / "thumb.png")
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for message in pool.map(shoot, examples):
+            if message:
+                fail(message)
+
+
+def source_files(name):
+    directory = ROOT / "examples" / name
+    files = [p for p in directory.iterdir() if p.suffix in (".c", ".h", ".svm")]
+    return sorted(files, key=lambda p: (p.name != "main.c", p.name))
+
+
+def example_article(name, entry, tags, controls, page):
+    """The example's description, game and source; the gallery's dialog shows
+    this same article, fetched from the example's page."""
+    title = entry["title"]
+    intro, demonstrates, expect = parse_header(ROOT / "examples" / name / "main.c")
+    tag_list = "".join(f'<li><a class="tag" href="{rel(page, "examples/")}?tag={esc(t)}" '
+                       f'title="{esc(tags[t])}">{esc(t)}</a></li>' for t in entry["tags"])
+    files = source_files(name)
+    tabs, panels = [], []
+    for i, path in enumerate(files):
+        ident = f"src-{name}-{re.sub(r'[^a-z0-9]', '-', path.name.lower())}"
+        selected = "true" if i == 0 else "false"
+        tabs.append(f'<button type="button" role="tab" id="{ident}-tab" aria-controls="{ident}" '
+                    f'aria-selected="{selected}" tabindex="{0 if i == 0 else -1}">{esc(path.name)}</button>')
+        lang = "svm" if path.suffix == ".svm" else "c"
+        code = path.read_text(encoding="utf-8")
+        panels.append(f'<div role="tabpanel" id="{ident}" aria-labelledby="{ident}-tab" tabindex="0"'
+                      f'{"" if i == 0 else " hidden"}>{code_block(code, lang)}</div>')
+    intro_html = "".join(f"<p>{prose(p)}</p>" for p in intro)
+    return f"""
+<article class="example" data-example="{esc(name)}" aria-labelledby="example-title-{esc(name)}">
+  <header class="example-head">
+    <h1 id="example-title-{esc(name)}"><span class="rom-title">{esc(title)}</span> <code class="dir">examples/{esc(name)}</code></h1>
+    <p class="example-summary">{inline_md(entry["summary"])}</p>
+    <div class="example-meta">{stars(entry["level"])}<ul class="tags">{tag_list}</ul></div>
+  </header>
+  <div class="stage">
+    <iframe class="game-frame" src="{rel(page, f"examples/{name}/play.html")}" title="{esc(title)}, running in the browser"
+            allow="fullscreen; gamepad; autoplay" allowfullscreen></iframe>
+  </div>
+  <div class="play-info">
+    <p class="play-note"><strong>Click or tap the game, or press a key, to start it.</strong>
+      Browsers only play sound after one. A gamepad works too; on a touch screen the page shows buttons.</p>
+    {controls}
+    <p class="example-links">
+      <a class="button" href="{rel(page, f"examples/{name}/play.html")}" target="_blank" rel="noopener">Open full page</a>
+      <a class="button" href="{github_url(f"examples/{name}")}">View on GitHub</a>
+    </p>
+  </div>
+  <div class="example-about">
+    <div class="example-intro">{intro_html}</div>
+    <section class="example-list"><h2>Demonstrates</h2>{item_list(demonstrates)}</section>
+    <section class="example-list"><h2>What to expect</h2>{item_list(expect)}</section>
+  </div>
+  <section class="example-source" aria-labelledby="source-{esc(name)}">
+    <h2 id="source-{esc(name)}">Source</h2>
+    <div class="tabs" role="tablist" aria-label="Files in examples/{esc(name)}">{''.join(tabs)}</div>
+    {''.join(panels)}
+  </section>
+</article>"""
+
+
+def build_examples(site, manifest, web_build):
+    examples = manifest["examples"]
+    tags = manifest["tags"]
+    controls = controls_line()
+    for name in examples:
+        page_src = web_build / f"{name}.html"
+        if not page_src.is_file():
+            fail(f"{page_src} is missing: build the web examples first "
+                 "(cmake --preset web-release && cmake --build --preset web-release)")
+            continue
+        (site.out / "examples" / name).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(page_src, site.out / "examples" / name / "play.html")
+    if errors:
+        return
+    take_thumbnails(manifest, web_build, site.out)
+
+    for name, entry in examples.items():
+        page = f"examples/{name}/index.html"
+        article = example_article(name, entry, tags, controls, page)
+        body = f'<main id="main" class="example-page">{article}</main>'
+        site.write(page, f"{entry['title']} ({name}) | Serval Engine examples", body,
+                   description=entry["summary"].replace("`", ""), section="examples", body_class="page-example",
+                   scripts=f'<script src="{rel(page, "assets/examples.js")}" defer></script>')
+
+    page = "examples/index.html"
+    used = [t for t in tags if any(t in e["tags"] for e in examples.values())]
+    tag_buttons = ['<button type="button" class="tag" data-tag="" aria-pressed="true">All</button>']
+    tag_buttons += [f'<button type="button" class="tag" data-tag="{esc(t)}" aria-pressed="false" '
+                    f'title="{esc(tags[t])}">{esc(t)}</button>' for t in used]
+    cards = []
+    for name, entry in examples.items():
+        search = " ".join([entry["title"], name, entry["summary"].replace("`", ""), *entry["tags"]]).lower()
+        card_tags = "".join(f'<li><button type="button" class="tag" data-tag="{esc(t)}" '
+                            f'title="{esc(tags[t])}">{esc(t)}</button></li>' for t in entry["tags"])
+        cards.append(f"""
+    <li class="card" data-hash="{esc(name)}" data-tags="{esc(" ".join(entry["tags"]))}" data-search="{esc(search)}">
+      <a class="card-link" href="{rel(page, f"examples/{name}/")}" data-example="{esc(name)}">
+        <span class="screen"><img src="{rel(page, f"examples/{name}/thumb.png")}" width="240" height="160"
+          alt="{esc(entry["title"])}: a frame of the game" loading="lazy"></span>
+        <span class="card-title"><span class="rom-title">{esc(entry["title"])}</span>
+          <code class="dir">{esc(name)}</code>{stars(entry["level"])}</span>
+      </a>
+      <p class="card-summary">{inline_md(entry["summary"])}</p>
+      <ul class="tags">{card_tags}</ul>
+    </li>""")
+    count = len(examples)
+    body = f"""
+<main id="main" class="gallery">
+  <header class="gallery-head">
+    <h1>Examples</h1>
+    <p class="lead">{count} games and demos made with Serval Engine. Each one runs here in your browser, built
+      from the same C as its GBA ROM. Open one to play it, see what it demonstrates and read its source.</p>
+  </header>
+  <div class="filters">
+    <div class="tag-filter" role="group" aria-label="Show examples using">{''.join(tag_buttons)}</div>
+    <div class="text-filter">
+      <label for="example-filter">Filter</label>
+      <input id="example-filter" type="search" placeholder="Name, feature or tag" autocomplete="off">
+    </div>
+  </div>
+  <p class="gallery-count"><span class="count" aria-live="polite">Showing {count} examples</span>
+    <span class="level-key">Stars: how much an example asks of a reader, from {stars(1)} to {stars(4)}</span></p>
+  <ul class="cards">{''.join(cards)}
+  </ul>
+  <p class="gallery-empty" hidden>No example matches. <button type="button" class="button clear-filters">Clear the filters</button></p>
+</main>
+<dialog class="example-dialog" aria-labelledby="example-dialog-title">
+  <div class="dialog-bar">
+    <span class="dialog-title" id="example-dialog-title">Example</span>
+    <button type="button" class="dialog-close" aria-label="Close">Close</button>
+  </div>
+  <div class="dialog-body"></div>
+</dialog>"""
+    site.write(page, "Examples | Serval Engine", body,
+               description=f"{count} Serval Engine examples running in the browser, with their source.",
+               section="examples", body_class="page-gallery",
+               scripts=f'<script src="{rel(page, "assets/examples.js")}" defer></script>')
+
+
 # --- Front page ------------------------------------------------------------------
 
 
@@ -390,11 +740,13 @@ def shape_of_a_game():
     return code_block(match.group(1), "c")
 
 
-def build_home(site):
+def build_home(site, manifest):
     page = "index.html"
     md = MarkdownIt("commonmark", {"html": True})
     md.core.ruler.push("serval_links", links_rule)
     tagline, about, status = readme_parts()
+    featured = manifest["featured"]
+    entry = manifest["examples"][featured]
     logo = "docs/images/serval-engine-logo"
     highlights = [
         ("A flat C API",
@@ -411,7 +763,7 @@ def build_home(site):
          "docs/vm/", "The VM"),
         ("Every game runs on the web",
          "Any game also builds into one self-contained web page, with sound, saves, keyboard, gamepad and "
-         "touch, ready for any static host.",
+         "touch: every example on this site runs that way.",
          "docs/platforms/#web", "The web target"),
     ]
     cards = "".join(f"""
@@ -428,10 +780,19 @@ def build_home(site):
       <p class="home-status"><strong>Status:</strong> {md_inline(md, status, page)}</p>
       <p class="actions">
         <a class="button primary" href="{rel(page, "docs/getting-started/")}">Get started</a>
+        <a class="button" href="{rel(page, "examples/")}">Play the examples</a>
         <a class="button" href="{rel(page, "docs/")}">Read the docs</a>
         <a class="button" href="{REPO_URL}">GitHub</a>
       </p>
     </div>
+    <figure class="featured">
+      <a class="screen" href="{rel(page, "examples/#" + featured)}">
+        <img src="{rel(page, f"examples/{featured}/thumb.png")}" width="240" height="160"
+          alt="{esc(entry["title"])}: a frame of the game">
+        <span class="play-badge">Play in your browser</span>
+      </a>
+      <figcaption><span class="rom-title">{esc(entry["title"])}</span> {inline_md(entry["summary"])}.</figcaption>
+    </figure>
   </section>
 
   <section class="highlights" aria-labelledby="highlights-title">
@@ -478,7 +839,9 @@ class Links(HTMLParser):
         for key, value in attrs:
             if value is None:
                 continue
-            if key == "id" or (tag == "a" and key == "name"):
+            if key == "id" or (tag == "a" and key == "name") or key == "data-hash":
+                # data-hash: a fragment the page's script handles (the gallery's
+                # examples/#<name> opens that example).
                 self.ids.add(value)
             elif key in ("href", "src") and not (tag == "link" and ("rel", "canonical") in attrs):
                 self.refs.append(value)
@@ -497,7 +860,7 @@ def check_links(out):
         return parsed[path]
 
     broken = []
-    pages = sorted(out.rglob("*.html"))
+    pages = sorted(p for p in out.rglob("*.html") if not p.name == "play.html")
     for path in pages:
         page = path.relative_to(out).as_posix()
         for ref in parse(path).refs:
@@ -529,8 +892,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", default=str(ROOT / "build/site"))
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--web-build", default=str(ROOT / "build/web-release/examples"))
     args = parser.parse_args()
     out = Path(args.out).resolve()
+    web_build = Path(args.web_build).resolve()
+
+    if not web_build.is_dir():
+        sys.exit(f"build.py: no web build at {web_build}\n"
+                 "Build the examples for the web first: cmake --preset web-release && "
+                 "cmake --build --preset web-release (or pass --web-build DIR)")
+    manifest = load_manifest()
+    if errors:
+        sys.exit("build.py: examples/gallery.toml:\n  " + "\n  ".join(errors))
 
     if out.exists():
         shutil.rmtree(out)
@@ -538,7 +911,9 @@ def main():
     site = Site(out, args.base_url)
     copy_static(out)
     build_docs(site)
-    build_home(site)
+    build_examples(site, manifest, web_build)
+    if not errors:
+        build_home(site, manifest)
     if errors:
         sys.exit("build.py: the site has problems:\n  " + "\n  ".join(errors))
 

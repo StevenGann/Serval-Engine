@@ -1,0 +1,105 @@
+# The examples gallery on the documentation site (tools/site/build.py,
+# https://stevengann.github.io/Serval-Engine/examples/). Every example
+# directory needs an entry here: the site's build fails without one.
+#
+# [examples.<directory>], in the order the gallery shows them (a teaching
+# order, simplest first):
+#   title      the ROM's TITLE in examples/CMakeLists.txt
+#   summary    one line, after the README's examples table (`code` allowed)
+#   tags       a few of the [tags] below: the example's main topics, not
+#              everything it uses (the gallery filters by them)
+#   level      1-4 stars: how much the example asks of a reader
+#                1  a few calls in one file
+#                2  a small complete game, or one engine feature in depth
+#                3  a full game split over several files
+#                4  an advanced design: many systems at once, or a game
+#                   written for the VM
+#   thumbnail  how tools/web-shots.py takes the gallery picture: the frame
+#              to save, and buttons as FRAME:KEYS:LENGTH (A B s S R L U D r l;
+#              s = SELECT, S = START). Pick a frame of real gameplay, not the
+#              splash or a title screen. The game is deterministic, so the
+#              same buttons always give the same picture; check it after
+#              changing the example.
+
+# The example the site's front page shows.
+featured = "fireflies"
+
+# The tag vocabulary: the only tags an example may use, with what each means.
+[tags]
+sprites = "Sprites drawn by hand with sprite_draw"
+animation = "Animated sprites or tiles"
+rotation = "Rotated and scaled sprites"
+metasprites = "Sprites built from several hardware sprites, drawn as one"
+tilemaps = "Map layers: tilesets, scrolling, parallax"
+physics = "Bodies, gravity, bounces and collisions"
+paths = "Movement patterns as path tables"
+ecs = "Entities with engine and game components and systems"
+sound = "Sound effects on the tone generators"
+music = "Songs on the tone generators, with sound effects over them"
+text = "HUD text"
+save = "Save data that survives power-off"
+vm = "Game logic written for the bytecode VM"
+benchmark = "Measures the engine's performance"
+
+[examples.hello]
+title = "SERVAL HELLO"
+summary = "The smallest game: one sprite moved with the D-pad"
+tags = ["sprites"]
+level = 1
+thumbnail = { frame = 30 }
+
+[examples.bunnymark]
+title = "BUNNYMARK"
+summary = "ECS, physics with gravity, depth sorting; doubles as the CPU benchmark"
+tags = ["ecs", "physics", "text", "benchmark"]
+level = 2
+thumbnail = { frame = 90, keys = ["1:A:60"] }
+
+[examples.pong]
+title = "PONG"
+summary = "A complete small game: AI opponent, collisions, effects, sound, splash screen"
+tags = ["physics", "sound", "text"]
+level = 2
+thumbnail = { frame = 300, keys = ["200:S:2", "250:U:14"] }
+
+[examples.asteroids]
+title = "ASTEROIDS"
+summary = "Rotating sprites, wrap-around, many short-lived entities, sound, a saved high-score table with initials entry"
+tags = ["rotation", "physics", "ecs", "sound", "save"]
+level = 3
+thumbnail = { frame = 390, keys = ["200:S:2", "230:r:14", "250:A:200"] }
+
+[examples.breakout]
+title = "PAW BREAKER"
+summary = "A brick breaker over four levels: bricks as entities with `body_hit_side`, a constant ball speed, falling power-ups, map layers as backgrounds, music, a saved top-5 table"
+tags = ["physics", "metasprites", "tilemaps", "music", "save"]
+level = 3
+thumbnail = { frame = 340, keys = ["200:S:2", "300:A:2"] }
+
+[examples.platformer]
+title = "SERVAL DASH"
+summary = "A first level in the classic side-scroller style: scrolling tile maps with parallax, map collision, animated sprites and tiles, enemies to stomp, music"
+tags = ["tilemaps", "physics", "animation", "music"]
+level = 3
+thumbnail = { frame = 730, keys = ["200:S:2", "600:rB:200", "700:A:20"] }
+
+[examples.shmup]
+title = "STAR VELDT"
+summary = "A vertical shoot-'em-up: a stage scrolled by the camera over a parallax starfield, enemy waves on movement patterns, aimed and spread bullets, a three-phase boss, music"
+tags = ["tilemaps", "paths", "rotation", "music", "save"]
+level = 4
+thumbnail = { frame = 830, keys = ["200:S:2", "500:A:400", "600:l:40", "800:r:60"] }
+
+[examples.blackjack]
+title = "BLACKJACK"
+summary = "Blackjack in a bold, bouncy card-game style: cards built from shared sprite pieces that slide, flip, tilt and wobble, a swing tune, a bankroll kept in save data"
+tags = ["metasprites", "rotation", "tilemaps", "music", "save"]
+level = 4
+thumbnail = { frame = 520, keys = ["200:S:2", "400:A:2"] }
+
+[examples.fireflies]
+title = "FIREFLIES"
+summary = "A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely bytecode for the VM, in a listing (`fireflies.svm`) assembled at build time"
+tags = ["vm", "paths", "animation", "music"]
+level = 4
+thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:30"] }
