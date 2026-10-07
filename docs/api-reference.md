@@ -32,12 +32,13 @@ Startup, the frame loop, CPU timing and buttons.
 | `bool button_pressed(u16 buttons)` | True only on the frame a button went down (any of several OR'd buttons). |
 | `bool button_repeat(u16 buttons)` | For menus and cursors: true on the frame a button went down, then while it stays held again after a delay and from then on at an interval (default 20 frames, then every 4: about 1/3 s, then 15 a second). Each button is counted on its own; with OR'd buttons, true if any is due. Counted from input alone, so deterministic. See the caveat below. |
 | `void button_repeat_set(int delay, int interval)` | Frames from a press to its first repeat and between later repeats, each 1 to 65,535 (else ignored, *warns*). A wait already under way for a held button finishes first. `serval_init()` restores the defaults. |
+| `void button_repeat_reset(void)` | Call when a screen opens, so a button held from the last screen doesn't repeat into it: every button held now stops firing in `button_repeat()` (neither its press nor its repeats, from this frame on) until it is released; released and pressed again, it behaves as usual. Buttons not held now are unaffected, and so are the delay and interval (`button_repeat_set`), `button_pressed()` and `button_down()`. |
 
 Buttons: `BUTTON_A`, `BUTTON_B`, `BUTTON_SELECT`, `BUTTON_START`, `BUTTON_RIGHT`, `BUTTON_LEFT`, `BUTTON_UP`, `BUTTON_DOWN`, `BUTTON_R`, `BUTTON_L`, and `BUTTON_ANY` (all ten). Button state changes only in `frame_begin()`.
 
 **Caveats**
 
-- `button_repeat()` counts from the press, not from when a menu opens: a button still held from the previous screen (the A that opened the menu) keeps repeating in the menu at once. If the menu should wait for a fresh press, act on `button_pressed()` until the button has been released once.
+- `button_repeat()` counts from the press, not from when a screen opens: a button still held from the previous screen (the A that opened a menu) would repeat in the new one at once. Call `button_repeat_reset()` when the screen opens.
 
 ## screen.h
 

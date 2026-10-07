@@ -73,16 +73,23 @@ bool button_pressed(u16 buttons);
 // stays held, again after a delay and from then on at an interval (default:
 // 20 frames, then every 4, about 1/3 second and 15 times a second). Each
 // button counts on its own; with several OR'd buttons, true if any of them is
-// due. Counted from input alone, so it is deterministic.
-// Caveat: repeats count from the press, not from when a menu opens, so a
-// button still held from the previous screen (the A that opened the menu)
-// keeps repeating in it at once. If the menu should wait for a fresh press,
-// act on button_pressed() until the button has been released once.
+// due. Counted from input alone, so it is deterministic. Repeats count from
+// the press, not from when a screen opens: a button still held from the
+// previous screen (the A that opened a menu) would repeat in the new one at
+// once, so call button_repeat_reset() when a screen opens.
 bool button_repeat(u16 buttons);
 
 // The frames from a press to its first repeat, and between repeats after that
 // (each 1 to 65535). A wait already under way for a held button finishes
 // first. serval_init() sets the defaults.
 void button_repeat_set(int delay, int interval);
+
+// Call when a screen opens, so a button held from the last screen doesn't
+// repeat into it: every button held now stops firing in button_repeat()
+// (neither its press nor its repeats) until it is released; pressed again,
+// it behaves as usual. Buttons not held now are unaffected, and so are the
+// delay and interval (button_repeat_set), button_pressed() and
+// button_down().
+void button_repeat_reset(void);
 
 #endif // SERVAL_CORE_H

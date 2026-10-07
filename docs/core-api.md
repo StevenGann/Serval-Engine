@@ -35,7 +35,7 @@ Modules, all in `include/serval/` (details in [api-reference.md](api-reference.m
 
 | Header | Provides |
 | --- | --- |
-| `core.h` | Init, splash, frame loop, frame count, CPU timing, buttons, held-button repeat (`button_repeat`, `button_repeat_set`) |
+| `core.h` | Init, splash, frame loop, frame count, CPU timing, buttons, held-button repeat (`button_repeat`, `button_repeat_set`, `button_repeat_reset`) |
 | `screen.h` | Screen size, `Color`, `COLOR_RGB`, backdrop color, brightness fades (`screen_set_brightness`) |
 | `sprites.h` | Sprite assets, groups, drawing, rotation, layers, per-draw palettes, animation data ([sprites.md](sprites.md)) |
 | `map.h` | Tilesets, metatile map layers on BG1-BG3, scroll offsets, the camera, runtime cell changes, map collision and map bodies (`C_MAPBODY`, `sys_map_movement`) ([tilemaps.md](tilemaps.md)) |

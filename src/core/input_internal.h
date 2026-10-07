@@ -6,8 +6,10 @@
 
 #include "serval/platform.h"
 
-// Forgets held buttons and sets the default delay and interval. Called by
-// serval_init().
+// Forgets held buttons (and any silenced by button_repeat_reset) and sets the
+// default delay and interval. Called by serval_init(). Not the public
+// button_repeat_reset() (core.h), which only silences the buttons held now
+// and keeps the delay and interval.
 void serval_repeat_reset(void);
 
 // Records the buttons held at the start of a frame (BUTTON_* bits). Called by
