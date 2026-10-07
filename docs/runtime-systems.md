@@ -1,6 +1,6 @@
 # Other runtime systems
 
-These systems are scoped; each section's **Status** says what is implemented. Implemented: save data, HUD text, brightness fades, math, paths, bouncing-body physics, pairwise entity collision and the camera. Planned and not designed in detail yet: dialogue text, alpha blending, windows and mosaic, a collision broad phase and events, camera following.
+These systems are scoped; each section's **Status** says what is implemented. Implemented: save data, HUD text, brightness fades, color mixing, math, paths, bouncing-body physics, pairwise entity collision and the camera. Designed and declared as *planned* API (in the headers, warned about at compile time, implemented in a later 1.x version; [releases.md](releases.md#planned-api)): alpha blending and raster effects. Planned and not designed in detail yet: dialogue text, a collision broad phase and events, camera following. After 1.0, with no API yet: windows and mosaic.
 
 ## Save data
 
@@ -113,11 +113,69 @@ Variable-width font renderer drawing glyphs into BG tiles; text boxes with typew
 
 ## Special effects
 
-**Status:** partly implemented (brightness).
+**Status:** brightness fades and color mixing implemented (`include/serval/screen.h`). Alpha blending (`screen_set_blend()`, with the `LAYER_*` constants, and `SPRITE_BLEND` in `sprites.h`) and raster effects (`raster_scroll()`, `raster_backdrop()`, `raster_clear()`) are declared as *planned* API: designed below, stubbed, and warned about wherever a game uses them ([releases.md](releases.md#planned-api)). Palette writes are planned in the sprite and tilemap docs ([below](#palette-effects)). Windows and mosaic come after 1.0, with no API yet.
 
-Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and mosaic, exposed as API calls and script ops for transitions.
+Screen-wide effects for transitions and atmosphere, exposed as API calls (and, for brightness, to scripts: [vm.md](vm.md)). The GBA's color special effect (`BLDCNT`, `BLDALPHA`, `BLDY`) does one thing at a time, so brightness fades and alpha blending share it ([below](#alpha-blending)); the engine owns those registers.
 
-**Implemented:** `screen_set_brightness(level)` (−16 black … 0 … 16 white) fades the whole screen through the hardware's brightness effect (`BLDCNT`/`BLDY`, every layer and the backdrop as first targets); games fade by stepping it once per frame. The hardware does one color effect at a time, so alpha blending, when it comes, will share it with brightness. `serval_splash()` borrows the effect for its own fade and restores the game's level. Not exposed yet: alpha blending, windows, mosaic; examples build other effects from palettes (Pong's paddle flash, score glow via `screen_set_backdrop`).
+### Brightness
+
+**Implemented:** `screen_set_brightness(level)` (−16 black … 0 … 16 white) fades the whole screen through the hardware's brightness effect (`BLDCNT`/`BLDY`, every layer and the backdrop as first targets, none as second targets); games fade by stepping it once per frame. It writes the registers at once, so set it right after `frame_begin()` to change whole frames. `serval_splash()` borrows the effect for its own fade and restores the game's level.
+
+### Color mixing
+
+**Implemented:** `color_mix(a, b, amount)` (`src/core/color.c`, portable) mixes two colors: `amount` 0 gives `a`, 256 gives `b`, 128 is halfway. Red, green and blue are mixed separately, each as `(a * (256 - amount) + b * amount) / 256`, rounded down, so `color_mix(a, b, t) == color_mix(b, a, 256 - t)`; bit 15 (unused) is 0 in the result, and amounts past 256 are clamped to 256 (*warns*). It is the building block for palette effects: a palette faded toward black, white or a dusk tint, a hit flash, a glowing backdrop (Pong's score glow is `screen_set_backdrop()` with colors it mixes itself).
+
+- **Matches the hardware.** Rounding down is what the hardware does, so at multiples of 16 `color_mix` gives exactly what [alpha blending](#alpha-blending) shows for `a` over `b` with weights `16 - amount / 16` and `amount / 16`, and, toward white, exactly what `screen_set_brightness(amount / 16)` does. Toward black the hardware's brightness decrease rounds the other way (it subtracts `v * -level / 16`, rounded down), so a palette faded with `color_mix` is the same or one step (of 31) darker per channel. A palette fade therefore looks like the brightness fade, but leaves alone what it isn't applied to (the HUD's palette, say) and keeps alpha blending working, which a brightness fade pauses.
+- **Cost:** about 140 cycles per color on the GBA (Thumb code in ROM; the test ROM logs it: 35,855 cycles for 256 colors in a Release build), so mixing all 256 background and sprite colors takes about 13% of a frame. Fade the palette banks that need it.
+- **Tested** (`tests/color_tests.c`, on the host and in the test ROM): every pair of channel values at every amount against the definition (checked as `m * 256 <= sum < (m + 1) * 256`, not with color.c's arithmetic), the endpoints, rounding, symmetry, bit 15, the clamp and its warning, and the equivalences with the hardware's blending and brightness above.
+
+### Palette effects
+
+**Planned:** writing colors at run time, through a shadow palette that `frame_end()` copies to palette RAM in VBlank: `sprite_set_colors()` for a sprite group's palettes ([sprites.md](sprites.md#palettes)) and `tileset_set_colors()` for the background palettes ([tilemaps.md](tilemaps.md#tilesets)), both declared as planned API. Palette cycling (water, lava, a flashing sign) and palette fades are game code on top of them, with `color_mix()` for the colors; helpers for both may follow after 1.0. Until then games recolor with per-draw palettes (`SPRITE_PALETTE(n)`: Breakout's flashing bricks), sprite variants with their own palette (Pong's paddle flash) and `screen_set_backdrop()`.
+
+### Alpha blending
+
+**Planned:** declared in `screen.h` (`screen_set_blend()`, `LAYER_*`) and `sprites.h` (`SPRITE_BLEND`), not implemented yet. `screen_set_blend()` does nothing and warns once in debug builds, and sprites drawn with `SPRITE_BLEND` are drawn opaque (see [sprites.md](sprites.md)): everything stays opaque. See-through layers and sprites: a foreground the player shows through, water, shadows and ghosts, glows.
+
+`screen_set_blend(top, bottom, top_weight, bottom_weight)`: where a pixel of one of the `top` layers is in front of a pixel of one of the `bottom` layers, the screen shows, for each 5-bit channel, `min(31, (top * top_weight + bottom * bottom_weight) / 16)`, rounded down (the hardware's alpha blending). The layers are bits, combinable with `|`:
+
+| Constant | Value | Layer |
+| --- | --- | --- |
+| `LAYER_HUD` | `1 << 0` | Background 0, the text layer |
+| `LAYER_FOREGROUND` | `1 << 1` | Background 1, in front of sprites |
+| `LAYER_PLAYFIELD` | `1 << 2` | Background 2, the playfield |
+| `LAYER_BACKGROUND` | `1 << 3` | Background 3, the parallax background |
+| `LAYER_SPRITES` | `1 << 4` | Every sprite |
+| `LAYER_BACKDROP` | `1 << 5` | The backdrop color |
+| `LAYER_ALL` | `0x3F` | All of them |
+
+The backgrounds are named after their [default roles](tilemaps.md#default-layer-roles); each bit stands for its background whatever it shows. The values are the hardware's (`BLDCNT`'s target bits; libtonc's `LAYER_BG0` … `LAYER_BD` are the same bits under other names).
+
+- **Weights** go from 0 to 16 (16 is the whole color); larger ones are clamped to 16 (*warns*). Weights summing to 16 mix (8 and 8 is half and half, as `color_mix(top, bottom, 128)`); summing past 16 they brighten (16 and 16 adds the colors, for glows and light beams). A see-through foreground: `screen_set_blend(LAYER_FOREGROUND, LAYER_ALL & ~LAYER_FOREGROUND, 8, 8)`.
+- **Which pixels blend.** Only the frontmost pixel blends, with the pixel directly behind it, and only if that one's layer is in `bottom`; otherwise the front pixel is drawn opaque. A layer may be in both masks. Sprites are one layer to the hardware: a sprite never blends with a sprite behind it; where two overlap, the front one blends with the layer behind both, and the sprite behind doesn't show there.
+- **`SPRITE_BLEND` sprites** (in `spr_flags`, `sprite_draw*()` flags and metasprite pieces; [sprites.md](sprites.md)) blend over the `bottom` layers with these weights whether or not `top` has `LAYER_SPRITES`, so `screen_set_blend(0, bottom, ...)` blends those sprites only (blackjack's solid card shadows are the case that asked for it; its veil, a layer, would be `top`). They will use the hardware's semi-transparent sprite mode.
+- **Off and timing.** With `bottom` 0 nothing blends: `screen_set_blend(0, 0, 0, 0)`, the default, is off. Bits outside `LAYER_ALL` are ignored (*warns*). The settings are applied at the next `frame_end()`, in VBlank, and kept until changed.
+- **Shared with the brightness.** While `screen_set_brightness()` is not 0, blending pauses: the brightness effect takes the registers (every layer a first target, no second targets), so everything, `SPRITE_BLEND` sprites included, is drawn opaque, then faded. When the brightness returns to 0, the blend settings come back. The hardware can't do both at once, and the fade wins because it must cover the whole screen. A fade that must keep its blending fades the palettes with `color_mix()` instead ([above](#color-mixing)). `serval_splash()` borrows the effect and puts the game's settings back.
+- **Web:** the renderer (`src/web/ppu.c`) already draws the hardware's alpha blending, semi-transparent sprites and brightness, matched against mGBA, so the implementation needs nothing new there.
+
+### Raster effects
+
+**Planned:** declared in `screen.h` (`raster_scroll()`, `raster_backdrop()`, `raster_clear()`), not implemented yet: each stub does nothing (layers scroll as a whole, the backdrop is one color) and warns once in debug builds.
+
+The hardware draws the screen one line at a time; a raster effect changes one setting between lines (in the horizontal blank), so each of the 160 lines can scroll a background differently (a rippling lake, heat haze, bands of a sky moving at different speeds) or have its own backdrop color (a sky gradient). The API is declarative: the game gives a table of `SCREEN_H` values, entry 0 for the top line, and the engine applies it every frame.
+
+- **Tables.** The engine reads the table at every `frame_end()` and doesn't copy it at the call, so it must stay valid while the effect is set (static or `const` data, not a local array); changing its values between frames animates the effect. Each `frame_end()` applies the table as it is then to the frame drawn next, all of it: a frame never changes halfway down. One effect at a time (the hardware has one channel for it): setting another replaces the one set. A new effect, and `raster_clear()`, take effect at the next `frame_end()`.
+- **`raster_scroll(bg, vertical, offsets)`** scrolls each line of a map layer (background 1-3) by its own offset, added to the layer's scroll position `(sx, sy)`: the camera times the layer's `scroll_factor` plus its `map_set_scroll()` offset, or the offset alone on a `MAP_LAYER_FIXED` layer ([tilemaps.md](tilemaps.md#fixed-and-self-scrolling-layers)). Screen line `y` shows the layer from layer pixel `(sx + offsets[y], sy + y)` on, or with `vertical`, from `(sx, sy + y + offsets[y])`. On the playfield (background 2) only the picture moves: collision, entities and the camera stay where they are. The effect belongs to the background, like `map_set_scroll()`'s offset, but also stays when its layer is unloaded or replaced. A background outside 1-3 or a NULL table is ignored (*warns*).
+- **How far lines can move.** A layer lives in VRAM as a 32×32-tile (256×256-pixel) ring around `(sx, sy)` ([tilemaps.md](tilemaps.md#streaming)). A span of `W` pixels can touch ⌊(`W` + 6) / 8⌋ + 1 tiles, which fits the ring's 32 for `W` up to 249: so one frame's offsets must lie within 9 pixels of each other horizontally (240 + 9; e.g. −4 to 4, a ripple) and within 89 vertically (160 + 89). The implementation streams the whole range the lines show, not just the screen's. The exception is an axis on which the layer wraps (`MAP_LAYER_WRAP`) and its map is 16, 8, 4, 2 or 1 metatiles long: the ring then holds all of it, so any offsets work there (sky bands from one repeating strip). Offsets spread further show wrong tiles at the edges of the lines furthest out (*warns*).
+- **`raster_backdrop(colors)`** gives each line its own backdrop color, instead of `screen_set_backdrop()`'s one color. When the effect ends, the backdrop is `screen_set_backdrop()`'s color again: the one last set, also if it was set while the effect was on. A NULL table is ignored (*warns*).
+- **`raster_clear()`** ends the effect, if any, at the next `frame_end()`.
+- **Hardware (GBA):** DMA channel 0, started by each horizontal blank (HBlank DMA), copying one value per line into the scroll register or background palette color 0. DMA 0 and the HBlank interrupt are reserved for raster effects from 1.0, before they are implemented, so implementing them breaks no game ([core-api.md](core-api.md)); games must not use them. For `raster_scroll()` the engine adds the layer's scroll to each offset when it reads the table, so the values the DMA copies are prepared before VBlank, like the map's rows and columns.
+- **Web:** the renderer draws each frame at once, from the state at VBlank, so it can't see register writes made between lines ([platforms.md](platforms.md#what-is-faked-or-missing)). It will apply the per-line values itself as it draws each line, which the declarative table makes possible.
+- **Debugging:** the debug link's viewers are to show them ([debug-link.md](debug-link.md)).
+
+### Windows and mosaic
+
+**After 1.0**, no API yet: windows (rectangular regions and the object window: spotlights, masked HUD regions, effects inside a region only) and mosaic. They will be new functions, added without changing anything that exists. Draw-flag bits 13 (mosaic) and 14 (object window) of `spr_flags` and `sprite_draw*()` flags are reserved for them ([sprites.md](sprites.md)).
 
 ## Math
 
@@ -125,7 +183,7 @@ Alpha blending, brightness fades, windows (spotlights, masked HUD regions) and m
 
 Standardize on fixed-point types and lookup tables for trig early. There is no FPU or hardware divider.
 
-**Implemented so far:** sine and cosine from a 1024-step table, with u16 angles (`include/serval/math.h`); their inverse `angle_of(dx, dy)` (atan2, within 0.1°) and `fx_length(dx, dy)` (within 0.1%, saturating), both without division: the larger component is scaled into [2^16, 2^17) by shifts, the ratio of the smaller to it comes from a 257-entry reciprocal table and one multiply, and atan or sqrt(1 + r²) of the ratio from 33-entry tables with linear interpolation (all tables generated at build time, formulas in `src/core/trig.c`); 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
+**Implemented so far:** sine and cosine from a 1024-step table, with u16 angles (`include/serval/math.h`); their inverse `angle_of(dx, dy)` (atan2, within 0.1°) and `fx_length(dx, dy)` (within 0.1%, saturating), both without division: the larger component is scaled into [2^16, 2^17) by shifts, the ratio of the smaller to it comes from a 257-entry reciprocal table and one multiply, and atan or sqrt(1 + r²) of the ratio from 33-entry tables with linear interpolation (all tables precomputed, with the formulas that generated them, in `src/core/trig.c`); 24.8 fixed point (`include/serval/fixed.h`) and deterministic random numbers (`include/serval/random.h`; `random_range` scales by multiplication, not division).
 
 ## Paths
 
@@ -140,7 +198,7 @@ Paths are an ECS component (`C_PATH`, bit 6) with per-slot state (the path, step
 - **Cheap per frame, no division.** The velocity is recomputed (`fx_sin`, `fx_cos`, two 32-bit multiplies) only when the heading or speed changed. Measured on the GBA (release, from ROM): about 160 cycles per entity on straight, constant-speed stretches, about 450 while turning, plus the loop over the 128 slots (about 10,000 cycles in all). The state lives in EWRAM (about 2.5 KiB, dropped from games that don't use paths).
 - **Safe misuse.** Bad paths (NULL, empty, a loop step past the end) and dead entities are refused with a warning; `C_PATH` added by hand is removed (debug builds; it would otherwise resume a previous entity's path); speeds are capped at `FX(4096)` so an accelerating endless step can't overflow.
 
-Planned: paths for the script VM ([vm.md](vm.md)); per-step events (for now, games read `path_step`/`path_time`); and absolute headings per step.
+Scripts start and stop paths too, and can wait for one to end ([vm.md](vm.md)). Planned: per-step events (for now, games read `path_step`/`path_time`), absolute headings per step, and aiming a path from a script (scripts can't set `path_heading` yet).
 
 ## Physics
 

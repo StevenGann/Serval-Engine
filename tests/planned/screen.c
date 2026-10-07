@@ -8,5 +8,13 @@
 
 #include "serval/screen.h"
 
+static const s16 offsets[SCREEN_H];
+static const Color colors[SCREEN_H];
+
 void planned_screen(void);
-void planned_screen(void) {}
+void planned_screen(void) {
+    screen_set_blend(LAYER_FOREGROUND, LAYER_ALL & ~LAYER_FOREGROUND, 8, 8); // planned
+    raster_scroll(2, false, offsets);                                        // planned
+    raster_backdrop(colors);                                                 // planned
+    raster_clear();                                                          // planned
+}

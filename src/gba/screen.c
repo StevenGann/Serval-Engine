@@ -1,5 +1,6 @@
 // Screen-wide effects: brightness (fade to black or white) through the
-// hardware's color special effect.
+// hardware's color special effect, and the stubs of the planned ones (alpha
+// blending, raster effects; docs/runtime-systems.md#special-effects).
 
 #include "serval/screen.h"
 
@@ -17,8 +18,11 @@ static bool warned_range;
 #endif
 
 void serval_screen_apply_brightness(void) {
-    // Every layer and the backdrop are first targets; the mode picks the
-    // direction, BLDY (0-16) how far.
+    // Every layer and the backdrop are first targets, with no second targets,
+    // so sprites marked semi-transparent fade too instead of blending; the
+    // mode picks the direction, BLDY (0-16) how far. Level 0 turns the effect
+    // off. (Alpha blending, planned, will put its own settings back here at
+    // level 0: blending pauses during a fade, screen.h.)
     if (brightness == 0)
         REG_BLDCNT = BLD_OFF;
     else
@@ -44,4 +48,58 @@ void screen_set_brightness(int level) {
     }
     brightness = (s8)level;
     serval_screen_apply_brightness();
+}
+
+// --- Planned API --------------------------------------------------------------
+//
+// Declared in screen.h with SERVAL_PLANNED, not implemented in this engine
+// version (docs/development.md#planned-api). Each stub changes nothing, so the
+// game sees today's behaviour (everything opaque, layers scrolled as a whole,
+// one backdrop color), and says so once per function in debug builds: a game
+// calling them every frame gets one line, not one per frame. They touch no
+// register, so the hardware they will need (the blend registers, DMA 0 and
+// the HBlank interrupt) stays untouched until then.
+
+#ifdef SERVAL_DEBUG
+static bool warned_blend, warned_raster_scroll, warned_raster_backdrop, warned_raster_clear;
+
+static void warn_planned(bool* warned, const char* message) {
+    if (!*warned) {
+        *warned = true;
+        SERVAL_WARN("%s", message);
+    }
+}
+#define WARN_PLANNED(flag, message) warn_planned(&(flag), (message))
+#else
+#define WARN_PLANNED(flag, message) ((void)0)
+#endif
+
+void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight) {
+    (void)top;
+    (void)bottom;
+    (void)top_weight;
+    (void)bottom_weight;
+    WARN_PLANNED(warned_blend, "screen_set_blend: alpha blending is planned, not implemented in "
+                               "this engine version; everything stays opaque");
+}
+
+void raster_scroll(u32 bg, bool vertical, const s16* offsets) {
+    (void)bg;
+    (void)vertical;
+    (void)offsets;
+    WARN_PLANNED(warned_raster_scroll, "raster_scroll: raster effects are planned, not "
+                                       "implemented in this engine version; the layer scrolls "
+                                       "as a whole");
+}
+
+void raster_backdrop(const Color* colors) {
+    (void)colors;
+    WARN_PLANNED(warned_raster_backdrop, "raster_backdrop: raster effects are planned, not "
+                                         "implemented in this engine version; the backdrop "
+                                         "stays one color");
+}
+
+void raster_clear(void) {
+    WARN_PLANNED(warned_raster_clear, "raster_clear: raster effects are planned, not implemented "
+                                      "in this engine version; there is no effect to end");
 }
