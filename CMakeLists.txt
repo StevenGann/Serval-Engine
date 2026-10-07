@@ -91,6 +91,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/psg.c
         src/gba/screen.c
         src/gba/splash.c
+        src/gba/splash_art.c
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c
@@ -119,6 +120,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/psg.c
         src/gba/screen.c
         src/gba/splash.c
+        src/gba/splash_art.c
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c
