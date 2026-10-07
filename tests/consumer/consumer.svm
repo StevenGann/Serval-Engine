@@ -1,9 +1,0 @@
-; consumer.svm: a script for the consumer game, assembled by serval_add_script()
-; with the release archive's tools/svm.py: one object whose Create handler
-; stores a value in a global, which main.c reads back.
-.object THING mask=0 sprite=0
-.globals ANSWER
-.handler THING CREATE
-    PUSH 42    ; 42
-    STG ANSWER ;
-    HALT       ;

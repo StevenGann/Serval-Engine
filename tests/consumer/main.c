@@ -2,8 +2,9 @@
 // tests/consumer/CMakeLists.txt, the way a game project uses the engine.
 //
 // Runs a few frames, prints text, does integer division (which needs libgcc),
-// runs a script assembled at build time by serval_add_script() (consumer.svm:
-// its Create handler stores 42 in a global) and exits through debug_exit with
+// runs a script built at build time by serval_add_script() (consumer.lua, in
+// the Lua subset: a global that starts at 40, to which its Create handler
+// adds 2) and exits through debug_exit with
 // the number of failed checks, so mgba-rom-test reports whether the ROM
 // booted and ran correctly.
 //

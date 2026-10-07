@@ -151,7 +151,7 @@ else()
     add_dependencies(serval_host_tests serval_api_only_check)
     # The script listings those games include the generated headers of are
     # assembled for this check too, which also runs the assembler on them.
-    serval_add_script(serval_api_only_check consumer/consumer.svm)
+    serval_add_script(serval_api_only_check consumer/consumer.lua)
     serval_add_script(serval_api_only_check ../examples/fireflies/fireflies.svm
                       HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
                               serval/sprites.h serval/path.h serval/screen.h)

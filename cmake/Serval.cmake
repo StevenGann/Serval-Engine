@@ -7,12 +7,14 @@
 # CMAKE_CURRENT_FUNCTION_LIST_DIR and settings from cache variables or target
 # properties, never from variables of the engine's directory scope.
 
-# Python runs tools/gbafix.py after each ROM link and tools/svm.py for script
-# listings, in every kind of build (GBA, web and host). Cached so that the
-# helpers find it when called from a game's own directory.
+# Python runs tools/gbafix.py after each ROM link, and tools/svlua.py and
+# tools/svm.py for scripts, in every kind of build (GBA, web and host). Cached
+# so that the helpers find it when called from a game's own directory.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(SERVAL_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE INTERNAL
-    "Python interpreter that runs the engine's tools (gbafix.py, svm.py)")
+    "Python interpreter that runs the engine's tools (gbafix.py, svlua.py, svm.py)")
+set(SERVAL_PYTHON_VERSION "${Python3_VERSION}" CACHE INTERNAL
+    "Version of SERVAL_PYTHON_EXECUTABLE (svlua.py needs 3.11 or later)")
 
 # Warning flags for engine code (not vendored third-party code). Link PRIVATE.
 add_library(serval_warnings INTERFACE)
@@ -137,24 +139,29 @@ function(serval_add_rom target)
         VERBATIM)
 endfunction()
 
-# serval_add_script(<target> <listing.svm> [SYMBOL <name>] [PREFIX <p>]
-#                   [HEADERS <h1> <h2> ...])
+# serval_add_script(<target> <script.lua | listing.svm> [SYMBOL <name>]
+#                   [PREFIX <p>] [HEADERS <h1> <h2> ...])
 #
-# Assembles a script listing (docs/vm.md, tools/svm.py) for a target made by
-# serval_add_rom() (or any target) at build time: <basename>_script.c, which
-# defines the blob as `const unsigned char <symbol>[]` and `<symbol>_size`,
-# and <basename>_script.h with the listing's objects, strings and globals as
-# <PREFIX>OBJ_*, <PREFIX>STR_* and <PREFIX>G_* defines, their counts and the
-# two externs. Both go in the target's binary directory; the .c joins the
-# target's sources and the directory its include path, so the game includes
-# the header and calls vm_load(<symbol>, <symbol>_size).
+# Builds a script blob for a target made by serval_add_rom() (or any target)
+# at build time: a script in the Lua subset (.lua, docs/lua.md) is compiled
+# by tools/svlua.py to <basename>.svm in the target's binary directory, and
+# that listing, or a hand-written one (.svm, docs/vm.md), is assembled by
+# tools/svm.py into <basename>_script.c, which defines the blob as
+# `const unsigned char <symbol>[]` and `<symbol>_size`, and
+# <basename>_script.h with the script's objects, strings, globals and arrays
+# as <PREFIX>OBJ_*, <PREFIX>STR_*, <PREFIX>G_* and <PREFIX>ARR_* defines,
+# their counts and the two externs. Both go in the target's binary
+# directory; the .c joins the target's sources and the directory its include
+# path, so the game includes the header and calls
+# vm_load(<symbol>, <symbol>_size).
 #
 # SYMBOL defaults to <basename>_script. HEADERS are C headers whose integer
-# constants the listing may use (the game's, and the engine's: a path relative
+# constants the script may use (the game's, and the engine's: a path relative
 # to the current source directory, or to the engine's include/ as the game
-# would #include it, e.g. serval/ecs.h). The listing is reassembled when it,
-# a header, svm.py or vm.h changes. Call it from the directory that defined
-# the target, after serval_add_rom().
+# would #include it, e.g. serval/ecs.h); a Lua script's names in ALL_CAPS
+# come from them. The script is rebuilt when it, a header, svlua.py, svm.py
+# or vm.h changes. Call it from the directory that defined the target, after
+# serval_add_rom().
 function(serval_add_script target listing)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
     if(NOT TARGET ${target})
@@ -163,19 +170,35 @@ function(serval_add_script target listing)
     endif()
     set(engine_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
     set(svm "${engine_dir}/tools/svm.py")
+    set(svlua "${engine_dir}/tools/svlua.py")
     set(vm_h "${engine_dir}/include/serval/vm.h")
-    foreach(file IN ITEMS "${svm}" "${vm_h}")
+    cmake_path(ABSOLUTE_PATH listing BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
+    cmake_path(GET listing EXTENSION LAST_ONLY extension)
+    string(TOLOWER "${extension}" extension)
+    if(NOT extension MATCHES "^\\.(lua|svm)$")
+        message(FATAL_ERROR "serval_add_script(${target}): ${listing} is neither a Lua script "
+                            "(.lua) nor a listing (.svm).")
+    endif()
+    set(tools "${svm}" "${vm_h}")
+    if(extension STREQUAL ".lua")
+        list(APPEND tools "${svlua}")
+    endif()
+    foreach(file IN LISTS tools)
         if(NOT EXISTS "${file}")
             message(FATAL_ERROR "serval_add_script(${target}): ${file} is missing.")
         endif()
     endforeach()
     if(NOT SERVAL_PYTHON_EXECUTABLE)
-        message(FATAL_ERROR "serval_add_script(${target}): Python 3 is needed to assemble "
+        message(FATAL_ERROR "serval_add_script(${target}): Python 3 is needed to build "
                             "${listing} (SERVAL_PYTHON_EXECUTABLE is empty).")
     endif()
-    cmake_path(ABSOLUTE_PATH listing BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
     if(NOT EXISTS "${listing}")
         message(FATAL_ERROR "serval_add_script(${target}): ${listing} does not exist.")
+    endif()
+    if(extension STREQUAL ".lua" AND SERVAL_PYTHON_VERSION VERSION_LESS 3.11)
+        message(FATAL_ERROR "serval_add_script(${target}): compiling ${listing} needs Python "
+                            "3.11 or later (tools/svlua.py); found ${SERVAL_PYTHON_VERSION} at "
+                            "${SERVAL_PYTHON_EXECUTABLE}.")
     endif()
     cmake_path(GET listing STEM base)
     if(NOT ARG_SYMBOL)
@@ -203,6 +226,17 @@ function(serval_add_script target listing)
     get_target_property(out_dir ${target} BINARY_DIR)
     set(c_file "${out_dir}/${base}_script.c")
     set(h_file "${out_dir}/${base}_script.h")
+    if(extension STREQUAL ".lua")
+        # The compiler's listing, which the assembler turns into the blob.
+        set(script "${listing}")
+        set(listing "${out_dir}/${base}.svm")
+        add_custom_command(
+            OUTPUT "${listing}"
+            COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svlua}" compile "${script}" -o "${listing}"
+            DEPENDS "${script}" "${svlua}"
+            COMMENT "Compiling ${base}.lua"
+            VERBATIM)
+    endif()
     add_custom_command(
         OUTPUT "${c_file}" "${h_file}"
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svm}" asm "${listing}" ${header_args}

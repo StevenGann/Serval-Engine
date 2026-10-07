@@ -35,7 +35,7 @@ No release has been published yet; `serval.json` says `0.1.0`.
 
 ## Release contents
 
-Each GitHub release attaches a packaged archive, `serval-engine-X.Y.Z.zip`. It contains only what building a game needs (`tools/package-release.sh`, which packages only files tracked by git): `include/`, `src/` (with the startup code and linker script), `cmake/`, `third_party/` (vendored libtonc and the license texts), `CMakeLists.txt`, `CMakePresets.json`, `tools/gbafix.py`, `tools/svm.py` (the script assembler `serval_add_script()` runs), `serval.json` and `LICENSE`. No docs, tests or examples.
+Each GitHub release attaches a packaged archive, `serval-engine-X.Y.Z.zip`. It contains only what building a game needs (`tools/package-release.sh`, which packages only files tracked by git): `include/`, `src/` (with the startup code and linker script), `cmake/`, `third_party/` (vendored libtonc and the license texts), `CMakeLists.txt`, `CMakePresets.json`, `tools/gbafix.py`, `tools/svlua.py` and `tools/svm.py` (the Lua-subset compiler and the script assembler `serval_add_script()` runs), `serval.json` and `LICENSE`. No docs, tests or examples.
 
 `serval-engine-X.Y.Z.zip.sha256` holds the archive's SHA-256 (`sha256sum -c` format). `serval.json` is also attached as a separate asset, so tools can read a release's manifest without downloading the archive.
 
