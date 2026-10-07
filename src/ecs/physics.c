@@ -80,6 +80,55 @@ static inline FIXED too_big(FIXED lo) {
 }
 #endif
 
+// The speed a perfect floor bounce (body_bounce SERVAL_BOUNCE_PERFECT) leaves
+// the floor with, before this frame's gravity is added: the one that brings
+// the body back up exactly as high as it fell from. The body hit the floor at
+// `speed` (at least 2 * g) and ended `past` (>= 0) beyond it; g is gravity's
+// magnitude along the axis (> 0).
+//
+// Keeping the speed, as walls other than floors do, isn't enough. Moved by
+// sys_movement() and then pulled by sys_physics(), a falling body keeps
+// v * v - g * v - 2 * g * x the same from frame to frame (v its velocity, x
+// its position, both along gravity): that value is its height in this
+// integration. A bounce that keeps the speed and mirrors the overshoot
+// changes it by 2 * g * (2 * past - speed), so the next bounce peaks higher or
+// lower by up to the distance the body falls in a frame, depending on where
+// in the frame it met the floor. And a body landing exactly on the floor
+// (past 0, as one dropped from rest from the right height does) loses one
+// frame's gravity of speed on every bounce, the same way each time, until it
+// rests. Instead the body is mirrored back inside as for any bounce and leaves
+// rising at w after gravity, with
+//     w * w + g * w = speed * speed + g * speed - 4 * g * past,
+// which keeps that value: w rounded to the nearest, found by bisection (no
+// divide; one step per bit of the speed, about a dozen). Returns w + g; less
+// than 2 * g (w < g: it would hardly leave the floor) means the caller makes
+// it a rest, as for any bounce that slow (a body that started the frame inside
+// the bounds rests this way only if it hit slower than about 3.6 times g).
+//
+// Inlined: called out of line, from ROM, it cost bunnymark (which never
+// bounces perfectly) 2,600 cycles a frame, since sys_physics' fast loop is out
+// of registers and a call clobbers them; inlined, bunnymark costs the same as
+// before (docs/runtime-systems.md#physics has the numbers).
+static inline __attribute__((always_inline)) FIXED perfect_rebound(FIXED speed, FIXED past,
+                                                                   FIXED g) {
+    const int64_t target = (int64_t)speed * (speed + g) - (int64_t)4 * g * past;
+    if (target < (int64_t)2 * g * g)
+        return 0;
+    // The largest w in [g, speed] with w * (w + g) <= target: for g it is at
+    // most target (checked above), for speed at least (past >= 0).
+    FIXED lo = g, hi = speed;
+    while (lo < hi) {
+        FIXED mid = lo + ((hi - lo + 1) >> 1);
+        if ((int64_t)mid * (mid + g) <= target)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    if (lo < speed && (int64_t)(lo + 1) * (lo + 1 + g) - target < target - (int64_t)lo * (lo + g))
+        lo++;
+    return lo + g;
+}
+
 // A body that reached a wall on one axis (moving into it, or resting
 // against it): the wall it is at (lo if at_lo, else hi), and whether that is
 // the floor (on_floor, the wall gravity pulls toward). Bounces it off the wall
@@ -91,9 +140,14 @@ static inline FIXED too_big(FIXED lo) {
 //   bounce and keep it hopping forever.
 // - Gravity is applied after the bounce, so it slows the rebound rather than
 //   adding to it.
-// - A floor bounce too slow to clear twice one frame's gravity becomes a rest:
-//   the body sits exactly on the floor with zero speed, and the floor cancels
-//   gravity, so it stays put even if gravity is switched off.
+// - A floor bounce keeps body_bounce/256 of the speed and of the overshoot.
+//   A perfect one (SERVAL_BOUNCE_PERFECT, 255) mirrors the whole overshoot
+//   and leaves at the speed that brings the body back to the height it fell
+//   from (perfect_rebound()).
+// - A floor bounce that hits or would leave the floor slower than twice one
+//   frame's gravity becomes a rest: the body sits exactly on the floor with
+//   zero speed, and the floor cancels gravity, so it stays put even if
+//   gravity is switched off.
 static inline __attribute__((always_inline)) bool hit_wall(FIXED* pos, FIXED* vel, FIXED lo,
                                                            FIXED hi, FIXED gravity, u32 bounce,
                                                            bool at_lo, bool on_floor) {
@@ -108,15 +162,34 @@ static inline __attribute__((always_inline)) bool hit_wall(FIXED* pos, FIXED* ve
     FIXED speed = serval_fx_abs(*vel);
     FIXED overshoot = wall - *pos; // how far past the wall, signed toward inside
     if (on_floor) {
-        speed = (FIXED)(((u32)speed * bounce) >> 8);
-        if (speed < 2 * serval_fx_abs(gravity)) {
+        // Too slow to bounce whatever body_bounce is (a body resting on the
+        // floor every frame, the common case): tested before scaling, so a
+        // resting body skips the multiply and the perfect-bounce test.
+        const FIXED slowest = 2 * serval_fx_abs(gravity);
+        if (speed < slowest) {
             *pos = wall;
             *vel = 0;
             return true;
         }
-        // Scale the magnitude, so both directions round the same way.
-        FIXED scaled = (FIXED)(((u32)serval_fx_abs(overshoot) * bounce) >> 8);
-        overshoot = overshoot < 0 ? -scaled : scaled;
+        if (bounce != SERVAL_BOUNCE_PERFECT) {
+            speed = (FIXED)(((u32)speed * bounce) >> 8);
+            if (speed < slowest) {
+                *pos = wall;
+                *vel = 0;
+                return true;
+            }
+            // Scale the magnitude, so both directions round the same way.
+            FIXED scaled = (FIXED)(((u32)serval_fx_abs(overshoot) * bounce) >> 8);
+            overshoot = overshoot < 0 ? -scaled : scaled;
+        } else {
+            // The overshoot is mirrored whole.
+            speed = perfect_rebound(speed, serval_fx_abs(overshoot), slowest >> 1);
+            if (speed < slowest) {
+                *pos = wall;
+                *vel = 0;
+                return true;
+            }
+        }
     }
     *pos = wall + overshoot;
     if (*pos < lo)
@@ -166,14 +239,29 @@ static inline __attribute__((always_inline)) bool update_axis(FIXED* pos, FIXED*
         FIXED speed = serval_fx_abs(*vel);
         FIXED overshoot = wall - *pos;
         if (on_floor) {
-            speed = (FIXED)(((u32)speed * bounce) >> 8);
-            if (speed < 2 * serval_fx_abs(gravity)) {
+            const FIXED slowest = 2 * serval_fx_abs(gravity);
+            if (speed < slowest) {
                 *pos = wall;
                 *vel = 0;
                 return true;
             }
-            FIXED scaled = (FIXED)(((u32)serval_fx_abs(overshoot) * bounce) >> 8);
-            overshoot = overshoot < 0 ? -scaled : scaled;
+            if (bounce != SERVAL_BOUNCE_PERFECT) {
+                speed = (FIXED)(((u32)speed * bounce) >> 8);
+                if (speed < slowest) {
+                    *pos = wall;
+                    *vel = 0;
+                    return true;
+                }
+                FIXED scaled = (FIXED)(((u32)serval_fx_abs(overshoot) * bounce) >> 8);
+                overshoot = overshoot < 0 ? -scaled : scaled;
+            } else {
+                speed = perfect_rebound(speed, serval_fx_abs(overshoot), slowest >> 1);
+                if (speed < slowest) {
+                    *pos = wall;
+                    *vel = 0;
+                    return true;
+                }
+            }
         }
         *pos = wall + overshoot;
         if (*pos < lo)

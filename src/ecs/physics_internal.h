@@ -31,6 +31,13 @@ static inline FIXED serval_fx_abs(FIXED v) {
     return v < 0 ? -v : v;
 }
 
+// The body_bounce of a perfect bounce, which loses nothing: every other value
+// keeps body_bounce/256 of the speed. A u8 can't hold 256, and without this
+// one exception a bounce could keep at most 255/256, so a ball meant to bounce
+// for ever would slowly die down. sys_physics() tests for it only on a floor
+// bounce fast enough not to be a rest (a resting body never reaches the test).
+#define SERVAL_BOUNCE_PERFECT 255
+
 // Takes friction/256 of the speed away, rounding the loss up on the
 // magnitude: any friction slows a body in either direction until it stops
 // (rounding toward zero would let slow bodies creep forever).

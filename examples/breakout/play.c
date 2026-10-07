@@ -11,11 +11,12 @@
 //   - The first level has 84 bricks, and map_set_cell() keeps at most
 //     MAP_MAX_CHANGES (64) changed cells per room: the 65th broken brick
 //     would stay solid. Entities have no such limit beyond the pool of 128.
-//   - The ball keeps a constant speed. A map body loses speed at every wall,
-//     ceiling and brick (body_bounce is at most 255/256), so the game would
-//     have to restore it after each contact; and body_contact says which
-//     side touched the map but not which cell, which the game would have to
-//     work out from the position to break the right brick.
+//   - body_contact says which side of a map body touched the map but not
+//     which cell, which the game would have to work out from the position to
+//     break the right brick. (Keeping the ball's speed constant would work
+//     either way: with body_bounce 255, a perfect bounce, a map body keeps
+//     its speed off every side of the map, as this ball, which has no
+//     gravity, does off the walls.)
 //   - body_hit_side() reports the brick and the side together, and a brick
 //     can flash, crack or be destroyed like any other entity.
 //   What a map would have done better: bricks would cost no sprites or

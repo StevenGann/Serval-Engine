@@ -14,11 +14,12 @@
 //   - applies gravity to its velocity, then limits its fall speed
 //     (body_max_fall).
 // A wall that gravity pulls toward is a floor. Bounces off a floor keep
-// body_bounce/256 of the speed, and a body touching a floor loses
-// body_friction/256 of its speed along it each frame (rounded up, so any
-// non-zero friction eventually stops it); other walls bounce perfectly. A
-// body too slow to bounce comes to rest on the floor (zero velocity) and stays
-// put until gravity changes direction or the game moves it.
+// body_bounce/256 of the speed (255: a perfect bounce, which loses nothing),
+// and a body touching a floor loses body_friction/256 of its speed along it
+// each frame (rounded up, so any non-zero friction eventually stops it);
+// other walls bounce keeping all of the speed. A body too slow to bounce
+// comes to rest on the floor (zero velocity) and stays put until gravity
+// changes direction or the game moves it.
 //
 // Each body can scale gravity (body_gravity), and sys_physics() can report the
 // walls bodies touch and the open edges they leave through (body_contact,
@@ -32,8 +33,19 @@
 // Body component pools (C_BODY), indexed by entity_index(). Zeroed by
 // entity_create(): a zero-sized body that doesn't bounce or slide.
 extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the bounds
-// Speed kept by a floor bounce, in 256ths (224 = 7/8). At most 255/256: a u8
-// can't express 256, so a floor bounce always loses a little speed.
+// How bouncy the body is on a floor, 0-255. 0 to 254 are the speed a floor
+// bounce keeps, in 256ths: 224 keeps 7/8 and 128 half, and 0 (the default)
+// none, so the body stops on the floor. 255 (a u8 can't hold 256) is a
+// perfect bounce, which loses nothing: the body comes back up as high as it
+// fell from (to within about a pixel, the frame steps), bounce after bounce,
+// so a ball dropped onto a floor bounces for ever. It leaves at the speed that
+// does that, about the speed it hit at. A floor bounce of any body_bounce,
+// 255 included, becomes a rest when the body hits the floor, or would leave
+// it, slower than twice one frame's gravity (a perfect bounce rests that way
+// only if it hit slower than about 3.6 times one frame's gravity). Only floor
+// bounces read it: off walls gravity doesn't pull toward, sys_physics()
+// keeps all of the speed whatever body_bounce is. Map bodies use it on every
+// side of the map they hit (sys_map_movement(), map.h).
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
 extern u8 body_friction[MAX_ENT];
@@ -55,7 +67,7 @@ extern u16 body_max_fall[MAX_ENT];
 // gravity, sys_physics() costs the same (checking costs ~110 cycles a frame,
 // only while there is gravity); otherwise it takes its slower general loop and
 // handles the scaled bodies out of line, in ROM: 32 bodies, 4 of them scaled,
-// cost about 4,000 cycles more per frame than with none. Scale the gravity of
+// cost about 4,300 cycles more per frame than with none. Scale the gravity of
 // the few odd bodies, not of the many.
 extern s8 body_gravity[MAX_ENT];
 #define BODY_GRAVITY(sixteenths) ((s8)((sixteenths) - 16))
@@ -162,14 +174,31 @@ u32 body_hit_side(u32 a, u32 b);
 // map bodies use (map.h, whose MAP_CONTACT_* are the same bits); read it, don't
 // write it. Use it for wall sounds and bounces instead of comparing velocity
 // signs: `if (body_contact[ball] & (BODY_SIDE_TOP | BODY_SIDE_BOTTOM))`.
-// A wrapping axis has no walls, so it reports nothing.
+// A wrapping axis has no walls, so it reports nothing. Zero for every body
+// until physics_set_contacts(true) (map bodies: always set).
+// Its bits:
+//   0-3  BODY_SIDE_BOTTOM, _TOP, _LEFT, _RIGHT: the sides that touched a wall
+//        of the bounds (sys_physics) or the map (sys_map_movement(), as
+//        MAP_CONTACT_FLOOR, _CEILING, _LEFT, _RIGHT)
+//   4    reserved for the engine, never set (it is BODY_SIDE_INSIDE's value,
+//        which only body_hit_side() returns)
+//   5    BODY_CONTACT_EXIT (below), with the side bit of the open edge the
+//        body left through
+//   6    MAP_CONTACT_LADDER (map.h): ladders, for map bodies only. Planned:
+//        never set in this version, and sys_physics() never sets it
+//   7    reserved for the engine, never set
+// Test the bits you want (body_contact[i] & BODY_SIDE_BOTTOM) rather than the
+// whole byte, which later versions may fill with more of them.
 extern u8 body_contact[MAX_ENT];
 // In body_contact (with physics_set_contacts(true)), with the side bit of the
 // open edge (physics_set_open_edges) the body left through: set only on the
 // frame the body becomes entirely outside the bounds past that edge, e.g.
 // BODY_CONTACT_EXIT | BODY_SIDE_LEFT for a ball that left through the open
-// left edge. Entirely outside means, in pixels (bounds as given to
-// physics_set_bounds, right and bottom exclusive):
+// left edge. That frame is the sys_physics() call that finds the body
+// entirely outside where it is now, and not where it was before
+// sys_movement() moved it (its position minus its velocity); the next call
+// clears it. A wrapping axis has no exits. Entirely outside means, in pixels
+// (bounds as given to physics_set_bounds, right and bottom exclusive):
 //   left:   pos_x + body_w <= left     right:  pos_x >= right
 //   top:    pos_y + body_h <= top      bottom: pos_y >= bottom
 // At pos_x + body_w == left the body's last column is already outside, so a
@@ -180,7 +209,7 @@ extern u8 body_contact[MAX_ENT];
 
 // Makes sys_physics() report contacts in body_contact (true) or not (false,
 // the default, which leaves body_contact 0 for bouncing bodies). Contacts take
-// sys_physics' slower general loop, about 80 cycles more per body per frame;
+// sys_physics' slower general loop, about 90 cycles more per body per frame;
 // switching them off clears them.
 void physics_set_contacts(bool on);
 

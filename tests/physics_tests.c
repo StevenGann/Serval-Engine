@@ -85,6 +85,97 @@ static void bodies_come_to_rest_on_the_floor(void) {
     CHECK(vel_y[i] == 0 && vel_x[i] == 0); // and stopped sliding
 }
 
+// A body dropped from rest at height y onto the floor at 90 (no ceiling in
+// reach), with the given body_bounce, for `frames` frames, with contacts on
+// (sys_physics' general loop) or off (its fast loop).
+typedef struct {
+    FIXED highest, lowest; // the highest and lowest peaks (least and most y) after a bounce
+    u32 bounces;
+    bool rested; // ever lay still on the floor
+    FIXED y, vy; // where it ended
+} Drop;
+
+static Drop drop(FIXED y, u32 bounce, bool contacts, int frames) {
+    reset();
+    physics_set_bounds(0, -1000, 100, 100);
+    physics_set_gravity(0, FX_ONE / 4);
+    physics_set_contacts(contacts);
+    u32 i = make_body(FX(20), y, 0, 0);
+    body_bounce[i] = (u8)bounce;
+    Drop d = {.highest = FX(1000), .lowest = -FX(1000)};
+    for (int f = 0; f < frames; f++) {
+        FIXED previous_vel = vel_y[i];
+        step(1);
+        if (previous_vel > 0 && vel_y[i] <= 0)
+            d.bounces++;
+        if (d.bounces && previous_vel < 0 && vel_y[i] >= 0) { // a peak
+            d.highest = pos_y[i] < d.highest ? pos_y[i] : d.highest;
+            d.lowest = pos_y[i] > d.lowest ? pos_y[i] : d.lowest;
+        }
+        d.rested = d.rested || (pos_y[i] == FX(90) && vel_y[i] == 0);
+    }
+    d.y = pos_y[i];
+    d.vy = vel_y[i];
+    reset();
+    return d;
+}
+
+// body_bounce 255 is a perfect bounce: the body comes back up to the height
+// it fell from, bounce after bounce, and never comes to rest (a u8 can't hold
+// 256, and 255/256 would lose a little height every time). From 75 pixels up
+// the body lands exactly on the floor, at a whole frame: keeping the speed
+// instead would lose a quarter pixel per frame of it on every bounce until it
+// rested. Both of sys_physics' loops bounce it alike.
+static void perfect_bounce_keeps_its_height(void) {
+    static const int heights[] = {15, 32, 50};
+    for (u32 h = 0; h < sizeof(heights) / sizeof(heights[0]); h++) {
+        const FIXED y = FX(heights[h]);
+        Drop fast = drop(y, 255, false, 6000);
+        Drop general = drop(y, 255, true, 6000);
+        CHECK(!fast.rested && fast.bounces >= 80);
+        CHECK(fast.highest >= y - FX(1) && fast.lowest <= y + FX(1));
+        CHECK(general.rested == fast.rested && general.bounces == fast.bounces);
+        CHECK(general.highest == fast.highest && general.lowest == fast.lowest);
+        CHECK(general.y == fast.y && general.vy == fast.vy);
+    }
+    // 254 isn't special: it loses height.
+    Drop lossy = drop(FX(15), 254, false, 3000);
+    CHECK(lossy.lowest > FX(15) + FX(20));
+    Drop lossy_general = drop(FX(15), 254, true, 3000);
+    CHECK(lossy_general.lowest == lossy.lowest && lossy_general.y == lossy.y);
+}
+
+// A perfect bounce still comes to rest when it is too small to make, as any
+// floor bounce does: when the body hits the floor, or would leave it, slower
+// than twice one frame's gravity. A body resting on the floor stays put
+// rather than hopping. Both loops alike.
+static void perfect_bounce_rests_when_too_slow(void) {
+    for (int contacts = 0; contacts < 2; contacts++) {
+        reset();
+        physics_set_gravity(0, FX_ONE / 4);
+        physics_set_contacts(contacts);
+        u32 resting = make_body(FX(20), FX(90), 0, 0);
+        u32 slow = make_body(FX(40), FX(90) - FX_ONE / 8, 0, 0); // will hit at a quarter pixel
+        // Hits at 0.625 pixels per frame (2.5 times gravity) and ends 150/256
+        // of a pixel past the floor: mirrored back inside that far, it could
+        // keep its height only by leaving slower than a quarter pixel per
+        // frame (gravity) after this frame's gravity, so it rests.
+        u32 grazing = make_body(FX(60), FX(90) - 10, 0, 160);
+        body_bounce[resting] = body_bounce[slow] = body_bounce[grazing] = 255;
+        step(1);
+        CHECK(pos_y[resting] == FX(90) && vel_y[resting] == 0);
+        CHECK(pos_y[slow] < FX(90) && vel_y[slow] == FX_ONE / 4);
+        CHECK(pos_y[grazing] == FX(90) && vel_y[grazing] == 0); // would leave too slowly
+        step(1);
+        CHECK(pos_y[slow] == FX(90) && vel_y[slow] == 0); // hit too slowly
+        step(100);
+        CHECK(pos_y[resting] == FX(90) && vel_y[resting] == 0);
+        CHECK(pos_y[slow] == FX(90) && vel_y[slow] == 0);
+        CHECK(pos_y[grazing] == FX(90) && vel_y[grazing] == 0);
+    }
+    reset();
+}
+
 static void resting_bodies_stay_put_without_gravity(void) {
     reset();
     physics_set_gravity(0, FX_ONE / 4);
@@ -775,6 +866,8 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
            {"bodies_come_to_rest_on_the_floor", bodies_come_to_rest_on_the_floor},
+           {"perfect_bounce_keeps_its_height", perfect_bounce_keeps_its_height},
+           {"perfect_bounce_rests_when_too_slow", perfect_bounce_rests_when_too_slow},
            {"resting_bodies_stay_put_without_gravity", resting_bodies_stay_put_without_gravity},
            {"gravity_in_any_direction", gravity_in_any_direction},
            {"non_bodies_are_untouched", non_bodies_are_untouched},
