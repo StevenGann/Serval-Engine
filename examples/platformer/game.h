@@ -79,7 +79,9 @@ typedef struct {
     // shrinks or dies, nor during the goal.
     void (*update)(void);
     void (*after_move)(void);
-    // The serval touches a metatile tagged TAG_HAZARD. NULL: player_hurt().
+    // The serval overlaps or stands on a metatile tagged TAG_HAZARD: called
+    // every frame it does (player_hurt() does nothing while it blinks, and
+    // player_die() once it dies). NULL: player_hurt().
     void (*hazard)(void);
     // Every frame the stage is on screen (playing, dying, at the goal; not
     // paused nor on the title), before drawing: screen-wide effects, e.g. the
@@ -164,6 +166,14 @@ int player_center_x(void);
 // pools; stages use them for their own objects too. A stage needing more
 // per-entity data keeps it in EWRAM (SERVAL_EWRAM_BSS): IWRAM is nearly
 // full in debug builds (docs/development.md#memory-use).
+//
+// A stage's own enemy has C_ENEMY and its obj_kind is the stage's own kind
+// (SPAWN_STAGE or above): the frame leaves its velocity and sprite to the
+// stage, but stomps it (enemy_squash), knocks it out from below
+// (enemy_knock), hurts the serval touching it otherwise, and turns it
+// (obj_dir) at walls and at other enemies, as any enemy. Every entity but
+// the serval and bouncing blocks is destroyed once it is 48 pixels behind
+// the camera's left edge or a metatile below the level (objects_after_move).
 extern u8 obj_kind[MAX_ENT];   // C_ENEMY: SpawnKind
 extern s8 obj_dir[MAX_ENT];    // -1 left, 1 right
 extern s16 obj_timer[MAX_ENT]; // frames: until a frog hops, an effect ends...
