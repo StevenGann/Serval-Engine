@@ -8,7 +8,7 @@ It is designed as three layers:
 
 1. **Core API**: a flat, raylib-style C API over libtonc (input, sprites, tilemaps and the camera, sound, text, save data).
 2. **World**: a fixed-pool, bitmask ECS for entity data.
-3. **Game logic** (in progress): GameMaker-style objects and events, run by a compact bytecode VM. The VM runs a whole game (the [`fireflies`](examples/fireflies/main.c) example, hand-assembled); until Studio Advance's script compiler emits its bytecode, games are written in C against the first two layers.
+3. **Game logic** (in progress): GameMaker-style objects and events, run by a compact bytecode VM. The VM runs a whole game (the [`fireflies`](examples/fireflies/main.c) example, written as a listing for the engine's assembler, `tools/svm.py`); until Studio Advance's script compiler emits its bytecode, games are written in C against the first two layers.
 
 > **Status:** pre-alpha, no release yet. The API will change.
 
@@ -27,7 +27,7 @@ Implemented:
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
-- Bytecode VM for GameMaker-style objects and events (Create, Step, Destroy, Collision, Animation End, Room Start): cooperative scripts with waits, entity properties and engine calls, no allocation, hot reload.
+- Bytecode VM for GameMaker-style objects and events (Create, Step, Destroy, Collision, Animation End, Room Start): cooperative scripts with waits, entity properties and engine calls, no allocation, hot reload; a reference assembler and disassembler for its blob format (`tools/svm.py`, run by `serval_add_script()` at build time).
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
 Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music and sampled sound effects, wave-channel music, streamed and compressed sprites, palette sharing and palette writes, alpha blending, tileset groups and compressed tilesets, slopes and ladders, dialogue text, an example game written in VM bytecode, and the editor debug link.
@@ -51,7 +51,7 @@ Planned (designed in [`docs/`](docs/README.md), not implemented): Maxmod music a
 | [`platformer`](examples/platformer/main.c) | "Serval Dash", a first level in the classic side-scroller style: scrolling tile maps with parallax, map collision, animated sprites and tiles, blocks hit from below, enemies to stomp, screen fades, music, a goal pole |
 | [`shmup`](examples/shmup/main.c) | "Star Veldt", a vertical shoot-'em-up: a stage scrolled by the camera over a parallax starfield, a narrow field with a HUD panel, enemy waves on movement patterns, aimed and spread bullets on an entity budget, power-ups, bombs, a three-phase boss, music, a saved top-5 table |
 | [`blackjack`](examples/blackjack/main.c) | Blackjack in a bold, bouncy modern card-game style: cards composed of shared sprite pieces that slide, flip, tilt and wobble, a swirling background, banners, chip and number pops, a swing tune, a bankroll kept in save data |
-| [`fireflies`](examples/fireflies/main.c) | A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely bytecode for the VM: objects with event handlers, waits, spawning, scoring, the timer, the HUD, sound and music in scripts; C only builds the blob, runs the frame loop and reports collisions |
+| [`fireflies`](examples/fireflies/main.c) | A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely bytecode for the VM: objects with event handlers, waits, spawning, scoring, the timer, the HUD, sound and music in scripts, in a listing (`fireflies.svm`) assembled at build time; C only loads the blob, runs the frame loop and reports collisions |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.
 
@@ -68,7 +68,7 @@ cmake --build --preset gba-release
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba
 ```
 
-Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()`; see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.
+Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()` (and assembles script listings with `serval_add_script()`); see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.
 
 ## License
 

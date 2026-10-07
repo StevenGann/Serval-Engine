@@ -2,7 +2,7 @@
 
 Write a GBA game in C with Serval Engine. This covers building the examples, the shape of a game, and the engine's main pieces. Function details are in [api-reference.md](api-reference.md).
 
-**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, fades, paths, save data, web builds). Maxmod music is not implemented yet ([the README](../README.md#features) lists what is planned). The scripting VM is, and `fireflies` runs a whole game on it, but its bytecode is meant to come from Studio Advance's script compiler; games written by hand are written in C, as this page describes.
+**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, fades, paths, save data, web builds). Maxmod music is not implemented yet ([the README](../README.md#features) lists what is planned). The scripting VM is, and `fireflies` runs a whole game on it from a listing assembled by the engine's assembler (`tools/svm.py`), but its bytecode is meant to come from Studio Advance's script compiler; games written by hand are written in C, as this page describes.
 
 ## 1. Build the examples
 
@@ -29,7 +29,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`platformer`](../examples/platformer/main.c) | A bigger game split into files: tilesets, metatiles and map layers, a scrolling camera, map bodies and collision, changing the map at runtime, a platformer controller |
 | [`shmup`](../examples/shmup/main.c) | A vertical shooter: a stage scrolled by the camera with a wrapping parallax layer, a HUD panel layer, an entity budget with caps, movement patterns from a wave table, aimed bullets, a multi-phase boss, cheap per-frame loops over the entities of each kind |
 | [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
-| [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all bytecode for the VM ([vm.md](vm.md)), objects with event handlers (Create, Step, Collision, Destroy, Animation End, Room Start) written as a listing and assembled at boot, and the little C a game made in Studio Advance keeps: the frame loop, collision pairs, a restart |
+| [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all bytecode for the VM ([vm.md](vm.md)), objects with event handlers (Create, Step, Collision, Destroy, Animation End, Room Start) written as a listing (`fireflies.svm`) assembled at build time, and the little C a game made in Studio Advance keeps: the frame loop, collision pairs, a restart |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 
@@ -62,6 +62,8 @@ cmake --build build
 ```
 
 `TITLE` (up to 12 characters) and `GAME_CODE` (4 characters) go into the ROM header. If the game saves (`save.h`) and will ship on a cartridge with Flash or EEPROM rather than SRAM, add `SAVE FLASH64K`, `FLASH128K`, `EEPROM8K` or `EEPROM512` to match it (the default, `SRAM`, suits emulators and flash carts; [save types](runtime-systems.md#save-types)). A game can have any number of source files; unused functions are dropped at link time. The engine's tests and examples are not built when it is added this way. [`tests/consumer/`](../tests/consumer/CMakeLists.txt) in the engine repository is a complete, CI-tested example of such a project.
+
+**Scripting.** Games are written in C today. The VM ([vm.md](vm.md)) is implemented, and a game can also carry logic as a script listing assembled at build time: `serval_add_script(my_game scripts.svm HEADERS game.h serval/ecs.h)` next to `serval_add_rom()` runs the engine's assembler (`tools/svm.py`, in the release archive) and gives the game `scripts_script.h` and a blob to `vm_load` ([development.md](development.md#building-a-game)). [`fireflies`](../examples/fireflies/fireflies.svm) is the example: its whole game is one listing, and its `main.c` the C a scripted game keeps. The assembler is a reference for the blob format, not a language; the script compiler that turns event blocks into it belongs to Studio Advance ([vm.md](vm.md#tools)).
 
 To experiment inside the engine's own tree instead, add the same `serval_add_rom()` line to `examples/CMakeLists.txt` (target name = directory name, e.g. `examples/my_game/main.c`).
 

@@ -2,7 +2,7 @@
 
 Game logic uses GameMaker's mental model — objects with event handlers — compiled to a compact custom bytecode VM in the style of GB Studio's GBVM.
 
-**Status:** format v1 and milestones 2-5 implemented (interpreter, scheduler, engine bridge: [`src/core/vm.c`](../src/core/vm.c), tested on the host and in the test ROM; the proof example, [`fireflies`](../examples/fireflies/main.c), a game whose logic is all bytecode); the debug-link integration is still to come. Until the first engine release ships it, everything here may change without a version bump. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today, and C stays a first-class escape hatch forever.
+**Status:** format v1 and milestones 2-5 implemented (interpreter, scheduler, engine bridge: [`src/core/vm.c`](../src/core/vm.c), tested on the host and in the test ROM; the proof example, [`fireflies`](../examples/fireflies/main.c), a game whose logic is all bytecode; the format's reference assembler and disassembler, [`tools/svm.py`](../tools/svm.py), see [Tools](#tools)); the debug-link integration is still to come. Until the first engine release ships it, everything here may change without a version bump. Games are written in C against the [core API](core-api.md) and [ECS](ecs.md) today, and C stays a first-class escape hatch forever.
 
 ## Why a custom VM
 
@@ -242,6 +242,62 @@ bool anim_finished(Entity e);
 
 C code that destroys scripted entities directly must use `vm_kill`/`vm_detach` so the VM's entity→context map stays honest (the stale-binding guard below makes a mistake safe, not correct).
 
+## Tools
+
+[`tools/svm.py`](../tools/svm.py) is the blob format's reference implementation, this document made executable: an **assembler** (`svm.py asm`) that turns a text listing into a blob, and a **disassembler** (`svm.py dis`) that turns a blob back into a listing the assembler reproduces byte for byte. Every number it uses (`VM_OP_*`, `VM_EV_*`, `VM_P_*`, `VM_SYS_*`, the limits and sizes) is read from [`vm.h`](../include/serval/vm.h) when it starts; the one table it keeps is each opcode's operand layout from the [opcode reference](#opcode-reference), and it refuses to run if that table and `vm.h`'s opcode list disagree. Python 3, standard library only.
+
+It is an assembler, not a language: one mnemonic per opcode, labels, constants and directives for the blob's tables. There are no expressions beyond integer constant arithmetic, no `if` or `while`, no variables and no event blocks. Those are the job of Studio Advance's script compiler, which emits this format and is not part of this repository.
+
+### Listing syntax
+
+One statement per line; `;` starts a comment; names are case-sensitive and must be defined before they are used.
+
+```text
+.const NAME expr                     a constant for expressions
+.object NAME mask=expr sprite=expr   an object, numbered from 0 in order of appearance
+.string NAME "text"                  a string, numbered from 0; printable ASCII (\" and \\)
+.globals NAME NAME ...               globals, numbered from 0; may repeat
+.handler OBJECT EVENT                the code that follows is OBJECT's handler for EVENT
+                                     (CREATE STEP DESTROY COLLISION ANIM_END ROOM_START)
+label:                               a label at the next byte (a jump or CALL target)
+MNEMONIC [operand]                   one opcode, by its VM_OP_* name without the prefix;
+                                     PUSH expr picks the smallest of PUSH8, PUSH16 and PUSH32
+.byte expr, expr, ...                raw bytes, where they appear
+.strings [NAME ...]                  these strings' bytes here instead of after the code
+```
+
+Operands: `GETP`/`SETP` take a property (`X`, `BODY_W`), `SYS` an engine call (`TEXT_PRINT`), `SPAWN` an object, `TRACE` a string, `LDG`/`STG` a global, `LDL`/`STL` a number, `JMP`/`JZ`/`JNZ`/`CALL` a label, `PUSH8/16/32` an expression (range-checked). A number works wherever a name does. In expressions, objects, strings and globals are `OBJ_NAME`, `STR_NAME` and `G_NAME`, the names the generated header gives C. Expressions are integers (decimal or `0x` hex), names, `+ - * / << >> | & ~` and parentheses with C precedence, and the engine's macros `FX(n)` (`n * 256`) and `C_GAME(n)`; `--header FILE` (repeatable) adds a C header's `#define`s and enumerators, so a listing uses the game's and the engine's names (`SPR_SERVAL_IDLE`, `C_POS`, `BUTTON_START`, `SPRITE_FLIP_H`). Lookup order: the listing's names, the headers in the order given, then `vm.h`'s.
+
+The [golden bytes](#worked-example-golden-bytes) as a listing (laid out with the string after the code):
+
+```text
+.object THING mask=0 sprite=0
+.string HI "HI"
+.globals SUM
+.handler THING CREATE
+    PUSH 5      ; 5
+    PUSH 7      ; 5 7
+    ADD         ; 12
+    STG SUM     ;
+    HALT
+```
+
+Layout: the header, the object table, the string table, the code in listing order (handler offsets and `CALL` targets patched in, `rel16` jumps counted from the byte after the operand), then every string's bytes, so adding a string never moves code. Errors (an unknown mnemonic or name, an operand that doesn't fit, a label bound twice or never, a handler for an object or event that doesn't exist, two handlers for the same event, a non-printable string, too many objects, strings or globals, a jump out of `rel16` range) name the listing's line and leave nothing written; a handler whose last op isn't `HALT`, `RET` or `JMP` is a warning.
+
+### Outputs
+
+- `-o OUT.bin`: the raw blob.
+- `--c OUT.c --symbol NAME`: the blob as `const unsigned char NAME[]` with `const unsigned int NAME_size` (plain C types, so it compiles anywhere), 16 bytes per line with the offset in a comment.
+- `--defs OUT.h`: an include-guarded header with `OBJ_<NAME>`, `STR_<NAME>` and `G_<NAME>` for every object, string and global, `OBJ_COUNT`, `STR_COUNT` and `G_COUNT`, and the two `extern`s; `--prefix P` prefixes the names.
+
+`svm.py dis BLOB.bin [-o OUT.svm]` validates the blob as `vm_load` would (magic, version, cell width, tables inside the blob, offsets in range, strings NUL-terminated) and writes a listing: numbered objects, strings and globals, a `.handler` line at every handler offset (two when handlers share one), `L_<offset>:` labels at handler offsets and at jump and call targets, properties, engine calls and events by name, `PUSH8/16/32` as written, and as `.byte` lines whatever the assembler wouldn't accept (padding, an unknown opcode, a jump into the middle of an instruction), so odd blobs round-trip too; strings that aren't after the code in index order get `.strings` lines. `asm(dis(b)) == b` for every blob `vm_load` accepts.
+
+### In a build
+
+`serval_add_script(<target> <listing.svm> [SYMBOL name] [PREFIX p] [HEADERS h...])` ([`cmake/Serval.cmake`](../cmake/Serval.cmake)) runs the assembler whenever the listing, a header, the tool or `vm.h` changes, generating `<basename>_script.c` and `<basename>_script.h` in the target's binary directory and adding them to the target, in the engine's tree and from a game's own project against a release archive (which ships `tools/svm.py`); [`fireflies`](../examples/fireflies/fireflies.svm) and [`tests/consumer`](../tests/consumer/consumer.svm) use it. Details in [development.md](development.md#building-a-game).
+
+The engine's own tests ([`tests/vm_tests.c`](../tests/vm_tests.c)) keep their small blob builder on purpose: they were written from this document alone, independently of the tool, and `tools/svm_test.py` (CTest `svm_tool`, host preset) checks the assembler against the same golden bytes, so the spec, the interpreter and the tool are three readings that must agree. Studio Advance's compiler is cross-checked against the same golden bytes.
+
 ## Exact semantics
 
 The rules an implementation must follow where the sections above leave room. Tests are written against these.
@@ -299,7 +355,7 @@ The smallest complete blob: one object (component mask 0, sprite 0) with only a 
 
 ## Implementation notes
 
-- **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `VM_OP_*`, `VM_EV_*`, `VM_P_*` and `VM_SYS_*` enums public (tests and the editor's compiler both need the numbers; the blob format is MIT, the compiler is not part of this repo).
+- **Files:** interpreter, scheduler and loader in `src/core/vm.c` (portable: no hardware access, unit-testable on the host); public header `include/serval/vm.h` with the `VM_OP_*`, `VM_EV_*`, `VM_P_*` and `VM_SYS_*` enums public (the tests, [`tools/svm.py`](#tools) and the editor's compiler all need the numbers; the blob format is MIT, the compiler is not part of this repo).
 - **Platform calls:** `src/core` must link on the host, where sound, music, text, buttons and brightness don't exist. `vm.c` makes the portable SYS calls (`camera_set`, `random_range`, `path_start`) itself and passes the others to `serval_vm_platform_call` ([`src/core/vm_internal.h`](../src/core/vm_internal.h)): `src/gba/vm_platform.c` (listed for both the GBA and web builds in `CMakeLists.txt`) calls the engine, and `src/host/platform.c` records each call in `serval_host_vm_calls` for the host tests.
 - **Placement:** the dispatch loop runs as Thumb in ROM. Measured with GCC 15.3, `vm.o` is about 7.8 KB of ROM in a Release build (the interpreter loop about 3.1 KB plus a 448 B jump table) and about 12.1 KB with debug checks; contexts, globals, the queue and the bindings take about 4.9 KB of EWRAM (`SERVAL_EWRAM_BSS`), the rest of its state 45 B of IWRAM (81 B with debug checks). A ROM that never calls the VM links none of it. The loop moves to IWRAM as ARM only if a script-heavy benchmark shows it pays, per the house rule.
 - **Dispatch:** a `switch` on the opcode byte is fine for v1; measure before anything cleverer.
@@ -308,7 +364,7 @@ The smallest complete blob: one object (component mask 0, sprite 0) with only a 
 
 ## Test plan
 
-Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UBSan) and `tests/rom/main.c`, with programs hand-assembled as commented `u8` arrays (helper macros in the test file; the engine ships no assembler — the compiler lives in the editor). Required coverage:
+Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UBSan) and `tests/rom/main.c`, with programs built by a small blob builder in the test file, kept independent of [`tools/svm.py`](#tools) on purpose (the tests were written from this document alone; the compiler lives in the editor). Required coverage:
 
 - Every opcode at least once; arithmetic edge cases (wrap, `DIV`/`MOD`/`FXDIV` by zero → 0 + warn, shift masking, `FXMUL` precision).
 - Loader rejection: bad magic, version, cell width, counts, out-of-range handler and string offsets.
@@ -323,7 +379,7 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 2. ~~**Core interpreter:** loader + stack/variable/arithmetic/control ops, budget, validation; `vm_tests.c` for all of it, green on host and in the test ROM~~ ([`src/core/vm.c`](../src/core/vm.c), [`tests/vm_tests.c`](../tests/vm_tests.c)).
 3. ~~**Scheduler:** contexts, waits, the two phases, event queue, `vm_attach`/`vm_detach`/`vm_kill`/`SPAWN`/`KILL`, Step dispatch, one-per-entity rule; frame-simulation tests~~.
 4. ~~**Engine bridge:** `GETP`/`SETP`, the SYS page, bindings, `WAIT_ANIM` (adds `anim_finished()` to the ECS) and `WAIT_MOVE`; update [frame-loop.md](frame-loop.md) from proposed to confirmed~~. Collisions reach scripts through `vm_event(a, b, VM_EV_COLLISION)` from game (or editor-generated) C code after `body_overlap`: `body_contact` reports only walls, and the engine has no entity-pair broad phase yet. An engine-side collision pass is future work.
-5. ~~**Proof example:** a small `examples/` game whose logic is entirely hand-assembled bytecode (objects, Step movement, a collision, waits, a spawn, sound) — the usual example rules apply (header comment, `serval_add_rom`, ROM checks, web build, screenshots)~~ ([`fireflies`](../examples/fireflies/main.c); [what it exposed](examples-roadmap.md#what-fireflies-exposed): `VM_P_BODY_W`/`VM_P_BODY_H`, `VM_SYS_TEXT_PRINT_NUMBER`, `INTERRUPTIBLE`, and the costs below).
+5. ~~**Proof example:** a small `examples/` game whose logic is entirely hand-assembled bytecode (objects, Step movement, a collision, waits, a spawn, sound) — the usual example rules apply (header comment, `serval_add_rom`, ROM checks, web build, screenshots)~~ ([`fireflies`](../examples/fireflies/main.c), its listing now assembled at build time by [`tools/svm.py`](#tools); [what it exposed](examples-roadmap.md#what-fireflies-exposed): `VM_P_BODY_W`/`VM_P_BODY_H`, `VM_SYS_TEXT_PRINT_NUMBER`, `INTERRUPTIBLE`, and the costs below).
 6. **Debug and performance:** `BRK` semantics finalized with [debug-link.md](debug-link.md), `vm_reload`, a script benchmark, and the IWRAM decision from its numbers. Freeze format v1 alongside the first release that ships it.
 
 Milestones 2 and 3 are pure `src/core` work with no hardware dependencies — buildable and testable entirely on the host.

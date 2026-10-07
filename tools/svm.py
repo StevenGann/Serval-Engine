@@ -1068,8 +1068,13 @@ def validate(data, vm):
         raise SvmError(f"format version {data[4]}; this tool knows version {vm.format_version}")
     if data[5] != vm.cell_bytes:
         raise SvmError(f"{data[5]}-byte cells; this tool knows {vm.cell_bytes}-byte cells")
-    le16 = lambda at: int.from_bytes(data[at:at + 2], "little")  # noqa: E731
-    le32 = lambda at: int.from_bytes(data[at:at + 4], "little")  # noqa: E731
+
+    def le16(at):
+        return int.from_bytes(data[at:at + 2], "little")
+
+    def le32(at):
+        return int.from_bytes(data[at:at + 4], "little")
+
     if le16(6) or le16(14):
         raise SvmError("the header's flags or reserved field is not 0")
     blob = Blob(data, vm)

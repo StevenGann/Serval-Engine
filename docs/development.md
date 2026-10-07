@@ -11,7 +11,7 @@
 | CMake | ≥ 3.25 | Uses presets (`CMakePresets.json`) |
 | Ninja | any recent | Generator for all presets |
 | ARM GNU Toolchain | 15.3.Rel1 (what CI uses) | Any `arm-none-eabi-gcc` should work, including devkitARM; CMake warns if it is older than `toolchain.gcc` in `serval.json`. Found on `PATH` or via `ARM_GNU_TOOLCHAIN=<toolchain root>` |
-| Python 3 | any recent | Runs `tools/gbafix.py` after each ROM link, and `tools/check-rom.py` in the tests |
+| Python 3 | any recent | Runs `tools/gbafix.py` after each ROM link, `tools/svm.py` for script listings (`serval_add_script()`), and `tools/check-rom.py` and `tools/svm_test.py` in the tests |
 | Host C compiler | GCC or Clang | Only for host unit tests |
 | Emscripten | 6.0.11 (what CI uses) | Only for [web builds](#web-builds). Install with [emsdk](https://emscripten.org/docs/getting_started/downloads.html); the toolchain file finds it through `EMSDK` alone (set it, or `source emsdk_env.sh`, which also puts emsdk's own tools on `PATH`), or `emcc` on `PATH` |
 | Chrome or Chromium | any recent | Only for `tools/web-shots.py` (found on `PATH`, or set `SERVAL_CHROME`) |
@@ -90,10 +90,10 @@ Frame numbers don't line up exactly with an emulator's. The page counts `frame_e
 | | `src/ecs/` and `src/core/` compile on the host (no libtonc, no hardware access). On the GBA they are part of the single `serval` library; host builds compile them alone as `serval_portable`, with `src/host/platform.c` (stderr output, clock-based entropy, save memory in RAM) |
 | `src/gba/` | GBA-only code: core API, frame loop, frame timing and `WAITCNT` (`core.c`), sprites, rotation and render systems (`sprites.c`), map layers in VRAM: tileset, animated tiles, streaming and background registers (`map.c`), brightness fades (`screen.c`), text layer (`text.c`), PSG sound effects (`psg.c`) and the music player (`music.c`, hooked in by `psg_music_play()`), save memory and its ROM ID string per save type (`save_sram.c`; `save_flash.c`, Flash with its chip-reading routines in EWRAM; `save_eeprom.c`, EEPROM through DMA3), each compiled once per type into a `serval_save_<type>` object, splash screen (`splash.c`), debug output (`debug.c`), engine-internal declarations (`internal.h`, `screen_internal.h`), startup code (`crt0.s`), linker script (`gba.ld`), and `memcpy` and friends (`libc.c`, linked into every ROM as the `serval_libc` object) |
 | `third_party/libtonc/` | Vendored libtonc, see its `VENDORED.md` |
-| `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; and `consumer/` (a minimal game project built against the release archive, plus a game that saves) |
+| `tests/` | The harness (`test.h`, `test.c`); shared suites run natively and in the ROM (`ecs_tests.c`, `physics_tests.c`, `map_tests.c`, `anim_tests.c`, `path_tests.c`, `math_tests.c`, `random_tests.c`, `text_format_tests.c`, `input_tests.c`, `psg_sequencer_tests.c`, `save_tests.c`); host-only suites for the web renderer and sound (`web_ppu_tests.c`, `web_apu_tests.c`); the runners (`host/main.c`, `rom/main.c`); hardware suites in `rom/` (core, sprites, map layers, presentation (fades, text styles, hidden sprites, animated tiles), text, audio, splash, save memory, libc, ECS and physics costs, libtonc compatibility: `compat_*.c`); `rom/save_main.c` (the per-save-type test ROMs) and `rom/run-rom-test.cmake` (runs them and checks mGBA's log); `public_headers.c`; and `consumer/` (a minimal game project built against the release archive, with a script listing, plus a game that saves) |
 | `examples/` | Example games, one directory each (see [getting-started.md](getting-started.md#1-build-the-examples)): `hello`, `bunnymark` (also the benchmark), `pong`, `asteroids`, `breakout`, `platformer`, `shmup`, `blackjack`, `fireflies`; `build-all.sh` builds them all into `roms/` and `html/` |
-| `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` (`Serval.cmake`, with its web variant in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
-| `tools/` | ROM header fixer (`gbafix.py`), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`) |
+| `cmake/` | Toolchain files (`arm-gba-toolchain.cmake`, `web-toolchain.cmake`), `serval_add_rom()` and `serval_add_script()` (`Serval.cmake`, with the web variant of the former in `ServalWeb.cmake`) and `serval_add_rom_checks()` (`ServalRomChecks.cmake`) |
+| `tools/` | ROM header fixer (`gbafix.py`), the script assembler and disassembler (`svm.py`, tested by `svm_test.py`; [vm.md](vm.md#tools)), ROM checker (`check-rom.py`), mGBA test runner build, release packaging, release-archive game checks (`check-consumer.sh`, and `check-consumer-web.sh` for web builds), benchmark (`bench.sh`), headless web page runner (`web-shots.py`) |
 
 ## Building a game
 
@@ -107,6 +107,14 @@ serval_add_rom(my_rpg SOURCES main.c TITLE "MY RPG" GAME_CODE "MYRP" SAVE FLASH1
 `TITLE` is up to 12 ASCII characters (default: the target name in upper case) and `GAME_CODE` 4 (default `0000`). `SAVE` is the cartridge save memory that `save.h` uses: `SRAM` (default), `FLASH64K`, `FLASH128K`, `EEPROM8K` or `EEPROM512`; it sets the slots and their capacity, and the ROM gets that type's backend (the `serval_save_<type>` object) and ID string only, or nothing if the game never saves ([runtime-systems.md](runtime-systems.md#save-types)). An unknown type is a configure error. It works both inside the engine's tree (`examples/`) and from a game's own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()`; everything it needs comes from the function's own directory, cache variables or target properties, never from the engine's directory scope. Game sources get `-ffunction-sections -fdata-sections` from the `serval` target, so unused game code is dropped too. `tests/consumer/` is the reference game project, and [getting-started.md](getting-started.md#2-create-your-game) walks through creating one.
 
 In web builds (the `web` presets) it produces `<target>.html` instead, from the same arguments; see [Web builds](#web-builds).
+
+`serval_add_script()` (same file) assembles a script listing for the VM ([vm.md](vm.md#tools)) at build time:
+
+```cmake
+serval_add_script(my_game scripts.svm HEADERS game.h serval/ecs.h serval/core.h)
+```
+
+It runs `tools/svm.py` whenever `scripts.svm`, a header, the tool or `vm.h` changes, writing `scripts_script.c` (the blob as `const unsigned char scripts_script[]` and `scripts_script_size`) and `scripts_script.h` (`OBJ_*`, `STR_*` and `G_*` defines for the listing's objects, strings and globals, their counts, and the two `extern`s) into the target's binary directory, adds both to the target and the directory to its include path; the game includes the header and calls `vm_load(scripts_script, scripts_script_size)`. `SYMBOL` renames the array (default `<basename>_script`), `PREFIX` the defines; `HEADERS` are C headers whose integer constants the listing may use, relative to the game's directory or to the engine's `include/`. Call it after `serval_add_rom()`, from the same directory. It works from a game's own project too, since the release archive ships `tools/svm.py`; `tests/consumer/` and `examples/fireflies` use it.
 
 ROMs are padded with `0xFF` to at least 512 KiB. Emulators guess whether a small file is a cartridge or a multiboot image (which runs from RAM and is at most 256 KiB); older mGBA releases (0.8.x) mistake small Serval ROMs for multiboot and show a white screen. Anything over 256 KiB is always treated as a cartridge.
 
@@ -123,7 +131,9 @@ Save types get test ROMs of their own: `serval_tests` saves to SRAM, and `serval
 
 Debug-only behavior (`SERVAL_DEBUG` warnings, [core-api.md](core-api.md#debug-builds-report-misuse)) is tested with `debug_warning_count()`, with `#ifdef SERVAL_DEBUG` branches for what release builds must do instead. CI runs the test ROM in RelWithDebInfo and Debug builds (checks on) and in a Release build (checks off), all with warnings as errors.
 
-Every ROM (test ROM and examples) also gets a `<target>_rom_checks` test (`serval_add_rom_checks()`, running `tools/check-rom.py`): the ROM is padded past 256 KiB and has a valid header (title, game code, checksum), newlib's `libc.a` is not in the link map, the code contains no BLX instruction (the ARM7TDMI has none), and a ROM that links the save code contains exactly one save type ID string, its type's (`SRAM_V113`, `FLASH512_V131`, `FLASH1M_V103` or `EEPROM_V124`), which emulators and flash carts look for, while a ROM that doesn't save contains none. `tests/consumer/` builds a minimal game against the release archive, the way games use it, runs it in mGBA and checks that unused game code was dropped, plus a game that saves with `SAVE EEPROM8K`; run it with `tools/check-consumer.sh <serval-engine-X.Y.Z.zip>`.
+Every ROM (test ROM and examples) also gets a `<target>_rom_checks` test (`serval_add_rom_checks()`, running `tools/check-rom.py`): the ROM is padded past 256 KiB and has a valid header (title, game code, checksum), newlib's `libc.a` is not in the link map, the code contains no BLX instruction (the ARM7TDMI has none), and a ROM that links the save code contains exactly one save type ID string, its type's (`SRAM_V113`, `FLASH512_V131`, `FLASH1M_V103` or `EEPROM_V124`), which emulators and flash carts look for, while a ROM that doesn't save contains none. `tests/consumer/` builds a minimal game against the release archive, the way games use it, runs it in mGBA and checks that unused game code was dropped, with a script listing assembled by `serval_add_script()` (its Create handler stores a value the ROM checks), plus a game that saves with `SAVE EEPROM8K`; run it with `tools/check-consumer.sh <serval-engine-X.Y.Z.zip>`.
+
+`tools/svm_test.py` (CTest `svm_tool`, host preset) tests the script assembler and disassembler: the golden bytes of [vm.md](vm.md#worked-example-golden-bytes) field by field and their round trip, `PUSH` widths at every boundary, exact `rel16` and `CALL` bytes, every error with its line number, header scraping, a round trip of a blob with every opcode, and the operand table against `vm.h`.
 
 Compile-only checks keep third-party libraries behind the API ([core-api.md](core-api.md#dependencies-stay-behind-the-api)):
 
@@ -179,9 +189,11 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | `pong` | 18,272 bytes |
 | `bunnymark` | 18,408 bytes |
 | `asteroids` | 19,056 bytes |
-| `fireflies` | 21,060 bytes |
+| `fireflies` | 20,524 bytes |
 | `platformer` | 21,380 bytes |
 | `breakout` | 21,852 bytes |
+
+`fireflies` measured 21,060 bytes when it was added; its blob is now ROM data assembled at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone.
 
 Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `2a3f5a1`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 

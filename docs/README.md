@@ -19,7 +19,7 @@ Design documents and reference for the runtime. They are the source of truth for
 | [audio.md](audio.md) | PSG sound effects and music; Maxmod music and SFX API | PSG implemented; Maxmod planned |
 | [frame-loop.md](frame-loop.md) | What `frame_begin`/`frame_end` do, the VBlank flush, the update order with scripts | Implemented, order with scripts confirmed; parts of the VBlank flush planned |
 | [runtime-systems.md](runtime-systems.md) | Save data, text, effects, math, paths, physics, entity collision, camera | Mostly implemented, per section; dialogue, blending, broad phase planned |
-| [vm.md](vm.md) | Object/event model and the bytecode VM: blob format, opcode set, scheduling, test plan and milestones | Format v1, interpreter, scheduler, engine bridge and proof example (`fireflies`) implemented; debug link planned |
+| [vm.md](vm.md) | Object/event model and the bytecode VM: blob format, opcode set, scheduling, test plan and milestones | Format v1, interpreter, scheduler, engine bridge, proof example (`fireflies`) and the reference assembler and disassembler (`tools/svm.py`) implemented; debug link planned |
 | [debug-link.md](debug-link.md) | Runtime side of the editor/emulator debug protocol | Planned |
 | [platforms.md](platforms.md) | Portability rules, the web target, future targets (GB/GBC, DS) | GBA and web implemented; GB/GBC, DS planned |
 | [releases.md](releases.md) | Versioning, the `serval.json` manifest, release contents | Workflow ready, no release yet |
