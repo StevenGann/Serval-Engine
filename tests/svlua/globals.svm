@@ -1,0 +1,66 @@
+; globals.svm: globals.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   FIELD_TOP SCREEN_W
+
+; --- Constants ---
+
+.const LIVES 3                          ; globals.lua:7
+.const SPEED 320                        ; globals.lua:8 SPEED = 1.25
+.const ORIGIN FIELD_TOP + 8             ; globals.lua:9
+
+; --- Objects ---
+
+.object INIT mask=0 sprite=0            ; globals.lua:5 Init
+
+; --- Strings ---
+
+.string HELLO_3 "HELLO, 3"              ; globals.lua:27
+
+; --- Globals (vm_load starts them at their initial values) ---
+
+.globals LIVES=LIVES                    ; globals.lua:13 lives: integer = LIVES
+.globals SPEED=SPEED                    ; globals.lua:14 speed: fixed = 1.25
+.globals ALIVE=1                        ; globals.lua:15 alive: boolean = true
+.globals HERO                           ; globals.lua:16 hero: entity = none
+.globals ORIGIN=ORIGIN                  ; globals.lua:17 origin: integer = ORIGIN
+.globals COUNT                          ; globals.lua:18 count: integer = 0
+.globals LOWEST=-2147483648             ; globals.lua:19 lowest: integer = -2147483648
+.globals HIGHEST=-2147483647            ; globals.lua:20 highest: integer = -2147483647
+.globals DRIFT=-128                     ; globals.lua:21 drift: fixed = -0.5
+.globals SPREAD=((FIELD_TOP + 8) * 2)   ; globals.lua:22 spread: integer = (FIELD_TOP + 8) * 2
+.globals LEVEL=2                        ; globals.lua:23 level: integer = 2
+.globals PAUSED                         ; globals.lua:24 paused: boolean = false
+
+; --- Init:room_start, a behaviour: it may wait ---
+.handler INIT ROOM_START                ; globals.lua:26
+    ; 27: print(1, 1, GREETING)
+    PUSH 1                              ; globals.lua:27
+    PUSH 1                              ; globals.lua:27
+    PUSH STR_HELLO_3                    ; globals.lua:27
+    SYS TEXT_PRINT                      ; globals.lua:27
+    ; 28: speed = speed * 2
+    LDG SPEED                           ; globals.lua:28
+    PUSH 2                              ; globals.lua:28
+    MUL                                 ; globals.lua:28
+    STG SPEED                           ; globals.lua:28
+    ; 29: origin = origin + HALF
+    LDG ORIGIN                          ; globals.lua:29
+    ; 10: local HALF <const> = SCREEN_W // 3     -- not computed by the assembler: inline
+    PUSH SCREEN_W                       ; globals.lua:10
+    PUSH 3                              ; globals.lua:10
+    IDIV                                ; globals.lua:10
+    ; 29: origin = origin + HALF
+    ADD                                 ; globals.lua:29
+    STG ORIGIN                          ; globals.lua:29
+    ; 30: if not paused then level = level + count end
+    LDG PAUSED                          ; globals.lua:30
+    JNZ init_room_start_if1_end         ; globals.lua:30
+    LDG LEVEL                           ; globals.lua:30
+    LDG COUNT                           ; globals.lua:30
+    ADD                                 ; globals.lua:30
+    STG LEVEL                           ; globals.lua:30
+init_room_start_if1_end:                ; globals.lua:30
+    ; 31: end
+    HALT                                ; globals.lua:31

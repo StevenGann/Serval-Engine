@@ -6,12 +6,12 @@
 
 .object PROBE mask=0 sprite=0           ; logic.lua:3 Probe
 
-; --- Globals ---
+; --- Globals (vm_load starts them at their initial values) ---
 
-.globals A                              ; logic.lua:5 a: boolean
-.globals B                              ; logic.lua:6 b: boolean
-.globals N                              ; logic.lua:7 n: integer
-.globals E                              ; logic.lua:8 e: entity
+.globals A                              ; logic.lua:5 a: boolean = false
+.globals B                              ; logic.lua:6 b: boolean = false
+.globals N                              ; logic.lua:7 n: integer = 0
+.globals E                              ; logic.lua:8 e: entity = none
 
 ; --- Probe:step, a reaction: it runs to completion ---
 .handler PROBE STEP                     ; logic.lua:10

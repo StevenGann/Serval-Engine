@@ -19,10 +19,10 @@
 
 .string HITS "HITS"                     ; entities.lua:42
 
-; --- Globals ---
+; --- Globals (vm_load starts them at their initial values) ---
 
-.globals HITS                           ; entities.lua:6 hits: integer
-.globals TARGET                         ; entities.lua:7 target: entity
+.globals HITS                           ; entities.lua:6 hits: integer = 0
+.globals TARGET                         ; entities.lua:7 target: entity = none
 
 ; --- Enemy:create, a behaviour: it may wait ---
 .handler ENEMY CREATE                   ; entities.lua:9

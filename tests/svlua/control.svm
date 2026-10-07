@@ -10,13 +10,13 @@
 
 .string FOR_STEP_IS_ZERO "'for' step is zero" ; control.lua:23
 
-; --- Globals ---
+; --- Globals (vm_load starts them at their initial values) ---
 
-.globals N                              ; control.lua:5 n: integer
-.globals LO                             ; control.lua:6 lo: integer
-.globals HI                             ; control.lua:7 hi: integer
-.globals STEP                           ; control.lua:8 step: integer
-.globals X                              ; control.lua:9 x: fixed
+.globals N                              ; control.lua:5 n: integer = 0
+.globals LO                             ; control.lua:6 lo: integer = 0
+.globals HI                             ; control.lua:7 hi: integer = 0
+.globals STEP                           ; control.lua:8 step: integer = 0
+.globals X                              ; control.lua:9 x: fixed = 0.0
 
 ; --- Probe:room_start, a behaviour: it may wait ---
 .handler PROBE ROOM_START               ; control.lua:11

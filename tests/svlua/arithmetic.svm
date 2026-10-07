@@ -8,13 +8,13 @@
 
 .object PROBE mask=0 sprite=0           ; arithmetic.lua:3 Probe
 
-; --- Globals ---
+; --- Globals (vm_load starts them at their initial values) ---
 
-.globals N                              ; arithmetic.lua:5 n: integer
-.globals M                              ; arithmetic.lua:6 m: integer
-.globals F                              ; arithmetic.lua:7 f: fixed
-.globals G                              ; arithmetic.lua:8 g: fixed
-.globals B                              ; arithmetic.lua:9 b: boolean
+.globals N                              ; arithmetic.lua:5 n: integer = 0
+.globals M                              ; arithmetic.lua:6 m: integer = 0
+.globals F                              ; arithmetic.lua:7 f: fixed = 0.0
+.globals G                              ; arithmetic.lua:8 g: fixed = 0.0
+.globals B                              ; arithmetic.lua:9 b: boolean = false
 
 ; --- Probe:step, a reaction: it runs to completion ---
 .handler PROBE STEP                     ; arithmetic.lua:11

@@ -1027,10 +1027,11 @@ def c_div(a, b):
 # --- Program model -----------------------------------------------------------
 
 # The engine's properties by their Lua field names: (the VM_P_* name, type).
+# scale is fixed point: spr_scale's 8.8 has the same 256-is-one scaling.
 PROPERTIES = {
     "x": ("X", FIXED), "y": ("Y", FIXED), "vx": ("VX", FIXED), "vy": ("VY", FIXED),
     "sprite": ("SPR", INT), "frame": ("FRAME", INT), "flags": ("FLAGS", INT),
-    "angle": ("ANGLE", INT), "depth": ("DEPTH", INT), "scale": ("SCALE", INT),
+    "angle": ("ANGLE", INT), "depth": ("DEPTH", INT), "scale": ("SCALE", FIXED),
     "body_w": ("BODY_W", INT), "body_h": ("BODY_H", INT), "tags": ("TAGS", INT),
     "anim_time": ("ANIM_TIME", INT), "anim_step": ("ANIM_STEP", INT),
 }
@@ -1068,7 +1069,8 @@ WAITS = ("wait", "wait_anim", "wait_move")
 ENGINE_NAMES = frozenset(ENGINE) | {"print", "spawn", "instances", "object", "array", "none",
                                     "math"}
 MATH_FUNCTIONS = ("floor", "abs", "min", "max")
-INIT_OBJECT = "Init"  # its room_start starts by setting every global's initial value
+# math's integer limits, with LUA_32BITS.
+MATH_CONSTANTS = {"mininteger": INT_MIN, "maxinteger": INT_MAX}
 
 _TABLE_HINT = ("loop over an array with for i = 1, #a do, or over an object's instances "
                "with for e in instances(Object) do")
@@ -1410,7 +1412,7 @@ class Resolver:
                     Label: "a label", Break: "break"}.get(type(stat), "this statement")
             self.error(stat, f"{what} at the top level: only declarations go there",
                        "the VM never runs a script's top level; put code in a handler, "
-                       "e.g. function Init:room_start()")
+                       "e.g. function Game:room_start()")
 
     def check_values(self, stat, names, values):
         if len(values) < len(names):
@@ -1767,6 +1769,10 @@ class BodyResolver:
             else:
                 self.error(target, f"{target.name} is {article(kind)}; it can't be assigned")
         else:
+            obj = target.obj if isinstance(target, Field) else None
+            if isinstance(obj, Name) and obj.name == "math" \
+                    and self.lookup(obj).kind == "builtin":
+                self.error(target, f"math.{target.name} can't be assigned")
             self.expr(target)
 
     def generic_for(self, stat):
@@ -1902,9 +1908,10 @@ class BodyResolver:
             if obj.sym.kind == "builtin" and obj.sym.name == "math":
                 if e.name == "tointeger":
                     self.error(e, "math.tointeger is not in the subset", "use math.floor(x)")
-                if e.name not in MATH_FUNCTIONS:
+                if e.name not in MATH_FUNCTIONS and e.name not in MATH_CONSTANTS:
                     self.error(e, f"math.{e.name} is not in the subset: the standard library "
-                               "stops at math.floor, math.abs, math.min and math.max",
+                               "stops at math.floor, math.abs, math.min, math.max, "
+                               "math.mininteger and math.maxinteger",
                                "random_range(lo, hi) for random numbers" if e.name == "random"
                                else None)
                 return
@@ -2072,7 +2079,6 @@ class Checker:
         self.strict = True
         for sym in p.top_order:
             getattr(self, "top_" + sym.kind, lambda s: None)(sym)
-        self.check_initial_values()
         self.strict = False
         for _ in range(10000):
             self.changed = False
@@ -2131,6 +2137,8 @@ class Checker:
         if isinstance(e, Call) and isinstance(e.func, Field) and isinstance(e.func.obj, Name) \
                 and e.func.obj.sym.kind == "builtin":
             return all(self.pure(a) for a in e.args)
+        if isinstance(e, Field) and isinstance(e.obj, Name) and e.obj.sym.kind == "builtin":
+            return e.name in MATH_CONSTANTS
         return False
 
     def top_global(self, sym):
@@ -2204,16 +2212,6 @@ class Checker:
 
     def top_function(self, sym):
         pass
-
-    def check_initial_values(self):
-        init = next((o for o in self.p.objects if o.name == INIT_OBJECT), None)
-        for g in self.p.globals:
-            if init is None and not g.init_const.is_zero:
-                self.error(g.init, f"{g.name} starts at {self.show(g.init_const)}, but the VM "
-                           "zeroes globals when it loads a script",
-                           f"start it at 0 (false, none) and set it in a handler, or declare "
-                           f"{INIT_OBJECT} = object {{}}: its room_start then sets every global "
-                           f"first (C starts it: vm_start(OBJ_INIT, VM_EV_ROOM_START))")
 
     @staticmethod
     def show(c):
@@ -2554,6 +2552,9 @@ class Checker:
     def x_Field(self, e):
         obj = e.obj
         if isinstance(obj, Name) and obj.sym.kind == "builtin" and obj.sym.name == "math":
+            if e.name in MATH_CONSTANTS:
+                e.const = Const(INT, MATH_CONSTANTS[e.name])
+                return INT
             self.fail(e, f"math.{e.name} is a function: call it")
         self.entity(obj, e)
         if e.name in PROPERTIES:
@@ -3040,6 +3041,8 @@ class Checker:
 
     def math_call(self, e, name):
         fname = f"math.{name}"
+        if name in MATH_CONSTANTS:
+            self.fail(e, f"{fname} is a number, not a function", f"write {fname}")
         if name in ("floor", "abs"):
             self.arity(e, fname, (1,))
             ty = self.value(e.args[0])
@@ -3249,32 +3252,11 @@ class CodeGen:
                 self.labels.add(f"{obj.listing.lower()}_{event}")
 
         code = []
-        init = next((o for o in p.objects if o.name == INIT_OBJECT), None)
         for body in p.bodies:
             if body.kind == "function" and not body.fn.used:
                 continue
-            code += FuncGen(self, body, init_globals=body.obj is init and init is not None
-                            and body.event == "room_start").generate()
-        if init is not None and "room_start" not in init.handlers:
-            code += self.init_handler(init)
+            code += FuncGen(self, body).generate()
         return "\n".join(self.tables() + code) + "\n"
-
-    def init_handler(self, init):
-        line = init.node.line
-        out = ["", f"; --- the initial values of the globals (no {INIT_OBJECT}:room_start in the "
-                   "script) ---",
-               self.located(f".handler {init.listing} ROOM_START", line)]
-        out += self.global_stores(line)
-        out.append(self.located("    HALT", line))
-        return out
-
-    def global_stores(self, line):
-        out = []
-        for g in self.p.globals:
-            out.append(self.located(f"    PUSH {g.init_const.asm()}", g.node.line,
-                                    f"{g.name} = {Checker.show(g.init_const)}"))
-            out.append(self.located(f"    STG {g.listing}", g.node.line))
-        return out
 
     def tables(self):
         p = self.p
@@ -3317,10 +3299,15 @@ class CodeGen:
             for data, (name, line) in self.strings.items():
                 out.append(self.located(f'.string {name} "{_escape(data)}"', line))
         if p.globals:
-            out += ["", "; --- Globals ---", ""]
+            out += ["", "; --- Globals (vm_load starts them at their initial values) ---", ""]
             for g in p.globals:
-                out.append(self.located(f".globals {g.listing}", g.node.line,
-                                        f"{g.name}: {g.ty}"))
+                c = g.init_const
+                text = g.listing
+                if not c.is_zero:  # an initial value: the blob carries it
+                    value = c.asm()
+                    text += f"=({value})" if " " in value else f"={value}"
+                out.append(self.located(f".globals {text}", g.node.line,
+                                        f"{g.name}: {g.ty} = {Checker.show(c)}"))
         if p.arrays:
             out += ["", "; --- Arrays ---", ""]
             for arr in p.arrays:
@@ -3338,10 +3325,9 @@ class FuncGen:
     """One handler's or function's code: a frame (ENTER p, n) for its
     parameters, locals and the loops' hidden state, and stack code."""
 
-    def __init__(self, cg, body, init_globals=False):
+    def __init__(self, cg, body):
         self.cg = cg
         self.body = body
-        self.init_globals = init_globals
         self.items = []
         self.next_slot = 0
         self.max_slot = 0
@@ -3400,10 +3386,6 @@ class FuncGen:
             param.slot = index
             self.slot_names[index] = [param.name]
         self.next_slot = self.max_slot = len(body.params)
-        if self.init_globals:
-            self.items.append(f"    ; the globals' initial values (an {INIT_OBJECT}:room_start "
-                              "starts with them)")
-            self.items += self.cg.global_stores(func.line)
         self.block(func.body)
         end = func.body.end_line
         last = "HALT" if body.kind == "handler" else "RET"

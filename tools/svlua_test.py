@@ -323,8 +323,8 @@ REJECTED = {
     "string_variable": (OBJ + "function A:step() local s = 'hi' end", 3, 29,
                         r"strings exist only as print's argument"),
     "standard_library": (OBJ + "function A:step() local x = math.sin(1) end", 3, 29,
-                         r"math\.sin is not in the subset: .*math\.floor, math\.abs, math\.min "
-                         r"and math\.max"),
+                         r"math\.sin is not in the subset: .*math\.floor, math\.abs, math\.min, "
+                         r"math\.max, math\.mininteger and math\.maxinteger"),
     "math_tointeger": (OBJ + "function A:step() local x = math.tointeger(1.0) end", 3, 29,
                        r"math\.tointeger is not in the subset"),
     "tostring": (OBJ + "function A:step() print(1, 1, tostring(3)) end", 3, 31,
@@ -358,7 +358,12 @@ REJECTED = {
     "missing_value": ("a, b = 1", 1, 4, r"b gets no value, so it would be nil"),
     "extra_value": ("a = 1, 2", 1, 8, r"more values than names"),
     "global_not_constant": ("a = 0\nb = a", 2, 5, r"the initial value of b must be a constant"),
-    "global_initial_value": ("speed = 3", 1, 9, r"speed starts at 3, but the VM zeroes globals"),
+    "math_constant_called": (OBJ + "function A:step() local x = math.maxinteger() end", 3, 29,
+                             r"math\.maxinteger is a number, not a function"),
+    "math_constant_assigned": (OBJ + "function A:step() math.mininteger = 1 end", 3, 19,
+                               r"math\.mininteger can't be assigned"),
+    "math_function_uncalled": (OBJ + "function A:step() local x = math.abs end", 3, 29,
+                               r"math\.abs is a function: call it"),
     "global_undeclared": (OBJ + "function A:step() count = 1 end", 3, 19, r"count is not defined"),
     "header_assigned": (OBJ + "function A:step() MAX = 1 end", 3, 19,
                         r"MAX is not declared, so it would be a constant from the C headers"),
@@ -663,52 +668,12 @@ end""")
 
 # --- Assembling the listings -------------------------------------------------
 
-# The revised VM (docs/vm.md, milestone 6) is being built on another branch:
-# until this tree's svm.py knows its opcodes and array directives, a listing
-# is assembled through this shim, which rewrites each new construct into the
-# bytes vm.md gives it. Once svm.py has ENTER, listings are assembled as they
-# are and the shim goes unused (delete it then).
-NEW_OPS = {"LDA": 0x0C, "STA": 0x0D, "LEN": 0x0E, "LSH": 0x1F, "IDIV": 0x26, "IMOD": 0x27,
-           "RETV": 0x2D, "ENTER": 0x2E, "NEXTI": 0x3E}
-NEW_PROPS = {"TAGS": 12, "ANIM_TIME": 13, "ANIM_STEP": 14}
 VM = svm.load_vm()
-REVISED = "ENTER" in svm.OPERANDS
-
-
-def shim(listing):
-    out = [".const VM_P_FIELD0 64"]
-    arrays = 0
-    for raw in listing.splitlines():
-        code = svm._strip_comment(raw).strip()
-        m = re.match(r"^\.(array|rom)\s+(\w+)", code)
-        if m:
-            out.append(f".const ARR_{m.group(2)} {arrays}")
-            arrays += 1
-            continue
-        m = re.match(r"^(\w+)(?:\s+(.*))?$", code)
-        if m and m.group(1) in NEW_OPS:
-            op, operand = m.group(1), (m.group(2) or "").strip()
-            if op == "ENTER":
-                out.append(f"    .byte {NEW_OPS[op]}, {operand}")
-            elif op in ("LDA", "STA", "LEN", "NEXTI"):
-                table = "OBJ" if op == "NEXTI" else "ARR"
-                out.append(f"    .byte {NEW_OPS[op]}, {table}_{operand} & 255, "
-                           f"{table}_{operand} >> 8")
-            else:
-                out.append(f"    .byte {NEW_OPS[op]}")
-        elif code == "SYS PATH_STOP":
-            out.append("    SYS 13")
-        elif re.match(r"^(GETP|SETP) (TAGS|ANIM_TIME|ANIM_STEP)$", code):
-            out.append(f"    {code.split()[0]} {NEW_PROPS[code.split()[1]]}")
-        else:
-            out.append(raw)
-    return "\n".join(out) + "\n"
 
 
 def assemble(listing, headers, name="test.svm"):
-    """The blob svm.py makes of a listing (through the shim until svm.py
-    knows the revised VM)."""
-    return svm.assemble(listing if REVISED else shim(listing), VM, headers, name)
+    """The blob svm.py makes of a listing."""
+    return svm.assemble(listing, VM, headers, name)
 
 
 def header_names(defines=None, files=()):
@@ -776,9 +741,10 @@ class ListingVM:
                 self.consts["STR_" + name] = len(self.strings)
                 self.strings.append(text.strip('"'))
             elif head == ".globals":
-                for name in rest.split():
+                for item in svm._split_top_level(rest):
+                    name, _, value = item.partition("=")
                     self.consts["G_" + name] = len(self.globals)
-                    self.globals[name] = 0
+                    self.globals[name] = svlua.wrap32(self.value(value)) if value else 0
             elif head == ".array":
                 name, length = rest.split(None, 1)
                 self.arrays[name] = (False, [0] * self.value(length))
@@ -965,7 +931,7 @@ def run_lua(source, obj="PROBE", event="ROOM_START", globals_=None, headers=None
 # --- Code generation ---------------------------------------------------------
 
 
-GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "init")
+GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals")
 GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
                   "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
                   "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
@@ -1064,6 +1030,11 @@ class Listing(unittest.TestCase):
             "f = MAX + 0.5": "PUSH FX(MAX) + 128", "n = MAX // 4": "PUSH MAX >> 2",
             "n = MAX % 8": "PUSH MAX & 7", "n = MAX << 2": "PUSH MAX << 2",
             "n = C_GAME(3)": "PUSH C_GAME(3)", "n = 5 * (3 ~ 3)": "PUSH 0",
+            "n = math.mininteger": "PUSH -2147483648", "n = math.maxinteger": "PUSH 2147483647",
+            "n = math.maxinteger + 1": "PUSH -2147483648",
+            "n = math.mininteger // -1": "PUSH -2147483648",
+            "n = -math.mininteger": "PUSH -2147483648",
+            "b = math.mininteger < math.maxinteger": "PUSH 1",
         }
         for stat, op in cases.items():
             with self.subTest(stat=stat):
@@ -1098,6 +1069,33 @@ class Listing(unittest.TestCase):
         self.assertEqual(code[code.index("f:") + 1], "ENTER 2, 1")
         self.assertNotIn("ENTER", code[code.index("g:") + 1])  # no locals: no frame
         self.assertEqual(code[code.index(".handler A STEP") + 1], "ENTER 0, 2")  # y's slot reused
+
+    def test_scale_is_fixed_point(self):
+        """spr_scale's 8.8 has 256 as one, as fixed values do: 1.5 is 384."""
+        code = self.code(OBJ + "f = 0.0\nfunction A:step() self.scale = 1.5; "
+                         "f = self.scale * 2; self.scale = 1 end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 1:start + 4], ["SELF", "PUSH 384", "SETP SCALE"])
+        self.assertEqual(code[start + 4:start + 9],
+                         ["SELF", "GETP SCALE", "PUSH 2", "MUL", "STG F"])
+        self.assertEqual(code[start + 9:start + 12], ["SELF", "PUSH 256", "SETP SCALE"])
+        with self.assertRaisesRegex(svlua.CompileError, "n is an integer .*, and this is fixed"):
+            self.compile(OBJ + "n = 0\nfunction A:step() n = self.scale end")
+
+    def test_initial_values_in_the_blob(self):
+        """.globals NAME=value: the blob carries the initial values (header
+        flag bit 0), so no code sets them; zeros need none."""
+        listing = self.compile(OBJ + "lives = 3\nspeed = 1.5\nalive = true\nhero = none\n"
+                               "n = 0\nlow = math.mininteger\nfunction A:step() n = lives end")
+        for line in (".globals LIVES=3 ", ".globals SPEED=384 ", ".globals ALIVE=1 ",
+                     ".globals HERO ", ".globals N ", ".globals LOW=-2147483648 "):
+            self.assertIn(line, listing)
+        result = assemble(listing, header_names())
+        self.assertEqual(result.global_values, [3, 384, 1, 0, 0, INT_MIN])
+        self.assertEqual(result.blob[6], VM.flag_global_values)
+        zeros = assemble(self.compile(OBJ + "n = 0\nb = false\nfunction A:step() n = 1 end"),
+                         header_names())
+        self.assertEqual(zeros.blob[6:8], bytes(2))  # no table: laid out as before
 
     def test_names_in_the_listing(self):
         listing = self.compile("Firefly = object {}\nlocal flag = false\nscores = array(3)\n"
@@ -1412,12 +1410,15 @@ end"""
         self.assertEqual(vm.entities[third][64], 3)
         self.assertEqual(vm.log, [("KILL", 3)])
 
-    def test_init_sets_the_globals(self):
+    def test_globals_start_at_their_initial_values(self):
         vm = run_lua("Init = object {}\nlives = 3\nspeed = 1.5\nalive = true\nhero = none\n"
+                     "low = math.mininteger\nhigh = math.maxinteger\n"
                      "function Init:room_start() lives = lives + 1 end", obj="INIT")
-        self.assertEqual(vm.globals, {"LIVES": 4, "SPEED": 384, "ALIVE": 1, "HERO": 0})
-        vm = run_lua("Init = object {}\nlives = 3\n", obj="INIT")  # a generated handler
-        self.assertEqual(vm.globals, {"LIVES": 3})
+        self.assertEqual(vm.globals, {"LIVES": 4, "SPEED": 384, "ALIVE": 1, "HERO": 0,
+                                      "LOW": INT_MIN, "HIGH": INT_MAX})
+        listing = svlua.compile_source("Init = object {}\nlives = 3\n", "t.lua")
+        self.assertNotIn(".handler", listing)  # Init is an object like any other
+        self.assertIn(".globals LIVES=3 ", listing)
 
 
 class Tool(unittest.TestCase):
