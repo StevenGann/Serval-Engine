@@ -6,7 +6,7 @@ Write a GBA game in C with Serval Engine. This covers building the examples, the
 
 ## 1. Build the examples
 
-Install CMake ≥ 3.25, Ninja, Python 3 and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). On Linux, `tools/setup-dev.sh` installs everything at the versions CI uses. Details: [development.md](development.md#requirements).
+Install CMake ≥ 3.25, Ninja, Python 3.11 or later and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). On Debian or Ubuntu, `tools/setup-dev.sh` installs everything: CMake, Ninja and Python from the distribution's packages (it stops if CMake is older than 3.25), the ARM toolchain, mgba-rom-test and Emscripten at the versions CI uses. Details: [development.md](development.md#requirements).
 
 ```sh
 tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
@@ -15,6 +15,7 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba
+#    (and bunnymark_bench.gba, the benchmark)
 ```
 
 Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash cart). Each example's `main.c` begins with what it demonstrates and what you should see and hear. Read them in this order:
@@ -35,7 +36,7 @@ Use the `gba-debug` preset while developing: debug builds report API misuse in m
 
 ## 2. Create your game
 
-A game is its own CMake project that adds the engine with `add_subdirectory()`. Get the engine as a release archive, `serval-engine-X.Y.Z.zip` from [GitHub Releases](https://github.com/StevenGann/Serval-Engine/releases) (check it against the `.sha256` next to it; until the first release, `tools/package-release.sh <dir>` builds one from a checkout, or use the checkout itself). Extract it into the game's directory and copy `examples/hello/main.c` as a start:
+A game is its own CMake project that adds the engine with `add_subdirectory()`. Get the engine as a release archive, `serval-engine-X.Y.Z.zip` from [GitHub Releases](https://github.com/StevenGann/Serval-Engine/releases) (check it against the `.sha256` next to it; until the first release, `tools/package-release.sh <dir>` builds one from a checkout, or use the checkout itself). Extract it into the game's directory, renaming the extracted `serval-engine-X.Y.Z/` to `serval-engine/`, and copy `examples/hello/main.c` from the engine's repository as a start (the archive has no examples):
 
 ```
 my_game/
@@ -63,9 +64,9 @@ cmake --build build
 
 `TITLE` (up to 12 characters) and `GAME_CODE` (4 characters) go into the ROM header. If the game saves (`save.h`) and will ship on a cartridge with Flash or EEPROM rather than SRAM, add `SAVE FLASH64K`, `FLASH128K`, `EEPROM8K` or `EEPROM512` to match it (the default, `SRAM`, suits emulators and flash carts; [save types](runtime-systems.md#save-types)). A game can have any number of source files; unused functions are dropped at link time. The engine's tests and examples are not built when it is added this way. [`tests/consumer/`](../tests/consumer/CMakeLists.txt) in the engine repository is a complete, CI-tested example of such a project.
 
-**Scripting.** C stays first-class: a game can be all C, and any part of a scripted game can drop to C. Game logic can also be written in the [Lua subset](lua.md), a statically checked subset of Lua 5.4 compiled ahead of time to the bytecode VM ([vm.md](vm.md)): `serval_add_script(my_game game.lua HEADERS game.h serval/ecs.h)` next to `serval_add_rom()` runs the engine's compiler and assembler (`tools/svlua.py` and `tools/svm.py`, in the release archive) at build time and gives the game `game_script.h` and a blob to `vm_load` ([development.md](development.md#building-a-game)). Objects are tables of event handlers (`function Player:step() ... end`), behaviours can `wait()`, and names in ALL_CAPS come from the C headers given. Collisions reach scripts without C code: `vm_collide(C_PLAYER, C_COIN)` once at boot, and the VM tests those bodies every frame and runs their `collision` handlers ([vm.md](vm.md#collisions)). [`fireflies`](../examples/fireflies/fireflies.lua) is the example: its whole game is one script, and its `main.c` the C a scripted game keeps. `serval_add_script()` also takes a hand-written listing for the assembler (`.svm`), the blob format's reference; Studio Advance's event editor compiles its event blocks through the same Lua subset.
+**Scripting.** C stays first-class: a game can be all C, and any part of a scripted game can drop to C. Game logic can also be written in the [Lua subset](lua.md), a statically checked subset of Lua 5.4 compiled ahead of time to the bytecode VM ([vm.md](vm.md)): `serval_add_script(my_game game.lua HEADERS game.h serval/ecs.h serval/core.h)` after `serval_add_rom()` runs the engine's compiler and assembler (`tools/svlua.py` and `tools/svm.py`, in the release archive) at build time and gives the game `game_script.h` and a blob to `vm_load` ([development.md](development.md#building-a-game)). Objects are tables of event handlers (`function Player:step() ... end`), behaviours can `wait(n)` frames, and names in ALL_CAPS come from the C headers given (only those: not the headers they include, so list `serval/core.h` for `BUTTON_*`). Collisions reach scripts without C code: `vm_collide(C_PLAYER, C_COIN)` once at boot, and `vm_events()`, called every frame, tests those bodies and runs their `collision` handlers ([vm.md](vm.md#collisions)). [`fireflies`](../examples/fireflies/fireflies.lua) is the example: its whole game is one script, and its `main.c` the C a scripted game keeps. `serval_add_script()` also takes a hand-written listing for the assembler (`.svm`), the blob format's reference; Studio Advance's event editor compiles its event blocks through the same Lua subset.
 
-To experiment inside the engine's own tree instead, add the same `serval_add_rom()` line to `examples/CMakeLists.txt` (target name = directory name, e.g. `examples/my_game/main.c`).
+To experiment inside the engine's own tree instead, put the game in `examples/my_game/` and add `serval_add_rom(my_game SOURCES my_game/main.c ...)` to `examples/CMakeLists.txt` (sources are relative to `examples/`; target name = directory name). An example that stays also needs `serval_add_rom_checks()` and an entry in `examples/gallery.toml`, or the documentation site's build fails ([development.md](development.md#documentation-site)).
 
 ### Playing it in a browser
 
@@ -98,7 +99,7 @@ int main(void) {
 }
 ```
 
-Everything runs at 60 frames per second, one loop iteration per frame. Sprites are immediate-mode: draw every sprite you want to see on every frame, and anything not drawn disappears. There is no `malloc`: entities, sprites and sounds come from fixed pools and constant tables.
+Everything runs at the screen's refresh rate, about 60 frames per second (59.73), one loop iteration per frame. Sprites are immediate-mode: draw every sprite you want to see on every frame, and anything not drawn disappears. There is no `malloc`: entities, sprites and sounds come from fixed pools and constant tables.
 
 Numbers with fractions use 24.8 fixed point (`FIXED`): `FX(3)` is 3.0, `FX_ONE / 4` is 0.25, `fx_to_int()` converts back, `fx_mul()`/`fx_div()` multiply and divide. The GBA has no floating-point hardware; avoid `float`.
 
@@ -161,7 +162,7 @@ int main(void) {
                 vel_x[i] = FX(random_range(-2, 2));
                 spr_id[i] = SPR_BALL;
                 body_w[i] = body_h[i] = 8;
-                body_bounce[i] = 224;        // keeps 7/8 of its speed per bounce
+                body_bounce[i] = 224;        // keeps 7/8 of its speed per floor bounce
                 psg_play(SND_BOUNCE);
             }
         }
@@ -175,7 +176,7 @@ int main(void) {
 }
 ```
 
-Your own components are bits from `C_GAME(0)` to `C_GAME(14)` with arrays you declare yourself (`static u8 hp[MAX_ENT];`); your own systems loop with `ECS_FOR_EACH(i, C_POS | C_ENEMY) { ... }` (after `#define C_ENEMY C_GAME(0)`). Collisions between two entities are `body_overlap(a, b)`. See [ecs.md](ecs.md) and `bunnymark`.
+Your own components are bits from `C_GAME(0)` to `C_GAME(14)` with arrays you declare yourself (`static u8 hp[MAX_ENT];`); your own systems loop with `ECS_FOR_EACH(i, C_POS | C_ENEMY) { ... }` (after `#define C_ENEMY C_GAME(0)`). Collisions between two entities are `body_overlap(a, b)`, which takes slot indices (`entity_index(e)`, or `i` in `ECS_FOR_EACH`), not handles. See [ecs.md](ecs.md) and `bunnymark`.
 
 ## 6. Text and debugging
 
@@ -197,5 +198,5 @@ debug_log(text_format("spawned %u", count));              // mGBA's log window
 - [tilemaps.md](tilemaps.md): tilesets, map layers, the camera, map bodies and map collision.
 - [audio.md](audio.md#psg-music): PSG music.
 - [runtime-systems.md](runtime-systems.md): save data, fades, paths, physics details.
-- [development.md](development.md#memory-use): memory (IWRAM) budgets and the benchmark.
+- [development.md](development.md#memory-use): memory (IWRAM) budgets, and [the benchmark](development.md#benchmark).
 - [licensing.md](licensing.md): the notices a shipped game must include.
