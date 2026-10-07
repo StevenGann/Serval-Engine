@@ -38,17 +38,18 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 // bounce keeps, in 256ths: 224 keeps 7/8 and 128 half, and 0 (the default)
 // none, so the body stops on the floor. 255 (a u8 can't hold 256) is a
 // perfect bounce, which loses nothing: the body comes back up as high as it
-// fell from (to within about a pixel, the frame steps), bounce after bounce,
-// so a ball dropped onto a floor bounces for ever (unless body_max_fall limits
-// its fall, which takes height away). It leaves at the speed that does that,
-// about the speed it hit at. A floor bounce of any body_bounce, 255 included,
-// becomes a rest when the body hits the floor, or would leave it, slower than
-// twice one frame's gravity (a perfect bounce rests that way only if it hit
-// slower than about 3.6 times one frame's gravity). Only floor bounces read
-// it: off walls gravity doesn't pull toward, sys_physics() keeps all of the
-// speed whatever body_bounce is. Map bodies use it on every side of the map
-// they hit, 255 being a perfect bounce off their floors too
-// (sys_map_movement(), map.h).
+// fell from, to within the frame steps (a sweep of 430 drops peaked within
+// 2.1 pixels of it, all but one within 1.4: docs/runtime-systems.md#physics),
+// bounce after bounce, so a ball dropped onto a floor bounces for ever
+// (unless body_max_fall limits its fall, which takes height away). It leaves
+// at the speed that does that, about the speed it hit at. A floor bounce of
+// any body_bounce, 255 included, becomes a rest when the body hits the floor,
+// or would leave it, slower than twice one frame's gravity (a perfect bounce
+// rests that way only if it hit slower than about 3.6 times one frame's
+// gravity). Only floor bounces read it: off walls gravity doesn't pull
+// toward, sys_physics() keeps all of the speed whatever body_bounce is. Map
+// bodies use it on every side of the map they hit, 255 being a perfect bounce
+// off their floors too (sys_map_movement(), map.h).
 extern u8 body_bounce[MAX_ENT];
 // Speed lost per frame sliding along a floor, in 256ths, rounded up (0: none).
 // Whatever it is, sys_physics() stops a speed along the floor under a
