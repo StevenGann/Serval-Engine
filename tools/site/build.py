@@ -81,6 +81,8 @@ NAV = [
         ("platforms", "Platforms"),
     ]),
     ("Working on the engine", [
+        ("handoff", "Handoff"),
+        ("api-freeze", "The 1.0 API freeze"),
         ("development", "Development"),
         ("examples-roadmap", "Examples roadmap"),
         ("releases", "Releases"),
