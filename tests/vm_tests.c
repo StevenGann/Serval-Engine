@@ -1285,8 +1285,9 @@ static void call_depth_is_limited(void) {
 }
 
 // vm.md "Opcode reference": an unknown opcode warns and halts the context.
+// 0x33 held INTERRUPTIBLE before v1 was released: unassigned now ("Waits").
 static void unknown_opcode_halts_only_its_context(void) {
-    static const u8 unknown[] = {0x0F, 0x2F, 0x3F, 0x41, 0xFF};
+    static const u8 unknown[] = {0x0F, 0x2F, 0x33, 0x3F, 0x41, 0xFF};
     reset();
     blob_begin(1 + sizeof unknown, 0, GLOBALS);
     witness(0);
@@ -1623,10 +1624,11 @@ static void contexts_resume_in_pool_order(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": every frame after the resume pass,
-// in entity index order, for attached entities with a Step handler and no
-// live context; skipped while one waits.
-static void step_handlers_run_every_frame_unless_live(void) {
+// vm.md "Behaviours and reactions", "Exact semantics: Step reactions": every
+// frame after the first drain, in entity index order, for attached entities
+// with a Step handler, also while their behaviour waits (on top of it).
+static void step_reactions_run_every_frame(void) {
+    enum { L_AGAIN };
     reset();
     blob_begin(4, 0, GLOBALS);
     handler(0, VM_EV_STEP);
@@ -1635,10 +1637,13 @@ static void step_handlers_run_every_frame_unless_live(void) {
     handler(1, VM_EV_STEP);
     append(0, 2);   //
     op(VM_OP_HALT); //
+    handler(2, VM_EV_CREATE);
+    label(L_AGAIN);           // a behaviour waiting most of the time:
+    count(2);                 // glob[2]: its rounds
+    wait_frames(3);           //
+    jump(VM_OP_JMP, L_AGAIN); //
     handler(2, VM_EV_STEP);
-    count(1);       // glob[1]: Step runs
-    wait_frames(3); // live for three frames: Step skipped meanwhile
-    count(2);       // glob[2]: resumes
+    count(1);       // glob[1]: Step runs, every frame
     op(VM_OP_HALT); //
     // Object 3 has no handlers.
     CHECK(load());
@@ -1651,24 +1656,24 @@ static void step_handlers_run_every_frame_unless_live(void) {
     vm_attach(e0, 0);
     vm_attach(e2, 2);
     vm_attach(e3, 3);
-    vm_events(); // drains the Create events (no Create handlers)
+    vm_events(); // drains the Create events: e2's behaviour starts and waits
+    CHECK(vm_global(2) == 1);
     u32 before = debug_warning_count();
-    static const s32 runs[] = {1, 1, 1, 2, 2, 2, 3};    // glob[1] after frames 1-7
-    static const s32 resumes[] = {0, 0, 0, 1, 1, 1, 2}; // glob[2]
-    for (u32 f = 0; f < 7; f++) {
+    static const s32 rounds[] = {1, 1, 2, 2, 2, 3, 3}; // glob[2] after frames 1-7
+    for (s32 f = 1; f <= 7; f++) {
         vm_set_global(0, 0);
         vm_step();
         CHECK(vm_global(0) == 12); // e0 then e1, once each
-        CHECK(vm_global(1) == runs[f] && vm_global(2) == resumes[f]);
+        CHECK(vm_global(1) == f);  // e2's Step, on top of its waiting behaviour
+        CHECK(vm_global(2) == rounds[f - 1]);
         vm_events();
     }
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Scheduling", "Exact semantics: Step handlers": an entity attached
-// before vm_step() runs its Create in the first drain and, if Create doesn't
-// wait, its first Step in the same vm_step(). A Create that waits holds Step
-// back until it ends (one script per entity).
+// vm.md "Scheduling", "Exact semantics: Step reactions": an entity attached
+// before vm_step() runs its Create in the first drain and its first Step in
+// the same vm_step(), on top of the Create if that waits.
 static void create_runs_before_the_first_step(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -1694,18 +1699,18 @@ static void create_runs_before_the_first_step(void) {
     u32 before = debug_warning_count();
     vm_step();
     CHECK(vm_global(0) == 12); // Create, then Step, in the same vm_step()
-    CHECK(vm_global(1) == 1);  // Create waits: no Step
+    CHECK(vm_global(1) == 13); // Create waits; Step runs on top of it
     vm_events();
     vm_step();
     CHECK(vm_global(0) == 122);
-    CHECK(vm_global(1) == 123); // Create ends in the resume pass, then Step
+    CHECK(vm_global(1) == 1323); // Create ends in the resume pass, then Step
     vm_events();
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": an entity a Step handler spawns runs
-// its Create in vm_step()'s second drain and its first Step in the next
-// frame, even from a slot the Step handlers have yet to reach.
+// vm.md "Exact semantics: Step reactions": an entity a Step reaction spawns
+// runs its Create in vm_step()'s second drain and its first Step in the next
+// frame, even from a slot the Step reactions have yet to reach.
 static void entity_spawned_by_step_steps_next_frame(void) {
     enum { L_DONE };
     reset();
@@ -1744,7 +1749,7 @@ static void entity_spawned_by_step_steps_next_frame(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": Step never runs before Create.
+// vm.md "Exact semantics: Step reactions": Step never runs before Create.
 // Spawned and C-attached entities' Step handlers check that their Create has
 // run (it sets their depth to 1). The Create-pending flag clears when the
 // Create is drained even if the object has no Create handler: such an entity
@@ -1797,40 +1802,257 @@ static void step_never_runs_before_create(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Contexts" (one script per entity), "Exact semantics: Draining": an
-// event for an entity whose context is live is dropped with a warning (not
-// deferred); one its object has no handler for is skipped silently.
-static void event_for_a_live_entity_is_dropped(void) {
+// vm.md "Behaviours and reactions", "Exact semantics: Reactions on top of a
+// behaviour": reactions (Step, Collision, Animation End) for an entity whose
+// behaviour waits run on top of it, on the same context: their activation
+// starts at the behaviour's stack top (its zeroed locals don't touch the
+// behaviour's cells, and it can't pop them: underflow), and when they end -
+// HALT, RET at their own level, or a fault - the behaviour's pc, stack,
+// frame, call depth and wait are back exactly as they were. Here it waits
+// inside a CALL, with locals and a temporary on its stack, and resumes in the
+// frame its WAIT 3 named, then returns and finds everything in place.
+static void reactions_run_on_top_of_a_waiting_behaviour(void) {
+    enum { L_SUB, L_SUB2 };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
-    store(0, 1);    //
-    wait_frames(5); //
-    store(0, 2);    //
+    enter(0, 2);    // l0 l1
+    push8(11);      //
+    stl(0);         // l0 = 11
+    push8(22);      //
+    stl(1);         // l1 = 22
+    push8(33);      // l0 l1 33: a temporary
+    call(L_SUB);    // waits in there; returns 44: l0 l1 33 44
+    stg(3);         // glob[3] = 44
+    stg(4);         // glob[4] = 33
+    ldl(0);         //
+    stg(5);         // glob[5] = 11
+    ldl(1);         //
+    stg(6);         // glob[6] = 22
+    store(0, 2);    // glob[0] = 2: the behaviour has ended
+    op(VM_OP_HALT); //
+    label(L_SUB);   // a frame of its own
+    enter(0, 1);    // l0 l1 33 | s0
+    push8(44);      //
+    stl(0);         // s0 = 44
+    store(0, 1);    // glob[0] = 1: waiting
+    wait_frames(3); //
+    ldl(0);         // 44
+    op(VM_OP_RETV); // drops the frame, pushes 44
+
+    handler(0, VM_EV_STEP);
+    count(7);       // glob[7]: Step runs, every frame
+    op(VM_OP_HALT); //
+
+    handler(0, VM_EV_COLLISION);
+    enter(0, 3);     // three zeroed locals, above the behaviour's cells
+    ldl(0);          //
+    ldl(1);          //
+    op(VM_OP_ADD);   //
+    ldl(2);          //
+    op(VM_OP_ADD);   // 0
+    stg(8);          // glob[8] = 0
+    push8(-1);       //
+    stl(0);          // writes its own local, not the behaviour's
+    op(VM_OP_OTHER); //
+    stg(9);          // glob[9] = other
+    push8(1);        // temporaries left on the stack
+    push8(2);        //
+    call(L_SUB2);    // a call of its own
+    count(10);       // glob[10]: Collisions that ran to their end
+    op(VM_OP_RET);   // at its own level: the reaction ends
+    label(L_SUB2);   //
+    push8(5);        //
+    op(VM_OP_RET);   //
+
+    handler(0, VM_EV_ANIM_END);
+    count(11);      // glob[11]: it ran
+    op(VM_OP_DROP); // nothing in its own activation: underflow, halts it
+    store(11, 99);  // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    vm_set_global(8, 99);
+    Entity e = entity_create(C_POS);
+    Entity o = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // Create runs and waits (3 frames)
+    CHECK(vm_global(0) == 1);
+    u32 before = debug_warning_count();
+    vm_step(); // frame 1: 2 frames left; Step on top
+    CHECK(vm_global(7) == 1);
+    vm_event(e, o, VM_EV_COLLISION);
+    vm_event(e, o, VM_EV_ANIM_END);
+    vm_events();
+    CHECK(vm_global(8) == 0 && vm_global(9) == o && vm_global(10) == 1);
+    CHECK(vm_global(11) == 1);
+    CHECK_WARNED(before, 1); // the underflow
+    vm_step();               // frame 2: 1 frame left
+    CHECK(vm_global(0) == 1 && vm_global(7) == 2);
+    vm_event(e, o, VM_EV_COLLISION); // again, while it still waits
+    vm_events();
+    CHECK(vm_global(10) == 2);
+    vm_step(); // frame 3: the behaviour resumes, returns and ends; then Step
+    CHECK(vm_global(0) == 2);
+    CHECK(vm_global(3) == 44 && vm_global(4) == 33);
+    CHECK(vm_global(5) == 11 && vm_global(6) == 22);
+    CHECK(vm_global(7) == 3);
+    CHECK(vm_global(11) == 1);
+    vm_events();
+    CHECK(vm_idle());                // Step's own context is freed
+    vm_event(e, o, VM_EV_COLLISION); // no behaviour now: a context of its own
+    vm_events();
+    CHECK(vm_global(10) == 3);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Exact semantics: Frames": a reaction on top of a behaviour has an
+// activation of its own, from the behaviour's stack top: ENTER can't take the
+// behaviour's cells as arguments, nor SWAP or DROP reach them (stack
+// underflow: warns once, halts the reaction), and LDL and STL see no local
+// below its frame. The behaviour's cells come through untouched.
+static void reactions_cannot_reach_below_their_activation(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(7);       //
+    push8(8);       //
+    push8(9);       // 7 8 9
+    wait_frames(2); //
+    stg(2);         // glob[2] = 9
+    stg(1);         // glob[1] = 8
+    stg(0);         // glob[0] = 7
     op(VM_OP_HALT); //
     handler(0, VM_EV_COLLISION);
+    count(3);       // glob[3]: it ran
+    enter(1, 0);    // no cell of its own to take: halted
+    store(3, 99);   // never runs
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_ANIM_END);
+    count(4);       // glob[4]
+    push8(1);       // one cell of its own
+    op(VM_OP_SWAP); // needs two: halted
+    store(4, 99);   // never runs
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_STEP);
+    count(5);       // glob[5]
+    push8(-1);      //
+    stl(1);         // outside its frame: dropped (warns)
+    ldl(1);         // 0 (no repeat)
+    stg(6);         // glob[6] = 0
+    op(VM_OP_HALT); //
+    CHECK(load());
+    vm_set_global(6, 99);
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // the behaviour waits on 7 8 9
+    u32 before = debug_warning_count();
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    vm_event(e, ENTITY_NONE, VM_EV_ANIM_END);
+    vm_events();
+    CHECK(vm_global(3) == 1 && vm_global(4) == 1);
+    CHECK_WARNED(before, 1); // underflow
+    vm_step();               // Step, on top of the behaviour's last frame of waiting
+    CHECK(vm_global(5) == 1 && vm_global(6) == 0);
+    CHECK_WARNED(before, 2); // the local
+    vm_events();
+    vm_step(); // the behaviour resumes and ends; then Step, alone
+    CHECK(vm_global(0) == 7 && vm_global(1) == 8 && vm_global(2) == 9);
+    CHECK(vm_global(5) == 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+static const PathStep move_steps[] = {{.frames = 3, .speed = FX(1)}};
+static const Path move_path = {PATH_STEPS(move_steps)};
+
+// vm.md "Exact semantics: Reactions on top of a behaviour": a reaction leaves
+// the behaviour's kind of wait alone too: a WAIT_MOVE resumes when the path
+// ends, not before, though a Step and a Collision run on top of it every
+// frame.
+static void reactions_keep_a_behaviours_wait(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_WAIT_MOVE); //
+    store(0, 1);         //
+    op(VM_OP_HALT);      //
+    handler(0, VM_EV_STEP);
     count(1);       //
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_COLLISION);
+    count(2);       //
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_VEL);
+    path_start(e, &move_path, 0);
+    vm_attach(e, 0);
+    u32 before = debug_warning_count();
+    for (s32 f = 1; f <= 4; f++) {
+        vm_step();
+        CHECK(vm_global(0) == (f == 4)); // the 3-frame path ends in frame 3's sys_path
+        CHECK(vm_global(1) == f);
+        sys_path();
+        sys_movement();
+        vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+        vm_events();
+        CHECK(vm_global(2) == f);
+    }
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Behaviours and reactions", "Exact semantics: Budget": a wait that
+// would suspend a reaction, or a reaction running past its budget, warns and
+// halts the reaction, not the behaviour beneath it (which goes on counting
+// frames). A wait that continues at once (WAIT 0, WAIT_MOVE with no path) is
+// fine. A reaction with no behaviour beneath it (object 1) is halted the same
+// way, and its context freed.
+static void reaction_waits_and_overruns_halt_only_the_reaction(void) {
+    enum { L_AGAIN, L_LOOP };
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    label(L_AGAIN);           // the behaviour: counts frames forever
+    count(0);                 //
+    wait_frames(1);           //
+    jump(VM_OP_JMP, L_AGAIN); //
+    handler(0, VM_EV_STEP);
+    count(1);            // glob[1]: Step runs
+    wait_frames(0);      // continues at once
+    op(VM_OP_WAIT_MOVE); // no path: continues at once
+    count(2);            // glob[2]
+    wait_frames(2);      // would suspend: warns, halts the reaction
+    store(3, 99);        // never runs
+    op(VM_OP_HALT);      //
+    handler(0, VM_EV_COLLISION);
+    label(L_LOOP);           // an endless loop
+    count(4);                // 5 ops a round
+    jump(VM_OP_JMP, L_LOOP); //
+    handler(1, VM_EV_STEP);
+    count(5);       // glob[5]
+    wait_frames(1); // warns (the same kind), halts
+    store(6, 99);   // never runs
     op(VM_OP_HALT); //
     CHECK(load());
     Entity e = entity_create(C_POS);
+    Entity alone = entity_create(C_POS);
     vm_attach(e, 0);
-    vm_events(); // Create runs and waits
-    CHECK(vm_global(0) == 1);
+    vm_attach(alone, 1);
+    vm_events(); // e's behaviour counts frame 0
     u32 before = debug_warning_count();
-    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
-    vm_events(); // dropped, with a warning
-    CHECK(vm_global(1) == 0);
-    CHECK_WARNED(before, 1);
-    vm_event(e, ENTITY_NONE, VM_EV_ANIM_END);
-    vm_events(); // no handler: skipped silently
-    CHECK_WARNED(before, 1);
-    frames(5);
-    CHECK(vm_global(0) == 2); // Create finished...
-    CHECK(vm_global(1) == 0); // ...and the dropped event stayed dropped
-    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
-    vm_events(); // free again: it runs
-    CHECK(vm_global(1) == 1);
-    CHECK_WARNED(before, 1);
+    for (s32 f = 1; f <= 3; f++) {
+        vm_step();
+        vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+        vm_events();
+        CHECK(vm_global(0) == 1 + f); // the behaviour, every frame
+        CHECK(vm_global(1) == f && vm_global(2) == f && vm_global(3) == 0);
+        CHECK(vm_global(4) == 51 * f); // 51 rounds and an LDG, then halted
+        CHECK(vm_global(5) == f && vm_global(6) == 0);
+    }
+    CHECK_WARNED(before, 2); // a wait in a reaction; a reaction over budget
+    vm_detach(e);
+    CHECK(vm_idle()); // object 1's reactions left nothing behind
 }
 
 // vm.md "Exact semantics: Draining": FIFO, from vm_events() and from
@@ -1908,38 +2130,48 @@ static void events_queued_while_draining_run_in_the_same_phase(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Contexts": Destroy (queued by KILL) force-halts the entity's live
-// context first, then runs the Destroy handler, then destroys the entity.
-static void kill_force_halts_a_waiting_script(void) {
+// vm.md "Entities" (KILL), "Exact semantics: Draining": Destroy (queued by
+// KILL) runs the Destroy reaction on top of the entity's waiting behaviour,
+// then halts the behaviour, then destroys the entity. The reaction sees the
+// entity alive, and its activation starts above the behaviour's cells.
+static void kill_runs_destroy_then_halts_the_behaviour(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 3);    // three cells on the behaviour's stack
     store(0, 1);    //
     wait_frames(5); //
     store(0, 2);    // never runs: killed while waiting
     op(VM_OP_HALT); //
     handler(0, VM_EV_DESTROY);
-    store(1, 1);    //
-    op(VM_OP_HALT); //
+    op(VM_OP_SELF);         // self
+    getp(VM_P_X);           // still alive: its x
+    stg(2);                 // glob[2] = 6.0
+    enter(0, VM_STACK - 3); // exactly what is left above the behaviour's cells
+    store(1, 1);            // one more cell: overflows (warns), so never runs
+    op(VM_OP_HALT);         //
     handler(1, VM_EV_CREATE);
     ldg(5);         // e
     op(VM_OP_KILL); // queues e's Destroy
     op(VM_OP_HALT); //
     CHECK(load());
     Entity e = entity_create(C_POS);
+    pos_x[entity_index(e)] = FX(6);
     vm_attach(e, 0);
     vm_events(); // Create runs and waits
     vm_set_global(5, e);
     u32 before = debug_warning_count();
     start(1);
-    vm_step(); // the thread queues Destroy; the drain halts e's wait, runs Destroy
-    CHECK(vm_global(1) == 1);
+    vm_step(); // the thread queues Destroy; the drain runs it, then halts e's wait
+    CHECK(vm_global(2) == FX(6));
+    CHECK(vm_global(1) == 0);
+    CHECK_WARNED(before, 1); // the overflow
     CHECK(!entity_alive(e));
     CHECK(vm_idle());
     vm_events();
     frames(6);
     CHECK(vm_global(0) == 1);
-    CHECK_WARNED(before, 0);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Entities" (KILL), "Exact semantics: Draining": KILL queues Destroy
@@ -1995,8 +2227,8 @@ static void kill_destroys_an_unattached_entity(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Draining": a wait inside Destroy warns and halts
-// the handler; the entity is destroyed all the same.
+// vm.md "Behaviours and reactions": a wait inside a Destroy reaction warns and
+// halts it; the entity is destroyed all the same.
 static void wait_inside_destroy_warns_and_halts(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -2139,8 +2371,9 @@ static void vm_event_rejects_unknown_events(void) {
 }
 
 // vm.md "Exact semantics: vm_kill": from C, outside the phases, the Destroy
-// logic runs at once: force-halt, Destroy handler (if any), entity_destroy;
-// an unattached entity is just destroyed.
+// logic runs at once: the Destroy reaction (if any, on top of the waiting
+// behaviour), the behaviour halted, entity_destroy; an unattached entity is
+// just destroyed.
 static void vm_kill_runs_destroy_at_once(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -2245,6 +2478,80 @@ static void attach_rebinds_an_attached_entity(void) {
     frames(4);
     CHECK(vm_global(0) == 1);
     CHECK(vm_global(2) == 4); // object 1's Step, every frame
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Exact semantics: Starting scripts": attaching twice before a drain
+// queues one Create, whether the entity is attached to the same object again,
+// rebound to another (then the other's Create runs), or detached and attached
+// again in between.
+static void double_attach_queues_one_create(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    count(0);       // glob[0]: object 0's Creates
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    count(1);       // glob[1]: object 1's Creates
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity c = entity_create(C_POS);
+    u32 before = debug_warning_count();
+    vm_attach(a, 0);
+    vm_attach(a, 0); // the same object again
+    vm_attach(b, 0);
+    vm_attach(b, 1); // rebound before its Create ran
+    vm_attach(c, 1);
+    vm_detach(c);
+    vm_attach(c, 1); // detached and attached again
+    vm_events();
+    CHECK(vm_global(0) == 1); // a's
+    CHECK(vm_global(1) == 2); // b's (object 1's) and c's
+    vm_attach(a, 0);          // after the drain: a new Create
+    vm_events();
+    CHECK(vm_global(0) == 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Behaviours and reactions", "Exact semantics: Draining": an instance
+// has at most one behaviour. A Room Start event for an instance whose Create
+// waits halts it and starts the Room Start behaviour; one its object has no
+// handler for leaves the behaviour alone.
+static void a_behaviour_event_replaces_the_live_behaviour(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);    //
+    wait_frames(2); //
+    store(0, 2);    // never runs: replaced
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_ROOM_START);
+    store(1, 1);    //
+    wait_frames(2); //
+    store(1, 2);    // runs
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    store(2, 1);    //
+    wait_frames(2); //
+    store(2, 2);    // runs: object 1 has no Room Start handler
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_events(); // both Creates run and wait
+    u32 before = debug_warning_count();
+    vm_event(a, ENTITY_NONE, VM_EV_ROOM_START);
+    vm_event(b, ENTITY_NONE, VM_EV_ROOM_START);
+    vm_events();
+    CHECK(vm_global(1) == 1);
+    frames(3);
+    CHECK(vm_global(0) == 1 && vm_global(1) == 2 && vm_global(2) == 2);
+    CHECK(vm_idle());
     CHECK_WARNED(before, 0);
 }
 
@@ -2489,8 +2796,8 @@ static void budget_warns_once_per_loaded_blob(void) {
     CHECK_WARNED(before, 2);
 }
 
-// vm.md "Exact semantics: Budget": inside a Destroy handler, which cannot
-// wait, the op over the budget halts the handler instead (a loop that would
+// vm.md "Exact semantics: Budget": inside a Destroy reaction, which cannot
+// wait, the op over the budget halts the reaction instead (a loop that would
 // end after 60 rounds stops in round 32); the entity is destroyed all the
 // same.
 static void budget_halts_a_destroy_handler(void) {
@@ -2864,9 +3171,6 @@ static void body_size_properties(void) {
 
 // --- Waits on the engine -----------------------------------------------------
 
-static const PathStep move_steps[] = {{.frames = 3, .speed = FX(1)}};
-static const Path move_path = {PATH_STEPS(move_steps)};
-
 // vm.md "Waits": WAIT_MOVE resumes once self has no C_PATH (sys_path removes
 // it when the path ends); a pathless entity goes on at once.
 static void wait_move_resumes_when_the_path_ends(void) {
@@ -2896,93 +3200,6 @@ static void wait_move_resumes_when_the_path_ends(void) {
     CHECK(!path_active(mover));
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
-}
-
-// vm.md "Waits" (INTERRUPTIBLE), "Exact semantics: Draining": once a script
-// has run INTERRUPTIBLE with a nonzero value, an event for its entity that
-// arrives while it waits (WAIT, WAIT_MOVE, ...) halts it for good and runs
-// instead of being dropped. An event the object has no handler for leaves
-// the wait alone; INTERRUPTIBLE 0 makes events drop again (with the usual
-// warning); in a thread, which no event reaches, it does nothing.
-static void interruptible_waits_let_events_in(void) {
-    reset();
-    blob_begin(4, 0, GLOBALS);
-    handler(0, VM_EV_CREATE); // interruptible WAIT
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  //
-    count(0);                 // glob[0]: Creates of object 0
-    wait_frames(3);           //
-    count(6);                 // glob[6]: waits that ran to their end
-    op(VM_OP_HALT);           //
-    handler(0, VM_EV_COLLISION);
-    op(VM_OP_OTHER);          // other
-    stg(1);                   // glob[1] = other
-    count(2);                 // glob[2]: object 0's Collisions
-    op(VM_OP_HALT);           //
-    handler(1, VM_EV_CREATE); // interruptible, then not again
-    push8(5);                 // 5: any nonzero value
-    op(VM_OP_INTERRUPTIBLE);  //
-    push8(0);                 // 0
-    op(VM_OP_INTERRUPTIBLE);  //
-    wait_frames(3);           //
-    count(7);                 // glob[7]: object 1's wait ran to its end
-    op(VM_OP_HALT);           //
-    handler(1, VM_EV_COLLISION);
-    count(3);                 // glob[3]: never (dropped)
-    op(VM_OP_HALT);           //
-    handler(2, VM_EV_CREATE); // interruptible WAIT_MOVE
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  //
-    op(VM_OP_WAIT_MOVE);      //
-    count(4);                 // glob[4]: never (interrupted)
-    op(VM_OP_HALT);           //
-    handler(2, VM_EV_COLLISION);
-    count(5);                 // glob[5]: object 2's Collisions
-    op(VM_OP_HALT);           //
-    handler(3, VM_EV_CREATE); // a thread
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  // nothing to interrupt: no effect, no warning
-    store(8, 1);              //
-    op(VM_OP_HALT);           //
-    CHECK(load());
-    Entity a = entity_create(C_POS);
-    Entity d = entity_create(C_POS);
-    Entity b = entity_create(C_POS);
-    Entity c = entity_create(C_POS | C_VEL);
-    Entity o = entity_create(C_POS);
-    path_start(c, &move_path, 0);
-    vm_attach(a, 0);
-    vm_attach(d, 0);
-    vm_attach(b, 1);
-    vm_attach(c, 2);
-    u32 before = debug_warning_count();
-    vm_events(); // every Create runs and waits
-    CHECK(vm_global(0) == 2);
-    CHECK_WARNED(before, 0);
-    vm_event(a, o, VM_EV_COLLISION); // cuts into a's WAIT
-    vm_event(d, o, VM_EV_ANIM_END);  // no handler: d waits on
-    vm_event(b, o, VM_EV_COLLISION); // b isn't interruptible any more: dropped
-    vm_event(c, o, VM_EV_COLLISION); // cuts into c's WAIT_MOVE
-    vm_events();
-    CHECK(vm_global(1) == o && vm_global(2) == 1);
-    CHECK(vm_global(3) == 0 && vm_global(5) == 1);
-    CHECK_WARNED(before, 1);
-    for (u32 f = 0; f < 4; f++) { // the waits end; c's path ends in frame 3
-        vm_step();
-        sys_path();
-        sys_movement();
-        vm_events();
-    }
-    CHECK(!path_active(c));
-    CHECK(vm_global(6) == 1); // d's wait ran to its end, a's never resumed
-    CHECK(vm_global(7) == 1); // b's too
-    CHECK(vm_global(4) == 0); // c's WAIT_MOVE never resumed
-    CHECK(vm_idle());
-    start(3);
-    vm_step();
-    CHECK(vm_global(8) == 1);
-    CHECK(vm_idle());
-    CHECK_WARNED(before, 1);
 }
 
 static const u32 anim_tiles[8 * 3];
@@ -3629,6 +3846,89 @@ static void loading_during_a_phase_is_refused(void) {
 #endif
 }
 
+// vm.md "Exact semantics: vm_kill": called outside the phases, vm_kill runs
+// the Destroy reaction at once; while it runs, loading is refused just as in
+// a phase (the blob would be pulled from under it), with one warning.
+static void loading_during_vm_kill_is_refused(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_DESTROY);
+    store(0, 1);          //
+    push8(5);             // sound 5
+    sys(VM_SYS_PSG_PLAY); // the hook tries to load, reload and unload
+    store(0, 2);          // the same blob runs on
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events();
+    vm_set_global(5, 77); // vm_load would zero it
+    serval_host_vm_calls = (ServalHostVmCalls){.during = load_during_the_phase};
+    loads_refused = 0;
+    u32 before = debug_warning_count();
+    vm_kill(e);
+    serval_host_vm_calls.during = NULL;
+    CHECK(loads_refused == 2);
+    CHECK(vm_global(0) == 2 && vm_global(5) == 77);
+    CHECK(!entity_alive(e) && vm_idle());
+    CHECK_WARNED(before, 1);
+    CHECK(vm_load(placed, placed_size)); // afterwards: fine
+    CHECK_WARNED(before, 1);
+#endif
+}
+
+#ifndef SERVAL_GBA
+// Stands in for game C code run during a phase that starts another (none can
+// in v1).
+static void phase_during_the_phase(void) {
+    vm_events();
+    vm_step();
+}
+#endif
+
+// vm.md "Exact semantics: Reactions on top of a behaviour" saves one
+// behaviour per context, which is enough because events are never dispatched
+// while a script runs. So vm_step and vm_events called from inside a phase
+// (by C code a script reached, as the recorder's hook does here on the host)
+// warn once and do nothing: the second Collision, queued while the first one
+// runs on top of the entity's behaviour, runs after it, not on top of it. The
+// behaviour beneath is untouched and still resumes.
+static void phases_do_not_nest(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    enter(0, 2);    // two cells on its stack
+    wait_frames(2); //
+    store(0, 1);    // resumes
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_COLLISION);
+    count(1);             // glob[1]: Collisions begun
+    push8(5);             // sound 5
+    sys(VM_SYS_PSG_PLAY); // the hook tries to run a phase
+    count(2);             // glob[2]: Collisions ended
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // the behaviour waits
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    serval_host_vm_calls = (ServalHostVmCalls){.during = phase_during_the_phase};
+    u32 before = debug_warning_count();
+    vm_events();
+    serval_host_vm_calls.during = NULL;
+    CHECK(vm_global(1) == 2 && vm_global(2) == 2);
+    CHECK(serval_host_vm_calls.calls == 2);
+    CHECK_WARNED(before, 1);
+    frames(2);
+    CHECK(vm_global(0) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+#endif
+}
+
 // --- Loader ------------------------------------------------------------------
 
 typedef struct {
@@ -3876,91 +4176,99 @@ static void unload_stops_everything(void) {
     ecs_reset();
 }
 
-TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
-           {"stack_and_variable_ops", stack_and_variable_ops},
-           {"push_sign_extension", push_sign_extension}, {"arithmetic_ops", arithmetic_ops},
-           {"fixed_point_ops", fixed_point_ops}, {"bitwise_and_shift_ops", bitwise_and_shift_ops},
-           {"lua_shift_op", lua_shift_op}, {"floored_division_ops", floored_division_ops},
-           {"comparison_ops", comparison_ops}, {"division_by_zero", division_by_zero},
-           {"control_flow", control_flow},
-           {"ret_with_empty_call_stack_halts", ret_with_empty_call_stack_halts},
-           {"frames_hold_arguments_and_locals", frames_hold_arguments_and_locals},
-           {"recursion_to_the_limits", recursion_to_the_limits},
-           {"handler_level_returns_end_the_handler", handler_level_returns_end_the_handler},
-           {"enter_needs_its_arguments", enter_needs_its_arguments},
-           {"stack_overflow_halts_only_its_context", stack_overflow_halts_only_its_context},
-           {"stack_underflow_halts_only_its_context", stack_underflow_halts_only_its_context},
-           {"call_depth_is_limited", call_depth_is_limited},
-           {"unknown_opcode_halts_only_its_context", unknown_opcode_halts_only_its_context},
-           {"locals_out_of_range", locals_out_of_range},
-           {"pc_escaping_the_blob_halts_its_context", pc_escaping_the_blob_halts_its_context},
-           {"truncated_operand_halts_its_context", truncated_operand_halts_its_context},
-           {"unknown_property_warns", unknown_property_warns},
-           {"unknown_sys_halts_only_its_context", unknown_sys_halts_only_its_context},
-           {"wait_counts_frames", wait_counts_frames},
-           {"wait_counter_is_clamped", wait_counter_is_clamped},
-           {"vm_start_first_runs_in_the_next_vm_step", vm_start_first_runs_in_the_next_vm_step},
-           {"vm_start_without_a_handler_fails", vm_start_without_a_handler_fails},
-           {"contexts_resume_in_pool_order", contexts_resume_in_pool_order},
-           {"step_handlers_run_every_frame_unless_live", step_handlers_run_every_frame_unless_live},
-           {"create_runs_before_the_first_step", create_runs_before_the_first_step},
-           {"entity_spawned_by_step_steps_next_frame", entity_spawned_by_step_steps_next_frame},
-           {"step_never_runs_before_create", step_never_runs_before_create},
-           {"event_for_a_live_entity_is_dropped", event_for_a_live_entity_is_dropped},
-           {"events_drain_in_fifo_order", events_drain_in_fifo_order},
-           {"events_queued_while_draining_run_in_the_same_phase",
-            events_queued_while_draining_run_in_the_same_phase},
-           {"kill_force_halts_a_waiting_script", kill_force_halts_a_waiting_script},
-           {"kill_runs_destroy_before_destroying", kill_runs_destroy_before_destroying},
-           {"kill_destroys_an_unattached_entity", kill_destroys_an_unattached_entity},
-           {"wait_inside_destroy_warns_and_halts", wait_inside_destroy_warns_and_halts},
-           {"kill_of_no_entity_warns_but_of_a_dead_one_is_silent",
-            kill_of_no_entity_warns_but_of_a_dead_one_is_silent},
-           {"destroy_event_behaves_like_kill", destroy_event_behaves_like_kill},
-           {"vm_event_rejects_unknown_events", vm_event_rejects_unknown_events},
-           {"vm_kill_runs_destroy_at_once", vm_kill_runs_destroy_at_once},
-           {"detach_stops_the_script_without_destroy", detach_stops_the_script_without_destroy},
-           {"attach_rebinds_an_attached_entity", attach_rebinds_an_attached_entity},
-           {"attach_misuse_is_ignored", attach_misuse_is_ignored},
-           {"spawn_creates_an_attached_entity", spawn_creates_an_attached_entity},
-           {"spawn_failures_push_zero", spawn_failures_push_zero},
-           {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
-           {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
-           {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
-           {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
-           {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
-           {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
-           {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
-           {"self_and_other", self_and_other},
-           {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
-           {"properties_of_dead_entities", properties_of_dead_entities},
-           {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
-           {"property_without_its_component_warns", property_without_its_component_warns},
-           {"body_size_properties", body_size_properties},
-           {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
-           {"interruptible_waits_let_events_in", interruptible_waits_let_events_in},
-           {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
-           {"wait_anim_without_a_one_shot_animation_continues",
-            wait_anim_without_a_one_shot_animation_continues},
-           {"wait_anim_continues_if_the_sprite_stops_being_one_shot",
-            wait_anim_continues_if_the_sprite_stops_being_one_shot},
-           {"animation_end_is_raised_when_an_animation_finishes",
-            animation_end_is_raised_when_an_animation_finishes},
-           {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
-           {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
-           {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
-           {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
-           {"sys_text_print_number", sys_text_print_number},
-           {"reload_keeps_globals_if_their_count_matches",
-            reload_keeps_globals_if_their_count_matches},
-           {"reload_keeps_attachments_to_objects_that_remain",
-            reload_keeps_attachments_to_objects_that_remain},
-           {"reload_halts_contexts_and_empties_the_queue",
-            reload_halts_contexts_and_empties_the_queue},
-           {"load_resets_everything", load_resets_everything},
-           {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
-           {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
-           {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
-           {"runs_are_deterministic", runs_are_deterministic},
-           {"debug_ops_log_and_continue", debug_ops_log_and_continue},
-           {"unload_stops_everything", unload_stops_everything});
+TEST_SUITE(
+    vm_tests, "vm", {"golden_example", golden_example},
+    {"stack_and_variable_ops", stack_and_variable_ops},
+    {"push_sign_extension", push_sign_extension}, {"arithmetic_ops", arithmetic_ops},
+    {"fixed_point_ops", fixed_point_ops}, {"bitwise_and_shift_ops", bitwise_and_shift_ops},
+    {"lua_shift_op", lua_shift_op}, {"floored_division_ops", floored_division_ops},
+    {"comparison_ops", comparison_ops}, {"division_by_zero", division_by_zero},
+    {"control_flow", control_flow},
+    {"ret_with_empty_call_stack_halts", ret_with_empty_call_stack_halts},
+    {"frames_hold_arguments_and_locals", frames_hold_arguments_and_locals},
+    {"recursion_to_the_limits", recursion_to_the_limits},
+    {"handler_level_returns_end_the_handler", handler_level_returns_end_the_handler},
+    {"enter_needs_its_arguments", enter_needs_its_arguments},
+    {"stack_overflow_halts_only_its_context", stack_overflow_halts_only_its_context},
+    {"stack_underflow_halts_only_its_context", stack_underflow_halts_only_its_context},
+    {"call_depth_is_limited", call_depth_is_limited},
+    {"unknown_opcode_halts_only_its_context", unknown_opcode_halts_only_its_context},
+    {"locals_out_of_range", locals_out_of_range},
+    {"pc_escaping_the_blob_halts_its_context", pc_escaping_the_blob_halts_its_context},
+    {"truncated_operand_halts_its_context", truncated_operand_halts_its_context},
+    {"unknown_property_warns", unknown_property_warns},
+    {"unknown_sys_halts_only_its_context", unknown_sys_halts_only_its_context},
+    {"wait_counts_frames", wait_counts_frames},
+    {"wait_counter_is_clamped", wait_counter_is_clamped},
+    {"vm_start_first_runs_in_the_next_vm_step", vm_start_first_runs_in_the_next_vm_step},
+    {"vm_start_without_a_handler_fails", vm_start_without_a_handler_fails},
+    {"contexts_resume_in_pool_order", contexts_resume_in_pool_order},
+    {"step_reactions_run_every_frame", step_reactions_run_every_frame},
+    {"create_runs_before_the_first_step", create_runs_before_the_first_step},
+    {"entity_spawned_by_step_steps_next_frame", entity_spawned_by_step_steps_next_frame},
+    {"step_never_runs_before_create", step_never_runs_before_create},
+    {"reactions_run_on_top_of_a_waiting_behaviour", reactions_run_on_top_of_a_waiting_behaviour},
+    {"reactions_keep_a_behaviours_wait", reactions_keep_a_behaviours_wait},
+    {"reactions_cannot_reach_below_their_activation",
+     reactions_cannot_reach_below_their_activation},
+    {"reaction_waits_and_overruns_halt_only_the_reaction",
+     reaction_waits_and_overruns_halt_only_the_reaction},
+    {"events_drain_in_fifo_order", events_drain_in_fifo_order},
+    {"events_queued_while_draining_run_in_the_same_phase",
+     events_queued_while_draining_run_in_the_same_phase},
+    {"kill_runs_destroy_then_halts_the_behaviour", kill_runs_destroy_then_halts_the_behaviour},
+    {"kill_runs_destroy_before_destroying", kill_runs_destroy_before_destroying},
+    {"kill_destroys_an_unattached_entity", kill_destroys_an_unattached_entity},
+    {"wait_inside_destroy_warns_and_halts", wait_inside_destroy_warns_and_halts},
+    {"kill_of_no_entity_warns_but_of_a_dead_one_is_silent",
+     kill_of_no_entity_warns_but_of_a_dead_one_is_silent},
+    {"destroy_event_behaves_like_kill", destroy_event_behaves_like_kill},
+    {"vm_event_rejects_unknown_events", vm_event_rejects_unknown_events},
+    {"vm_kill_runs_destroy_at_once", vm_kill_runs_destroy_at_once},
+    {"detach_stops_the_script_without_destroy", detach_stops_the_script_without_destroy},
+    {"attach_rebinds_an_attached_entity", attach_rebinds_an_attached_entity},
+    {"double_attach_queues_one_create", double_attach_queues_one_create},
+    {"a_behaviour_event_replaces_the_live_behaviour",
+     a_behaviour_event_replaces_the_live_behaviour},
+    {"attach_misuse_is_ignored", attach_misuse_is_ignored},
+    {"spawn_creates_an_attached_entity", spawn_creates_an_attached_entity},
+    {"spawn_failures_push_zero", spawn_failures_push_zero},
+    {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
+    {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
+    {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
+    {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
+    {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
+    {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
+    {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
+    {"self_and_other", self_and_other},
+    {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
+    {"properties_of_dead_entities", properties_of_dead_entities},
+    {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
+    {"property_without_its_component_warns", property_without_its_component_warns},
+    {"body_size_properties", body_size_properties},
+    {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
+    {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
+    {"wait_anim_without_a_one_shot_animation_continues",
+     wait_anim_without_a_one_shot_animation_continues},
+    {"wait_anim_continues_if_the_sprite_stops_being_one_shot",
+     wait_anim_continues_if_the_sprite_stops_being_one_shot},
+    {"animation_end_is_raised_when_an_animation_finishes",
+     animation_end_is_raised_when_an_animation_finishes},
+    {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
+    {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
+    {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
+    {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
+    {"sys_text_print_number", sys_text_print_number},
+    {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
+    {"reload_keeps_attachments_to_objects_that_remain",
+     reload_keeps_attachments_to_objects_that_remain},
+    {"reload_halts_contexts_and_empties_the_queue", reload_halts_contexts_and_empties_the_queue},
+    {"load_resets_everything", load_resets_everything},
+    {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
+    {"loading_during_vm_kill_is_refused", loading_during_vm_kill_is_refused},
+    {"phases_do_not_nest", phases_do_not_nest},
+    {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
+    {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
+    {"runs_are_deterministic", runs_are_deterministic},
+    {"debug_ops_log_and_continue", debug_ops_log_and_continue},
+    {"unload_stops_everything", unload_stops_everything});

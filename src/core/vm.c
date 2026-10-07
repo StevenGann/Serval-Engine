@@ -1,13 +1,21 @@
 // The bytecode VM (vm.h; the format and every rule are in docs/vm.md): the
-// blob loader, the interpreter, the scheduler (contexts, waits, Step
-// handlers, the event queue) and the bridge to entities and engine calls.
+// blob loader, the interpreter, the scheduler (contexts, waits, behaviours and
+// reactions, the event queue) and the bridge to entities and engine calls.
 // Portable: the engine calls only the GBA build has (sound, music, text,
 // buttons, brightness) go through serval_vm_platform_call (vm_internal.h).
 //
 // vm_step() runs, in this order: the resume pass, Animation End (queued for
 // animations finished since the last check), a drain of the event queue, the
-// Step handlers, and a second drain. A binding's Create-pending flag keeps an
-// entity's Step handler from running before its Create was drained.
+// Step reactions, and a second drain. A binding's Create-pending flag keeps an
+// entity's Step reaction from running before its Create was drained.
+//
+// Behaviours (Create, Room Start, vm_start threads) may wait; reactions (every
+// other event) run to completion. A reaction for an entity whose behaviour
+// waits runs on top of it, in the same context: the behaviour's registers are
+// saved in `below`, the reaction's activation starts at the behaviour's stack
+// top, and when the reaction ends (or faults) the registers come back. One
+// save slot is enough: reactions never wait, and events are only dispatched
+// while no script runs (vm_step and vm_events refuse to nest).
 //
 // The blob is read in place, byte by byte (little-endian, no alignment), and
 // every read is checked against its size first: a bad jump or a handler that
@@ -29,21 +37,27 @@ enum {
     CTX_FREE,        // not in use
     CTX_READY,       // started by vm_start(): runs in the next resume pass
     CTX_RUNNING,     // executing
-    CTX_WAIT_FRAMES, // WAIT: resumes when wait_frames counts down to 0 (the waiting
-                     // states come last: dispatch tests state >= CTX_WAIT_FRAMES)
+    CTX_WAIT_FRAMES, // WAIT: resumes when wait_frames counts down to 0
     CTX_WAIT_ANIM,   // WAIT_ANIM: resumes once anim_finished(self)
     CTX_WAIT_MOVE,   // WAIT_MOVE: resumes once self has no C_PATH
 };
 
+// What a reaction on top of a waiting behaviour saves and restores.
 typedef struct {
-    u32 pc;                // blob offset of the next opcode
+    u32 pc;          // blob offset of the next opcode
+    Entity other;    // the running handler's other entity, else ENTITY_NONE
+    u16 wait_frames; // CTX_WAIT_FRAMES: resume passes left
+    u8 state;        // CTX_*
+    u8 event;        // the VM_EV_* handler it runs
+    u8 sp, fp, cp;   // stack top, frame start, call depth
+    u8 base;         // the activation's floor: 0, or the sp of the behaviour beneath
+} Registers;
+
+typedef struct {
+    Registers r;
+    Registers below;       // the waiting behaviour's, while `stacked`
     Entity self;           // bound entity, or ENTITY_NONE for a thread (vm_start)
-    Entity other;          // the event's other entity, else ENTITY_NONE
-    u8 state;              // CTX_*
-    u8 event;              // the VM_EV_* handler it runs
-    u16 wait_frames;       // CTX_WAIT_FRAMES: resume passes left
-    u8 sp, fp, cp;         // stack top, frame start, call depth
-    u8 interruptible;      // INTERRUPTIBLE: an event for self may cut into its waits
+    bool stacked;          // a reaction runs on top of the behaviour in `below`
     s32 stack[VM_STACK];   // operands, and the locals of every frame
     u32 call_pc[VM_CALLS]; // CALL's return points
     u8 call_fp[VM_CALLS];  // and the callers' frames
@@ -65,7 +79,7 @@ SERVAL_EWRAM_BSS static u8 bound_context[MAX_ENT];
 SERVAL_EWRAM_BSS static u8 bound_flags[MAX_ENT];
 
 enum {
-    BIND_CREATE_PENDING = 1, // its Create is queued: no Step handler yet
+    BIND_CREATE_PENDING = 1, // its Create is queued: no Step reaction yet
     BIND_ANIM_DONE = 2,      // anim_finished() at the latest Animation End check
 };
 
@@ -75,12 +89,14 @@ static u32 object_count, string_count, global_count;
 static VmBindings bindings;
 static u32 queue_head, queue_count;
 static u32 ops_frame; // vm_ops_this_frame()
-static bool in_phase; // inside vm_step() or vm_events()
+static bool in_phase; // inside vm_step(), vm_events() or vm_kill()'s Destroy logic
+
+#define BEHAVIOUR_EVENTS (1u << VM_EV_CREATE | 1u << VM_EV_ROOM_START)
 
 _Static_assert(VM_CONTEXTS < 255, "bound_context holds a context index + 1 in a u8");
 _Static_assert(MAX_ENT <= 256, "an entity slot fits a handle's low byte");
 _Static_assert(VM_GLOBALS >= 256, "LDG and STG take any u8 global index");
-_Static_assert(VM_STACK <= 255, "sp and fp are u8");
+_Static_assert(VM_STACK <= 255, "sp, fp and base are u8");
 _Static_assert(VM_CALLS <= 255, "cp is a u8");
 
 // --- Warnings ----------------------------------------------------------------
@@ -96,11 +112,11 @@ enum {
     WARN_CALL_DEPTH,
     WARN_DIV_ZERO,
     WARN_BUDGET,
-    WARN_DESTROY_BUDGET,
+    WARN_REACTION_BUDGET,
     WARN_LOCAL,
     WARN_SELF,
     WARN_WAIT_ANIM,
-    WARN_DESTROY_WAIT,
+    WARN_REACTION_WAIT,
     WARN_PROPERTY,
     WARN_PROP_ENTITY,
     WARN_PROP_COMPONENT,
@@ -113,7 +129,6 @@ enum {
     WARN_STRING,
     WARN_NO_CONTEXT,
     WARN_QUEUE_FULL,
-    WARN_DROPPED,
     WARN_STALE,
     WARN_ATTACH_BLOB,
     WARN_ATTACH_OBJECT,
@@ -124,6 +139,7 @@ enum {
     WARN_EVENT,
     WARN_EVENT_DESTROY_NONE,
     WARN_LOAD_IN_PHASE,
+    WARN_NESTED_PHASE,
     WARN_GLOBAL,
     WARN_VM_KILL_NONE,
     WARN_COUNT
@@ -202,14 +218,28 @@ static u32 context_index(const Context* c) {
     return (u32)(c - contexts);
 }
 
-// Frees the context and clears its entity's link to it.
+// Frees the context, a behaviour beneath a reaction included, and clears its
+// entity's link to it.
 static void halt(Context* c) {
     if (c->self != ENTITY_NONE) {
         u32 slot = entity_index(c->self);
         if (slot < MAX_ENT && bound_context[slot] == context_index(c) + 1)
             bound_context[slot] = 0;
     }
-    c->state = CTX_FREE;
+    c->r.state = CTX_FREE;
+    c->stacked = false;
+}
+
+// The running handler has ended (or faulted): a reaction on top of a
+// behaviour gives the context back to it, exactly as it was; anything else
+// frees the context.
+static void finish(Context* c) {
+    if (c->stacked) {
+        c->r = c->below;
+        c->stacked = false;
+    } else {
+        halt(c);
+    }
 }
 
 // Detaches slot's entity, halting its live context.
@@ -218,7 +248,7 @@ static void unbind(u32 slot) {
     bound_context[slot] = 0;
     bound[slot] = ENTITY_NONE;
     if (live)
-        contexts[live - 1].state = CTX_FREE;
+        halt(&contexts[live - 1]);
 }
 
 // True if an entity is attached in slot. A binding whose entity was destroyed
@@ -242,16 +272,11 @@ static bool attached(u32 slot) {
 static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 state) {
     for (u32 k = 0; k < VM_CONTEXTS; k++) {
         Context* c = &contexts[k];
-        if (c->state != CTX_FREE)
+        if (c->r.state != CTX_FREE)
             continue;
-        c->pc = pc;
+        c->r = (Registers){.pc = pc, .other = other, .state = (u8)state, .event = (u8)event};
         c->self = self;
-        c->other = other;
-        c->state = (u8)state;
-        c->event = (u8)event;
-        c->wait_frames = 0;
-        c->sp = c->fp = c->cp = 0;
-        c->interruptible = 0;
+        c->stacked = false;
         if (self != ENTITY_NONE)
             bound_context[entity_index(self)] = (u8)(k + 1);
         return c;
@@ -283,9 +308,20 @@ static bool enqueue(Entity e, Entity other, u32 event) {
     return true;
 }
 
-// Attaches a live entity to a valid object and queues its Create. Its Step
-// handler waits until that Create is drained; a Create the full queue drops
-// is never drained, so it doesn't hold Step back.
+// True if a Create event for e is in the queue.
+static bool create_queued(Entity e) {
+    for (u32 k = 0; k < queue_count; k++) {
+        const QueuedEvent* q = &queue[(queue_head + k) % VM_EVENT_QUEUE];
+        if (q->e == e && q->event == VM_EV_CREATE)
+            return true;
+    }
+    return false;
+}
+
+// Attaches a live entity to a valid object and queues its Create, unless one
+// is queued already (attaching twice before a drain queues one Create). Its
+// Step reaction waits until that Create is drained; a Create the full queue
+// drops is never drained, so it doesn't hold Step back.
 static void bind(Entity e, u32 object) {
     u32 slot = entity_index(e);
     if (attached(slot))
@@ -293,7 +329,8 @@ static void bind(Entity e, u32 object) {
     bound[slot] = e;
     bound_object[slot] = (u16)object;
     bound_context[slot] = 0;
-    bound_flags[slot] = enqueue(e, ENTITY_NONE, VM_EV_CREATE) ? BIND_CREATE_PENDING : 0;
+    bool pending = create_queued(e) || enqueue(e, ENTITY_NONE, VM_EV_CREATE);
+    bound_flags[slot] = pending ? BIND_CREATE_PENDING : 0;
 }
 
 // --- Entities ----------------------------------------------------------------
@@ -528,28 +565,29 @@ static s32 floored(u32 op, s32 a, s32 b) {
 
 // --- Interpreter -------------------------------------------------------------
 
-// Runs the context until it halts or waits, or until it has run
-// VM_OPS_PER_SLICE ops. `must_finish`: a Destroy handler run by the Destroy
-// logic, which must not wait (a wait warns and halts it). Returns the number
-// of ops run.
-static u32 execute(Context* c, bool must_finish) {
+// Runs the context's handler until it ends or waits, or until it has run
+// VM_OPS_PER_SLICE ops. `reaction`: a reaction, which must not wait (a wait,
+// or running past the budget, warns and ends it). Returns the number of ops
+// run.
+static u32 execute(Context* c, bool reaction) {
     const u8* const code = blob;
     const u32 size = blob_size;
     s32* const st = c->stack;
-    u32 pc = c->pc;
-    u32 sp = c->sp;
-    u32 fp = c->fp;
+    const u32 base = c->r.base;
+    u32 pc = c->r.pc;
+    u32 sp = c->r.sp;
+    u32 fp = c->r.fp;
     u32 ops = 0;
     u32 at = pc; // the current op's offset, for warnings
     (void)at;    // (release builds have none)
-    c->state = CTX_RUNNING;
+    c->r.state = CTX_RUNNING;
 
 // pc is at most size here (the opcode at pc - 1 was inside the blob).
 #define OPERAND(n)                                                                                 \
     if ((n) > size - pc)                                                                           \
     goto escaped
 #define NEED(n)                                                                                    \
-    if (sp < (n))                                                                                  \
+    if (sp < base + (n))                                                                           \
     goto underflow
 #define ROOM(n)                                                                                    \
     if (sp + (n) > VM_STACK)                                                                       \
@@ -573,7 +611,7 @@ static u32 execute(Context* c, bool must_finish) {
         case VM_OP_NOP:
             break;
         case VM_OP_HALT:
-            goto halted;
+            goto ended;
         case VM_OP_PUSH8:
             OPERAND(1);
             ROOM(1);
@@ -654,7 +692,6 @@ static u32 execute(Context* c, bool must_finish) {
                           at, n, (int)sp - (int)fp);
             break;
         }
-
         // Arithmetic wraps (two's complement, done in u32: no C undefined
         // behaviour), and dividing by zero gives 0.
         case VM_OP_ADD:
@@ -766,27 +803,27 @@ static u32 execute(Context* c, bool must_finish) {
         // and RETV end the handler, whatever the stack holds.
         case VM_OP_CALL:
             OPERAND(4);
-            if (c->cp == VM_CALLS)
+            if (c->r.cp == VM_CALLS)
                 goto call_depth;
-            c->call_pc[c->cp] = pc + 4;
-            c->call_fp[c->cp] = (u8)fp;
-            c->cp++;
+            c->call_pc[c->r.cp] = pc + 4;
+            c->call_fp[c->r.cp] = (u8)fp;
+            c->r.cp++;
             fp = sp;
             pc = le32(code + pc);
             break;
         case VM_OP_RET:
         case VM_OP_RETV: {
-            if (c->cp == 0)
-                goto halted;
+            if (c->r.cp == 0)
+                goto ended;
             s32 value = 0;
             if (op == VM_OP_RETV) {
                 NEED(1);
                 value = st[--sp];
             }
             sp = fp;
-            c->cp--;
-            pc = c->call_pc[c->cp];
-            fp = c->call_fp[c->cp];
+            c->r.cp--;
+            pc = c->call_pc[c->r.cp];
+            fp = c->call_fp[c->r.cp];
             if (op == VM_OP_RETV) {
                 ROOM(1);
                 st[sp++] = value;
@@ -797,7 +834,7 @@ static u32 execute(Context* c, bool must_finish) {
             OPERAND(2);
             u32 p = code[pc], n = code[pc + 1];
             pc += 2;
-            NEED(p); // the arguments
+            NEED(p); // the arguments: in this activation
             ROOM(n);
             fp = sp - p;
             for (u32 k = 0; k < n; k++)
@@ -810,10 +847,10 @@ static u32 execute(Context* c, bool must_finish) {
             s32 n = st[--sp];
             if (n <= 0)
                 break;
-            if (must_finish)
-                goto destroy_wait;
-            c->wait_frames = n > 0xFFFF ? 0xFFFF : (u16)n;
-            c->state = CTX_WAIT_FRAMES;
+            if (reaction)
+                goto reaction_wait;
+            c->r.wait_frames = n > 0xFFFF ? 0xFFFF : (u16)n;
+            c->r.state = CTX_WAIT_FRAMES;
             goto suspend;
         }
         case VM_OP_WAIT_ANIM:
@@ -827,21 +864,17 @@ static u32 execute(Context* c, bool must_finish) {
             }
             if (anim_finished(c->self))
                 break;
-            if (must_finish)
-                goto destroy_wait;
-            c->state = CTX_WAIT_ANIM;
+            if (reaction)
+                goto reaction_wait;
+            c->r.state = CTX_WAIT_ANIM;
             goto suspend;
         case VM_OP_WAIT_MOVE:
             if (!path_active(c->self))
                 break;
-            if (must_finish)
-                goto destroy_wait;
-            c->state = CTX_WAIT_MOVE;
+            if (reaction)
+                goto reaction_wait;
+            c->r.state = CTX_WAIT_MOVE;
             goto suspend;
-        case VM_OP_INTERRUPTIBLE: // no effect in a thread: no event reaches one
-            NEED(1);
-            c->interruptible = st[--sp] != 0;
-            break;
 
         case VM_OP_SELF:
             ROOM(1);
@@ -853,7 +886,7 @@ static u32 execute(Context* c, bool must_finish) {
             break;
         case VM_OP_OTHER:
             ROOM(1);
-            st[sp++] = c->other;
+            st[sp++] = c->r.other;
             break;
         case VM_OP_GETP: {
             OPERAND(1);
@@ -882,7 +915,7 @@ static u32 execute(Context* c, bool must_finish) {
             pc += 2;
             s32 y = st[--sp], x = st[--sp];
             st[sp++] = spawn(object, x, y, at);
-            if (c->state != CTX_RUNNING)
+            if (c->r.state != CTX_RUNNING)
                 return ops; // halted from outside (cannot happen today)
             break;
         }
@@ -902,7 +935,6 @@ static u32 execute(Context* c, bool must_finish) {
                 enqueue(e, ENTITY_NONE, VM_EV_DESTROY);
             break;
         }
-
         case VM_OP_SYS: {
             OPERAND(1);
             u32 fn = code[pc];
@@ -910,7 +942,7 @@ static u32 execute(Context* c, bool must_finish) {
             if (fn >= VM_SYS_COUNT) {
                 WARN_ONCE(WARN_SYS, "vm: SYS at 0x%x: no engine call %u (0 to %d); halted", at, fn,
                           VM_SYS_COUNT - 1);
-                goto halted;
+                goto ended;
             }
             u32 n = sys_arity[fn];
             NEED(n);
@@ -919,7 +951,7 @@ static u32 execute(Context* c, bool must_finish) {
             for (u32 k = 0; k < n; k++)
                 args[k] = st[sp + k];
             s32 result = sys_call(fn, args);
-            if (c->state != CTX_RUNNING)
+            if (c->r.state != CTX_RUNNING)
                 return ops; // halted from outside (cannot happen today)
             if (SYS_RETURNS & 1u << fn)
                 st[sp++] = result; // room: every call with a result pops an argument
@@ -936,7 +968,7 @@ static u32 execute(Context* c, bool must_finish) {
 #ifdef SERVAL_DEBUG
             u32 index = le16(code + pc);
             const char* s = index < string_count ? string_of(index) : "?";
-            if (sp)
+            if (sp > base)
                 debug_log(text_format("vm: %s %d", s, (int)st[sp - 1]));
             else
                 debug_log(text_format("vm: %s", s));
@@ -947,7 +979,7 @@ static u32 execute(Context* c, bool must_finish) {
 
         default:
             WARN_ONCE(WARN_UNKNOWN_OP, "vm: unknown opcode 0x%x at 0x%x; halted", op, at);
-            goto halted;
+            goto ended;
         }
     }
 
@@ -961,74 +993,115 @@ escaped:
               "vm: a script ran out of the blob at 0x%x (%u bytes): a bad jump or call, or a "
               "handler without HALT at its end; halted",
               at, size);
-    goto halted;
+    goto ended;
 overflow:
     WARN_ONCE(WARN_OVERFLOW, "vm: stack overflow at 0x%x (more than %d cells); halted", at,
               VM_STACK);
-    goto halted;
+    goto ended;
 underflow:
     WARN_ONCE(WARN_UNDERFLOW, "vm: stack underflow at 0x%x (opcode 0x%x needs more cells); halted",
               at, (u32)code[at]);
-    goto halted;
+    goto ended;
 call_depth:
     WARN_ONCE(WARN_CALL_DEPTH, "vm: CALL at 0x%x is nested more than %d deep; halted", at,
               VM_CALLS);
-    goto halted;
-destroy_wait:
-    WARN_ONCE(WARN_DESTROY_WAIT,
-              "vm: a Destroy handler waits at 0x%x; it must run to completion, so it is halted",
-              at);
-    goto halted;
+    goto ended;
+reaction_wait:
+#ifdef SERVAL_DEBUG
+    WARN_ONCE(WARN_REACTION_WAIT,
+              "vm: a %s reaction waits at 0x%x; only Create and Room Start may wait, so it is "
+              "halted",
+              event_names[c->r.event], at);
+#endif
+    goto ended;
 budget: // the op at `at` is not run
 #ifdef SERVAL_DEBUG
-    if (first_warning(must_finish ? WARN_DESTROY_BUDGET : WARN_BUDGET))
-        SERVAL_WARN("vm: a %s handler ran %d ops in one phase (an endless loop?); it %s at 0x%x",
-                    event_names[c->event], VM_OPS_PER_SLICE,
-                    must_finish ? "is halted (Destroy can't wait)" : "waits a frame", at);
+    if (first_warning(reaction ? WARN_REACTION_BUDGET : WARN_BUDGET))
+        SERVAL_WARN("vm: a %s %s ran %d ops in one phase (an endless loop?); it %s at 0x%x",
+                    event_names[c->r.event], reaction ? "reaction" : "behaviour", VM_OPS_PER_SLICE,
+                    reaction ? "is halted (reactions can't wait)" : "waits a frame", at);
 #endif
-    if (must_finish)
-        goto halted;
-    c->wait_frames = 1;
-    c->state = CTX_WAIT_FRAMES;
+    if (reaction)
+        goto ended;
+    c->r.wait_frames = 1;
+    c->r.state = CTX_WAIT_FRAMES;
     goto suspend;
 suspend:
-    c->pc = pc;
-    c->sp = (u8)sp;
-    c->fp = (u8)fp;
+    c->r.pc = pc;
+    c->r.sp = (u8)sp;
+    c->r.fp = (u8)fp;
     return ops;
-halted:
-    halt(c);
+ended:
+    finish(c);
     return ops;
 }
 
-static void run(Context* c, bool must_finish) {
-    ops_frame += execute(c, must_finish);
+static void run(Context* c, bool reaction) {
+    ops_frame += execute(c, reaction);
 }
 
 // --- Scheduler ---------------------------------------------------------------
 
-// The Destroy logic (KILL, vm_kill): runs e's Destroy handler to completion
-// if it is attached, then destroys it.
+// The return points of a behaviour that waits inside a CALL, while a reaction
+// runs on top of it: the reaction's own calls start at depth 0, in the same
+// slots. One set is enough, as for `below`: reactions don't nest.
+SERVAL_EWRAM_BSS static u32 below_call_pc[VM_CALLS];
+SERVAL_EWRAM_BSS static u8 below_call_fp[VM_CALLS];
+
+// Runs a reaction of slot's attached entity to completion: on top of its
+// behaviour if one waits (it always does, if it has one: no script runs while
+// events are dispatched), else in a context of its own, freed when it ends.
+static void react(u32 slot, u32 handler, Entity other, u32 event) {
+    u32 live = bound_context[slot];
+    if (!live) {
+        Context* c = start_context(handler, bound[slot], other, event, CTX_RUNNING);
+        if (c)
+            run(c, true);
+        return;
+    }
+    Context* c = &contexts[live - 1];
+    u32 depth = c->r.cp;
+    for (u32 k = 0; k < depth; k++) {
+        below_call_pc[k] = c->call_pc[k];
+        below_call_fp[k] = c->call_fp[k];
+    }
+    c->below = c->r;
+    c->stacked = true;
+    u8 top = c->r.sp;
+    c->r = (Registers){.pc = handler,
+                       .other = other,
+                       .state = CTX_RUNNING,
+                       .event = (u8)event,
+                       .sp = top,
+                       .fp = top,
+                       .base = top};
+    run(c, true);
+    if (c->r.state < CTX_WAIT_FRAMES)
+        return; // the behaviour was halted meanwhile (cannot happen today)
+    for (u32 k = 0; k < depth; k++) {
+        c->call_pc[k] = below_call_pc[k];
+        c->call_fp[k] = below_call_fp[k];
+    }
+}
+
+// The Destroy logic (KILL, vm_kill): runs e's Destroy reaction if it is
+// attached (on top of its behaviour if that waits), then halts the behaviour,
+// unbinds e and destroys it.
 static void destroy(Entity e) {
     if (!entity_alive(e))
         return;
     u32 slot = entity_index(e);
     if (attached(slot)) {
-        u32 live = bound_context[slot];
-        if (live)
-            halt(&contexts[live - 1]);
         u32 handler = handler_of(bound_object[slot], VM_EV_DESTROY);
-        if (handler) {
-            Context* c = start_context(handler, e, ENTITY_NONE, VM_EV_DESTROY, CTX_RUNNING);
-            if (c)
-                run(c, true);
-        }
-        unbind(slot);
+        if (handler)
+            react(slot, handler, ENTITY_NONE, VM_EV_DESTROY);
+        unbind(slot); // halts the behaviour
     }
     entity_destroy(e);
 }
 
-// Runs a queued event's handler for e (any event but Destroy).
+// Runs a queued event's handler for e (any event but Destroy): a behaviour
+// replaces e's live one, a reaction runs to completion.
 static void dispatch(Entity e, Entity other, u32 event) {
     if (!entity_alive(e))
         return;
@@ -1036,28 +1109,18 @@ static void dispatch(Entity e, Entity other, u32 event) {
     if (!attached(slot))
         return;
     // Drained, whether it runs, has no handler or is dropped below: the
-    // entity's Step handler may run from now on.
+    // entity's Step reaction may run from now on.
     if (event == VM_EV_CREATE)
         bound_flags[slot] &= (u8)~BIND_CREATE_PENDING;
     u32 handler = handler_of(bound_object[slot], event);
     if (!handler)
         return;
-    if (bound_context[slot]) {
-        Context* live = &contexts[bound_context[slot] - 1];
-        // One script per entity: the event is dropped, unless the script
-        // waits and has made itself INTERRUPTIBLE; then the event replaces it.
-        if (!live->interruptible || live->state < CTX_WAIT_FRAMES) {
-#ifdef SERVAL_DEBUG
-            WARN_ONCE(WARN_DROPPED,
-                      "vm: entity %u's script is still running (or waiting), so its %s event "
-                      "is dropped (one script per entity; INTERRUPTIBLE lets events cut into "
-                      "its waits)",
-                      slot, event_names[event]);
-#endif
-            return;
-        }
-        halt(live);
+    if (!(BEHAVIOUR_EVENTS & 1u << event)) {
+        react(slot, handler, other, event);
+        return;
     }
+    if (bound_context[slot])
+        halt(&contexts[bound_context[slot] - 1]); // at most one behaviour per instance
     Context* c = start_context(handler, e, other, event, CTX_RUNNING);
     if (c)
         run(c, false);
@@ -1098,13 +1161,26 @@ static void queue_anim_ends(void) {
     }
 }
 
+// True (warning) if a phase, or vm_kill's Destroy logic, is running: a phase
+// started from inside one (by C code a script reached) would dispatch events
+// to a context whose script is running.
+static bool nested_phase(const char* who) {
+    (void)who; // only for warnings
+    if (!in_phase)
+        return false;
+    WARN_ONCE(WARN_NESTED_PHASE, "%s: called during vm_step, vm_events or vm_kill; ignored", who);
+    return true;
+}
+
 void vm_step(void) {
+    if (nested_phase("vm_step"))
+        return;
     ops_frame = 0;
     in_phase = true;
     // Resume pass: each context once, in pool order.
     for (u32 k = 0; k < VM_CONTEXTS; k++) {
         Context* c = &contexts[k];
-        if (c->state == CTX_FREE)
+        if (c->r.state == CTX_FREE)
             continue;
         if (c->self != ENTITY_NONE && !entity_alive(c->self)) {
             u32 slot = entity_index(c->self);
@@ -1114,12 +1190,12 @@ void vm_step(void) {
             continue;
         }
         bool resume;
-        switch (c->state) {
+        switch (c->r.state) {
         case CTX_READY:
             resume = true;
             break;
         case CTX_WAIT_FRAMES:
-            resume = --c->wait_frames == 0;
+            resume = --c->r.wait_frames == 0;
             break;
         case CTX_WAIT_ANIM:
             // The game may have switched self to a sprite without a one-shot
@@ -1130,7 +1206,7 @@ void vm_step(void) {
                 WARN_ONCE(WARN_WAIT_ANIM,
                           "vm: WAIT_ANIM at 0x%x: self no longer has a one-shot animation to "
                           "wait for (its sprite or components changed); not waiting",
-                          c->pc - 1);
+                          c->r.pc - 1);
                 resume = true;
             }
             break;
@@ -1146,23 +1222,22 @@ void vm_step(void) {
     }
     queue_anim_ends();
     drain(); // Creates queued since the last phase run before their first Step
-    // Step handlers, in entity order, for attached entities with no live
-    // context whose Create has been drained.
+    // Step reactions, in entity order, for attached entities whose Create has
+    // been drained: on top of their behaviour if it waits.
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
-        if (!attached(slot) || bound_context[slot] || (bound_flags[slot] & BIND_CREATE_PENDING))
+        if (!attached(slot) || (bound_flags[slot] & BIND_CREATE_PENDING))
             continue;
         u32 handler = handler_of(bound_object[slot], VM_EV_STEP);
-        if (!handler)
-            continue;
-        Context* c = start_context(handler, bound[slot], ENTITY_NONE, VM_EV_STEP, CTX_RUNNING);
-        if (c)
-            run(c, false);
+        if (handler)
+            react(slot, handler, ENTITY_NONE, VM_EV_STEP);
     }
-    drain(); // events the Step handlers queued, e.g. the Create of an entity they spawned
+    drain(); // events the Step reactions queued, e.g. the Create of an entity they spawned
     in_phase = false;
 }
 
 void vm_events(void) {
+    if (nested_phase("vm_events"))
+        return;
     in_phase = true;
     drain();
     in_phase = false;
@@ -1200,10 +1275,15 @@ void vm_kill(Entity e) {
         WARN_ONCE(WARN_VM_KILL_NONE, "vm_kill: ENTITY_NONE; ignored");
         return;
     }
-    if (in_phase)
+    if (in_phase) {
         enqueue(e, ENTITY_NONE, VM_EV_DESTROY);
-    else
-        destroy(e);
+        return;
+    }
+    // The Destroy reaction runs now; while it does, this counts as a phase
+    // (loads are refused, vm_kill queues, vm_step and vm_events don't nest).
+    in_phase = true;
+    destroy(e);
+    in_phase = false;
 }
 
 int vm_start(u16 object, u8 event) {
@@ -1232,7 +1312,7 @@ void vm_event(Entity e, Entity other, u8 event) {
                   (u32)event);
         return;
     }
-    // Destroy is exactly KILL: queued, `other` unused (the handler's OTHER is
+    // Destroy is exactly KILL: queued, `other` unused (the reaction's OTHER is
     // 0), and no entity at all warns.
     if (event == VM_EV_DESTROY && e == ENTITY_NONE) {
         WARN_ONCE(WARN_EVENT_DESTROY_NONE, "vm_event: Destroy for ENTITY_NONE; ignored");
@@ -1322,13 +1402,15 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
 // attached to objects b still has. Leaves the globals alone.
 static void install(const u8* b, u32 size, bool keep) {
     u32 objects = b ? le16(b + 8) : 0;
-    for (u32 k = 0; k < VM_CONTEXTS; k++)
-        contexts[k].state = CTX_FREE;
+    for (u32 k = 0; k < VM_CONTEXTS; k++) {
+        contexts[k].r.state = CTX_FREE;
+        contexts[k].stacked = false;
+    }
     queue_head = queue_count = 0;
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
         bound_context[slot] = 0;
         // A binding kept by a hot reload lost its queued Create with the queue:
-        // its Step handler must not wait for it.
+        // its Step reaction must not wait for it.
         bound_flags[slot] &= (u8)~BIND_CREATE_PENDING;
         if (!(keep && attached(slot) && bound_object[slot] < objects))
             bound[slot] = ENTITY_NONE;
@@ -1341,16 +1423,18 @@ static void install(const u8* b, u32 size, bool keep) {
     global_count = b ? le16(b + 12) : 0;
 }
 
-// True (warning) if a phase is running: vm_load, vm_reload and vm_unload
-// would pull the blob, contexts and queue from under the running script.
-// Scripts can't call them in v1 (no SYS call leads there), so only game C code
-// run from inside vm_step or vm_events could; it is refused.
+// True (warning) if a phase (or vm_kill's Destroy logic) is running: vm_load,
+// vm_reload and vm_unload would pull the blob, contexts and queue from under
+// the running script. Scripts can't call them in v1 (no SYS call leads there),
+// so only game C code run from inside vm_step, vm_events or vm_kill could; it
+// is refused.
 static bool loading_in_phase(const char* who) {
     (void)who; // only for warnings
     if (!in_phase)
         return false;
     WARN_ONCE(WARN_LOAD_IN_PHASE,
-              "%s: called during vm_step or vm_events; ignored (load between frames)", who);
+              "%s: called during vm_step, vm_events or vm_kill; ignored (load between frames)",
+              who);
     return true;
 }
 
@@ -1423,7 +1507,7 @@ bool vm_idle(void) {
     if (queue_count)
         return false;
     for (u32 k = 0; k < VM_CONTEXTS; k++) {
-        if (contexts[k].state != CTX_FREE)
+        if (contexts[k].r.state != CTX_FREE)
             return false;
     }
     return true;

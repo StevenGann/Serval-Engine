@@ -19,9 +19,10 @@
 ;                              never right on the serval
 ;   Player: Create, Step       the D-pad sets its velocity; walk or stand
 ;   Firefly: Create            wanders along random paths until its time is
-;                              up, then fades out; Collision: caught (score,
-;                              chime, sparkle, a jingle every 10); Destroy:
-;                              one fewer alive
+;                              up, then fades out (its behaviour: it waits);
+;                              Collision: caught (score, chime, sparkle, a
+;                              jingle every 10), a reaction that runs on top
+;                              of the waiting Create; Destroy: one fewer alive
 ;   Sparkle: Create, Anim End  a burst that removes itself when it's done
 ;   Resting: Create            the serval sitting down when time is up
 ;
@@ -432,7 +433,9 @@ same:
 
 ; --- Firefly -------------------------------------------------------------------------
 
-; Create, then its whole life. Local 0: flights left.
+; Create, then its whole life: its behaviour, which waits. A catch
+; (Collision) runs on top of it while it waits, and the Destroy that follows
+; ends it. Local 0: flights left.
 .handler FIREFLY CREATE
     ENTER 0, 1             ; local 0
     SELF                   ; e
@@ -457,11 +460,6 @@ same:
     PUSH FLIGHTS_MAX       ; lo hi
     SYS RANDOM_RANGE       ; flights
     STL 0                  ;
-    ; From here on a catch (Collision) may cut into this handler's waits:
-    ; without it, the event would be dropped, since the firefly's script is
-    ; always waiting (one script per entity).
-    PUSH 1        ; 1
-    INTERRUPTIBLE ;
 wander:
     LDG PLAYING                       ; playing
     JZ fade                           ; the round is over
@@ -497,7 +495,8 @@ fade:
     KILL                  ;
     HALT                  ;
 
-; Collision: the serval (OTHER) caught it.
+; Collision: the serval (OTHER) caught it. A reaction: it runs to its end,
+; on top of the Create's wait.
 .handler FIREFLY COLLISION
     LDG SCORE        ; score
     PUSH 1           ; score 1

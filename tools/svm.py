@@ -126,7 +126,6 @@ OPERANDS = {
     "WAIT": NONE,
     "WAIT_ANIM": NONE,
     "WAIT_MOVE": NONE,
-    "INTERRUPTIBLE": NONE,
     "SELF": NONE,
     "OTHER": NONE,
     "GETP": (("u8", "prop"),),

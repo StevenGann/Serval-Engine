@@ -2,19 +2,24 @@
 #define SERVAL_VM_H
 
 // The bytecode VM: objects with event handlers (GameMaker's model), run as
-// cooperative scripts with no allocation. The editor's script compiler emits
+// cooperative scripts with no allocation. A compiler (the Lua subset of
+// docs/lua.md, Studio Advance's event editor through it) or tools/svm.py emits
 // a script blob in the format specified in docs/vm.md, the source of truth
 // for every number below; this header only names them.
+//
+// Create and Room Start start an instance's behaviour, a script that may wait;
+// every other event is a reaction that runs to completion, on top of the
+// behaviour if it waits (docs/vm.md "Behaviours and reactions").
 //
 //     vm_load(game_scripts, sizeof game_scripts);
 //     Entity e = entity_create(C_POS | C_SPR);
 //     vm_attach(e, OBJ_PLAYER); // its Create handler runs in the next phase
 //     for (;;) {
 //         frame_begin();
-//         vm_step();            // waits, queued events, Step handlers
+//         vm_step();            // waits, queued events, Step reactions
 //         sys_movement();
 //         sys_physics();
-//         vm_events();          // collision handlers (vm_event from game code)
+//         vm_events();          // Collision reactions (vm_event from game code)
 //         sys_animate();
 //         sys_render();
 //         frame_end();
@@ -31,7 +36,7 @@
 #define VM_CALLS 16          // CALL depth per context
 #define VM_GLOBALS 256       // global cells shared by all scripts
 #define VM_EVENT_QUEUE 32    // events waiting for dispatch
-#define VM_OPS_PER_SLICE 256 // opcodes a context may run in one phase
+#define VM_OPS_PER_SLICE 256 // opcodes a script may run in one phase
 
 // --- Blob format (docs/vm.md#blob-format) ------------------------------------
 
@@ -100,10 +105,9 @@ enum {
     VM_OP_RETV = 0x2D,
     VM_OP_ENTER = 0x2E, // u8 p, u8 n: the frame's arguments and locals
 
-    VM_OP_WAIT = 0x30,
+    VM_OP_WAIT = 0x30, // waits are for behaviours; 0x33 is unassigned
     VM_OP_WAIT_ANIM = 0x31,
     VM_OP_WAIT_MOVE = 0x32,
-    VM_OP_INTERRUPTIBLE = 0x33,
 
     VM_OP_SELF = 0x38,
     VM_OP_OTHER = 0x39,
@@ -183,17 +187,20 @@ void vm_bind(const VmBindings* bindings);
 
 // --- Entities and events -----------------------------------------------------
 
-// Binds an entity to an object and queues its Create event. Its Step handler
-// first runs once that Create has been dispatched.
+// Binds an entity to an object and queues its Create event (one, however often
+// it is attached before that is drained). Its Step reaction first runs once
+// that Create has been dispatched.
 void vm_attach(Entity e, u16 object);
 // Halts the entity's script and unbinds it; no Destroy event.
 void vm_detach(Entity e);
-// Runs the entity's Destroy handler (if any) to completion, then destroys it.
-// Use this, or vm_detach, instead of entity_destroy for attached entities.
+// Runs the entity's Destroy reaction (if any), then halts its behaviour and
+// destroys it. Use this, or vm_detach, instead of entity_destroy for attached
+// entities.
 void vm_kill(Entity e);
 // Starts an object's handler as a thread with no entity (self is
-// ENTITY_NONE). It first runs in the next vm_step(). Returns the context
-// index, or -1 (and warns) if there is no such handler or no free context.
+// ENTITY_NONE), a behaviour. It first runs in the next vm_step(). Returns the
+// context index, or -1 (and warns) if there is no such handler or no free
+// context.
 int vm_start(u16 object, u8 event);
 // Queues an event for an entity: game code reports collisions this way,
 // e.g. vm_event(a, b, VM_EV_COLLISION) after body_overlap(a, b).

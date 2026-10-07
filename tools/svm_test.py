@@ -428,7 +428,6 @@ ahead:
     WAIT
     WAIT_ANIM
     WAIT_MOVE
-    INTERRUPTIBLE
     SELF
     OTHER
     GETP BODY_H
@@ -535,6 +534,8 @@ class OperandTable(unittest.TestCase):
             with self.subTest(mnemonic=mnemonic):
                 self.assertEqual(svm.operand_size(mnemonic), size)
         self.assertEqual(VM.ops["ENTER"], 0x2E)
+        self.assertNotIn("INTERRUPTIBLE", VM.ops)
+        self.assertNotIn(0x33, VM.op_names)  # unassigned
 
 
 class GeneratedFiles(unittest.TestCase):
