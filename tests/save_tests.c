@@ -398,7 +398,8 @@ static void power_loss_keeps_the_old_save_on(void) {
 }
 ON_EVERY_LAYOUT(power_loss_keeps_the_old_save)
 
-// The same for erasing: the slot reads as before or as empty.
+// The same for erasing: the slot reads as before or as empty. Also when the
+// newer copy is damaged, so that the slot holds the older one.
 static void power_loss_during_erase_on(void) {
     TestSave first = make_save(1), second = make_save(2), loaded;
     u32 slot = slot_n(5);
@@ -406,22 +407,27 @@ static void power_loss_during_erase_on(void) {
     begin(0xFF);
     u32 per_copy = kind == KIND_EEPROM ? 1 : 4;
     end();
-    for (u32 cut = 0; cut <= 2 * per_copy; cut++) {
-        begin(0xFF);
-        CHECK(save_write(slot, &first, sizeof first, 1));
-        CHECK(save_write(slot, &second, sizeof second, 1));
-        power = cut;
-        steps = 0;
-        save_erase(slot);
-        power = 0xFFFFFFFFu;
-        int result = save_read(slot, &loaded, sizeof loaded, 1);
-        // The older copy is cleared first; once the newer copy's magic is
-        // touched, the slot is empty.
-        if (steps > per_copy)
-            CHECK(result == SAVE_EMPTY);
-        else
-            CHECK(result == SAVE_OK && same(&loaded, &second, sizeof second));
-        end();
+    for (u32 damaged = 0; damaged <= 1; damaged++) {
+        const TestSave* held = damaged ? &first : &second;
+        for (u32 cut = 0; cut <= 2 * per_copy; cut++) {
+            begin(0xFF);
+            CHECK(save_write(slot, &first, sizeof first, 1));   // copy A
+            CHECK(save_write(slot, &second, sizeof second, 1)); // copy B, the newer
+            if (damaged)
+                memory[copy_offset(slot, 1) + SAVE_HEADER_SIZE] ^= 0x01;
+            power = cut;
+            steps = 0;
+            save_erase(slot);
+            power = 0xFFFFFFFFu;
+            int result = save_read(slot, &loaded, sizeof loaded, 1);
+            // The copy the slot doesn't read from is cleared first; once the
+            // other one's magic is touched, the slot is empty.
+            if (steps > per_copy)
+                CHECK(result == SAVE_EMPTY);
+            else
+                CHECK(result == SAVE_OK && same(&loaded, held, sizeof loaded));
+            end();
+        }
     }
 }
 ON_EVERY_LAYOUT(power_loss_during_erase)

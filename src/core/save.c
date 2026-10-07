@@ -25,8 +25,9 @@
 // old save stays the slot's save; then it reads everything back. On EEPROM,
 // whose writes are 8-byte blocks, the last write is the block holding the
 // magic and the sequence number, and the one before it the block with the
-// version, size and CRC. save_erase() clears the magic of the older copy
-// first, then the newer one, so it is all or nothing too.
+// version, size and CRC. save_erase() clears the magic of the copy a read
+// doesn't return first, then that of the one it does, so it is all or
+// nothing too.
 
 #include "serval/save.h"
 
@@ -386,23 +387,22 @@ u32 save_slot_size(u32 slot) {
 void save_erase(u32 slot) {
     if (!slot_ok(FN_ERASE, slot))
         return;
-    u32 first = slot * 2;
-    Header a = {0}, b = {0};
-    bool has_a = read_header(first, &a), has_b = read_header(first + 1, &b);
-    if (!has_a && !has_b)
+    u32 first = slot * 2, last = first;
+    Header h;
+    bool present[2] = {read_header(first, &h), read_header(first + 1, &h)};
+    if (!present[0] && !present[1])
         return;
-    // The older copy first: if power fails in between, the slot still reads
-    // as before the erase.
-    if (has_a && has_b && (s32)(b.seq - a.seq) > 0) {
-        clear_magic(first);
-        clear_magic(first + 1);
-    } else {
-        if (has_b)
-            clear_magic(first + 1);
-        if (has_a)
-            clear_magic(first);
-    }
-    if (read_header(first, &a) || read_header(first + 1, &b))
+    // The copy a read returns is cleared last (if the slot reads as corrupt,
+    // either order does): if power fails in between, the slot still reads as
+    // before the erase. That isn't always the newer copy: if the newer one is
+    // damaged, a read returns the older.
+    find_save(slot, &last, &h);
+    u32 other = last ^ 1;
+    if (present[other - first])
+        clear_magic(other);
+    if (present[last - first])
+        clear_magic(last);
+    if (read_header(first, &h) || read_header(first + 1, &h))
         warn_not_written(FN_ERASE, slot);
     flush();
 }
