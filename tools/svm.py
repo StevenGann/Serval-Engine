@@ -41,10 +41,10 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        code
 
 Operands, separated by commas: GETP and SETP take a property (X, BODY_W,
-...), SYS an engine call (TEXT_PRINT, ...), SPAWN an object, TRACE a string,
-LDG and STG a global, LDL and STL a number, ENTER two numbers (ENTER 0, 3),
-JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an expression; a number or an
-expression works wherever a name does. In expressions, objects,
+FIELD0, ...), SYS an engine call (TEXT_PRINT, ...), SPAWN and NEXTI an object,
+TRACE a string, LDG and STG a global, LDL, STL, LDA, STA and LEN a number,
+ENTER two numbers (ENTER 0, 3), JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an
+expression; a number or an expression works wherever a name does. In expressions, objects,
 strings and globals are named OBJ_NAME, STR_NAME and G_NAME, as the header
 --defs writes them. Expressions: integers (decimal or 0x hex, a trailing u
 ignored), names (the listing's, then --header constants in the order given,
@@ -92,6 +92,9 @@ OPERANDS = {
     "STG": (("u8", "global"),),
     "LDL": (("u8", None),),
     "STL": (("u8", None),),
+    "LDA": (("u16", None),),
+    "STA": (("u16", None),),
+    "LEN": (("u16", None),),
     "ADD": NONE,
     "SUB": NONE,
     "MUL": NONE,
@@ -132,6 +135,7 @@ OPERANDS = {
     "SETP": (("u8", "prop"),),
     "SPAWN": (("u16", "object"),),
     "KILL": NONE,
+    "NEXTI": (("u16", "object"),),
     "SYS": (("u8", "sys"),),
     "BRK": NONE,
     "TRACE": (("u16", "string"),),
@@ -518,6 +522,8 @@ class Vm:
             self.header_size = names["VM_HEADER_SIZE"]
             self.object_size = names["VM_OBJECT_SIZE"]
             self.max_globals = names["VM_GLOBALS"]
+            self.field0 = names["VM_P_FIELD0"]
+            self.fields = names["VM_FIELDS"]
             self.event_count = names["VM_EV_COUNT"]
             self.prop_count = names["VM_P_COUNT"]
             self.sys_count = names["VM_SYS_COUNT"]
@@ -528,6 +534,8 @@ class Vm:
         self.op_names = {v: n for n, v in self.ops.items()}
         self.event_names = {v: n for n, v in self.events.items()}
         self.prop_names = {v: n for n, v in self.props.items()}
+        for k in range(1, self.fields):  # the instance fields after the first
+            self.prop_names[self.field0 + k] = f"VM_P_FIELD0 + {k}"
         self.sys_names = {v: n for n, v in self.sys.items()}
 
 
@@ -946,8 +954,10 @@ class Assembler:
         elif names == "global" and value >= len(self.globals):
             self.warn(f"global {value} is past the {len(self.globals)} declared "
                       "(the header's count only matters to vm_reload)")
-        elif names == "prop" and value >= self.vm.prop_count:
-            self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1})")
+        elif names == "prop" and not (value < self.vm.prop_count or
+                                      0 <= value - self.vm.field0 < self.vm.fields):
+            self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1}, "
+                      f"fields {self.vm.field0} to {self.vm.field0 + self.vm.fields - 1})")
         elif names == "sys" and value >= self.vm.sys_count:
             self.warn(f"engine call {value} is not in vm.h's page (0 to {self.vm.sys_count - 1})")
         return value

@@ -70,22 +70,33 @@ typedef struct {
 
 SERVAL_EWRAM_BSS static Context contexts[VM_CONTEXTS];
 SERVAL_EWRAM_BSS static s32 globals[VM_GLOBALS];
+SERVAL_EWRAM_BSS static s32 array_cells[VM_ARRAY_CELLS]; // the RAM arrays' pool
 SERVAL_EWRAM_BSS static QueuedEvent queue[VM_EVENT_QUEUE];
 // Bindings, by entity slot: the attached entity's handle (ENTITY_NONE: none),
-// its object, its live context + 1 (0: none) and its BIND_* flags.
+// its object, its live context + 1 (0: none), its BIND_* flags and its
+// instance fields.
 SERVAL_EWRAM_BSS static Entity bound[MAX_ENT];
 SERVAL_EWRAM_BSS static u16 bound_object[MAX_ENT];
 SERVAL_EWRAM_BSS static u8 bound_context[MAX_ENT];
 SERVAL_EWRAM_BSS static u8 bound_flags[MAX_ENT];
+SERVAL_EWRAM_BSS static s32 fields[MAX_ENT][VM_FIELDS];
 
 enum {
     BIND_CREATE_PENDING = 1, // its Create is queued: no Step reaction yet
     BIND_ANIM_DONE = 2,      // anim_finished() at the latest Animation End check
 };
 
+// Bytes per element of each kind of array (docs/vm.md "Array table"); RAM
+// arrays are cells of the pool.
+static const u8 element_size[VM_ARRAY_KIND_COUNT] = {
+    [VM_ARRAY_RAM] = 0, [VM_ARRAY_S8] = 1,  [VM_ARRAY_U8] = 1,
+    [VM_ARRAY_S16] = 2, [VM_ARRAY_U16] = 2, [VM_ARRAY_S32] = 4};
+
 static const u8* blob; // the loaded blob; NULL: none
 static u32 blob_size;
-static u32 object_count, string_count, global_count;
+static u32 object_count, string_count, global_count, array_count;
+static u32 array_table; // blob offset of the array table
+static u32 ram_layout;  // fingerprint of the RAM arrays' layout, for vm_reload
 static VmBindings bindings;
 static u32 queue_head, queue_count;
 static u32 ops_frame; // vm_ops_this_frame()
@@ -114,14 +125,19 @@ enum {
     WARN_BUDGET,
     WARN_REACTION_BUDGET,
     WARN_LOCAL,
+    WARN_ARRAY,
+    WARN_ARRAY_INDEX,
+    WARN_ARRAY_ROM,
     WARN_SELF,
     WARN_WAIT_ANIM,
     WARN_REACTION_WAIT,
     WARN_PROPERTY,
     WARN_PROP_ENTITY,
     WARN_PROP_COMPONENT,
+    WARN_FIELD_UNATTACHED,
     WARN_SPAWN_OBJECT,
     WARN_SPAWN_FULL,
+    WARN_NEXTI_OBJECT,
     WARN_KILL_NONE,
     WARN_SYS,
     WARN_SONG,
@@ -242,11 +258,18 @@ static void finish(Context* c) {
     }
 }
 
-// Detaches slot's entity, halting its live context.
+static void clear_fields(u32 slot) {
+    for (u32 k = 0; k < VM_FIELDS; k++)
+        fields[slot][k] = 0;
+}
+
+// Detaches slot's entity, halting its live context and clearing its instance
+// fields.
 static void unbind(u32 slot) {
     u32 live = bound_context[slot];
     bound_context[slot] = 0;
     bound[slot] = ENTITY_NONE;
+    clear_fields(slot);
     if (live)
         halt(&contexts[live - 1]);
 }
@@ -321,7 +344,9 @@ static bool create_queued(Entity e) {
 // Attaches a live entity to a valid object and queues its Create, unless one
 // is queued already (attaching twice before a drain queues one Create). Its
 // Step reaction waits until that Create is drained; a Create the full queue
-// drops is never drained, so it doesn't hold Step back.
+// drops is never drained, so it doesn't hold Step back. Its instance fields
+// start at zero: an unattached slot's always are (unbind and install clear
+// them).
 static void bind(Entity e, u32 object) {
     u32 slot = entity_index(e);
     if (attached(slot))
@@ -335,21 +360,32 @@ static void bind(Entity e, u32 object) {
 
 // --- Entities ----------------------------------------------------------------
 
-static const u32 prop_component[VM_P_COUNT] = {C_POS, C_POS, C_VEL, C_VEL, C_SPR,  C_SPR,
-                                               C_SPR, C_SPR, C_SPR, C_SPR, C_BODY, C_BODY};
+// The component each engine property belongs to (0: none, VM_P_TAGS).
+static const u32 prop_component[VM_P_COUNT] = {C_POS,  C_POS,  C_VEL, C_VEL,  C_SPR,
+                                               C_SPR,  C_SPR,  C_SPR, C_SPR,  C_SPR,
+                                               C_BODY, C_BODY, 0,     C_ANIM, C_ANIM};
 // A property appended to vm.h without a row here would silently get component 0
 // (no warning when it's missing) and fall into set_prop's default case.
-_Static_assert(VM_P_COUNT == 12, "add the new property to prop_component, get_prop and set_prop");
+_Static_assert(VM_P_COUNT == 15, "add the new property to prop_component, get_prop and set_prop");
+_Static_assert(VM_P_FIELD0 >= VM_P_COUNT && VM_P_FIELD0 + VM_FIELDS <= 256,
+               "the instance fields follow the engine properties, within a u8 operand");
+
+// VM_P_TAGS: C_GAME(0) to C_GAME(14) of ent_mask, as bits 0 to 14.
+#define TAG_SHIFT 16
+#define TAG_BITS 0x7FFFu
+_Static_assert(C_GAME(0) == 1u << TAG_SHIFT && C_GAME(14) == 1u << (TAG_SHIFT + 14),
+               "VM_P_TAGS maps C_GAME(n) to bit n");
 
 // The slot of the entity in `cell` for GETP or SETP of `prop`, or -1 (warning)
-// for an unknown property or a dead entity.
+// for an unknown property, a dead entity, or a field of an unattached one.
 static int prop_slot(u32 prop, s32 cell, u32 at) {
     (void)at; // only for warnings
-    if (prop >= VM_P_COUNT) {
+    bool field = prop >= VM_P_FIELD0 && prop < VM_P_FIELD0 + VM_FIELDS;
+    if (prop >= VM_P_COUNT && !field) {
         WARN_ONCE(WARN_PROPERTY,
-                  "vm: GETP/SETP at 0x%x: no property %u (VM_P_X to VM_P_BODY_H, 0 to %d); "
-                  "reads 0, writes nothing",
-                  at, prop, VM_P_COUNT - 1);
+                  "vm: GETP/SETP at 0x%x: no property %u (VM_P_X to VM_P_ANIM_STEP are 0 to %d, "
+                  "the instance fields %d to %d); reads 0, writes nothing",
+                  at, prop, VM_P_COUNT - 1, VM_P_FIELD0, VM_P_FIELD0 + VM_FIELDS - 1);
         return -1;
     }
     Entity e = cell_entity(cell);
@@ -361,11 +397,23 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
         return -1;
     }
     u32 i = entity_index(e);
+    if (field) {
+        // e is alive in slot i, so a binding there that is still attached is
+        // e's.
+        if (!attached(i)) {
+            WARN_ONCE(WARN_FIELD_UNATTACHED,
+                      "vm: GETP/SETP at 0x%x: entity %u is not attached to an object, so it has "
+                      "no instance fields (property %u); reads 0, writes nothing",
+                      at, i, prop);
+            return -1;
+        }
+        return (int)i;
+    }
     if (!ent_has(i, prop_component[prop]))
         WARN_ONCE(WARN_PROP_COMPONENT,
                   "vm: GETP/SETP at 0x%x: entity %u lacks the component of property %u "
-                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_W/H, else C_SPR); its "
-                  "array is used anyway",
+                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_W/H, C_ANIM for "
+                  "ANIM_TIME/STEP, else C_SPR); its array is used anyway",
                   at, i, prop);
     return (int)i;
 }
@@ -394,8 +442,16 @@ static s32 get_prop(u32 i, u32 prop) {
         return spr_scale[i];
     case VM_P_BODY_W:
         return body_w[i];
-    default: // VM_P_BODY_H
+    case VM_P_BODY_H:
         return body_h[i];
+    case VM_P_TAGS:
+        return (s32)(ent_mask[i] >> TAG_SHIFT & TAG_BITS);
+    case VM_P_ANIM_TIME:
+        return spr_anim_time[i];
+    case VM_P_ANIM_STEP:
+        return spr_anim_step[i];
+    default: // an instance field (prop_slot checked)
+        return fields[i][prop - VM_P_FIELD0];
     }
 }
 
@@ -435,8 +491,21 @@ static void set_prop(u32 i, u32 prop, s32 value) {
     case VM_P_BODY_W:
         body_w[i] = (u8)value;
         break;
-    default: // VM_P_BODY_H
+    case VM_P_BODY_H:
         body_h[i] = (u8)value;
+        break;
+    case VM_P_TAGS: // only the game's components: C_ALIVE and the engine's stay
+        ent_mask[i] = (ent_mask[i] & ~(TAG_BITS << TAG_SHIFT)) | ((u32)value & TAG_BITS)
+                                                                     << TAG_SHIFT;
+        break;
+    case VM_P_ANIM_TIME:
+        spr_anim_time[i] = (u8)value;
+        break;
+    case VM_P_ANIM_STEP:
+        spr_anim_step[i] = (u8)value;
+        break;
+    default: // an instance field (prop_slot checked)
+        fields[i][prop - VM_P_FIELD0] = value;
         break;
     }
 }
@@ -468,6 +537,24 @@ static Entity spawn(u32 object, s32 x, s32 y, u32 at) {
     return e;
 }
 
+// NEXTI: the next attached instance of the object after the entity in `cell`,
+// in slot order (no entity: from the first slot), or ENTITY_NONE. Slots, not
+// handles, are compared, so an instance killed meanwhile still leads on.
+static Entity next_instance(u32 object, s32 cell, u32 at) {
+    (void)at; // only for warnings
+    if (object >= object_count) {
+        WARN_ONCE(WARN_NEXTI_OBJECT, "vm: NEXTI at 0x%x: no object %u (the blob has %u); pushes 0",
+                  at, object, object_count);
+        return ENTITY_NONE;
+    }
+    Entity e = cell_entity(cell);
+    for (u32 slot = e == ENTITY_NONE ? 0 : entity_index(e) + 1u; slot < MAX_ENT; slot++) {
+        if (bound_object[slot] == object && attached(slot))
+            return bound[slot];
+    }
+    return ENTITY_NONE;
+}
+
 // WAIT_ANIM can wait for e: it has C_SPR | C_ANIM and a one-shot sprite.
 // Checked when WAIT_ANIM runs and on every resume pass while it waits.
 static bool anim_waitable(Entity e) {
@@ -481,14 +568,62 @@ static bool anim_waitable(Entity e) {
     return serval_plausible_pointer(sprite) && (sprite->flags & SPRITE_ASSET_ANIM_ONCE);
 }
 
+// --- Arrays ------------------------------------------------------------------
+
+// Array n's 8-byte record, or NULL (warning) if the blob has no array n.
+static const u8* array_record(u32 n, u32 at) {
+    (void)at; // only for warnings
+    if (n >= array_count) {
+        WARN_ONCE(WARN_ARRAY,
+                  "vm: LDA/STA/LEN at 0x%x: no array %u (the blob has %u); reads 0, writes nothing",
+                  at, n, array_count);
+        return NULL;
+    }
+    return blob + array_table + n * VM_ARRAY_RECORD_SIZE;
+}
+
+// True if i is an index of the array (warning if not).
+static bool array_index_ok(const u8* record, u32 n, s32 i, u32 at) {
+    (void)n, (void)at; // only for warnings
+    u32 length = le16(record);
+    if (i >= 0 && (u32)i < length)
+        return true;
+    WARN_ONCE(WARN_ARRAY_INDEX,
+              "vm: LDA/STA at 0x%x: index %d is outside array %u (length %u; indices start at "
+              "0); reads 0, writes nothing",
+              at, (int)i, n, length);
+    return false;
+}
+
+// Element i (in range) of an array.
+static s32 array_get(const u8* record, u32 i) {
+    u32 kind = record[2];
+    u32 offset = le32(record + 4);
+    if (kind == VM_ARRAY_RAM)
+        return array_cells[offset + i];
+    const u8* p = blob + offset + i * element_size[kind];
+    switch (kind) {
+    case VM_ARRAY_S8:
+        return (s8)p[0];
+    case VM_ARRAY_U8:
+        return p[0];
+    case VM_ARRAY_S16:
+        return (s16)le16(p);
+    case VM_ARRAY_U16:
+        return (s32)le16(p);
+    default: // VM_ARRAY_S32
+        return (s32)le32(p);
+    }
+}
+
 // --- Engine calls ------------------------------------------------------------
 
 // Arguments per VM_SYS_* call (at most SYS_MAX_ARGS), and the calls that push a
 // result. A call appended to vm.h without an entry here would silently take no
 // arguments.
-#define SYS_MAX_ARGS 3
-static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 3};
-_Static_assert(VM_SYS_COUNT == 13, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+#define SYS_MAX_ARGS 4
+static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1};
+_Static_assert(VM_SYS_COUNT == 14, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 #define SYS_RETURNS                                                                                \
     (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
 
@@ -515,6 +650,9 @@ static s32 sys_call(u32 fn, const s32* args) {
         path_start(cell_entity(args[0]), path, (u32)args[2]);
         return 0;
     }
+    case VM_SYS_PATH_STOP:
+        path_stop(cell_entity(args[0]));
+        return 0;
     case VM_SYS_MUSIC_PLAY: {
         s32 index = args[0];
         const PsgSong* song = NULL;
@@ -692,6 +830,42 @@ static u32 execute(Context* c, bool reaction) {
                           at, n, (int)sp - (int)fp);
             break;
         }
+        case VM_OP_LDA:
+        case VM_OP_STA:
+        case VM_OP_LEN: {
+            OPERAND(2);
+            u32 n = le16(code + pc);
+            pc += 2;
+            if (op == VM_OP_LEN) {
+                ROOM(1);
+                const u8* record = array_record(n, at);
+                st[sp++] = record ? (s32)le16(record) : 0;
+            } else if (op == VM_OP_LDA) {
+                NEED(1);
+                const u8* record = array_record(n, at);
+                s32 i = st[sp - 1];
+                st[sp - 1] =
+                    record && array_index_ok(record, n, i, at) ? array_get(record, (u32)i) : 0;
+            } else {
+                NEED(2);
+                s32 value = st[--sp];
+                s32 i = st[--sp];
+                const u8* record = array_record(n, at);
+                if (!record)
+                    break;
+                if (record[2] != VM_ARRAY_RAM) {
+                    WARN_ONCE(WARN_ARRAY_ROM,
+                              "vm: STA at 0x%x: array %u is ROM data, which scripts can't change; "
+                              "nothing written",
+                              at, n);
+                    break;
+                }
+                if (array_index_ok(record, n, i, at))
+                    array_cells[le32(record + 4) + (u32)i] = value;
+            }
+            break;
+        }
+
         // Arithmetic wraps (two's complement, done in u32: no C undefined
         // behaviour), and dividing by zero gives 0.
         case VM_OP_ADD:
@@ -935,6 +1109,17 @@ static u32 execute(Context* c, bool reaction) {
                 enqueue(e, ENTITY_NONE, VM_EV_DESTROY);
             break;
         }
+        case VM_OP_NEXTI: {
+            OPERAND(2);
+            NEED(1);
+            u32 object = le16(code + pc);
+            pc += 2;
+            st[sp - 1] = next_instance(object, st[sp - 1], at);
+            if (c->r.state != CTX_RUNNING)
+                return ops; // halted from outside (cannot happen today)
+            break;
+        }
+
         case VM_OP_SYS: {
             OPERAND(1);
             u32 fn = code[pc];
@@ -946,7 +1131,7 @@ static u32 execute(Context* c, bool reaction) {
             }
             u32 n = sys_arity[fn];
             NEED(n);
-            s32 args[SYS_MAX_ARGS] = {0, 0, 0};
+            s32 args[SYS_MAX_ARGS] = {0, 0, 0, 0};
             sp -= n;
             for (u32 k = 0; k < n; k++)
                 args[k] = st[sp + k];
@@ -1348,21 +1533,33 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
                     who, (u32)b[5], VM_CELL_BYTES);
         return false;
     }
+    if (le16(b + 6)) {
+        SERVAL_WARN("%s: the blob's header flags are 0x%x, but this engine knows no flags (they "
+                    "must be 0); nothing is loaded",
+                    who, le16(b + 6));
+        return false;
+    }
     u32 objects = le16(b + 8), strings = le16(b + 10), used_globals = le16(b + 12);
+    u32 arrays = le16(b + 14);
     if (used_globals > VM_GLOBALS) {
         SERVAL_WARN("%s: the blob uses %u globals; the most is %d; nothing is loaded", who,
                     used_globals, VM_GLOBALS);
         return false;
     }
-    u32 tables_end = VM_HEADER_SIZE + objects * VM_OBJECT_SIZE + strings * 4;
+    u32 arrays_at = VM_HEADER_SIZE + objects * VM_OBJECT_SIZE + strings * 4;
+    u32 tables_end = arrays_at + arrays * VM_ARRAY_RECORD_SIZE;
     if (tables_end > size) {
-        SERVAL_WARN("%s: the blob's tables (%u objects, %u strings) need %u bytes, but it has %u; "
-                    "nothing is loaded",
-                    who, objects, strings, tables_end, size);
+        SERVAL_WARN("%s: the blob's tables (%u objects, %u strings, %u arrays) need %u bytes, but "
+                    "it has %u; nothing is loaded",
+                    who, objects, strings, arrays, tables_end, size);
         return false;
     }
     for (u32 object = 0; object < objects; object++) {
         const u8* record = b + VM_HEADER_SIZE + object * VM_OBJECT_SIZE;
+        if (le16(record + 6)) {
+            SERVAL_WARN("%s: object %u's reserved field is not 0; nothing is loaded", who, object);
+            return false;
+        }
         for (u32 event = 0; event < VM_EV_COUNT; event++) {
             u32 offset = le32(record + 8 + event * 4);
             if (offset && (offset < tables_end || offset >= size)) {
@@ -1371,6 +1568,25 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
                             who, object, event, offset, tables_end, size);
                 return false;
             }
+        }
+    }
+    for (u32 n = 0; n < arrays; n++) {
+        const u8* record = b + arrays_at + n * VM_ARRAY_RECORD_SIZE;
+        u32 length = le16(record), kind = record[2], where = le32(record + 4);
+        if (kind >= VM_ARRAY_KIND_COUNT || record[3]) {
+            SERVAL_WARN("%s: array %u has kind %u and reserved byte %u (kinds: 0 RAM, 1 s8, 2 u8, "
+                        "3 s16, 4 u16, 5 s32; the reserved byte must be 0); nothing is loaded",
+                        who, n, kind, (u32)record[3]);
+            return false;
+        }
+        if (kind == VM_ARRAY_RAM ? where > VM_ARRAY_CELLS || length > VM_ARRAY_CELLS - where
+                                 : where < tables_end || where > size ||
+                                       length * element_size[kind] > size - where) {
+            SERVAL_WARN("%s: array %u (%u elements at %u) is outside %s; nothing is loaded", who, n,
+                        length, where,
+                        kind == VM_ARRAY_RAM ? "the RAM arrays' pool (VM_ARRAY_CELLS cells)"
+                                             : "the blob's data past its tables");
+            return false;
         }
     }
     const u8* string_table = b + VM_HEADER_SIZE + objects * VM_OBJECT_SIZE;
@@ -1397,9 +1613,31 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
     return true;
 }
 
+// A fingerprint of a valid blob's RAM array layout (the array count, each
+// array's kind, and each RAM array's length and first cell): vm_reload keeps
+// the pool's cells when it is unchanged. Kept as a number, not read back from
+// the old blob, which a hot reload may already have overwritten.
+static u32 layout_of(const u8* b) {
+    u32 arrays = le16(b + 14);
+    const u8* table = b + VM_HEADER_SIZE + le16(b + 8) * VM_OBJECT_SIZE + le16(b + 10) * 4;
+    u32 hash = 2166136261u; // FNV-1a, over the fields' bytes
+#define MIX(byte) hash = (hash ^ (u8)(byte)) * 16777619u
+    MIX(arrays);
+    MIX(arrays >> 8);
+    for (u32 n = 0; n < arrays; n++) {
+        const u8* record = table + n * VM_ARRAY_RECORD_SIZE;
+        MIX(record[2]); // the kind; a RAM array's whole record (length, first cell)
+        for (u32 k = 0; record[2] == VM_ARRAY_RAM && k < VM_ARRAY_RECORD_SIZE; k++)
+            MIX(record[k]);
+    }
+#undef MIX
+    return hash;
+}
+
 // Makes b (NULL: none) the loaded blob: halts every context, empties the
 // queue and detaches every entity, except, when hot reloading (keep), those
-// attached to objects b still has. Leaves the globals alone.
+// attached to objects b still has, which keep their instance fields. Leaves
+// the globals and the RAM arrays alone.
 static void install(const u8* b, u32 size, bool keep) {
     u32 objects = b ? le16(b + 8) : 0;
     for (u32 k = 0; k < VM_CONTEXTS; k++) {
@@ -1412,8 +1650,10 @@ static void install(const u8* b, u32 size, bool keep) {
         // A binding kept by a hot reload lost its queued Create with the queue:
         // its Step reaction must not wait for it.
         bound_flags[slot] &= (u8)~BIND_CREATE_PENDING;
-        if (!(keep && attached(slot) && bound_object[slot] < objects))
+        if (!(keep && attached(slot) && bound_object[slot] < objects)) {
             bound[slot] = ENTITY_NONE;
+            clear_fields(slot);
+        }
     }
     reset_warnings();
     blob = b;
@@ -1421,6 +1661,8 @@ static void install(const u8* b, u32 size, bool keep) {
     object_count = objects;
     string_count = b ? le16(b + 10) : 0;
     global_count = b ? le16(b + 12) : 0;
+    array_count = b ? le16(b + 14) : 0;
+    array_table = VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + string_count * 4;
 }
 
 // True (warning) if a phase (or vm_kill's Destroy logic) is running: vm_load,
@@ -1454,7 +1696,17 @@ static bool load(const u8* b, u32 size, bool keep, const char* who) {
         for (u32 k = 0; k < VM_GLOBALS; k++)
             globals[k] = 0;
     }
+    u32 layout = layout_of(b);
+    if (!(keep && blob && layout == ram_layout)) {
+        if (keep && blob)
+            SERVAL_WARN("%s: the new blob's RAM arrays are laid out differently; their cells are "
+                        "zeroed",
+                        who);
+        for (u32 k = 0; k < VM_ARRAY_CELLS; k++)
+            array_cells[k] = 0;
+    }
     install(b, size, keep);
+    ram_layout = layout;
     return true;
 }
 

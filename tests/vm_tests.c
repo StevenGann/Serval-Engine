@@ -41,7 +41,7 @@ enum { BLOB_CAP = 2048, MAX_LABELS = 16, MAX_FIXUPS = 32 };
 typedef struct {
     u8 bytes[BLOB_CAP];
     u32 size;
-    u16 objects, strings;
+    u16 objects, strings, arrays;
     u32 labels[MAX_LABELS];
     u32 fixup_at[MAX_FIXUPS]; // operands to fill in once labels are known
     u8 fixup_label[MAX_FIXUPS];
@@ -80,12 +80,14 @@ static void put32(u32 at, u32 value) {
 }
 
 // vm.md "Blob format": the 16-byte header, then the object table (32 bytes
-// per object) and the string table (4 bytes per string), zeroed: no
-// handlers, mask 0, sprite 0. Strings and code follow.
-static void blob_begin(u16 objects, u16 strings, u16 globals) {
+// per object), the string table (4 bytes per string) and the array table (8
+// bytes per array), zeroed: no handlers, mask 0, sprite 0, empty RAM arrays
+// at cell 0. Strings, ROM array data and code follow.
+static void blob_begin_arrays(u16 objects, u16 strings, u16 globals, u16 arrays) {
     bld.size = 0;
     bld.objects = objects;
     bld.strings = strings;
+    bld.arrays = arrays;
     bld.fixups = 0;
     bld.broken = false;
     for (u32 l = 0; l < MAX_LABELS; l++)
@@ -100,9 +102,14 @@ static void blob_begin(u16 objects, u16 strings, u16 globals) {
     emit16(objects);
     emit16(strings);
     emit16(globals);
-    emit16(0); // reserved
-    for (u32 k = 0; k < (u32)objects * VM_OBJECT_SIZE + 4u * strings; k++)
+    emit16(arrays);
+    for (u32 k = 0; k < (u32)objects * VM_OBJECT_SIZE + 4u * strings + 8u * arrays; k++)
         emit(0);
+}
+
+// A blob without arrays: laid out exactly as before arrays existed.
+static void blob_begin(u16 objects, u16 strings, u16 globals) {
+    blob_begin_arrays(objects, strings, globals, 0);
 }
 
 static u32 object_record(u32 obj) {
@@ -141,6 +148,42 @@ static u32 string(u16 index, const char* text) {
         if (!*text)
             break;
     }
+    return at;
+}
+
+// vm.md "Array table": array n's record.
+static u32 array_record(u32 n) {
+    return object_record(bld.objects) + 4u * bld.strings + 8u * n;
+}
+
+enum { ARRAY_RAM, ARRAY_S8, ARRAY_U8, ARRAY_S16, ARRAY_U16, ARRAY_S32 };
+
+// Array n: RAM, `length` cells from pool cell `first`.
+static void ram_array(u32 n, u32 length, u32 first) {
+    if (n >= bld.arrays) {
+        bld.broken = true;
+        return;
+    }
+    put16(array_record(n), length);
+    bld.bytes[array_record(n) + 2] = ARRAY_RAM;
+    put32(array_record(n) + 4, first);
+}
+
+// Array n: ROM data of `kind`, its elements emitted here (little-endian,
+// packed). Returns their blob offset.
+static u32 rom_array(u32 n, u32 kind, const s32* values, u32 length) {
+    static const u8 bytes[] = {0, 1, 1, 2, 2, 4};
+    u32 at = bld.size;
+    if (n >= bld.arrays || kind == ARRAY_RAM || kind > ARRAY_S32) {
+        bld.broken = true;
+        return at;
+    }
+    put16(array_record(n), length);
+    bld.bytes[array_record(n) + 2] = (u8)kind;
+    put32(array_record(n) + 4, at);
+    for (u32 k = 0; k < length; k++)
+        for (u32 b = 0; b < bytes[kind]; b++)
+            emit((u32)values[k] >> (8 * b) & 0xFF);
     return at;
 }
 
@@ -223,6 +266,22 @@ static void enter(u32 p, u32 n) {
     emit(VM_OP_ENTER);
     emit(p);
     emit(n);
+}
+
+static void lda(u32 array) {
+    op16(VM_OP_LDA, array);
+}
+
+static void sta(u32 array) {
+    op16(VM_OP_STA, array);
+}
+
+static void len(u32 array) {
+    op16(VM_OP_LEN, array);
+}
+
+static void nexti(u32 obj) {
+    op16(VM_OP_NEXTI, obj);
 }
 
 static void label(u32 l) {
@@ -328,6 +387,15 @@ static void append(u32 g, s32 digit) {
     push8(10);
     op(VM_OP_MUL);
     push8(digit);
+    op(VM_OP_ADD);
+    stg(g);
+}
+
+// glob[g] = glob[g] * 10 + the value on top of the stack, which is popped.
+static void append_top(u32 g) {
+    ldg(g);
+    push8(10);
+    op(VM_OP_MUL);
     op(VM_OP_ADD);
     stg(g);
 }
@@ -1419,9 +1487,17 @@ static void truncated_operand_halts_its_context(void) {
 // alike); GETP pushes 0 and SETP drops the value (both pop as usual) and the
 // context goes on.
 static void unknown_property_warns(void) {
+    // The first engine property not assigned, the last one reserved for the
+    // engine, the first past the instance fields, the last a u8 can name.
+    static const u8 unknown[] = {VM_P_COUNT, VM_P_FIELD0 - 1, VM_P_FIELD(VM_FIELDS), 255};
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    for (u32 k = 0; k < sizeof unknown; k++) {
+        ldg(0);           // e
+        getp(unknown[k]); // warns (once): 0
+        stg(4 + k);       // glob[4 + k] = 0
+    }
     ldg(0);           // e
     getp(VM_P_COUNT); // warns: 0
     stg(1);           // glob[1] = 0
@@ -1435,11 +1511,17 @@ static void unknown_property_warns(void) {
     CHECK(load());
     Entity e = entity_create(C_POS | C_VEL | C_SPR);
     u32 i = entity_index(e);
+    vm_attach(e, 0); // attached: instance fields would be readable
     vm_set_global(0, e);
     vm_set_global(1, 99);
-    start(0);
+    for (u16 k = 0; k < sizeof unknown; k++)
+        vm_set_global(4 + k, 99);
     u32 before = debug_warning_count();
     vm_step();
+    u32 wrong = 0;
+    for (u16 k = 0; k < sizeof unknown; k++)
+        wrong += vm_global(4 + k) != 0;
+    CHECK(wrong == 0);
     CHECK(vm_global(1) == 0 && vm_global(2) == 66 && vm_global(3) == 1);
     CHECK(vm_idle());
     CHECK(pos_x[i] == 0 && pos_y[i] == 0 && vel_x[i] == 0 && vel_y[i] == 0);
@@ -2930,7 +3012,8 @@ static void self_and_other(void) {
 
 // vm.md "Entities": GETP and SETP reach the ECS arrays of the same names.
 // Writes truncate to the array's type; reads extend it back to a cell (sign-
-// extending s16, zero-extending u8 and u16).
+// extending s16, zero-extending u8 and u16). VM_P_TAGS is C_GAME(0) to
+// C_GAME(14) of ent_mask as bits 0 to 14; SETP changes only those bits.
 static const struct {
     s32 written;
     s32 read; // what GETP then gives
@@ -2948,6 +3031,9 @@ static const struct {
     [VM_P_SCALE] = {0xFFFF, -1, "VM_P_SCALE truncates to s16, reads sign-extended"},
     [VM_P_BODY_W] = {0x1FE, 0xFE, "VM_P_BODY_W truncates to u8, reads unsigned"},
     [VM_P_BODY_H] = {-1, 0xFF, "VM_P_BODY_H truncates to u8, reads unsigned"},
+    [VM_P_TAGS] = {-1, 0x7FFF, "VM_P_TAGS keeps bits 0 to 14"},
+    [VM_P_ANIM_TIME] = {0x1FF, 0xFF, "VM_P_ANIM_TIME truncates to u8, reads unsigned"},
+    [VM_P_ANIM_STEP] = {-2, 0xFE, "VM_P_ANIM_STEP truncates to u8, reads unsigned"},
 };
 
 // Where properties_read_and_write_the_ecs stores what it reads: GETP of
@@ -2978,7 +3064,8 @@ static void properties_read_and_write_the_ecs(void) {
     }
     op(VM_OP_HALT);
     CHECK(load());
-    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BODY);
+    u32 components = C_POS | C_VEL | C_SPR | C_BODY | C_ANIM;
+    Entity e = entity_create(components);
     u32 i = entity_index(e);
     vm_set_global(0, e);
     u32 before = debug_warning_count();
@@ -2989,6 +3076,10 @@ static void properties_read_and_write_the_ecs(void) {
     CHECK(spr_id[i] == 0x2345 && spr_frame[i] == 0xFF && spr_flags[i] == 0xFFFF);
     CHECK(spr_angle[i] == 0x8000 && spr_depth[i] == -32768 && spr_scale[i] == -1);
     CHECK(body_w[i] == 0xFE && body_h[i] == 0xFF);
+    CHECK(spr_anim_time[i] == 0xFF && spr_anim_step[i] == 0xFE);
+    // Every game component set; the engine's and C_ALIVE as they were.
+    CHECK(ent_mask[i] == (components | C_ALIVE | 0x7FFFu << 16));
+    CHECK(ent_has(i, C_GAME(0) | C_GAME(14)));
     for (u32 p = 0; p < VM_P_COUNT; p++)
         if (vm_global((u16)(READ_BY_SCRIPT + p)) != prop_rows[p].read)
             test_fail(__FILE__, __LINE__, prop_rows[p].what);
@@ -3005,8 +3096,12 @@ static void properties_read_and_write_the_ecs(void) {
     spr_scale[i] = -32768;
     body_w[i] = 200;
     body_h[i] = 7;
-    static const s32 from_c[VM_P_COUNT] = {-FX(7), 3,      1,  -1,     0xFFFF, 200,
-                                           0x8001, 0xFFFF, -2, -32768, 200,    7};
+    ent_mask[i] = components | C_ALIVE | C_GAME(1) | C_GAME(13);
+    spr_anim_time[i] = 250;
+    spr_anim_step[i] = 3;
+    static const s32 from_c[VM_P_COUNT] = {-FX(7),           3,      1,  -1,     0xFFFF, 200,
+                                           0x8001,           0xFFFF, -2, -32768, 200,    7,
+                                           1 << 1 | 1 << 13, 250,    3};
     start(1);
     vm_step();
     u32 wrong = 0;
@@ -3166,6 +3261,180 @@ static void body_size_properties(void) {
     vm_attach(c, 1);
     vm_events();
     CHECK(body_w[entity_index(c)] == 9 && vm_global(2) == 9);
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Entities": VM_P_TAGS reads C_GAME(0) to C_GAME(14) as bits 0 to 14,
+// and SETP changes only those components: the engine's, and C_ALIVE, stay
+// (bit 15 and up of the value are ignored). Systems see the change at once.
+// No component is needed: no warning.
+static void tags_are_the_game_components(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);  // self
+    getp(VM_P_TAGS); // tags
+    stg(0);          // glob[0]
+    op(VM_OP_SELF);  // self
+    push32(0x18001); // self 0x18001: bits 0 and 15 (no C_GAME(15)), and 16
+    setp(VM_P_TAGS); //
+    op(VM_OP_SELF);  // self
+    getp(VM_P_TAGS); // 1
+    stg(1);          // glob[1]
+    op(VM_OP_HALT);  //
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_VEL | C_GAME(2) | C_GAME(14));
+    u32 i = entity_index(e);
+    u32 before = debug_warning_count();
+    vm_attach(e, 0);
+    vm_events();
+    CHECK(vm_global(0) == (1 << 2 | 1 << 14));
+    CHECK(vm_global(1) == 1);
+    CHECK(ent_mask[i] == (C_POS | C_VEL | C_GAME(0) | C_ALIVE));
+    CHECK(ecs_count(C_GAME(0)) == 1 && ecs_count(C_GAME(2)) == 0);
+    CHECK(entity_alive(e));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Entities": instance fields (VM_P_FIELD0 on) are VM_FIELDS cells of
+// each attached entity: zeroed when it is attached (again, too), its own
+// (another instance's are readable by handle, from any script), and not there
+// for an unattached entity (warns once; reads 0, writes nothing).
+static void instance_fields(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);                  // self
+    getp(VM_P_FIELD0);               // 0: zeroed at attach
+    ldg(0);                          //
+    op(VM_OP_ADD);                   //
+    stg(0);                          // glob[0] += field 0
+    op(VM_OP_SELF);                  // self
+    op(VM_OP_SELF);                  // self self
+    getp(VM_P_X);                    // self x
+    setp(VM_P_FIELD0);               // field 0 = x
+    op(VM_OP_SELF);                  // self
+    push8(6);                        // self 6
+    setp(VM_P_FIELD(VM_FIELDS - 1)); // the last field = 6
+    op(VM_OP_HALT);                  //
+    handler(0, VM_EV_COLLISION);
+    op(VM_OP_OTHER);                 // other
+    getp(VM_P_FIELD(VM_FIELDS - 1)); // 6
+    stg(1);                          // glob[1]: another instance's field
+    op(VM_OP_SELF);                  // self
+    getp(VM_P_FIELD0);               // its x
+    stg(2);                          // glob[2]
+    op(VM_OP_HALT);                  //
+    handler(1, VM_EV_CREATE);        // a thread
+    ldg(5);                          // an unattached entity
+    getp(VM_P_FIELD0);               // warns: 0
+    stg(3);                          // glob[3] = 0
+    ldg(5);                          //
+    push8(1);                        //
+    setp(VM_P_FIELD(1));             // warns (no repeat), nothing written
+    ldg(6);                          // an attached one
+    getp(VM_P_FIELD0);               // its x
+    stg(4);                          // glob[4]
+    op(VM_OP_HALT);                  //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity loose = entity_create(C_POS);
+    pos_x[entity_index(a)] = 1;
+    pos_x[entity_index(b)] = 2;
+    u32 before = debug_warning_count();
+    vm_attach(a, 0);
+    vm_attach(b, 0);
+    vm_events();
+    CHECK(vm_global(0) == 0);
+    vm_event(a, b, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(1) == 6 && vm_global(2) == 1);
+    vm_event(b, a, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(1) == 6 && vm_global(2) == 2);
+    vm_attach(a, 0); // attached again: zeroed, then its Create sets them
+    vm_events();
+    CHECK(vm_global(0) == 0);
+    CHECK_WARNED(before, 0);
+    vm_set_global(3, 99);
+    vm_set_global(5, loose);
+    vm_set_global(6, b);
+    start(1);
+    vm_step();
+    CHECK(vm_global(3) == 0 && vm_global(4) == 2);
+    CHECK_WARNED(before, 1);
+    vm_detach(b); // b's fields go with its binding
+    vm_set_global(5, b);
+    start(1);
+    vm_step();
+    CHECK(vm_global(3) == 0);
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Entities" (NEXTI), "Exact semantics: Arrays, fields, instances":
+// NEXTI e gives the next attached instance of the object after e in slot
+// order (0: from the first), and 0 when none is left: a loop over every
+// instance, skipping other objects' and unattached entities. Slots are
+// compared, so it goes on from an entity that is dead by now, and a loop that
+// KILLs each instance it visits (queued) still visits them all. An object the
+// blob doesn't have warns and gives 0.
+static void nexti_loops_over_an_objects_instances(void) {
+    enum { L_NEXT, L_DONE };
+    reset();
+    blob_begin(4, 0, GLOBALS);
+    handler(2, VM_EV_CREATE);
+    push8(0);                // 0: from the first
+    label(L_NEXT);           //
+    nexti(0);                // e
+    op(VM_OP_DUP);           // e e
+    jump(VM_OP_JZ, L_DONE);  // e
+    op(VM_OP_DUP);           // e e
+    getp(VM_P_X);            // e x
+    append_top(0);           // e: glob[0] = glob[0] * 10 + x
+    op(VM_OP_DUP);           // e e
+    op(VM_OP_KILL);          // e: its Destroy is queued
+    jump(VM_OP_JMP, L_NEXT); //
+    label(L_DONE);           // 0
+    op(VM_OP_DROP);          //
+    op(VM_OP_HALT);          //
+    handler(3, VM_EV_CREATE);
+    ldg(5);         // a dead entity's handle
+    nexti(0);       // the next instance after its slot
+    stg(1);         // glob[1]
+    push8(0);       //
+    nexti(7);       // no object 7: warns, 0
+    stg(2);         // glob[2] = 0
+    op(VM_OP_HALT); //
+    CHECK(load());
+    static const u16 objects[] = {0, 1, 0, 0xFFFF, 0, 0}; // 0xFFFF: not attached
+    Entity e[6];
+    for (u32 k = 0; k < 6; k++) {
+        e[k] = entity_create(C_POS);
+        pos_x[entity_index(e[k])] = (FIXED)(k + 1);
+    }
+    for (u32 k = 6; k-- > 0;) // attached out of slot order
+        if (objects[k] != 0xFFFF)
+            vm_attach(e[k], objects[k]);
+    vm_events();
+    vm_kill(e[2]); // dead now
+    u32 before = debug_warning_count();
+    vm_set_global(5, e[2]);
+    vm_set_global(2, 99);
+    start(3);
+    vm_step();
+    CHECK(vm_global(1) == e[4] && vm_global(2) == 0);
+    CHECK_WARNED(before, 1);
+    start(2);
+    vm_step(); // e[0], e[4] and e[5], then their Destroys
+    CHECK(vm_global(0) == 156);
+    CHECK(!entity_alive(e[0]) && !entity_alive(e[4]) && !entity_alive(e[5]));
+    CHECK(entity_alive(e[1]) && entity_alive(e[3]));
+    vm_set_global(0, 0);
+    start(2);
+    vm_step(); // none left
+    CHECK(vm_global(0) == 0);
+    CHECK(vm_idle());
     CHECK_WARNED(before, 1);
 }
 
@@ -3370,6 +3639,51 @@ static void animation_end_is_raised_when_an_animation_finishes(void) {
     restore_sprites();
 }
 
+// vm.md "Entities": VM_P_ANIM_TIME and VM_P_ANIM_STEP are spr_anim_time and
+// spr_anim_step; with VM_P_FRAME, what restarting an animation sets. A script
+// that restarts its one-shot animation in its Animation End reaction gets
+// another Animation End when it finishes again.
+static void animation_properties_restart_an_animation(void) {
+    reset();
+    use_anim_sprites();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_ANIM_END);
+    count(0);             // glob[0]: Animation Ends
+    op(VM_OP_SELF);       // self
+    getp(VM_P_ANIM_TIME); // 0: sys_animate leaves it there on the last frame
+    stg(1);               // glob[1]
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_FRAME);     // restart: frame 0...
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_ANIM_TIME); // ...shown for no frames yet
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_ANIM_STEP); // (no frame_order: unused)
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_SPR | C_ANIM);
+    u32 i = entity_index(e);
+    spr_id[i] = SPR_ONCE;
+    vm_attach(e, 0);
+    u32 before = debug_warning_count();
+    // As in animation_end_is_raised_when_an_animation_finishes: it finishes
+    // in frame 3's vm_step(); restarted there, it finishes again two frames
+    // later, and so on.
+    static const s32 ends[] = {0, 0, 1, 1, 2, 2, 3, 3, 4};
+    vm_set_global(1, 99);
+    for (u32 f = 0; f < sizeof ends / sizeof ends[0]; f++) {
+        vm_step();
+        CHECK(vm_global(0) == ends[f]);
+        vm_events();
+        sys_animate();
+    }
+    CHECK(vm_global(1) == 0);
+    CHECK_WARNED(before, 0);
+    restore_sprites();
+}
+
 // --- SYS ---------------------------------------------------------------------
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -3536,10 +3850,14 @@ static void sys_bad_string_or_song_index(void) {
 
 #ifndef SERVAL_GBA
 // The platform's latest call, as src/host/platform.c recorded it.
-static bool last_call(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, const void* ptr) {
+static bool last_call4(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, s32 a3, const void* ptr) {
     const ServalHostVmCalls* r = &serval_host_vm_calls;
     return r->calls == calls && r->fn == fn && r->args[0] == a0 && r->args[1] == a1 &&
-           r->args[2] == a2 && r->ptr == ptr;
+           r->args[2] == a2 && r->args[3] == a3 && r->ptr == ptr;
+}
+
+static bool last_call(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, const void* ptr) {
+    return last_call4(calls, fn, a0, a1, a2, 0, ptr);
 }
 #endif
 
@@ -3618,9 +3936,9 @@ static void platform_sys_calls_reach_the_platform(void) {
 #endif
 }
 
-// vm.md "Engine calls": SYS text_print_number(col, row, value) pops three and
-// pushes nothing; it is a platform call (vm_internal.h), so on the host the
-// recorder sees its arguments in push order, with no string or song.
+// vm.md "Engine calls": SYS text_print_number(col, row, value, width) pops
+// four and pushes nothing; it is a platform call (vm_internal.h), so on the
+// host the recorder sees its arguments in push order, with no string or song.
 // tests/rom/vm_platform_tests.c checks what the GBA prints.
 static void sys_text_print_number(void) {
     reset();
@@ -3630,12 +3948,14 @@ static void sys_text_print_number(void) {
     push8(3);                      // 55 col
     push8(4);                      // 55 col row
     push16(-1234);                 // 55 col row value
+    push8(0);                      // 55 col row value width
     sys(VM_SYS_TEXT_PRINT_NUMBER); // 55: frame 1
     stg(0);                        // glob[0] = 55
     wait_frames(1);                //
     push8(5);                      // col
     push8(6);                      // col row
     push32(INT32_MIN);             // col row value
+    push8(12);                     // col row value width
     sys(VM_SYS_TEXT_PRINT_NUMBER); // frame 2
     store(1, 1);                   // carried on
     op(VM_OP_HALT);                //
@@ -3648,15 +3968,259 @@ static void sys_text_print_number(void) {
     vm_step();
     CHECK(vm_global(0) == 55);
 #ifndef SERVAL_GBA
-    CHECK(last_call(1, VM_SYS_TEXT_PRINT_NUMBER, 3, 4, -1234, NULL));
+    CHECK(last_call4(1, VM_SYS_TEXT_PRINT_NUMBER, 3, 4, -1234, 0, NULL));
 #endif
     frame();
     CHECK(vm_global(1) == 1);
 #ifndef SERVAL_GBA
-    CHECK(last_call(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, NULL));
+    CHECK(last_call4(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, 12, NULL));
 #endif
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
+}
+
+// vm.md "Engine calls": SYS path_stop(entity) is path.h's path_stop: the path
+// ends where it is (a WAIT_MOVE on it resumes in the next pass). A dead or no
+// entity is ignored, as path_stop does. Pops one, pushes nothing.
+static void sys_path_stop(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_WAIT_MOVE); // until the path ends
+    store(0, 1);         //
+    op(VM_OP_HALT);      //
+    handler(1, VM_EV_CREATE);
+    push8(55);             // 55
+    ldg(5);                // 55 e
+    sys(VM_SYS_PATH_STOP); // 55
+    push8(0);              // 55 0: no entity
+    sys(VM_SYS_PATH_STOP); // 55
+    stg(1);                // glob[1] = 55
+    op(VM_OP_HALT);        //
+    CHECK(load());
+    vm_bind(&(VmBindings){.paths = sys_paths, .path_count = 2});
+    Entity e = entity_create(C_POS | C_VEL);
+    path_start(e, &sys_path_down, 0); // 10 frames
+    vm_attach(e, 0);
+    vm_set_global(5, e);
+    u32 before = debug_warning_count();
+    frame(); // e waits on its path
+    sys_path();
+    CHECK(path_active(e) && vm_global(0) == 0);
+    start(1);
+    frame(); // the thread stops the path
+    CHECK(!path_active(e) && vm_global(1) == 55);
+    CHECK(vm_global(0) == 0);
+    vm_step(); // the wait ends
+    CHECK(vm_global(0) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    vm_bind(NULL);
+}
+
+// --- Arrays ------------------------------------------------------------------
+
+// vm.md "Stack and variables" (LDA, STA, LEN), "Array table": RAM arrays are
+// cells of the pool from their first cell (ranges may overlap), 0-based. An
+// index outside the array warns (once, for LDA and STA alike): LDA pushes 0,
+// STA drops the value. An array the blob doesn't have warns (once): LDA and
+// LEN push 0, STA drops. Cells outlast the handler that wrote them.
+static void ram_arrays(void) {
+    reset();
+    blob_begin_arrays(2, 0, GLOBALS, 2);
+    ram_array(0, 4, 10); // cells 10-13
+    ram_array(1, 3, 12); // cells 12-14: overlaps the last two
+    handler(0, VM_EV_CREATE);
+    for (s32 k = 0; k < 4; k++) {
+        push8(k);      // i
+        push8(10 * k); // i v
+        sta(0);        // array 0 [i] = 10i
+    }
+    push8(0);       // array 1's 0 is array 0's 2
+    lda(1);         // 20
+    stg(0);         // glob[0] = 20
+    len(0);         //
+    stg(1);         // glob[1] = 4
+    len(1);         //
+    stg(2);         // glob[2] = 3
+    push8(4);       // one past the end
+    lda(0);         // warns: 0
+    stg(3);         // glob[3] = 0
+    push8(-1);      //
+    lda(0);         // 0 (no repeat)
+    stg(4);         // glob[4] = 0
+    push8(4);       //
+    push8(99);      //
+    sta(0);         // dropped
+    push8(55);      // 55
+    push8(0);       // 55 0
+    lda(2);         // no array 2: warns, 55 0
+    stg(5);         // glob[5] = 0
+    push8(0);       // 55 0
+    push8(1);       // 55 0 1
+    sta(2);         // dropped: 55
+    len(2);         // 55 0
+    stg(6);         // glob[6] = 0
+    stg(7);         // glob[7] = 55
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    push8(3);       //
+    lda(0);         // 30, from the other handler
+    stg(8);         //
+    push8(2);       //
+    lda(1);         // cell 14: never written, 0
+    stg(9);         //
+    op(VM_OP_HALT); //
+    CHECK(load());
+    for (u16 g = 3; g <= 9; g++)
+        vm_set_global(g, 99);
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    static const s32 expected[] = {20, 4, 3, 0, 0, 0, 0, 55};
+    for (u16 g = 0; g < sizeof expected / sizeof expected[0]; g++)
+        if (vm_global(g) != expected[g])
+            test_fail(__FILE__, __LINE__, text_format("glob[%u] is %d", g, vm_global(g)));
+    CHECK_WARNED(before, 2);
+    start(1);
+    vm_step();
+    CHECK(vm_global(8) == 30 && vm_global(9) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// The ROM arrays' elements, one array per kind, in the narrowest kind's
+// extremes.
+static const s32 rom_s8[] = {-128, 127, -1};
+static const s32 rom_u8[] = {0, 255, 128};
+static const s32 rom_s16[] = {-32768, 32767, -2};
+static const s32 rom_u16[] = {65535, 0, 32768};
+static const s32 rom_s32[] = {INT32_MIN, INT32_MAX, -3};
+
+// vm.md "Array table": ROM arrays are constant data read in place, in each
+// kind (s8 and s16 sign-extended, u8 and u16 zero-extended). STA to one warns
+// and writes nothing; an index outside it warns and reads 0. The last array
+// ends the blob, so reading its last element reads the blob's last bytes and
+// no further (ASan, on the host).
+static void rom_arrays_of_every_kind(void) {
+    static const s32* const values[] = {rom_s8, rom_u8, rom_s16, rom_u16, rom_s32};
+    static const u8 kinds[] = {ARRAY_S8, ARRAY_U8, ARRAY_S16, ARRAY_U16, ARRAY_S32};
+    reset();
+    blob_begin_arrays(1, 0, GLOBALS, 5);
+    for (u32 n = 0; n < 4; n++)
+        rom_array(n, kinds[n], values[n], 3);
+    handler(0, VM_EV_CREATE);
+    for (u32 n = 0; n < 5; n++) {
+        for (s32 i = 0; i < 3; i++) {
+            push8(i);            // i
+            lda(n);              // element i
+            stg(3 * n + (u32)i); // glob[3n + i]
+        }
+        len(n);      //
+        stg(16 + n); // glob[16 + n] = 3
+    }
+    push8(1);                            // i
+    push8(7);                            // i 7
+    sta(0);                              // a ROM array: warns, nothing written
+    push8(1);                            //
+    lda(0);                              // still 127
+    stg(21);                             //
+    push8(3);                            // one past the end
+    lda(4);                              // warns: 0
+    stg(22);                             //
+    op(VM_OP_HALT);                      //
+    rom_array(4, ARRAY_S32, rom_s32, 3); // the blob's last 12 bytes
+    CHECK(load());
+    vm_set_global(22, 99);
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    u32 wrong = 0;
+    for (u32 n = 0; n < 5; n++) {
+        for (u32 i = 0; i < 3; i++)
+            wrong += vm_global((u16)(3 * n + i)) != values[n][i];
+        wrong += vm_global((u16)(16 + n)) != 3;
+    }
+    CHECK(wrong == 0);
+    CHECK(vm_global(21) == 127 && vm_global(22) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// A blob for the array reload cases: object 0's Create adds 1 to cell 0 of
+// its RAM array and copies it to glob[0]. `length` and `first` lay the RAM
+// array out; `rom` puts a ROM array of that many elements before it (array 0,
+// making the RAM array number 1), or after it with `rom_after`.
+static void build_counter_array_with(u16 length, u16 first, u16 rom, bool rom_after) {
+    static const s32 data[] = {1, 2, 3};
+    u32 n = rom && !rom_after ? 1 : 0;
+    blob_begin_arrays(1, 0, GLOBALS, rom ? 2 : 1);
+    if (rom)
+        rom_array(1 - n, ARRAY_U8, data, rom);
+    ram_array(n, length, first);
+    handler(0, VM_EV_CREATE);
+    push8(0);       // 0
+    push8(0);       // 0 0
+    lda(n);         // 0 a[0]
+    push8(1);       //
+    op(VM_OP_ADD);  // 0 a[0]+1
+    sta(n);         // a[0] += 1
+    push8(0);       //
+    lda(n);         // a[0]
+    stg(0);         // glob[0]
+    op(VM_OP_HALT); //
+}
+
+static void build_counter_array(u16 length, u16 first, u16 rom) {
+    build_counter_array_with(length, first, rom, false);
+}
+
+// Runs object 0's Create `times` times; returns glob[0], the counter.
+static s32 count_up(u32 times) {
+    for (u32 k = 0; k < times; k++)
+        start(0);
+    vm_step();
+    return vm_global(0);
+}
+
+// vm.md "Array table", "Hot reload": vm_load zeroes the RAM arrays' cells;
+// vm_reload keeps them when the new blob's RAM arrays are laid out the same
+// (the array count, each array's kind, each RAM array's length and first
+// cell; ROM data may change), and zeroes them with a warning otherwise.
+static void ram_arrays_across_loads(void) {
+    reset();
+    build_counter_array(4, 8, 0);
+    CHECK(load());
+    u32 before = debug_warning_count();
+    CHECK(count_up(2) == 2);
+    build_counter_array(4, 8, 0);
+    CHECK(reload()); // the same layout: kept
+    CHECK(count_up(1) == 3);
+    CHECK_WARNED(before, 0);
+    build_counter_array(5, 8, 0); // longer: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 1);
+    CHECK(count_up(1) == 1);
+    build_counter_array(5, 9, 0); // moved: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 2);
+    CHECK(count_up(2) == 2);
+    build_counter_array(5, 9, 2); // a ROM array before it: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 3);
+    CHECK(count_up(1) == 1);
+    build_counter_array(5, 9, 3); // only the ROM array changed: kept
+    CHECK(reload());
+    CHECK(count_up(1) == 2);
+    CHECK_WARNED(before, 3);
+    build_counter_array_with(5, 9, 3, true); // as many arrays, but array 0 is RAM now
+    CHECK(reload());
+    CHECK_WARNED(before, 4);
+    CHECK(count_up(1) == 1);
+    build_counter_array_with(5, 9, 3, true);
+    CHECK(load()); // vm_load: zeroed, no warning
+    CHECK(count_up(1) == 1);
+    CHECK_WARNED(before, 4);
 }
 
 // --- Hot reload --------------------------------------------------------------
@@ -3721,6 +4285,52 @@ static void reload_keeps_attachments_to_objects_that_remain(void) {
     CHECK(vm_global(0) == 133); // e0, then e2: no Create to wait for any more
     CHECK(vm_global(1) == 2);
     CHECK(entity_alive(e0) && entity_alive(e1) && entity_alive(e2));
+}
+
+// Objects whose Create sets the instance's field 3 to 7; object 0's Room
+// Start, run as a thread, reads that field of the entities in glob[5] and
+// glob[6] into glob[0] and glob[1].
+static void build_fielders(u16 objects) {
+    blob_begin(objects, 0, GLOBALS);
+    for (u16 obj = 0; obj < objects; obj++) {
+        handler(obj, VM_EV_CREATE);
+        op(VM_OP_SELF);
+        push8(7);
+        setp(VM_P_FIELD(3));
+        op(VM_OP_HALT);
+    }
+    handler(0, VM_EV_ROOM_START);
+    ldg(5);
+    getp(VM_P_FIELD(3));
+    stg(0);
+    ldg(6);
+    getp(VM_P_FIELD(3));
+    stg(1);
+    op(VM_OP_HALT);
+}
+
+// vm.md "Hot reload": instance fields are kept for the entities the reload
+// keeps attached; an entity the reload detaches has none any more.
+static void reload_keeps_the_kept_instances_fields(void) {
+    reset();
+    build_fielders(2);
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_events();
+    vm_set_global(5, a);
+    vm_set_global(6, b);
+    build_fielders(1); // object 1 is gone: b is detached
+    CHECK(reload());
+    vm_set_global(1, 99);
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_ROOM_START) >= 0);
+    vm_step();
+    CHECK(vm_global(0) == 7); // a's, kept
+    CHECK(vm_global(1) == 0); // b is unattached: warns
+    CHECK_WARNED(before, 1);
 }
 
 // A Collision handler for object 0 (glob[1] = 1) and a thread, object 1,
@@ -3947,9 +4557,16 @@ static const u8* golden_with(const Patch* patch) {
 }
 
 // vm.md "Load-time validation". The golden blob's tables end at 0x34; its
-// Create handler offset is at 0x18, Room Start's at 0x2C, string 0's at 0x30.
+// Create handler offset is at 0x18, Room Start's at 0x2C, string 0's at 0x30;
+// the header's flags are at 6, its array count at 14, object 0's reserved
+// field at 0x16.
 static const Patch bad_patches[] = {
     {0, 'X', 1, "bad magic"},
+    {6, 1, 2, "header flags not 0"},
+    {6, 0x8000, 2, "header flags not 0 (top bit)"},
+    {0x16, 1, 2, "object reserved field not 0"},
+    {14, 1, 2, "an array table over the code and the string"},
+    {14, 0xFFFF, 2, "array table past the end"},
     {3, 'b', 1, "bad magic (last byte)"},
     {4, 0, 1, "version 0"},
     {4, 2, 1, "version 2"},
@@ -4043,6 +4660,69 @@ static void loader_rejects_a_string_without_its_nul(void) {
     CHECK(!load());
     CHECK_WARNED(before, 1);
     CHECK(vm_start(0, VM_EV_CREATE) == -1); // nothing loaded
+}
+
+// One array record, and whether vm_load must accept it, in a blob whose
+// tables end at 0x38 and whose last byte is at 0x3F (size 0x40).
+static const struct {
+    u32 length, kind, reserved, where;
+    bool good;
+    const char* what;
+} array_cases[] = {
+    {4, ARRAY_RAM, 0, 0, true, "a RAM array at cell 0"},
+    {24, ARRAY_RAM, 0, VM_ARRAY_CELLS - 24, true, "a RAM array ending at the pool's end"},
+    {0, ARRAY_RAM, 0, VM_ARRAY_CELLS, true, "an empty RAM array at the pool's end"},
+    {VM_ARRAY_CELLS, ARRAY_RAM, 0, 0, true, "the whole pool"},
+    {25, ARRAY_RAM, 0, VM_ARRAY_CELLS - 24, false, "a RAM array past the pool's end"},
+    {0, ARRAY_RAM, 0, VM_ARRAY_CELLS + 1, false, "an empty RAM array past the pool"},
+    {1, ARRAY_RAM, 0, 0xFFFFFFFF, false, "a RAM array at cell 2^32 - 1"},
+    {0xFFFF, ARRAY_RAM, 0, 0, false, "a RAM array longer than the pool"},
+    {8, ARRAY_U8, 0, 0x38, true, "u8 data filling the rest of the blob"},
+    {2, ARRAY_S32, 0, 0x38, true, "s32 data filling the rest of the blob"},
+    {4, ARRAY_S16, 0, 0x38, true, "s16 data filling the rest of the blob"},
+    {0, ARRAY_S8, 0, 0x40, true, "empty data at the blob's end"},
+    {9, ARRAY_U8, 0, 0x38, false, "u8 data one byte past the end"},
+    {3, ARRAY_S32, 0, 0x38, false, "s32 data past the end"},
+    {5, ARRAY_U16, 0, 0x38, false, "u16 data past the end"},
+    {1, ARRAY_S8, 0, 0x37, false, "data in the array table"},
+    {1, ARRAY_S8, 0, 0x10, false, "data in the object table"},
+    {0, ARRAY_S8, 0, 0x41, false, "empty data past the blob's end"},
+    {1, ARRAY_S8, 0, 0xFFFFFFFF, false, "data at 2^32 - 1"},
+    {0xFFFF, ARRAY_S32, 0, 0x38, false, "65535 s32s"},
+    {1, ARRAY_S32 + 1, 0, 0x38, false, "an unknown kind"},
+    {1, 255, 0, 0x38, false, "kind 255"},
+    {1, ARRAY_RAM, 1, 0, false, "a RAM array's reserved byte not 0"},
+    {1, ARRAY_U8, 0x80, 0x38, false, "a ROM array's reserved byte not 0"},
+};
+
+// vm.md "Load-time validation": every array record must be valid: a known
+// kind, its reserved byte 0, a RAM range inside VM_ARRAY_CELLS, ROM data
+// inside the blob past the tables. One warning per rejected blob.
+static void loader_checks_array_records(void) {
+    reset();
+    u32 before = debug_warning_count();
+    u32 rejected = 0;
+    for (u32 k = 0; k < sizeof array_cases / sizeof array_cases[0]; k++) {
+        blob_begin_arrays(1, 0, GLOBALS, 1); // tables: 0x10 + 0x20 + 8 = 0x38
+        handler(0, VM_EV_CREATE);
+        for (u32 b = 0; b < 7; b++)
+            op(VM_OP_NOP);
+        op(VM_OP_HALT); // 0x38 to 0x3F
+        put16(array_record(0), array_cases[k].length);
+        bld.bytes[array_record(0) + 2] = (u8)array_cases[k].kind;
+        bld.bytes[array_record(0) + 3] = (u8)array_cases[k].reserved;
+        put32(array_record(0) + 4, array_cases[k].where);
+        if (load() != array_cases[k].good)
+            test_fail(__FILE__, __LINE__, array_cases[k].what);
+        rejected += !array_cases[k].good;
+        vm_unload();
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() - before == rejected);
+#else
+    (void)rejected;
+    CHECK(debug_warning_count() == before);
+#endif
 }
 
 // --- Determinism -------------------------------------------------------------
@@ -4246,6 +4926,9 @@ TEST_SUITE(
     {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
     {"property_without_its_component_warns", property_without_its_component_warns},
     {"body_size_properties", body_size_properties},
+    {"tags_are_the_game_components", tags_are_the_game_components},
+    {"instance_fields", instance_fields},
+    {"nexti_loops_over_an_objects_instances", nexti_loops_over_an_objects_instances},
     {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
     {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
     {"wait_anim_without_a_one_shot_animation_continues",
@@ -4254,14 +4937,18 @@ TEST_SUITE(
      wait_anim_continues_if_the_sprite_stops_being_one_shot},
     {"animation_end_is_raised_when_an_animation_finishes",
      animation_end_is_raised_when_an_animation_finishes},
+    {"animation_properties_restart_an_animation", animation_properties_restart_an_animation},
     {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
     {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
     {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
     {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
-    {"sys_text_print_number", sys_text_print_number},
+    {"sys_text_print_number", sys_text_print_number}, {"sys_path_stop", sys_path_stop},
+    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
     {"reload_keeps_attachments_to_objects_that_remain",
      reload_keeps_attachments_to_objects_that_remain},
+    {"reload_keeps_the_kept_instances_fields", reload_keeps_the_kept_instances_fields},
     {"reload_halts_contexts_and_empties_the_queue", reload_halts_contexts_and_empties_the_queue},
     {"load_resets_everything", load_resets_everything},
     {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
@@ -4269,6 +4956,7 @@ TEST_SUITE(
     {"phases_do_not_nest", phases_do_not_nest},
     {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
     {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
+    {"loader_checks_array_records", loader_checks_array_records},
     {"runs_are_deterministic", runs_are_deterministic},
     {"debug_ops_log_and_continue", debug_ops_log_and_continue},
     {"unload_stops_everything", unload_stops_everything});

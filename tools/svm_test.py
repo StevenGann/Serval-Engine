@@ -228,6 +228,8 @@ class Errors(unittest.TestCase):
         "ENTER past a u8": (".object X\n.handler X CREATE\nENTER 0, 256\nHALT\n", 3, "fit"),
         "an operand too many": (".object X\n.handler X CREATE\nLDG 1, 2\nHALT\n", 3,
                                 "LDG takes 1 operand"),
+        "NEXTI of an undeclared object": (".object X\n.handler X CREATE\nNEXTI 1\nHALT\n", 3,
+                                          "no object"),
     }
 
     def test_each_error_names_its_line(self):
@@ -393,6 +395,9 @@ start:
     STG TWO
     LDL 3
     STL 7
+    LDA 0
+    STA 2
+    LEN 1
     ENTER 2, 5
     ADD
     SUB
@@ -432,9 +437,14 @@ ahead:
     OTHER
     GETP BODY_H
     SETP 200                   ; not a property vm.h knows: a number, with a warning
+    GETP FIELD0
+    SETP VM_P_FIELD0 + 15      ; the last instance field
+    GETP TAGS
     SPAWN B
     KILL
+    NEXTI A
     SYS TEXT_PRINT_NUMBER
+    SYS PATH_STOP
     SYS 99
     BRK
     TRACE HELLO
@@ -466,8 +476,10 @@ class RoundTrip(unittest.TestCase):
         self.assertIn('.string 0 "say \\"hi\\" \\\\ bye"', listing)
         self.assertIn("    PUSH8 -1\n    PUSH16 -300\n    PUSH32 70000\n", listing)
         self.assertIn("    GETP BODY_H\n    SETP 200\n", listing)
-        self.assertIn("    SYS TEXT_PRINT_NUMBER\n    SYS 99\n", listing)
-        self.assertIn("    LDL 3\n    STL 7\n    ENTER 2, 5\n", listing)
+        self.assertIn("    GETP FIELD0\n    SETP VM_P_FIELD0 + 15\n    GETP TAGS\n", listing)
+        self.assertIn("    SYS TEXT_PRINT_NUMBER\n    SYS PATH_STOP\n    SYS 99\n", listing)
+        self.assertIn("    LDA 0\n    STA 2\n    LEN 1\n    ENTER 2, 5\n", listing)
+        self.assertIn("    NEXTI 0\n", listing)
         self.assertIn("    JZ L_", listing)
         self.assertIn("    CALL L_", listing)
 
@@ -528,8 +540,8 @@ class OperandTable(unittest.TestCase):
 
     def test_layouts_from_the_opcode_reference(self):
         """The new operand layouts, byte by byte (vm.md's opcode reference)."""
-        sizes = {"ENTER": 2, "LSH": 0, "IDIV": 0, "IMOD": 0, "RETV": 0, "LDL": 1, "STL": 1,
-                 "CALL": 4}
+        sizes = {"ENTER": 2, "LDA": 2, "STA": 2, "LEN": 2, "NEXTI": 2, "LSH": 0, "IDIV": 0,
+                 "IMOD": 0, "RETV": 0, "LDL": 1, "STL": 1, "CALL": 4}
         for mnemonic, size in sizes.items():
             with self.subTest(mnemonic=mnemonic):
                 self.assertEqual(svm.operand_size(mnemonic), size)
