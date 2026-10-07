@@ -37,6 +37,7 @@ enum {
     W_SET_OUTSIDE,
     W_SET_METATILE,
     W_SET_FULL,
+    W_CAMERA_SMALL,
 };
 static u32 warned;
 
@@ -68,7 +69,31 @@ static void clamp_camera(void) {
     serval_camera_y = clamp(serval_camera_y, 0, max_y < 0 ? 0 : max_y);
 }
 
+#ifdef SERVAL_DEBUG
+// Clamping at the playfield's edges is normal (a camera following the player
+// is clamped near every edge), so it is silent. But on an axis where the
+// playfield is smaller than the screen the camera can only be 0, and asking
+// for anything else there does nothing: a game drifting a small layer with
+// the camera sees it stand still. Checked here, on the requested position,
+// not in clamp_camera(), which map_load() also calls.
+static void check_small_playfield(int x, int y) {
+    const MapLayer* playfield = serval_map_layers[2];
+    if (!playfield)
+        return;
+    bool narrow = x != 0 && playfield->width * 16 < SCREEN_W;
+    bool low = y != 0 && playfield->height * 16 < SCREEN_H;
+    if (narrow || low)
+        WARN_ONCE(W_CAMERA_SMALL,
+                  "camera_set(%d, %d): the playfield is %s than the screen, so %c stays 0; move "
+                  "small layers with map_set_scroll()",
+                  x, y, narrow ? "narrower" : "shorter", narrow ? 'x' : 'y');
+}
+#endif
+
 void camera_set(int x, int y) {
+#ifdef SERVAL_DEBUG
+    check_small_playfield(x, y);
+#endif
     serval_camera_x = x;
     serval_camera_y = y;
     clamp_camera();
