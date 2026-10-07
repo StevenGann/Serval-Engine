@@ -1046,6 +1046,8 @@ class Listing(unittest.TestCase):
         self.assertEqual(code[code.index("f:") + 1], "RET")
         self.assertEqual(code[code.index("g:") + 1:code.index("g:") + 3], ["PUSH 1", "RETV"])
         self.assertEqual(code[-1], "HALT")
+        code = self.code(OBJ + "function B:create() while true do wait(1) end end")
+        self.assertEqual(code[-2:], ["JMP b_create_while1", "HALT"])  # not reached, but there
 
     def test_constant_folding(self):
         cases = {

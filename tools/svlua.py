@@ -3350,6 +3350,7 @@ class FuncGen:
         self.counter = 0
         self.user_labels = {}
         self.shown = None
+        self.last_op = None
         if body.kind == "handler":
             self.prefix = f"{body.obj.listing.lower()}_{body.event}"
         else:
@@ -3369,6 +3370,7 @@ class FuncGen:
         line = node if isinstance(node, int) else node.line
         self.show(line)
         self.items.append(self.cg.located("    " + text, line, note))
+        self.last_op = text.split()[0]
 
     def label(self, name, node):
         line = node if isinstance(node, int) else node.line
@@ -3403,9 +3405,12 @@ class FuncGen:
                               "starts with them)")
             self.items += self.cg.global_stores(func.line)
         self.block(func.body)
+        end = func.body.end_line
+        last = "HALT" if body.kind == "handler" else "RET"
         if can_fall(func.body):
-            end = func.body.end_line
-            self.op("HALT" if body.kind == "handler" else "RET", end)
+            self.op(last, end)
+        elif self.last_op not in ("HALT", "RET", "RETV"):
+            self.op(last, end, "not reached: every handler and function ends in HALT or RET")
         if self.max_slot > 60:
             self.cg.error(func, f"{body.name} needs {self.max_slot} frame cells; a context's "
                           "stack has 64 for every frame and operand", "use fewer locals")
