@@ -863,7 +863,8 @@ static const OpRow shift_edge_rows[] = {
 };
 
 static void lua_shift_op(void) {
-    static OpRow rows[SHIFT_COUNTS];
+    // 1.3 KB: in EWRAM, to keep the test ROM's IWRAM for the engine's code.
+    static SERVAL_EWRAM_BSS OpRow rows[SHIFT_COUNTS];
     for (u32 t = 0; t < sizeof shift_sweeps / sizeof shift_sweeps[0]; t++) {
         for (u32 k = 0; k < SHIFT_COUNTS; k++)
             rows[k] = (OpRow){VM_OP_LSH, shift_sweeps[t].a, SHIFT_MIN + (s32)k,
@@ -5325,7 +5326,7 @@ static void run_spawners(s32* out) {
 // vm.md "Determinism": two identical runs (scripts, inputs, seed) leave
 // identical globals.
 static void runs_are_deterministic(void) {
-    static s32 first[GLOBALS], second[GLOBALS];
+    static SERVAL_EWRAM_BSS s32 first[GLOBALS], second[GLOBALS];
     run_spawners(first);
     run_spawners(second);
     u32 differ = 0;

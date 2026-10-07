@@ -29,7 +29,8 @@ static const Metatile metatiles[] = {
 };
 
 #define MAX_CELLS (40 * 16)
-static u16 cells[MAX_CELLS];
+// 1.3 KB: in EWRAM, to keep the test ROM's IWRAM for the engine's code.
+static SERVAL_EWRAM_BSS u16 cells[MAX_CELLS];
 static MapLayer playfield;
 
 // Loads a playfield drawn as text, one string per metatile row: '.' empty,
