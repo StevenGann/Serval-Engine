@@ -6,8 +6,8 @@
 // the test ROM can't press buttons. Not part of the public API.
 //
 // The splash is a fade-in, a hold with the jingle, and a fade-out; its logo
-// is one of SERVAL_SPLASH_STYLES candidate styles, which L and R cycle while
-// the owner picks one (docs/open-questions.md). Frames at ~59.73 fps.
+// is one of SERVAL_SPLASH_STYLES variations of the logo, which L and R cycle
+// while the owner picks the final one (docs/open-questions.md). Frames at ~59.73 fps.
 
 #include "serval/platform.h"
 

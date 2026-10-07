@@ -25,7 +25,7 @@ void serval_init(void);
 // Shows the "made with Serval Engine" splash screen, then returns: about three
 // seconds of the logo fading in on a black backdrop, a jingle, and fading out.
 // Pressing any button but L and R once it has faded in skips the rest. (While
-// the logo is being chosen, four candidate styles are built in and R and L
+// the logo's final variation is being chosen, four are built in and R and L
 // show the next and previous one; a switch restarts the hold. See
 // docs/core-api.md.) Call it after serval_init(), before loading your game's
 // graphics. Puts back the backdrop color (so the screen then shows the game's
