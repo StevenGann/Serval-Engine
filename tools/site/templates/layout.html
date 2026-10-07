@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<meta name="description" content="${description}">
+<link rel="canonical" href="${canonical}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Serval Engine">
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="${description}">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="${social_image}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" sizes="64x64" href="${root}docs/images/serval-engine-mark.png">
+<link rel="icon" type="image/png" sizes="256x256" href="${root}docs/images/serval-engine-mark@4x.png">
+<link rel="apple-touch-icon" href="${root}docs/images/serval-engine-mark@4x.png">
+<link rel="stylesheet" href="${root}assets/site.css">
+<script>
+  // The theme the reader picked (the toggle in the header), before the page draws.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem("serval-theme"); } catch (e) {}
+    if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.classList.add("js");
+  })();
+</script>
+${head}
+</head>
+<body class="${body_class}" data-root="${root}">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="${root}">
+      <img class="brand-logo" src="${root}docs/images/serval-engine-logo.png"
+        srcset="${root}docs/images/serval-engine-logo@2x.png 2x, ${root}docs/images/serval-engine-logo@4x.png 4x"
+        width="138" height="47" alt="Serval Engine">
+      <img class="brand-mark" src="${root}docs/images/serval-engine-mark.png"
+        srcset="${root}docs/images/serval-engine-mark@4x.png 4x" width="64" height="64" alt="Serval Engine">
+    </a>
+    <nav class="site-nav" aria-label="Site">
+      <a href="${root}docs/"${docs_current}>Docs</a>
+      <a class="nav-github" href="${repo_url}">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="tool-button search-open" type="button" aria-label="Search the docs" aria-keyshortcuts="/">
+        ${icon_search}<span class="search-label">Search</span><kbd>/</kbd>
+      </button>
+      <button class="tool-button theme-toggle" type="button" aria-label="Switch between light and dark">
+        ${icon_theme}
+      </button>
+    </div>
+  </div>
+</header>
+${body}
+<footer class="site-footer">
+  <div class="footer-inner">
+    <img src="${root}docs/images/serval-engine-mark.png" width="64" height="64" alt="">
+    <div>
+      <p>Serval Engine is open source under the <a href="${license_url}">MIT License</a>, so it can be linked
+        into any game, including commercial ones.</p>
+      <ul class="footer-links">
+        <li><a href="${root}docs/">Docs</a></li>
+        <li><a href="${repo_url}">Source on GitHub</a></li>
+        <li><a href="${releases_url}">Releases</a></li>
+      </ul>
+      <p class="fine">Game Boy Advance is a trademark of Nintendo. Serval Engine is not affiliated with or
+        endorsed by Nintendo.</p>
+    </div>
+  </div>
+</footer>
+<dialog class="search-dialog" aria-labelledby="search-dialog-title">
+  <div class="dialog-bar">
+    <span class="dialog-title" id="search-dialog-title">Search the docs</span>
+    <button type="button" class="dialog-close" aria-label="Close">Close</button>
+  </div>
+  <div id="search" class="search-body"></div>
+  <p class="search-missing" hidden>Search isn't available in this build of the site: its index is made by
+    Pagefind after the build (<code>python -m pagefind --site build/site</code>).</p>
+</dialog>
+<script src="${root}assets/site.js" defer></script>
+${scripts}
+</body>
+</html>

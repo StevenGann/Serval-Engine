@@ -1,0 +1,11 @@
+# The documentation site's generator (tools/site/build.py) and its search
+# index. Install into a virtual environment:
+#   python3 -m venv build/site-venv
+#   build/site-venv/bin/pip install -r tools/site/requirements.txt
+# Pinned, transitive dependencies included, so every build renders the same.
+markdown-it-py==4.2.0
+mdit-py-plugins==0.6.1
+mdurl==0.1.2
+Pygments==2.21.0
+pagefind[bin]==1.5.2
+pagefind-bin==1.5.2
