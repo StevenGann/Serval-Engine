@@ -5,14 +5,16 @@
 // from ASCII pictures into charblock 1 and shown on the text layer's map.
 // Not part of the public API.
 //
-// Four candidate styles are in the tree while one is being picked
-// (docs/open-questions.md); the splash cycles them with L and R.
+// The logo is the mark-and-wordmark design (a serval's head and "SERVAL
+// ENGINE" in chunky letters) in four variations while the final one is
+// picked (docs/open-questions.md); the splash cycles them with L and R.
 
 #include <tonc_types.h>
 
 // Where the logos live: charblock 1 (BG0 keeps charblock 0 as its base, and
-// a 10-bit tile index reaches both), SERVAL_SPLASH_ART_TILES tiles per style,
-// and one BG palette bank per style from SERVAL_SPLASH_ART_FIRST_BANK.
+// a 10-bit tile index reaches both), up to SERVAL_SPLASH_ART_TILES drawn
+// tiles per style (tiles with nothing drawn take no VRAM), and one BG
+// palette bank per style from SERVAL_SPLASH_ART_FIRST_BANK.
 #define SERVAL_SPLASH_ART_CHARBLOCK 1
 #define SERVAL_SPLASH_ART_TILES 128
 #define SERVAL_SPLASH_ART_FIRST_BANK 10
