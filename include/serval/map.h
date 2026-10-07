@@ -135,11 +135,12 @@ void map_set_scroll(u32 bg, int x, int y);
 // without one, any position is kept. Backgrounds scroll at the next
 // frame_end(); entities drawn by sys_render afterwards in this frame already
 // use it, so set it before them.
-// Caveat: the clamp follows the playfield alone, silently (no warning). With
-// a playfield no bigger than the screen on an axis, wrapping or not, the
-// camera stays at 0 on that axis, and so do the other layers it scrolls. To
-// scroll a small or wrapping layer (a starfield, clouds) on such a screen,
-// move it with map_set_scroll() instead.
+// Clamping at the playfield's edges is silent (a camera following the
+// player is clamped near every edge). But where the playfield, wrapping or
+// not, is smaller than the screen on an axis, the camera, and with it every
+// layer it scrolls, can only be at 0 on that axis: asking for any other
+// value there warns (once, in debug builds). To scroll a small layer (a
+// starfield, clouds) on such a screen, move it with map_set_scroll().
 void camera_set(int x, int y);
 int camera_x(void);
 int camera_y(void);

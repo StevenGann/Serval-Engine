@@ -676,6 +676,40 @@ static void contacts_report_exits_through_open_edges(void) {
     reset();
 }
 
+// The exact frame of BODY_CONTACT_EXIT, with bodies moving a pixel per frame:
+// the one they become entirely outside on, pos_x + body_w <= left or
+// pos_x >= right (likewise vertically; right and bottom are exclusive). At
+// pos_x == left - body_w the body's last column is already outside, a frame
+// before a game's own `pos_x < left - body_w` says so.
+static void contacts_report_exits_on_the_exact_frame(void) {
+    reset();
+    physics_set_contacts(true);
+    physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT | PHYSICS_EDGE_TOP |
+                           PHYSICS_EDGE_BOTTOM);
+    // 10x10, two pixels inside an edge each.
+    u32 left = make_body(-FX(8), FX(20), -FX(1), 0);
+    u32 right = make_body(FX(98), FX(60), FX(1), 0);
+    u32 top = make_body(FX(20), -FX(8), 0, -FX(1));
+    u32 bottom = make_body(FX(60), FX(98), 0, FX(1));
+    step(1); // one pixel still inside each edge
+    CHECK(pos_x[left] == -FX(9) && body_contact[left] == 0);
+    CHECK(pos_x[right] == FX(99) && body_contact[right] == 0);
+    CHECK(pos_y[top] == -FX(9) && body_contact[top] == 0);
+    CHECK(pos_y[bottom] == FX(99) && body_contact[bottom] == 0);
+    step(1); // entirely outside
+    CHECK(pos_x[left] == -FX(10) && body_contact[left] == (BODY_CONTACT_EXIT | BODY_SIDE_LEFT));
+    CHECK(pos_x[right] == FX(100) && body_contact[right] == (BODY_CONTACT_EXIT | BODY_SIDE_RIGHT));
+    CHECK(pos_y[top] == -FX(10) && body_contact[top] == (BODY_CONTACT_EXIT | BODY_SIDE_TOP));
+    CHECK(pos_y[bottom] == FX(100) &&
+          body_contact[bottom] == (BODY_CONTACT_EXIT | BODY_SIDE_BOTTOM));
+    CHECK(!(pos_x[left] < -FX(10))); // the game's own test: not yet
+    step(1);
+    CHECK(body_contact[left] == 0 && body_contact[right] == 0); // that frame only
+    CHECK(body_contact[top] == 0 && body_contact[bottom] == 0);
+    CHECK(pos_x[left] < -FX(10)); // the game's own test, a frame late
+    reset();
+}
+
 // A wrapping axis has no walls: no contacts on it, while the other axis
 // still reports its walls.
 static void wrapping_axes_report_no_contacts(void) {
@@ -770,6 +804,7 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"contacts_report_each_wall", contacts_report_each_wall},
            {"contacts_while_resting_and_off", contacts_while_resting_and_off},
            {"contacts_report_exits_through_open_edges", contacts_report_exits_through_open_edges},
+           {"contacts_report_exits_on_the_exact_frame", contacts_report_exits_on_the_exact_frame},
            {"wrapping_axes_report_no_contacts", wrapping_axes_report_no_contacts},
            {"max_fall_takes_fractions", max_fall_takes_fractions},
            {"screen_and_world_bodies_meet_in_the_world",

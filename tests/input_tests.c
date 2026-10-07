@@ -80,6 +80,56 @@ static void bad_settings_are_ignored(void) {
     serval_repeat_reset();
 }
 
+// button_repeat_reset(), as a screen opens: a button held at the call fires
+// nothing (not even this frame's press) until it is released; pressed again,
+// it works as usual.
+static void reset_silences_held_buttons_until_released(void) {
+    serval_repeat_reset();
+    button_repeat_set(3, 2);
+    serval_repeat_frame(BUTTON_A); // pressed: fires
+    CHECK(button_repeat(BUTTON_A));
+    button_repeat_reset(); // in the same frame
+    CHECK(!button_repeat(BUTTON_A));
+    // Held on: without the reset it would repeat on frames 3, 5, 7 and 9 of these.
+    CHECK(repeat_frames(BUTTON_A, BUTTON_A, 10) == 0);
+    serval_repeat_frame(0); // released
+    // A new press works as usual.
+    CHECK(repeat_frames(BUTTON_A, BUTTON_A, 6) == (1u << 1 | 1u << 4 | 1u << 6));
+    serval_repeat_reset();
+}
+
+// Buttons not held at the call are unaffected, also while a silenced one is
+// still held.
+static void reset_leaves_buttons_pressed_later_alone(void) {
+    serval_repeat_reset();
+    button_repeat_set(3, 2);
+    repeat_frames(BUTTON_UP, BUTTON_UP, 5); // UP held from the last screen
+    button_repeat_reset();
+    serval_repeat_frame(BUTTON_UP); // frame 6: UP's repeat would be due
+    CHECK(!button_repeat(BUTTON_UP));
+    // Frames 7-12: DOWN goes down and repeats as usual. Frames 13-16: UP,
+    // whose repeats would be due on 14 and 16, is still silent.
+    CHECK(repeat_frames(BUTTON_UP | BUTTON_DOWN, BUTTON_DOWN, 6) == (1u << 1 | 1u << 4 | 1u << 6));
+    CHECK(repeat_frames(BUTTON_UP | BUTTON_DOWN, BUTTON_UP, 4) == 0);
+    serval_repeat_reset();
+}
+
+// The reset keeps the delay and interval (button_repeat_set); serval_init()'s
+// serval_repeat_reset() forgets everything, silenced buttons included.
+static void reset_keeps_the_timing(void) {
+    serval_repeat_reset();
+    button_repeat_set(3, 2);
+    serval_repeat_frame(BUTTON_A);
+    button_repeat_reset();
+    serval_repeat_frame(0);
+    CHECK(repeat_frames(BUTTON_B, BUTTON_B, 6) == (1u << 1 | 1u << 4 | 1u << 6)); // not 20, 4
+    serval_repeat_frame(BUTTON_A);
+    button_repeat_reset();
+    serval_repeat_reset(); // A still held: serval_init() forgets the silence
+    CHECK(repeat_frames(BUTTON_A, BUTTON_A, 1) == 1u << 1);
+    serval_repeat_reset();
+}
+
 TEST_SUITE(input_tests, "input",
            {"fires_on_press_then_after_delay_and_interval",
             fires_on_press_then_after_delay_and_interval},
@@ -87,4 +137,8 @@ TEST_SUITE(input_tests, "input",
            {"release_restarts_the_delay", release_restarts_the_delay},
            {"buttons_count_separately", buttons_count_separately},
            {"interval_of_one_fires_every_frame", interval_of_one_fires_every_frame},
-           {"bad_settings_are_ignored", bad_settings_are_ignored});
+           {"bad_settings_are_ignored", bad_settings_are_ignored},
+           {"reset_silences_held_buttons_until_released",
+            reset_silences_held_buttons_until_released},
+           {"reset_leaves_buttons_pressed_later_alone", reset_leaves_buttons_pressed_later_alone},
+           {"reset_keeps_the_timing", reset_keeps_the_timing});

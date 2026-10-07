@@ -12,13 +12,18 @@
 static u16 delay = DEFAULT_DELAY, interval = DEFAULT_INTERVAL;
 static u32 held;               // buttons held last frame
 static u32 due;                // buttons whose repeat fires this frame
+static u32 muted;              // held at button_repeat_reset(): silent until released
 static u16 wait[BUTTON_COUNT]; // frames until a held button's next repeat
 
+// Engine-internal, for serval_init(): forgets everything, settings included.
+// Not button_repeat_reset(), the public call below, which only silences the
+// buttons held now and keeps the settings.
 void serval_repeat_reset(void) {
     delay = DEFAULT_DELAY;
     interval = DEFAULT_INTERVAL;
     held = 0;
     due = 0;
+    muted = 0;
 }
 
 void serval_repeat_frame(u32 buttons) {
@@ -27,6 +32,7 @@ void serval_repeat_frame(u32 buttons) {
         due = 0;
         return;
     }
+    muted &= buttons;           // a release ends a button's silence
     u32 fire = buttons & ~held; // presses fire at once
     for (u32 still = buttons & held, i = 0; still; still >>= 1, i++) {
         if (!(still & 1))
@@ -41,11 +47,20 @@ void serval_repeat_frame(u32 buttons) {
             wait[i] = delay;
     }
     held = buttons;
-    due = fire;
+    due = fire & ~muted;
 }
 
 bool button_repeat(u16 buttons) {
     return (due & buttons) != 0;
+}
+
+// The public call: the buttons held now (polled by this frame's
+// frame_begin()) stay silent, from this frame on, until released. Their
+// repeat waits count on, but fire nothing; a new press restarts the wait, as
+// for any press.
+void button_repeat_reset(void) {
+    muted = held;
+    due &= ~muted;
 }
 
 void button_repeat_set(int new_delay, int new_interval) {

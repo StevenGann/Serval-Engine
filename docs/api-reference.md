@@ -32,12 +32,13 @@ Startup, the frame loop, CPU timing and buttons.
 | `bool button_pressed(u16 buttons)` | True only on the frame a button went down (any of several OR'd buttons). |
 | `bool button_repeat(u16 buttons)` | For menus and cursors: true on the frame a button went down, then while it stays held again after a delay and from then on at an interval (default 20 frames, then every 4: about 1/3 s, then 15 a second). Each button is counted on its own; with OR'd buttons, true if any is due. Counted from input alone, so deterministic. See the caveat below. |
 | `void button_repeat_set(int delay, int interval)` | Frames from a press to its first repeat and between later repeats, each 1 to 65,535 (else ignored, *warns*). A wait already under way for a held button finishes first. `serval_init()` restores the defaults. |
+| `void button_repeat_reset(void)` | Call when a screen opens, so a button held from the last screen doesn't repeat into it: every button held now stops firing in `button_repeat()` (neither its press nor its repeats, from this frame on) until it is released; released and pressed again, it behaves as usual. Buttons not held now are unaffected, and so are the delay and interval (`button_repeat_set`), `button_pressed()` and `button_down()`. |
 
 Buttons: `BUTTON_A`, `BUTTON_B`, `BUTTON_SELECT`, `BUTTON_START`, `BUTTON_RIGHT`, `BUTTON_LEFT`, `BUTTON_UP`, `BUTTON_DOWN`, `BUTTON_R`, `BUTTON_L`, and `BUTTON_ANY` (all ten). Button state changes only in `frame_begin()`.
 
 **Caveats**
 
-- `button_repeat()` counts from the press, not from when a menu opens: a button still held from the previous screen (the A that opened the menu) keeps repeating in the menu at once. If the menu should wait for a fresh press, act on `button_pressed()` until the button has been released once.
+- `button_repeat()` counts from the press, not from when a screen opens: a button still held from the previous screen (the A that opened a menu) would repeat in the new one at once. Call `button_repeat_reset()` when the screen opens.
 
 ## screen.h
 
@@ -158,7 +159,7 @@ An entity with `C_POS | C_VEL | C_BODY` is a body. Body pools, zeroed by `entity
 | `u8 body_friction[]` | Speed lost per frame while touching a floor, in 256ths (0 = none). The loss is rounded up, so any non-zero friction eventually stops a body. |
 | `u16 body_max_fall[]` | Maximum fall speed in pixels per frame, fixed point like velocities (`FX(5)`, or `FX(3) / 2` for 1.5; 0 = no limit; under 256): after gravity is added, the velocity in the direction gravity pulls is limited to it, on each axis gravity acts on. A faster speed the game sets (a jump against gravity) is kept until gravity is next applied. |
 | `s8 body_gravity[]` | How strongly gravity pulls the body, written with `BODY_GRAVITY(sixteenths)`: `BODY_GRAVITY(16)` normal, `(8)` half, `(0)` none, `(-16)` reversed (range −112 to 143). Stores the scale minus 16, so 0 (the default) is normal gravity. Floors follow the body's own gravity. While every body has normal gravity `sys_physics()` costs the same; otherwise it takes its general loop and moves scaled bodies out of line, in ROM (32 bodies, 4 scaled: ~4,000 cycles more). |
-| `u8 body_contact[]` | With `physics_set_contacts(true)`: the walls of the bounds the body touched in the last `sys_physics()`, as `BODY_SIDE_*` bits of the body's side (`BODY_SIDE_BOTTOM` for the bottom bound...), set on the frame it bounces and on every frame it rests against a wall. `BODY_CONTACT_EXIT` plus a side: the body ended up entirely outside through that open edge this frame (set on that frame only). A wrapping axis reports nothing. The same pool as map bodies' contacts ([map.h](#maph)); read only. |
+| `u8 body_contact[]` | With `physics_set_contacts(true)`: the walls of the bounds the body touched in the last `sys_physics()`, as `BODY_SIDE_*` bits of the body's side (`BODY_SIDE_BOTTOM` for the bottom bound...), set on the frame it bounces and on every frame it rests against a wall. `BODY_CONTACT_EXIT` plus a side: the body became entirely outside through that open edge this frame (set on that frame only; the exact test per edge is in the caveat below). A wrapping axis reports nothing. The same pool as map bodies' contacts ([map.h](#maph)); read only. |
 
 Map bodies use `body_bounce`, `body_friction`, `body_max_fall` and `body_gravity` too ([map.h](#maph)).
 
@@ -175,7 +176,7 @@ Map bodies use `body_bounce`, `body_friction`, `body_max_fall` and `body_gravity
 
 **Caveats**
 
-- `BODY_CONTACT_EXIT` counts a body touching the edge from outside as exited: `pos_x + body_w == left` (or `pos_x == right`; likewise top and bottom). A body that lands exactly there exits a frame earlier than a typical `pos_x < left - body_w` check in game code says it is out; use one test or the other, not both. (Wrapping is the other way round: a body touching the low edge from outside hasn't wrapped yet.)
+- `BODY_CONTACT_EXIT` is set on the frame a body becomes entirely outside past an open edge, in pixels: left `pos_x + body_w <= left`, right `pos_x >= right`, top `pos_y + body_h <= top`, bottom `pos_y >= bottom` (right and bottom are exclusive). At `pos_x + body_w == left` the body's last column is already outside, so a game's own `pos_x < left - body_w` test is a frame late for a body that lands exactly there: use `BODY_CONTACT_EXIT` rather than a position test of your own. (Wrapping is different: a body at exactly `pos_x + body_w == left` hasn't wrapped yet, so one standing there doesn't jump back and forth.)
 
 ## map.h
 
@@ -212,7 +213,7 @@ Tiled backgrounds of 16×16 metatiles on BG1-BG3, a camera that scrolls them, an
 | `void tileset_set_tiles(u16 first, const u32* tiles, u16 count)` | Replaces `count` tiles of the loaded tileset from tile `first` with `tiles` (8 words per tile), for animated tiles (water, shimmering bonus blocks): every cell showing them changes. Queued and copied in VBlank at the next `frame_end()`, so `tiles` must stay valid until then. Up to `MAP_MAX_TILE_UPDATES` (8) calls per frame; another call for the same `first` in a frame replaces the earlier one. Ignored (*warns*) without a tileset, past its `tile_count`, for a NULL `tiles`, or when the frame's queue is full. Keep it to a few dozen tiles per frame (VBlank is short: each tile is 32 bytes to copy). `tileset_load` drops queued updates. |
 | `void map_unload(u32 bg)` | Hides the layer on background `bg` (turned off at the next `frame_end()`) and forgets it, and its `map_set_scroll()` offset. Nothing if none is shown; *warns* for `bg` outside 1-3. |
 | `void map_set_scroll(u32 bg, int x, int y)` | Moves background `bg`'s layer (1-3) by (x, y) pixels from where the camera puts it: the screen's top-left shows layer pixel camera × `scroll_factor` + (x, y), or (x, y) on a fixed layer. Applied at the next `frame_end()` and streamed like camera moves, so a layer can scroll by itself (a starfield drifting past while the camera stays put): add the speed every frame and let the offset count on (a jump of a screen or more redraws the window). On the playfield it moves the graphics away from collision and entities. Kept until changed or `map_unload()`, also when `map_load()` replaces the layer (set it before, like the camera). *Warns* for `bg` outside 1-3. |
-| `void camera_set(int x, int y)` | Sets the world position shown at the screen's top-left, in pixels. With a playfield loaded, clamped so the view stays inside its map (0 on an axis where the map is smaller than the screen); without one, kept as given. Backgrounds scroll at the next `frame_end()`; `sys_render` and `sys_render_by_depth` subtract it from entity positions (except those with `SPRITE_SCREEN`; `sprite_draw` doesn't: it takes screen coordinates), so set it before them. Starts at (0, 0). |
+| `void camera_set(int x, int y)` | Sets the world position shown at the screen's top-left, in pixels. With a playfield loaded, clamped so the view stays inside its map (0 on an axis where the map is smaller than the screen); without one, kept as given. Clamping at the map's edges is silent; a non-zero position on an axis where the map is smaller than the screen *warns* (see the caveat below). Backgrounds scroll at the next `frame_end()`; `sys_render` and `sys_render_by_depth` subtract it from entity positions (except those with `SPRITE_SCREEN`; `sprite_draw` doesn't: it takes screen coordinates), so set it before them. Starts at (0, 0). |
 | `int camera_x(void)`, `int camera_y(void)` | The camera position (after clamping). |
 | `u16 map_cell(int mx, int my)` | The playfield's metatile index at metatile coordinates (mx, my), including runtime changes; 0 outside the map or without a playfield. |
 | `void map_set_cell(int mx, int my, u16 metatile)` | Changes a playfield cell at runtime (broken block, open door). Up to `MAP_MAX_CHANGES` (64) changed cells per room; setting a cell back to its original metatile frees its place. Redrawn at the next `frame_end()` if on screen, and affects `map_cell`, `map_collision_at` and map bodies at once. Ignored (*warns*) when the table is full, outside the playfield, without one, or for a metatile it doesn't have. |
@@ -225,7 +226,7 @@ Tiled backgrounds of 16×16 metatiles on BG1-BG3, a camera that scrolls them, an
 
 **Caveats**
 
-- `camera_set()` clamps to the playfield (BG2) alone, silently. Where the playfield is no bigger than the screen on an axis, even a wrapping one, the camera stays at 0 on that axis, and so do the layers it scrolls. To drift a small or wrapping layer (a starfield, clouds) on such a screen, use `map_set_scroll()`.
+- `camera_set()` clamps to the playfield (BG2) alone. At the map's edges that is silent (a camera following the player is clamped near every edge), but where the playfield, even a wrapping one, is smaller than the screen on an axis, the camera can only be 0 on that axis, and so can the layers it scrolls: asking for any other value there *warns* (once). To drift a small layer (a starfield, clouds) on such a screen, use `map_set_scroll()`. (A playfield exactly the screen's size is an ordinary one-screen room: its camera stays at 0 without a warning.)
 
 ## audio.h
 
@@ -355,7 +356,7 @@ Per-entity state, indexed by slot and set by `path_start()`: `u16 path_heading[]
 
 **Caveats**
 
-- Write `PathStep` tables with designated initializers, as in the example. A positional initializer that leaves fields out, such as `{40, 0, FX(2)}`, triggers `-Wmissing-field-initializers` under `-Wextra`, an error with warnings as errors; a positional one must give all four fields (`{40, 0, FX(2), 0}`).
+- Write `PathStep` tables with designated initializers, as in the example, because a positional initializer that leaves fields out, such as `{40, 0, FX(2)}`, trips the compiler's `-Wmissing-field-initializers` (part of `-Wextra`; an error with warnings as errors), as it would for any C struct.
 
 ## random.h
 

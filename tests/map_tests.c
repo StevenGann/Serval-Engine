@@ -187,10 +187,46 @@ static void camera_is_clamped_to_the_playfield(void) {
     CHECK(camera_x() == 80 && camera_y() == 0);
     camera_set(33, -4);
     CHECK(camera_x() == 33 && camera_y() == 0);
-    static const char* const small[] = {"...", "..."}; // smaller than the screen
+    reset();
+}
+
+// Clamping at a playfield's edges is silent: a camera following the player is
+// clamped near every edge. On an axis where the playfield is smaller than the
+// screen, the camera can only be 0, and asking for anything else there warns,
+// once. (A playfield exactly as big as the screen is an ordinary room.)
+static void camera_warns_on_a_playfield_smaller_than_the_screen(void) {
+    reset();
+    u32 before = debug_warning_count();
+    LOAD(room); // 320x160: as high as the screen
+    camera_set(1000, 1000);
+    CHECK(camera_x() == 80 && camera_y() == 0);
+    camera_set(-50, -50);
+    CHECK(camera_x() == 0 && camera_y() == 0);
+    CHECK(debug_warning_count() == before); // clamped at the edges: no warning
+    // 0 where the playfield is smaller than the screen, clamped at an edge on
+    // the other axis: no warning.
+    static const char* const wide[] = {"....................", "...................."}; // 320x32
+    LOAD(wide);
+    camera_set(1000, 0);
+    CHECK(camera_x() == 80 && camera_y() == 0);
+    static const char* const narrow[] = {"...", "...", "...", "...", "...", "...",
+                                         "...", "...", "...", "...", "...", "..."}; // 48x192
+    LOAD(narrow); // re-clamps the camera (x 80 to 0), silently
+    CHECK(camera_x() == 0);
+    camera_set(0, 500);
+    CHECK(camera_x() == 0 && camera_y() == 32);
+    CHECK(debug_warning_count() == before);
+    static const char* const small[] = {"...", "..."}; // 48x32
     LOAD(small);
+    camera_set(0, 0);
+    CHECK(debug_warning_count() == before);
+    camera_set(10, 0);
+    CHECK(camera_x() == 0 && camera_y() == 0);
+    CHECK(debug_warning_count() == before + WARNINGS_ON);
+    camera_set(0, -10);
     camera_set(10, 10);
     CHECK(camera_x() == 0 && camera_y() == 0);
+    CHECK(debug_warning_count() == before + WARNINGS_ON); // once
     reset();
 }
 
@@ -761,6 +797,10 @@ TEST_SUITE(map_tests, "map",
            {"collision reads metatiles and the edges", collision_reads_metatiles_and_the_edges},
            {"tags come with the collision byte", tags_come_with_the_collision_byte},
            {"map_load rejects bad layers", map_load_rejects_bad_layers},
+           // Before other camera tests: the warning comes once per run, so a
+           // wrong one there would hide the checks for none here.
+           {"camera warns on a playfield smaller than the screen",
+            camera_warns_on_a_playfield_smaller_than_the_screen},
            {"camera is clamped to the playfield", camera_is_clamped_to_the_playfield},
            {"layers scroll by camera, factor and offset",
             layers_scroll_by_camera_factor_and_offset},
