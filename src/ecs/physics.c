@@ -299,6 +299,16 @@ typedef u32 __attribute__((may_alias)) Word;
 // One body's step: bounces (or wraps) both axes, applies gravity gx, gy and
 // friction. `general` is a constant: false in the fast loop, which handles
 // neither wrapping nor contacts.
+//
+// Friction is applied even when body_friction is 0, which takes nothing
+// away, so serval_slide() still stops speeds along a floor under a sixteenth
+// of a pixel per frame (sys_map_movement() skips friction 0). Skipping it
+// changed bunnymark (avg 73,360, peak 77,491; its bodies all have friction)
+// in every form tried, since the fast loop is out of registers: testing
+// body_friction before the slide, here or in serval_slide(), gave avg 73,435,
+// peak 77,731; testing it, or the loss before rounding, together with the
+// stop gave avg 73,093 and 73,087, but peak 78,393. Each added 40-108 bytes
+// of IWRAM.
 static inline __attribute__((always_inline)) void update_body(u32 i, FIXED gx, FIXED gy, FIXED left,
                                                               FIXED top, bool open_right,
                                                               bool open_bottom, bool general) {

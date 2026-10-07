@@ -16,10 +16,11 @@
 // A wall that gravity pulls toward is a floor. Bounces off a floor keep
 // body_bounce/256 of the speed (255: a perfect bounce, which loses nothing),
 // and a body touching a floor loses body_friction/256 of its speed along it
-// each frame (rounded up, so any non-zero friction eventually stops it);
-// other walls bounce keeping all of the speed. A body too slow to bounce
-// comes to rest on the floor (zero velocity) and stays put until gravity
-// changes direction or the game moves it.
+// each frame (rounded up, so any non-zero friction eventually stops it), and
+// a speed along it under a sixteenth of a pixel per frame becomes 0, even
+// with body_friction 0; other walls bounce keeping all of the speed. A body
+// too slow to bounce comes to rest on the floor (zero velocity) and stays put
+// until gravity changes direction or the game moves it.
 //
 // Each body can scale gravity (body_gravity), and sys_physics() can report the
 // walls bodies touch and the open edges they leave through (body_contact,
@@ -49,7 +50,11 @@ extern u8 body_w[MAX_ENT], body_h[MAX_ENT]; // size in pixels, kept inside the b
 // they hit, 255 being a perfect bounce off their floors too
 // (sys_map_movement(), map.h).
 extern u8 body_bounce[MAX_ENT];
-// Speed lost per frame sliding along a floor, in 256ths (0 = no friction).
+// Speed lost per frame sliding along a floor, in 256ths, rounded up (0: none).
+// Whatever it is, sys_physics() stops a speed along the floor under a
+// sixteenth of a pixel per frame (FX_ONE / 16), so a body without friction
+// keeps sliding only at FX_ONE / 16 or faster. Map bodies without friction
+// keep any speed (sys_map_movement(), map.h).
 extern u8 body_friction[MAX_ENT];
 // Maximum fall speed in pixels per frame, in fixed point like velocities but
 // stored in a u16 (0 = no limit, up to just under 256): body_max_fall[i] =

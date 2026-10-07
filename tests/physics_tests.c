@@ -150,10 +150,10 @@ static void perfect_bounce_keeps_its_height(void) {
 // than twice one frame's gravity. A body resting on the floor stays put
 // rather than hopping. Both loops alike.
 static void perfect_bounce_rests_when_too_slow(void) {
-    for (int contacts = 0; contacts < 2; contacts++) {
+    for (int general = 0; general < 2; general++) {
         reset();
         physics_set_gravity(0, FX_ONE / 4);
-        physics_set_contacts(contacts);
+        physics_set_contacts(general == 1);
         u32 resting = make_body(FX(20), FX(90), 0, 0);
         u32 slow = make_body(FX(40), FX(90) - FX_ONE / 8, 0, 0); // will hit at a quarter pixel
         // Hits at 0.625 pixels per frame (2.5 times gravity) and ends 150/256
@@ -260,6 +260,41 @@ static void low_friction_stops_both_ways(void) {
     step(200); // both stop long before reaching a wall
     CHECK(vel_x[right] == 0 && vel_x[left] == 0);
     CHECK(pos_x[right] - FX(30) == FX(60) - pos_x[left]); // same distance each way
+}
+
+// body_friction 0 takes nothing from a body's speed along its floor, but
+// sys_physics() still stops a speed there under a sixteenth of a pixel per
+// frame, as with friction (map bodies without friction keep even a crawl:
+// map_tests.c). Kept because every way of skipping it tried changed bunnymark
+// (physics.c, update_body()). On a floor below and on one to the right, in
+// the fast loop and in the general one (contacts on); in the air, nothing.
+static void slow_slides_stop_without_friction(void) {
+    for (int general = 0; general < 2; general++) {
+        reset();
+        physics_set_contacts(general == 1);
+        physics_set_gravity(0, FX_ONE / 4);
+        u32 right = make_body(FX(30), FX(90), FX_ONE / 32, 0); // resting on the floor
+        u32 left = make_body(FX(60), FX(90), -FX_ONE / 32, 0);
+        u32 kept = make_body(FX(10), FX(90), FX_ONE / 16, 0); // the slowest speed kept
+        u32 air = make_body(FX(40), FX(20), FX_ONE / 32, 0);  // falling
+        body_friction[right] = body_friction[left] = body_friction[kept] = body_friction[air] = 0;
+        step(1); // moved by sys_movement(), then stopped by sys_physics()
+        CHECK(vel_x[right] == 0 && pos_x[right] == FX(30) + FX_ONE / 32);
+        CHECK(vel_x[left] == 0 && pos_x[left] == FX(60) - FX_ONE / 32);
+        CHECK(vel_x[air] == FX_ONE / 32);
+        step(63);
+        CHECK(vel_x[kept] == FX_ONE / 16 && pos_x[kept] == FX(14));
+        CHECK(pos_x[right] == FX(30) + FX_ONE / 32 && pos_y[right] == FX(90));
+
+        reset();
+        physics_set_contacts(general == 1);
+        physics_set_gravity(FX_ONE / 4, 0);
+        u32 down = make_body(FX(90), FX(30), 0, FX_ONE / 32); // resting on the right wall
+        body_friction[down] = 0;
+        step(1);
+        CHECK(vel_y[down] == 0 && pos_y[down] == FX(30) + FX_ONE / 32 && pos_x[down] == FX(90));
+    }
+    reset();
 }
 
 // Falling onto the floor and "falling" up onto the ceiling are mirror images.
@@ -876,6 +911,7 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"wrapping_brings_bodies_back_on_the_other_side",
             wrapping_brings_bodies_back_on_the_other_side},
            {"low_friction_stops_both_ways", low_friction_stops_both_ways},
+           {"slow_slides_stop_without_friction", slow_slides_stop_without_friction},
            {"floor_bounces_are_symmetric", floor_bounces_are_symmetric},
            {"stationary_body_at_wrap_edge_stays_put", stationary_body_at_wrap_edge_stays_put},
            {"inverted_bounds_are_ignored", inverted_bounds_are_ignored},
