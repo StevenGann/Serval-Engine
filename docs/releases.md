@@ -26,7 +26,7 @@ Planned API is declared in this version but not implemented yet, so that the API
 
 ```
 main.c:12:5: warning: 'music_play' is deprecated: Serval: planned, not implemented in
-this version: tracker music, docs/audio.md [-Wdeprecated-declarations]
+this version: tracker music, docs/audio.md#tracker-music [-Wdeprecated-declarations]
 ```
 
 "Deprecated" is the compiler's fixed wording: nothing is being removed. The warning means the call is in the API, and this engine version does nothing useful with it yet. Games built with `-Werror` stop at it.

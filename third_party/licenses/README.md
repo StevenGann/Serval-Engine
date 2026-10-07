@@ -9,6 +9,6 @@ Verbatim license texts of third-party code compiled into every game ROM, and int
 | [emscripten.txt](emscripten.txt) | Emscripten runtime (web builds only) | MIT (or University of Illinois/NCSA) | Emscripten 6.0.11 (`a001454`), `LICENSE` |
 | [musl.txt](musl.txt) | musl libc routines Emscripten links (web builds only) | MIT | Emscripten 6.0.11 (`a001454`), `system/lib/libc/musl/COPYRIGHT` |
 
-The Maxmod fork is not chosen yet. Both forks use identical ISC terms; the BlocksDS copy lists additional copyright holders for its changes. If the devkitPro fork is chosen, replace this file with its `maxmod_license.txt`.
+Maxmod comes from BlocksDS (decided for 1.0; [docs/audio.md](https://github.com/StevenGann/Serval-Engine/blob/main/docs/audio.md#maxmod-blocksds)). Tracker music and sampled sound are planned API, so no ROM links Maxmod yet; the notice is here for the version that implements them.
 
 Update these files whenever a dependency is updated.

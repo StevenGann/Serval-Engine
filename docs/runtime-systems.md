@@ -1,6 +1,6 @@
 # Other runtime systems
 
-These systems are scoped; each section's **Status** says what is implemented. Implemented: save data, HUD text, brightness fades, color mixing, math, paths, bouncing-body physics, pairwise entity collision and the camera. Designed and declared as *planned* API (in the headers, warned about at compile time, implemented in a later 1.x version; [releases.md](releases.md#planned-api)): alpha blending and raster effects. Planned and not designed in detail yet: dialogue text, a collision broad phase and events, camera following. After 1.0, with no API yet: windows and mosaic.
+These systems are scoped; each section's **Status** says what is implemented. Implemented: save data, HUD text, brightness fades, color mixing, math, paths, bouncing-body physics, pairwise entity collision and the camera. Designed and declared as *planned* API (in the headers, warned about at compile time, implemented in a later 1.x version; [releases.md](releases.md#planned-api)): alpha blending and raster effects. Planned and not designed in detail yet: dialogue text, a collision broad phase, camera following. Collision events for scripts are implemented ([vm.md](vm.md#collisions)). After 1.0, with no API yet: windows and mosaic.
 
 ## Save data
 

@@ -48,7 +48,7 @@ typedef s32 FIXED;
 // function or constant compiles with a warning at the use, e.g.
 //
 //     warning: 'music_play' is deprecated: Serval: planned, not implemented in
-//     this version: tracker music, docs/audio.md [-Wdeprecated-declarations]
+//     this version: tracker music, docs/audio.md#tracker-music [-Wdeprecated-declarations]
 //
 // and does nothing harmful at run time: a planned function returns 0, false or
 // its type's "none" and changes nothing, a loader refuses data that needs a
