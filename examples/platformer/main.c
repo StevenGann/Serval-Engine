@@ -59,6 +59,11 @@
 //     after them
 //   - Frogs hop at random intervals, seeded with random_entropy() when START
 //     is pressed: the same input plays the same game on the GBA and the web
+//   - Saved progress (save.h) in the cartridge's Flash (SAVE FLASH64K in
+//     examples/CMakeLists.txt; the web build keeps it in localStorage): the
+//     furthest stage reached and the best score, one versioned struct in one
+//     slot, written only on black screens (the stage card, game over, the
+//     ending)
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
@@ -66,9 +71,14 @@
 //   - The title fades in: the start of the level under a blue sky, rolling
 //     green hills and pale blue mountains behind, white clouds, an orange
 //     spotted serval on the grass, "S E R V A L   D A S H", a blinking "PRESS
-//     START" and the controls. The top row is the HUD: score, gems (blue gem
-//     icon), "STAGE 1-1", time (clock icon) and lives (serval head icon). All
-//     text has a dark drop shadow, so it stays readable over the clouds.
+//     START", the controls and the best score saved ("BEST 000000" on a first
+//     boot). The top row is the HUD: score, gems (blue gem icon), "STAGE
+//     1-1", time (clock icon) and lives (serval head icon). All text has a
+//     dark drop shadow, so it stays readable over the clouds.
+//   - Once a later stage has been reached, the title also shows "SELECT:
+//     STAGE 1-1": SELECT steps through the stages reached (a tick), back to
+//     1-1 after the last, and START begins with the one shown (the HUD shows
+//     it too). A game started there has the usual 3 lives and no score.
 //   - START: a rising chime, a fade to a black "STAGE 1-1" card with the lives
 //     left, then a fade into the level and its music: a bouncy tune in F major
 //     (melody, bass and drums) that loops about every 26 seconds. The

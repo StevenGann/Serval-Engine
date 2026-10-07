@@ -16,7 +16,7 @@ serval_add_rom(platformer SOURCES platformer/main.c platformer/game.c platformer
                platformer/player.c platformer/objects.c platformer/art.c platformer/sound.c
                platformer/stage_overworld.c platformer/art_overworld.c
                platformer/sound_overworld.c
-               TITLE "SERVAL DASH" GAME_CODE "SVPF")
+               TITLE "SERVAL DASH" GAME_CODE "SVPF" SAVE FLASH64K)
 target_link_libraries(platformer PRIVATE serval_warnings)
 
 serval_add_rom(breakout SOURCES breakout/main.c breakout/game.c breakout/play.c

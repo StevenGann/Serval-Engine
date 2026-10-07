@@ -52,7 +52,55 @@ static int goal_bonus;
 static int brightness = SCREEN_BRIGHTNESS_MIN; // the title fades in from black
 static bool fading_out;
 static void (*next_screen)(void); // shown once the fade out reaches black
+static int title_stage;           // the stage START begins with, picked with SELECT
 int cam_x, cam_y;
+
+// --- Saved progress ------------------------------------------------------------
+
+// How far the player has come and the best score, in one small struct in one
+// save slot: the cartridge's Flash on the GBA (SAVE FLASH64K in
+// examples/CMakeLists.txt), the browser's localStorage on the web. Only
+// fixed-size fields: no pointers, which would mean nothing after a power-off.
+typedef struct {
+    u8 reached;   // stages reached so far, 1 to STAGES: the title can start any of them
+    u8 unused[3]; // keeps best_score 4 bytes in; saved as 0
+    u32 best_score;
+} Progress;
+
+// PROGRESS_VERSION is the layout of Progress: raise it when the struct
+// changes, and save_read() reports a save in the old layout as
+// SAVE_OTHER_VERSION instead of reading it as garbage.
+#define PROGRESS_SLOT 0
+#define PROGRESS_VERSION 1
+
+static Progress progress;
+
+static void progress_load(void) {
+    if (save_read(PROGRESS_SLOT, &progress, sizeof progress, PROGRESS_VERSION) != SAVE_OK ||
+        progress.reached < 1 || progress.reached > STAGES)
+        // A first boot (SAVE_EMPTY), a damaged save (SAVE_CORRUPT) or another
+        // layout: only the first stage, no best score. Nothing is written
+        // until there is progress to save.
+        progress = (Progress){.reached = 1};
+}
+
+// Records reaching stage_index and the score so far, saving only if either
+// is new: a Flash write takes a few frames (an erase and about 40
+// microseconds a byte), so it happens on black screens (the stage card, game
+// over, the ending), never during play.
+static void progress_update(void) {
+    bool changed = false;
+    if (stage_index + 1 > progress.reached) {
+        progress.reached = (u8)(stage_index + 1);
+        changed = true;
+    }
+    if ((u32)score > progress.best_score) {
+        progress.best_score = (u32)score;
+        changed = true;
+    }
+    if (changed)
+        save_write(PROGRESS_SLOT, &progress, sizeof progress, PROGRESS_VERSION);
+}
 
 // --- Scoring -----------------------------------------------------------------
 
@@ -102,12 +150,13 @@ static bool update_fade(void) {
 
 // --- HUD and animated tiles ---------------------------------------------------
 
-// One row at the top, all 30 columns: score, gems, stage, time and lives.
-// The icons are sprites drawn above the text layer.
+// One row at the top, all 30 columns: score, gems, stage (on the title, the
+// one START begins with), time and lives. The icons are sprites drawn above
+// the text layer.
 static void draw_hud(void) {
+    const char* name = stages[state == TITLE ? title_stage : stage_index]->name;
     text_print_line(
-        0, 0,
-        text_format("%06d  x%02d STAGE %s  %03d  x%d", score, gems, stage->name, time_left, lives));
+        0, 0, text_format("%06d  x%02d STAGE %s  %03d  x%d", score, gems, name, time_left, lives));
     sprite_draw(SPR_HUD_GEM, 0, 7 * 8, 0, SPRITE_ABOVE_HUD);
     sprite_draw(SPR_HUD_CLOCK, 0, 22 * 8, 0, SPRITE_ABOVE_HUD);
     sprite_draw(SPR_HUD_SERVAL, 0, 27 * 8, 0, SPRITE_ABOVE_HUD);
@@ -186,7 +235,21 @@ static void show_title(void) {
     text_clear();
     text_print_centered(5, "S E R V A L   D A S H");
     text_print_centered(13, "A:JUMP  B:RUN  START:PAUSE");
-    text_print_centered(15, "A FIRST LEVEL, CLASSIC STYLE");
+    text_print_centered(15, text_format("BEST %06d", (int)progress.best_score));
+    if (title_stage >= progress.reached)
+        title_stage = 0;
+    if (progress.reached > 1)
+        text_print_centered(17, text_format("SELECT: STAGE %s", stages[title_stage]->name));
+}
+
+// SELECT on the title: the next stage reached, back to the first after the
+// last.
+static void select_stage(void) {
+    if (progress.reached < 2)
+        return;
+    title_stage = (title_stage + 1) % progress.reached;
+    text_print_centered(17, text_format("SELECT: STAGE %s", stages[title_stage]->name));
+    psg_play(SND_PAUSE);
 }
 
 // A black screen with the stage and the lives left, before (re)starting.
@@ -203,6 +266,7 @@ static void show_stage_card(void) {
     text_clear();
     text_print_centered(8, text_format("STAGE %s", stage->name));
     text_print_centered(11, text_format("x %d", lives));
+    progress_update(); // a stage reached for the first time, a best score
 }
 
 static void start_level(void) {
@@ -232,7 +296,7 @@ static void start_game(void) {
     score = 0;
     gems = 0;
     lives = START_LIVES;
-    stage_index = 0;
+    stage_index = title_stage;
     checkpoint_reached = false;
     player_big = false;
     psg_play(SND_START);
@@ -249,6 +313,7 @@ static void show_ending(void) {
     map_unload(3);
     screen_set_backdrop(COLOR_RGB(0, 0, 0));
     text_clear();
+    progress_update();
     if (stage->ending_start)
         stage->ending_start();
 }
@@ -276,6 +341,7 @@ static void game_over(void) {
     text_clear();
     text_print_centered(9, "GAME OVER");
     psg_play(SND_GAME_OVER);
+    progress_update();
 }
 
 void start_goal(void) {
@@ -423,6 +489,7 @@ void game_init(void) {
     physics_set_open_edges(PHYSICS_EDGE_LEFT | PHYSICS_EDGE_RIGHT | PHYSICS_EDGE_TOP |
                            PHYSICS_EDGE_BOTTOM);
     text_set_shadow(true); // white text stays readable over the clouds
+    progress_load();
     show_title();
 }
 
@@ -436,6 +503,8 @@ static void update_state(void) {
             text_print_line(0, 9, "");
         if (start)
             start_game();
+        else if (button_pressed(BUTTON_SELECT))
+            select_stage();
         break;
     case STAGE_CARD:
         if (--state_timer == 0)
