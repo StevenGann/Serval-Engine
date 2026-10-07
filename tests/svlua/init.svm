@@ -1,0 +1,62 @@
+; init.svm: init.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   FIELD_TOP SCREEN_W
+
+; --- Constants ---
+
+.const LIVES 3                          ; init.lua:5
+.const SPEED 320                        ; init.lua:6 SPEED = 1.25
+.const ORIGIN FIELD_TOP + 8             ; init.lua:7
+
+; --- Objects ---
+
+.object INIT mask=0 sprite=0            ; init.lua:3 Init
+
+; --- Strings ---
+
+.string HELLO_3 "HELLO, 3"              ; init.lua:18
+
+; --- Globals ---
+
+.globals LIVES                          ; init.lua:11 lives: integer
+.globals SPEED                          ; init.lua:12 speed: fixed
+.globals ALIVE                          ; init.lua:13 alive: boolean
+.globals HERO                           ; init.lua:14 hero: entity
+.globals ORIGIN                         ; init.lua:15 origin: integer
+
+; --- Init:room_start, a behaviour: it may wait ---
+.handler INIT ROOM_START                ; init.lua:17
+    ; the globals' initial values (an Init:room_start starts with them)
+    PUSH LIVES                          ; init.lua:11 lives = LIVES
+    STG LIVES                           ; init.lua:11
+    PUSH SPEED                          ; init.lua:12 speed = 1.25
+    STG SPEED                           ; init.lua:12
+    PUSH 1                              ; init.lua:13 alive = true
+    STG ALIVE                           ; init.lua:13
+    PUSH 0                              ; init.lua:14 hero = none
+    STG HERO                            ; init.lua:14
+    PUSH ORIGIN                         ; init.lua:15 origin = ORIGIN
+    STG ORIGIN                          ; init.lua:15
+    ; 18: print(1, 1, GREETING)
+    PUSH 1                              ; init.lua:18
+    PUSH 1                              ; init.lua:18
+    PUSH STR_HELLO_3                    ; init.lua:18
+    SYS TEXT_PRINT                      ; init.lua:18
+    ; 19: speed = speed * 2
+    LDG SPEED                           ; init.lua:19
+    PUSH 2                              ; init.lua:19
+    MUL                                 ; init.lua:19
+    STG SPEED                           ; init.lua:19
+    ; 20: origin = origin + HALF
+    LDG ORIGIN                          ; init.lua:20
+    ; 8: local HALF <const> = SCREEN_W // 3     -- not computed by the assembler: inline
+    PUSH SCREEN_W                       ; init.lua:8
+    PUSH 3                              ; init.lua:8
+    IDIV                                ; init.lua:8
+    ; 20: origin = origin + HALF
+    ADD                                 ; init.lua:20
+    STG ORIGIN                          ; init.lua:20
+    ; 21: end
+    HALT                                ; init.lua:21

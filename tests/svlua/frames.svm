@@ -1,0 +1,156 @@
+; frames.svm: frames.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+
+; --- Objects ---
+
+.object PROBE mask=0 sprite=0           ; frames.lua:4 Probe
+
+; --- Globals ---
+
+.globals RESULT                         ; frames.lua:6 result: integer
+
+; --- function fact(n) ---
+fact:                                   ; frames.lua:8
+    ; frame: 0 n
+    ENTER 1, 0                          ; frames.lua:8
+    ; 9: if n <= 1 then return 1 end
+    LDL 0                               ; frames.lua:9 n
+    PUSH 1                              ; frames.lua:9
+    LE                                  ; frames.lua:9
+    JZ fact_if1_end                     ; frames.lua:9
+    PUSH 1                              ; frames.lua:9
+    RETV                                ; frames.lua:9
+fact_if1_end:                           ; frames.lua:9
+    ; 10: return n * fact(n - 1)
+    LDL 0                               ; frames.lua:10 n
+    LDL 0                               ; frames.lua:10 n
+    PUSH 1                              ; frames.lua:10
+    SUB                                 ; frames.lua:10
+    CALL fact                           ; frames.lua:10
+    MUL                                 ; frames.lua:10
+    RETV                                ; frames.lua:10
+
+; --- function clamp(v, lo, hi) ---
+clamp:                                  ; frames.lua:13
+    ; frame: 0 v, 1 lo, 2 hi, 3 (math.max), 4 (math.max), 5 (math.min), 6 (math.min)
+    ENTER 3, 4                          ; frames.lua:13
+    ; 14: return math.max(lo, math.min(v, hi))
+    LDL 1                               ; frames.lua:14 lo
+    STL 3                               ; frames.lua:14
+    LDL 0                               ; frames.lua:14 v
+    STL 5                               ; frames.lua:14
+    LDL 2                               ; frames.lua:14 hi
+    STL 6                               ; frames.lua:14
+    LDL 6                               ; frames.lua:14
+    LDL 5                               ; frames.lua:14
+    LT                                  ; frames.lua:14
+    JZ clamp_min2                       ; frames.lua:14
+    LDL 6                               ; frames.lua:14
+    STL 5                               ; frames.lua:14
+clamp_min2:                             ; frames.lua:14
+    LDL 5                               ; frames.lua:14
+    STL 4                               ; frames.lua:14
+    LDL 3                               ; frames.lua:14
+    LDL 4                               ; frames.lua:14
+    LT                                  ; frames.lua:14
+    JZ clamp_max1                       ; frames.lua:14
+    LDL 4                               ; frames.lua:14
+    STL 3                               ; frames.lua:14
+clamp_max1:                             ; frames.lua:14
+    LDL 3                               ; frames.lua:14
+    RETV                                ; frames.lua:14
+
+; --- function hypot2(a, b) ---
+hypot2:                                 ; frames.lua:17
+    ; frame: 0 a, 1 b, 2 aa, 3 bb
+    ENTER 2, 2                          ; frames.lua:17
+    ; 18: local aa = a * a
+    LDL 0                               ; frames.lua:18 a
+    LDL 0                               ; frames.lua:18 a
+    MUL                                 ; frames.lua:18
+    STL 2                               ; frames.lua:18
+    ; 19: local bb = b * b
+    LDL 1                               ; frames.lua:19 b
+    LDL 1                               ; frames.lua:19 b
+    MUL                                 ; frames.lua:19
+    STL 3                               ; frames.lua:19
+    ; 20: return aa + bb
+    LDL 2                               ; frames.lua:20 aa
+    LDL 3                               ; frames.lua:20 bb
+    ADD                                 ; frames.lua:20
+    RETV                                ; frames.lua:20
+
+; --- function report(v) ---
+report:                                 ; frames.lua:23
+    ; frame: 0 v
+    ENTER 1, 0                          ; frames.lua:23
+    ; 24: print(1, 1, v)
+    PUSH 1                              ; frames.lua:24
+    PUSH 1                              ; frames.lua:24
+    LDL 0                               ; frames.lua:24 v
+    PUSH 0                              ; frames.lua:24 no width: just the digits
+    SYS TEXT_PRINT_NUMBER               ; frames.lua:24
+    ; 25: end
+    RET                                 ; frames.lua:25
+
+; --- Probe:room_start, a behaviour: it may wait ---
+.handler PROBE ROOM_START               ; frames.lua:27
+    ; frame: 0 total, 1 i, 2 square
+    ENTER 0, 3                          ; frames.lua:27
+    ; 28: local total = 0
+    PUSH 0                              ; frames.lua:28
+    STL 0                               ; frames.lua:28
+    ; 29: for i = 1, 3 do
+    PUSH 1                              ; frames.lua:29
+    STL 1                               ; frames.lua:29
+probe_room_start_for1:                  ; frames.lua:29
+    ; 30: local square = hypot2(i, i)
+    LDL 1                               ; frames.lua:30 i
+    LDL 1                               ; frames.lua:30 i
+    CALL hypot2                         ; frames.lua:30
+    STL 2                               ; frames.lua:30
+    ; 31: total = total + square
+    LDL 0                               ; frames.lua:31 total
+    LDL 2                               ; frames.lua:31 square
+    ADD                                 ; frames.lua:31
+    STL 0                               ; frames.lua:31
+    ; 29: for i = 1, 3 do
+    LDL 1                               ; frames.lua:29
+    PUSH 3                              ; frames.lua:29
+    EQ                                  ; frames.lua:29
+    JNZ probe_room_start_for1_end       ; frames.lua:29 the last iteration
+    LDL 1                               ; frames.lua:29
+    PUSH 1                              ; frames.lua:29
+    ADD                                 ; frames.lua:29
+    STL 1                               ; frames.lua:29
+    JMP probe_room_start_for1           ; frames.lua:29
+    ; 32: end
+probe_room_start_for1_end:              ; frames.lua:32
+    ; 33: result = fact(5) + clamp(total, 0, 100) + math.abs(-total)
+    PUSH 5                              ; frames.lua:33
+    CALL fact                           ; frames.lua:33
+    LDL 0                               ; frames.lua:33 total
+    PUSH 0                              ; frames.lua:33
+    PUSH 100                            ; frames.lua:33
+    CALL clamp                          ; frames.lua:33
+    ADD                                 ; frames.lua:33
+    LDL 0                               ; frames.lua:33 total
+    NEG                                 ; frames.lua:33
+    DUP                                 ; frames.lua:33
+    PUSH 0                              ; frames.lua:33
+    LT                                  ; frames.lua:33
+    JZ probe_room_start_abs2            ; frames.lua:33
+    NEG                                 ; frames.lua:33
+probe_room_start_abs2:                  ; frames.lua:33
+    ADD                                 ; frames.lua:33
+    STG RESULT                          ; frames.lua:33
+    ; 34: report(result)
+    LDG RESULT                          ; frames.lua:34
+    CALL report                         ; frames.lua:34
+    ; 35: fact(3)       -- a result nobody uses: dropped
+    PUSH 3                              ; frames.lua:35
+    CALL fact                           ; frames.lua:35
+    DROP                                ; frames.lua:35 the result isn't used
+    ; 36: end
+    HALT                                ; frames.lua:36

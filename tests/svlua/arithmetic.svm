@@ -1,0 +1,141 @@
+; arithmetic.svm: arithmetic.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   SCREEN_W FLAGS MASK
+
+; --- Objects ---
+
+.object PROBE mask=0 sprite=0           ; arithmetic.lua:3 Probe
+
+; --- Globals ---
+
+.globals N                              ; arithmetic.lua:5 n: integer
+.globals M                              ; arithmetic.lua:6 m: integer
+.globals F                              ; arithmetic.lua:7 f: fixed
+.globals G                              ; arithmetic.lua:8 g: fixed
+.globals B                              ; arithmetic.lua:9 b: boolean
+
+; --- Probe:step, a reaction: it runs to completion ---
+.handler PROBE STEP                     ; arithmetic.lua:11
+    ; 12: n = n + m * 3 - -m        -- ADD SUB MUL NEG
+    LDG N                               ; arithmetic.lua:12
+    LDG M                               ; arithmetic.lua:12
+    PUSH 3                              ; arithmetic.lua:12
+    MUL                                 ; arithmetic.lua:12
+    ADD                                 ; arithmetic.lua:12
+    LDG M                               ; arithmetic.lua:12
+    NEG                                 ; arithmetic.lua:12
+    SUB                                 ; arithmetic.lua:12
+    STG N                               ; arithmetic.lua:12
+    ; 13: f = f + g * 0.5 - 2       -- fixed: FXMUL, and 2 converted when it is folded
+    LDG F                               ; arithmetic.lua:13
+    LDG G                               ; arithmetic.lua:13
+    PUSH 128                            ; arithmetic.lua:13 (0.5)
+    FXMUL                               ; arithmetic.lua:13
+    ADD                                 ; arithmetic.lua:13
+    PUSH 512                            ; arithmetic.lua:13 (2.0)
+    SUB                                 ; arithmetic.lua:13
+    STG F                               ; arithmetic.lua:13
+    ; 14: f = f * n                 -- fixed times an integer: MUL
+    LDG F                               ; arithmetic.lua:14
+    LDG N                               ; arithmetic.lua:14
+    MUL                                 ; arithmetic.lua:14
+    STG F                               ; arithmetic.lua:14
+    ; 15: f = g + n                 -- a variable integer converted: PUSH 256, MUL
+    LDG G                               ; arithmetic.lua:15
+    LDG N                               ; arithmetic.lua:15
+    PUSH 256                            ; arithmetic.lua:15
+    MUL                                 ; arithmetic.lua:15 to fixed point
+    ADD                                 ; arithmetic.lua:15
+    STG F                               ; arithmetic.lua:15
+    ; 16: g = n / m                 -- / of two integers: FXDIV, a fixed result
+    LDG N                               ; arithmetic.lua:16
+    LDG M                               ; arithmetic.lua:16
+    FXDIV                               ; arithmetic.lua:16
+    STG G                               ; arithmetic.lua:16
+    ; 17: g = f / 3                 -- / of fixed by an integer: FXDIV after FX(3)
+    LDG F                               ; arithmetic.lua:17
+    PUSH 768                            ; arithmetic.lua:17 (3.0)
+    FXDIV                               ; arithmetic.lua:17
+    STG G                               ; arithmetic.lua:17
+    ; 18: n = n // m + n % m        -- IDIV IMOD: floored, as Lua's
+    LDG N                               ; arithmetic.lua:18
+    LDG M                               ; arithmetic.lua:18
+    IDIV                                ; arithmetic.lua:18
+    LDG N                               ; arithmetic.lua:18
+    LDG M                               ; arithmetic.lua:18
+    IMOD                                ; arithmetic.lua:18
+    ADD                                 ; arithmetic.lua:18
+    STG N                               ; arithmetic.lua:18
+    ; 19: g = f // 1.5              -- fixed //: IDIV, then a whole fixed value
+    LDG F                               ; arithmetic.lua:19
+    PUSH 384                            ; arithmetic.lua:19 (1.5)
+    IDIV                                ; arithmetic.lua:19
+    PUSH 256                            ; arithmetic.lua:19
+    MUL                                 ; arithmetic.lua:19 to fixed point
+    STG G                               ; arithmetic.lua:19
+    ; 20: n = n & m | n ~ m         -- AND OR XOR
+    LDG N                               ; arithmetic.lua:20
+    LDG M                               ; arithmetic.lua:20
+    AND                                 ; arithmetic.lua:20
+    LDG N                               ; arithmetic.lua:20
+    LDG M                               ; arithmetic.lua:20
+    XOR                                 ; arithmetic.lua:20
+    OR                                  ; arithmetic.lua:20
+    STG N                               ; arithmetic.lua:20
+    ; 21: n = ~n << m               -- BNOT LSH
+    LDG N                               ; arithmetic.lua:21
+    BNOT                                ; arithmetic.lua:21
+    LDG M                               ; arithmetic.lua:21
+    LSH                                 ; arithmetic.lua:21
+    STG N                               ; arithmetic.lua:21
+    ; 22: n = n >> m                -- LSH with the count negated
+    LDG N                               ; arithmetic.lua:22
+    LDG M                               ; arithmetic.lua:22
+    NEG                                 ; arithmetic.lua:22
+    LSH                                 ; arithmetic.lua:22
+    STG N                               ; arithmetic.lua:22
+    ; 23: n = n >> 3                -- a constant count: folded to -3
+    LDG N                               ; arithmetic.lua:23
+    PUSH -3                             ; arithmetic.lua:23
+    LSH                                 ; arithmetic.lua:23
+    STG N                               ; arithmetic.lua:23
+    ; 24: b = n < m and f >= g      -- comparisons
+    LDG N                               ; arithmetic.lua:24
+    LDG M                               ; arithmetic.lua:24
+    LT                                  ; arithmetic.lua:24
+    DUP                                 ; arithmetic.lua:24
+    JZ probe_step_and1                  ; arithmetic.lua:24 short circuit
+    DROP                                ; arithmetic.lua:24
+    LDG F                               ; arithmetic.lua:24
+    LDG G                               ; arithmetic.lua:24
+    GE                                  ; arithmetic.lua:24
+probe_step_and1:                        ; arithmetic.lua:24
+    STG B                               ; arithmetic.lua:24
+    ; 25: b = n == m or f ~= g
+    LDG N                               ; arithmetic.lua:25
+    LDG M                               ; arithmetic.lua:25
+    EQ                                  ; arithmetic.lua:25
+    DUP                                 ; arithmetic.lua:25
+    JNZ probe_step_or2                  ; arithmetic.lua:25 short circuit
+    DROP                                ; arithmetic.lua:25
+    LDG F                               ; arithmetic.lua:25
+    LDG G                               ; arithmetic.lua:25
+    NE                                  ; arithmetic.lua:25
+probe_step_or2:                         ; arithmetic.lua:25
+    STG B                               ; arithmetic.lua:25
+    ; 27: n = 7 // 2 + 7 % -2 * 10 + (1 << 31 >> 31)
+    PUSH -6                             ; arithmetic.lua:27
+    STG N                               ; arithmetic.lua:27
+    ; 28: f = 1.5 * 2 + 7 / 2 + 2 ^ 3
+    PUSH 3712                           ; arithmetic.lua:28 (14.5)
+    STG F                               ; arithmetic.lua:28
+    ; 29: n = SCREEN_W // 2 + (FLAGS & 7) * 3 - ~MASK   -- header constants: the assembler computes them
+    PUSH (SCREEN_W >> 1) + (FLAGS & 7) * 3 - ~MASK ; arithmetic.lua:29
+    STG N                               ; arithmetic.lua:29
+    ; 30: f = SCREEN_W / 4 + 0.25
+    PUSH SCREEN_W * 256 / 4 + 64        ; arithmetic.lua:30
+    STG F                               ; arithmetic.lua:30
+    ; 31: end
+    HALT                                ; arithmetic.lua:31

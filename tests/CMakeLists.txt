@@ -115,6 +115,10 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # The Lua-subset compiler (tools/svlua.py, docs/lua.md): the lexer and
+    # parser, every rejected construct, types, golden listings, fireflies.lua.
+    add_test(NAME svlua_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_test.py")
     # The logo PNGs in docs/images are the splash's own drawing, made by
     # tools/logo-png.py; this fails when splash_art.c changes until they are
     # regenerated.

@@ -1,0 +1,116 @@
+; logic.svm: logic.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+
+; --- Objects ---
+
+.object PROBE mask=0 sprite=0           ; logic.lua:3 Probe
+
+; --- Globals ---
+
+.globals A                              ; logic.lua:5 a: boolean
+.globals B                              ; logic.lua:6 b: boolean
+.globals N                              ; logic.lua:7 n: integer
+.globals E                              ; logic.lua:8 e: entity
+
+; --- Probe:step, a reaction: it runs to completion ---
+.handler PROBE STEP                     ; logic.lua:10
+    ; 11: if a and b then n = 1 end
+    LDG A                               ; logic.lua:11
+    JZ probe_step_if1_end               ; logic.lua:11
+    LDG B                               ; logic.lua:11
+    JZ probe_step_if1_end               ; logic.lua:11
+    PUSH 1                              ; logic.lua:11
+    STG N                               ; logic.lua:11
+probe_step_if1_end:                     ; logic.lua:11
+    ; 12: if a or b then n = 2 end
+    LDG A                               ; logic.lua:12
+    JNZ probe_step_or3                  ; logic.lua:12
+    LDG B                               ; logic.lua:12
+    JZ probe_step_if2_end               ; logic.lua:12
+probe_step_or3:                         ; logic.lua:12
+    PUSH 2                              ; logic.lua:12
+    STG N                               ; logic.lua:12
+probe_step_if2_end:                     ; logic.lua:12
+    ; 13: if not (a and b) then n = 3 end
+    LDG A                               ; logic.lua:13
+    JZ probe_step_and5                  ; logic.lua:13
+    LDG B                               ; logic.lua:13
+    JNZ probe_step_if4_end              ; logic.lua:13
+probe_step_and5:                        ; logic.lua:13
+    PUSH 3                              ; logic.lua:13
+    STG N                               ; logic.lua:13
+probe_step_if4_end:                     ; logic.lua:13
+    ; 14: if (a or b) and not (n > 2 or n < -2) then n = 4 end
+    LDG A                               ; logic.lua:14
+    JNZ probe_step_or7                  ; logic.lua:14
+    LDG B                               ; logic.lua:14
+    JZ probe_step_if6_end               ; logic.lua:14
+probe_step_or7:                         ; logic.lua:14
+    LDG N                               ; logic.lua:14
+    PUSH 2                              ; logic.lua:14
+    GT                                  ; logic.lua:14
+    JNZ probe_step_if6_end              ; logic.lua:14
+    LDG N                               ; logic.lua:14
+    PUSH -2                             ; logic.lua:14
+    LT                                  ; logic.lua:14
+    JNZ probe_step_if6_end              ; logic.lua:14
+    PUSH 4                              ; logic.lua:14
+    STG N                               ; logic.lua:14
+probe_step_if6_end:                     ; logic.lua:14
+    ; 15: if n ~= 0 and e == none then n = 5 end
+    LDG N                               ; logic.lua:15
+    JZ probe_step_if8_end               ; logic.lua:15
+    LDG E                               ; logic.lua:15
+    JNZ probe_step_if8_end              ; logic.lua:15
+    PUSH 5                              ; logic.lua:15
+    STG N                               ; logic.lua:15
+probe_step_if8_end:                     ; logic.lua:15
+    ; 16: a = a and b        -- a value: DUP, JZ, DROP
+    LDG A                               ; logic.lua:16
+    DUP                                 ; logic.lua:16
+    JZ probe_step_and9                  ; logic.lua:16 short circuit
+    DROP                                ; logic.lua:16
+    LDG B                               ; logic.lua:16
+probe_step_and9:                        ; logic.lua:16
+    STG A                               ; logic.lua:16
+    ; 17: b = a or n > 1
+    LDG A                               ; logic.lua:17
+    DUP                                 ; logic.lua:17
+    JNZ probe_step_or10                 ; logic.lua:17 short circuit
+    DROP                                ; logic.lua:17
+    LDG N                               ; logic.lua:17
+    PUSH 1                              ; logic.lua:17
+    GT                                  ; logic.lua:17
+probe_step_or10:                        ; logic.lua:17
+    STG B                               ; logic.lua:17
+    ; 18: b = not a
+    LDG A                               ; logic.lua:18
+    LNOT                                ; logic.lua:18
+    STG B                               ; logic.lua:18
+    ; 19: b = true and a     -- folded: a
+    LDG A                               ; logic.lua:19
+    STG B                               ; logic.lua:19
+    ; 20: b = false and a    -- folded: false (a isn't evaluated)
+    PUSH 0                              ; logic.lua:20 false
+    STG B                               ; logic.lua:20
+    ; 21: if n == 0 then n = 6 elseif n > 10 then n = 7 else n = 8 end
+    LDG N                               ; logic.lua:21
+    JNZ probe_step_if11_elseif1         ; logic.lua:21
+    PUSH 6                              ; logic.lua:21
+    STG N                               ; logic.lua:21
+    JMP probe_step_if11_end             ; logic.lua:21
+probe_step_if11_elseif1:                ; logic.lua:21
+    LDG N                               ; logic.lua:21
+    PUSH 10                             ; logic.lua:21
+    GT                                  ; logic.lua:21
+    JZ probe_step_if11_else             ; logic.lua:21
+    PUSH 7                              ; logic.lua:21
+    STG N                               ; logic.lua:21
+    JMP probe_step_if11_end             ; logic.lua:21
+probe_step_if11_else:                   ; logic.lua:21
+    PUSH 8                              ; logic.lua:21
+    STG N                               ; logic.lua:21
+probe_step_if11_end:                    ; logic.lua:21
+    ; 22: end
+    HALT                                ; logic.lua:22
