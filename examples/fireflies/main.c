@@ -16,10 +16,11 @@
 //         serval (Create). They use waits (WAIT, WAIT_MOVE, WAIT_ANIM),
 //         SPAWN and KILL, SELF and OTHER, entity properties (GETP/SETP,
 //         including the body size), a subroutine shared by two handlers
-//         (CALL/RET: print the score), globals, locals, loops, INTERRUPTIBLE
-//         (a catch may cut into a firefly's waits) and the SYS engine calls
-//         (sound, music, text and numbers, random numbers, buttons,
-//         brightness, paths).
+//         (CALL/RET: print the score), globals, locals (ENTER), loops,
+//         behaviours and reactions (a firefly's Create is its behaviour,
+//         waiting most of the time; a catch is a Collision reaction that runs
+//         on top of it) and the SYS engine calls (sound, music, text and
+//         numbers, random numbers, buttons, brightness, paths).
 //       * C (this file) does only what Studio Advance generates as C for a
 //         game made in its editor: main(), the art, sound and path tables
 //         (art.c, sound.c), vm_load of the blob, vm_bind, the frame loop in
@@ -123,7 +124,7 @@ int main(void) {
 
     for (;;) {
         frame_begin();
-        vm_step(); // waits, queued events (Creates), Step handlers
+        vm_step(); // waits, queued events (Creates), Step reactions
         sys_path();
         sys_movement();
         sys_physics(); // keeps bodies inside the bounds

@@ -64,7 +64,7 @@ class Golden(unittest.TestCase):
         self.assertEqual(blob[8:10], le16(1))  # objects
         self.assertEqual(blob[10:12], le16(1))  # strings
         self.assertEqual(blob[12:14], le16(1))  # globals
-        self.assertEqual(blob[14:16], le16(0))  # reserved
+        self.assertEqual(blob[14:16], le16(0))  # arrays: none, so no array table
         self.assertEqual(blob[16:20], le32(0))  # mask
         self.assertEqual(blob[20:22], le16(0))  # sprite
         self.assertEqual(blob[22:24], le16(0))  # reserved
@@ -217,6 +217,38 @@ class Errors(unittest.TestCase):
         "string placed twice": (".object X\n.string S \"s\"\n.handler X CREATE\n.strings S\n.strings S\n"
                                 "HALT\n", 5, "already placed"),
         "division by zero": (".const A 1 / 0\n" + OK, 1, "division by zero"),
+        "ENTER with one operand": (".object X\n.handler X CREATE\nENTER 1\nHALT\n", 3,
+                                   "ENTER takes 2 operands"),
+        "ENTER with three operands": (".object X\n.handler X CREATE\nENTER 1, 2, 3\nHALT\n", 3,
+                                      "ENTER takes 2 operands"),
+        "ENTER with an empty operand": (".object X\n.handler X CREATE\nENTER 1,\nHALT\n", 3,
+                                        "ENTER takes 2 operands"),
+        "ENTER with none": (".object X\n.handler X CREATE\nENTER\nHALT\n", 3,
+                            "ENTER needs 2 operands"),
+        "ENTER past a u8": (".object X\n.handler X CREATE\nENTER 0, 256\nHALT\n", 3, "fit"),
+        "an operand too many": (".object X\n.handler X CREATE\nLDG 1, 2\nHALT\n", 3,
+                                "LDG takes 1 operand"),
+        "array not declared": (".object X\n.handler X CREATE\nLDA 0\nHALT\n", 3, "no array"),
+        "array name unknown": (".object X\n.handler X CREATE\nLEN NOPE\nHALT\n", 3,
+                               "no array NOPE"),
+        "NEXTI of an undeclared object": (".object X\n.handler X CREATE\nNEXTI 1\nHALT\n", 3,
+                                          "no object"),
+        ".array past the pool": (".array A 1000\n.array B 25\n" + OK, 2, "outside the RAM"),
+        ".array at= past the pool": (".array A 1 at=1024\n" + OK, 1, "outside the RAM"),
+        ".array longer than 16 bits": (".array A 65536\n" + OK, 1, "16 bits"),
+        ".array without a length": (".array A\n" + OK, 1, ".array takes"),
+        ".array defined twice": (".array A 1\n.array A 1\n" + OK, 2, "already defined"),
+        ".rom of an unknown kind": (".rom A s64 1\n" + OK, 1, "no array kind s64"),
+        ".rom value past s8": (".rom A s8 1, 128\n" + OK, 1, "128 doesn't fit s8"),
+        ".rom value past u8": (".rom A u8 -1\n" + OK, 1, "-1 doesn't fit u8"),
+        ".rom value past s16": (".rom A s16 -32769\n" + OK, 1, "doesn't fit s16"),
+        ".rom value past u16": (".rom A u16 65536\n" + OK, 1, "doesn't fit u16"),
+        ".rom value past 32 bits": (".rom A s32 0x100000000\n" + OK, 1, "32-bit range"),
+        ".rom without a kind": (".rom A\n" + OK, 1, ".rom takes"),
+        ".data of a RAM array": (".array A 1\n.object X\n.handler X CREATE\n.data A\nHALT\n", 4,
+                                 "RAM array"),
+        ".data placed twice": (".rom A u8 1\n.object X\n.handler X CREATE\n.data A\n.data A\n"
+                               "HALT\n", 5, "already placed"),
     }
 
     def test_each_error_names_its_line(self):
@@ -240,8 +272,9 @@ class Errors(unittest.TestCase):
         result = asm(".object X\n.handler X CREATE\nPUSH 1\n.handler X STEP\nHALT\n")
         self.assertEqual(len(result.warnings), 1)
         self.assertEqual(result.warnings[0][1], 2)
-        self.assertIn("HALT or RET", result.warnings[0][2])
+        self.assertIn("HALT, RET or RETV", result.warnings[0][2])
         self.assertEqual(asm(".object X\n.handler X CREATE\nJMP a\na:\nRET\n").warnings, [])
+        self.assertEqual(asm(".object X\n.handler X CREATE\nPUSH 1\nRETV\n").warnings, [])
 
     def test_shared_code_is_one_handler_group(self):
         result = asm(".object X\n.handler X CREATE\n.handler X STEP\nHALT\n")
@@ -289,6 +322,141 @@ class Errors(unittest.TestCase):
             self.assertIn("bad.bin: error: not a script blob", stderr.getvalue())
 
 
+class Arrays(unittest.TestCase):
+    """vm.md "Array table": the records, the RAM pool positions, the ROM data
+    after the code and before the strings, and the names."""
+
+    LISTING = """
+.object X
+.string S "hi"
+.array FIRST 4                 ; pool cells 0-3
+.rom LEVELS u8 1, 2, 255
+.array SECOND 2                ; cells 4-5: after FIRST
+.rom WAVES s32 -1, 0x7FFFFFFF
+.array THIRD 3 at=100          ; cells 100-102
+.array FOURTH 1                ; cell 103
+.rom SIGNED s8 -128, 127
+.rom WIDE s16 -2
+.rom HALF u16 65535
+.handler X CREATE
+    PUSH 1
+    LDA LEVELS
+    LEN ARR_WAVES
+    STA FOURTH
+    HALT
+"""
+
+    def test_tables_and_layout(self):
+        result = asm(self.LISTING)
+        blob = result.blob
+        self.assertEqual(blob[14:16], le16(9))  # the array count
+        arrays_at = 16 + 32 + 4
+        code_at = arrays_at + 9 * 8
+        records = [blob[arrays_at + 8 * n:arrays_at + 8 * n + 8] for n in range(9)]
+        code = bytes([VM.ops["PUSH8"], 1, VM.ops["LDA"], 1, 0, VM.ops["LEN"], 3, 0,
+                      VM.ops["STA"], 5, 0, VM.ops["HALT"]])
+        self.assertEqual(blob[code_at:code_at + len(code)], code)
+        data_at = code_at + len(code)  # the ROM data, in array order, after the code
+        self.assertEqual(records[0], le16(4) + bytes([0, 0]) + le32(0))
+        self.assertEqual(records[1], le16(3) + bytes([2, 0]) + le32(data_at))
+        self.assertEqual(records[2], le16(2) + bytes([0, 0]) + le32(4))
+        self.assertEqual(records[3], le16(2) + bytes([5, 0]) + le32(data_at + 3))
+        self.assertEqual(records[4], le16(3) + bytes([0, 0]) + le32(100))
+        self.assertEqual(records[5], le16(1) + bytes([0, 0]) + le32(103))
+        self.assertEqual(records[6], le16(2) + bytes([1, 0]) + le32(data_at + 11))
+        self.assertEqual(records[7], le16(1) + bytes([3, 0]) + le32(data_at + 13))
+        self.assertEqual(records[8], le16(1) + bytes([4, 0]) + le32(data_at + 15))
+        self.assertEqual(blob[data_at:data_at + 17],
+                         bytes([1, 2, 255]) + le32(0xFFFFFFFF) + le32(0x7FFFFFFF)
+                         + bytes([0x80, 0x7F]) + le16(0xFFFE) + le16(0xFFFF))
+        string_at = data_at + 17  # the strings after the data
+        self.assertEqual(blob[16 + 32:16 + 32 + 4], le32(string_at))
+        self.assertEqual(blob[string_at:], b"hi\0")
+        self.assertEqual(result.arrays, ["FIRST", "LEVELS", "SECOND", "WAVES", "THIRD", "FOURTH",
+                                         "SIGNED", "WIDE", "HALF"])
+
+    def test_round_trip(self):
+        blob = asm(self.LISTING).blob
+        listing = svm.disassemble(blob, VM)
+        self.assertNotIn(".data", listing)  # the default layout
+        self.assertNotIn(".strings", listing)
+        self.assertIn(".array 0 4\n.rom 1 u8 1, 2, 255\n.array 2 2\n.rom 3 s32 -1, 2147483647\n"
+                      ".array 4 3 at=100\n.array 5 1\n.rom 6 s8 -128, 127\n.rom 7 s16 -2\n"
+                      ".rom 8 u16 65535\n", listing)
+        self.assertIn("    LDA 1\n    LEN 3\n    STA 5\n", listing)
+        self.assertEqual(asm(listing).blob, blob)
+
+    def test_placed_data_round_trips(self):
+        """.data puts ROM data where it appears (here before the code, with a
+        string between); the disassembler says so with .data lines."""
+        blob = asm(".object X\n.string S \"s\"\n.rom A u8 9\n.rom B s16 1, 2\n"
+                   ".rom EMPTY u8\n.array R 2 at=7\n"
+                   ".data B\n.strings S\n.data EMPTY A\n"
+                   ".handler X CREATE\nPUSH 0\nLDA B\nHALT\n").blob
+        tables = 16 + 32 + 4 + 4 * 8
+        self.assertEqual(blob[tables:tables + 4], le16(1) + le16(2))  # B's data first
+        self.assertEqual(blob[tables + 4:tables + 6], b"s\0")
+        self.assertEqual(blob[tables + 6], 9)  # A's, after the empty array's (no bytes)
+        self.assertEqual(blob[16 + 32 + 4 + 16 + 4:16 + 32 + 4 + 16 + 8], le32(tables + 6))  # EMPTY
+        self.assertEqual(blob[16 + 32 + 4 + 4:16 + 32 + 4 + 8], le32(tables + 6))  # A
+        listing = svm.disassemble(blob, VM)
+        self.assertIn("    .data 1\n    .strings 0\n    .data 2\n    .data 0\n", listing)
+        self.assertIn(".rom 2 u8\n", listing)
+        self.assertEqual(asm(listing).blob, blob)
+
+    def test_defs_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = os.path.join(tmp, "game.svm")
+            with open(listing, "w") as f:
+                f.write(self.LISTING)
+            h = os.path.join(tmp, "out.h")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(svm.main(["asm", listing, "--defs", h]), 0)
+            with open(h) as f:
+                header = f.read()
+            for line in ("#define ARR_FIRST 0", "#define ARR_LEVELS 1", "#define ARR_HALF 8",
+                         "#define ARR_COUNT 9"):
+                self.assertIn(line, header)
+
+    def test_names_in_expressions(self):
+        blob = asm(".array A 1\n.rom B u8 1\n.object X\n.handler X CREATE\nPUSH ARR_B\n"
+                   "LDA ARR_B - 1\nHALT\n").blob
+        code = blob[16 + 32 + 16:]
+        self.assertEqual(code[:5], bytes([VM.ops["PUSH8"], 1, VM.ops["LDA"], 0, 0]))
+
+    def test_the_whole_pool(self):
+        asm(f".array A {VM.array_cells}\n" + Errors.OK)  # just fits
+        asm(f".array A 0 at={VM.array_cells}\n" + Errors.OK)  # empty, at the end
+        with self.assertRaisesRegex(svm.SvmError, "outside the RAM"):
+            asm(f".array A {VM.array_cells}\n.array B 1\n" + Errors.OK)
+
+    def test_dis_refuses_bad_records(self):
+        good = asm(".rom A u8 1, 2\n.array R 3\n" + Errors.OK).blob
+        record = 16 + 32
+        bad = {
+            "kind": good[:record + 2] + b"\x06" + good[record + 3:],
+            "reserved": good[:record + 3] + b"\x01" + good[record + 4:],
+            "data past the end": good[:record] + le16(9) + good[record + 2:],
+            "data in the tables": good[:record + 4] + le32(record) + good[record + 8:],
+            "RAM past the pool": good[:record + 12] + le32(VM.array_cells - 2) + good[record + 16:],
+            "flags": good[:6] + le16(1) + good[8:],
+            "object reserved": good[:22] + le16(1) + good[24:],
+        }
+        for name, blob in bad.items():
+            with self.subTest(case=name):
+                with self.assertRaises(svm.SvmError):
+                    svm.disassemble(blob, VM)
+        svm.disassemble(good, VM)
+
+    def test_dis_refuses_overlapping_data(self):
+        good = asm(".rom A u8 1, 2\n.rom B u8 3\n" + Errors.OK).blob
+        b_record = 16 + 32 + 8
+        a_data = int.from_bytes(good[16 + 32 + 4:16 + 32 + 8], "little")
+        overlap = good[:b_record + 4] + le32(a_data + 1) + good[b_record + 8:]
+        with self.assertRaisesRegex(svm.SvmError, "overlap"):
+            svm.disassemble(overlap, VM)
+
+
 HEADER = """
 // A header the way games write them.
 #define PLAIN 3
@@ -331,7 +499,7 @@ class Headers(unittest.TestCase):
         for name in ("FUNC", "CAST", "EMPTY", "Named", "SOMETHING"):
             with self.subTest(name=name):
                 self.assertIsNone(h.lookup(name))
-        self.assertEqual(h.lookup("VM_STACK"), 8)  # vm.h's names, after the headers
+        self.assertEqual(h.lookup("VM_STACK"), 64)  # vm.h's names, after the headers
         self.assertEqual(h.constants()["DERIVED"], 22)
 
     def test_conflicting_redefinition(self):
@@ -346,7 +514,7 @@ class Headers(unittest.TestCase):
         # The listing's own names come first, then the headers, then vm.h.
         blob = asm(".const HEALTH 7\n.object X\n.handler X CREATE\nPUSH HEALTH\nPUSH VM_STACK\nHALT\n",
                    h).blob
-        self.assertEqual(blob[48:], bytes([2, 7, 2, 8, 1]))
+        self.assertEqual(blob[48:], bytes([2, 7, 2, 64, 1]))
 
     def test_real_headers(self):
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -366,6 +534,9 @@ EVERY_OPCODE = """
 .string HELLO "say \\"hi\\" \\\\ bye"
 .string EMPTY ""
 .globals ONE TWO
+.array CELLS 4
+.rom TABLE s16 -300, 7, FX(2)
+.array OVER 2 at=2              ; overlapping CELLS
     .byte 0xFF, 0x00, 0x7F     ; padding between the tables and the code
 .handler A CREATE
 .handler B STEP                ; two handlers sharing an offset
@@ -381,6 +552,10 @@ start:
     STG TWO
     LDL 3
     STL 7
+    LDA CELLS
+    STA ARR_TABLE + 1
+    LEN TABLE
+    ENTER 2, 5
     ADD
     SUB
     MUL
@@ -396,29 +571,37 @@ start:
     SHL
     SHR
     LNOT
+    LSH
     EQ
     NE
     LT
     LE
     GT
     GE
+    IDIV
+    IMOD
     JMP ahead
     JZ start
     JNZ ahead
     CALL sub
     RET
+    RETV
 ahead:
     WAIT
     WAIT_ANIM
     WAIT_MOVE
-    INTERRUPTIBLE
     SELF
     OTHER
     GETP BODY_H
     SETP 200                   ; not a property vm.h knows: a number, with a warning
+    GETP FIELD0
+    SETP VM_P_FIELD0 + 15      ; the last instance field
+    GETP TAGS
     SPAWN B
     KILL
+    NEXTI A
     SYS TEXT_PRINT_NUMBER
+    SYS PATH_STOP
     SYS 99
     BRK
     TRACE HELLO
@@ -450,7 +633,11 @@ class RoundTrip(unittest.TestCase):
         self.assertIn('.string 0 "say \\"hi\\" \\\\ bye"', listing)
         self.assertIn("    PUSH8 -1\n    PUSH16 -300\n    PUSH32 70000\n", listing)
         self.assertIn("    GETP BODY_H\n    SETP 200\n", listing)
-        self.assertIn("    SYS TEXT_PRINT_NUMBER\n    SYS 99\n", listing)
+        self.assertIn("    GETP FIELD0\n    SETP VM_P_FIELD0 + 15\n    GETP TAGS\n", listing)
+        self.assertIn("    SYS TEXT_PRINT_NUMBER\n    SYS PATH_STOP\n    SYS 99\n", listing)
+        self.assertIn("    LDA 0\n    STA 2\n    LEN 1\n    ENTER 2, 5\n", listing)
+        self.assertIn("    NEXTI 0\n", listing)
+        self.assertIn(".array 0 4\n.rom 1 s16 -300, 7, 512\n.array 2 2 at=2\n", listing)
         self.assertIn("    JZ L_", listing)
         self.assertIn("    CALL L_", listing)
 
@@ -500,10 +687,25 @@ class OperandTable(unittest.TestCase):
             svm.check_operands(svm.Vm(names))
 
     def test_every_row_has_a_size(self):
-        for mnemonic, (kind, names) in svm.OPERANDS.items():
+        for mnemonic, fields in svm.OPERANDS.items():
+            for kind, names in fields:
+                with self.subTest(mnemonic=mnemonic):
+                    self.assertIn(kind, svm.OPERAND_SIZE)
+                    self.assertIn(names, (None, "global", "prop", "sys", "object", "string",
+                                          "array", "label"))
+                    if names == "label":
+                        self.assertEqual(len(fields), 1)  # the fixups assume it
+
+    def test_layouts_from_the_opcode_reference(self):
+        """The new operand layouts, byte by byte (vm.md's opcode reference)."""
+        sizes = {"ENTER": 2, "LDA": 2, "STA": 2, "LEN": 2, "NEXTI": 2, "LSH": 0, "IDIV": 0,
+                 "IMOD": 0, "RETV": 0, "LDL": 1, "STL": 1, "CALL": 4}
+        for mnemonic, size in sizes.items():
             with self.subTest(mnemonic=mnemonic):
-                self.assertIn(kind, svm.OPERAND_SIZE)
-                self.assertIn(names, (None, "global", "prop", "sys", "object", "string", "label"))
+                self.assertEqual(svm.operand_size(mnemonic), size)
+        self.assertEqual(VM.ops["ENTER"], 0x2E)
+        self.assertNotIn("INTERRUPTIBLE", VM.ops)
+        self.assertNotIn(0x33, VM.op_names)  # unassigned
 
 
 class GeneratedFiles(unittest.TestCase):

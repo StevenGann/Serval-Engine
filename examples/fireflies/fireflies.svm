@@ -2,8 +2,9 @@
 ; VM (docs/vm.md), assembled at build time by tools/svm.py (serval_add_script
 ; in examples/CMakeLists.txt) into fireflies_script, ROM data that main.c
 ; loads. One op per line; the comment after each op is the value stack after
-; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value).
-; Handlers end in HALT; subroutines in RET.
+; it, top on the right ("e" an entity, "x"/"y" positions, "fx" a FIXED value),
+; leaving out the handler's locals, which ENTER puts at the bottom of its
+; stack. Handlers end in HALT; subroutines in RET.
 ;
 ; In a game made with Studio Advance, the editor's script compiler emits the
 ; blob from event blocks instead; this file is what such a compiler's output
@@ -18,9 +19,10 @@
 ;                              never right on the serval
 ;   Player: Create, Step       the D-pad sets its velocity; walk or stand
 ;   Firefly: Create            wanders along random paths until its time is
-;                              up, then fades out; Collision: caught (score,
-;                              chime, sparkle, a jingle every 10); Destroy:
-;                              one fewer alive
+;                              up, then fades out (its behaviour: it waits);
+;                              Collision: caught (score, chime, sparkle, a
+;                              jingle every 10), a reaction that runs on top
+;                              of the waiting Create; Destroy: one fewer alive
 ;   Sparkle: Create, Anim End  a burst that removes itself when it's done
 ;   Resting: Create            the serval sitting down when time is up
 ;
@@ -110,6 +112,7 @@
 
 ; Room Start, run as a thread. Local 0: the brightness while fading.
 .handler ROOM ROOM_START
+    ENTER 0, 1           ; local 0
     ; A new round: every global set, whatever the last round left.
     PUSH 0               ; 0
     STG SCORE            ;
@@ -238,6 +241,7 @@ no_tick:
     PUSH 17          ; col
     PUSH CAUGHT_ROW  ; col row
     LDG SCORE        ; col row score
+    PUSH 0           ; col row score width: just the digits
     SYS TEXT_PRINT_NUMBER ;
     PUSH 90          ; 90
     WAIT             ;
@@ -275,6 +279,7 @@ fade_out:
 
 ; Room Start, run as a second thread. Locals: 0 x, 1 y (pixels).
 .handler SPAWNER ROOM_START
+    ENTER 0, 2         ; locals 0 and 1
 loop:
     LDG SPAWN_MIN      ; min
     LDG SPAWN_MAX      ; min max
@@ -357,6 +362,7 @@ done:
 
 ; Step, every frame. Locals: 0 vx, 1 vy (both start at 0), 2 sprite.
 .handler PLAYER STEP
+    ENTER 0, 3         ; locals 0 to 2, zeroed
     PUSH BUTTON_LEFT   ; button
     SYS BUTTON_DOWN    ; down
     JZ not_left        ;
@@ -428,8 +434,11 @@ same:
 
 ; --- Firefly -------------------------------------------------------------------------
 
-; Create, then its whole life. Local 0: flights left.
+; Create, then its whole life: its behaviour, which waits. A catch
+; (Collision) runs on top of it while it waits, and the Destroy that follows
+; ends it. Local 0: flights left.
 .handler FIREFLY CREATE
+    ENTER 0, 1             ; local 0
     SELF                   ; e
     PUSH 8                 ; e 8
     SETP BODY_W            ;
@@ -452,11 +461,6 @@ same:
     PUSH FLIGHTS_MAX       ; lo hi
     SYS RANDOM_RANGE       ; flights
     STL 0                  ;
-    ; From here on a catch (Collision) may cut into this handler's waits:
-    ; without it, the event would be dropped, since the firefly's script is
-    ; always waiting (one script per entity).
-    PUSH 1        ; 1
-    INTERRUPTIBLE ;
 wander:
     LDG PLAYING                       ; playing
     JZ fade                           ; the round is over
@@ -492,7 +496,8 @@ fade:
     KILL                  ;
     HALT                  ;
 
-; Collision: the serval (OTHER) caught it.
+; Collision: the serval (OTHER) caught it. A reaction: it runs to its end,
+; on top of the Create's wait.
 .handler FIREFLY COLLISION
     LDG SCORE        ; score
     PUSH 1           ; score 1
@@ -596,6 +601,7 @@ print_score:
     PUSH SCORE_COL        ; col
     PUSH 0                ; col row
     LDG SCORE             ; col row score
+    PUSH 0                ; col row score width: just the digits
     SYS TEXT_PRINT_NUMBER ;
     RET                   ;
 
@@ -608,5 +614,6 @@ print_time:
     PUSH TIME_COL         ; col
     PUSH 0                ; col row
     LDG TIME              ; col row time
+    PUSH 0                ; col row time width: just the digits
     SYS TEXT_PRINT_NUMBER ;
     RET                   ;

@@ -16,6 +16,7 @@
 #include "serval/physics.h"
 #include "serval/random.h"
 #include "serval/sprites.h"
+#include "serval/text.h"
 #include "serval/vm.h"
 #include "test.h"
 
@@ -40,7 +41,7 @@ enum { BLOB_CAP = 2048, MAX_LABELS = 16, MAX_FIXUPS = 32 };
 typedef struct {
     u8 bytes[BLOB_CAP];
     u32 size;
-    u16 objects, strings;
+    u16 objects, strings, arrays;
     u32 labels[MAX_LABELS];
     u32 fixup_at[MAX_FIXUPS]; // operands to fill in once labels are known
     u8 fixup_label[MAX_FIXUPS];
@@ -79,12 +80,14 @@ static void put32(u32 at, u32 value) {
 }
 
 // vm.md "Blob format": the 16-byte header, then the object table (32 bytes
-// per object) and the string table (4 bytes per string), zeroed: no
-// handlers, mask 0, sprite 0. Strings and code follow.
-static void blob_begin(u16 objects, u16 strings, u16 globals) {
+// per object), the string table (4 bytes per string) and the array table (8
+// bytes per array), zeroed: no handlers, mask 0, sprite 0, empty RAM arrays
+// at cell 0. Strings, ROM array data and code follow.
+static void blob_begin_arrays(u16 objects, u16 strings, u16 globals, u16 arrays) {
     bld.size = 0;
     bld.objects = objects;
     bld.strings = strings;
+    bld.arrays = arrays;
     bld.fixups = 0;
     bld.broken = false;
     for (u32 l = 0; l < MAX_LABELS; l++)
@@ -99,9 +102,14 @@ static void blob_begin(u16 objects, u16 strings, u16 globals) {
     emit16(objects);
     emit16(strings);
     emit16(globals);
-    emit16(0); // reserved
-    for (u32 k = 0; k < (u32)objects * VM_OBJECT_SIZE + 4u * strings; k++)
+    emit16(arrays);
+    for (u32 k = 0; k < (u32)objects * VM_OBJECT_SIZE + 4u * strings + 8u * arrays; k++)
         emit(0);
+}
+
+// A blob without arrays: laid out exactly as before arrays existed.
+static void blob_begin(u16 objects, u16 strings, u16 globals) {
+    blob_begin_arrays(objects, strings, globals, 0);
 }
 
 static u32 object_record(u32 obj) {
@@ -140,6 +148,42 @@ static u32 string(u16 index, const char* text) {
         if (!*text)
             break;
     }
+    return at;
+}
+
+// vm.md "Array table": array n's record.
+static u32 array_record(u32 n) {
+    return object_record(bld.objects) + 4u * bld.strings + 8u * n;
+}
+
+enum { ARRAY_RAM, ARRAY_S8, ARRAY_U8, ARRAY_S16, ARRAY_U16, ARRAY_S32 };
+
+// Array n: RAM, `length` cells from pool cell `first`.
+static void ram_array(u32 n, u32 length, u32 first) {
+    if (n >= bld.arrays) {
+        bld.broken = true;
+        return;
+    }
+    put16(array_record(n), length);
+    bld.bytes[array_record(n) + 2] = ARRAY_RAM;
+    put32(array_record(n) + 4, first);
+}
+
+// Array n: ROM data of `kind`, its elements emitted here (little-endian,
+// packed). Returns their blob offset.
+static u32 rom_array(u32 n, u32 kind, const s32* values, u32 length) {
+    static const u8 bytes[] = {0, 1, 1, 2, 2, 4};
+    u32 at = bld.size;
+    if (n >= bld.arrays || kind == ARRAY_RAM || kind > ARRAY_S32) {
+        bld.broken = true;
+        return at;
+    }
+    put16(array_record(n), length);
+    bld.bytes[array_record(n) + 2] = (u8)kind;
+    put32(array_record(n) + 4, at);
+    for (u32 k = 0; k < length; k++)
+        for (u32 b = 0; b < bytes[kind]; b++)
+            emit((u32)values[k] >> (8 * b) & 0xFF);
     return at;
 }
 
@@ -214,6 +258,30 @@ static void spawn(u32 obj) {
 
 static void trace(u32 str) {
     op16(VM_OP_TRACE, str);
+}
+
+// ENTER p, n: the top p cells become the frame's first locals, n zeroed ones
+// follow.
+static void enter(u32 p, u32 n) {
+    emit(VM_OP_ENTER);
+    emit(p);
+    emit(n);
+}
+
+static void lda(u32 array) {
+    op16(VM_OP_LDA, array);
+}
+
+static void sta(u32 array) {
+    op16(VM_OP_STA, array);
+}
+
+static void len(u32 array) {
+    op16(VM_OP_LEN, array);
+}
+
+static void nexti(u32 obj) {
+    op16(VM_OP_NEXTI, obj);
 }
 
 static void label(u32 l) {
@@ -319,6 +387,15 @@ static void append(u32 g, s32 digit) {
     push8(10);
     op(VM_OP_MUL);
     push8(digit);
+    op(VM_OP_ADD);
+    stg(g);
+}
+
+// glob[g] = glob[g] * 10 + the value on top of the stack, which is popped.
+static void append_top(u32 g) {
+    ldg(g);
+    push8(10);
+    op(VM_OP_MUL);
     op(VM_OP_ADD);
     stg(g);
 }
@@ -431,11 +508,13 @@ static void golden_example(void) {
 // --- Stack, variables, arithmetic --------------------------------------------
 
 // vm.md "Stack and variables": each op's stack effect, seen through STG; LDG
-// sees vm_set_global; locals start zeroed in every new context ("Contexts").
+// sees vm_set_global; ENTER's locals start zeroed in every new context
+// ("Frames").
 static void stack_and_variable_ops(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 8);    // locals 0-7, zeroed
     op(VM_OP_NOP);  //
     push8(-2);      // -2
     push16(1000);   // -2 1000
@@ -471,6 +550,7 @@ static void stack_and_variable_ops(void) {
     op(VM_OP_HALT); // ends the handler
     store(12, 1);   // never runs
     handler(1, VM_EV_CREATE);
+    enter(0, 8);    //
     ldl(0);         // 0
     stg(13);        // glob[13] = 0
     ldl(7);         // 0
@@ -574,7 +654,7 @@ static void check_rows(const OpRow* rows, u32 n) {
     CHECK(vm_idle());
     for (u32 r = 0; r < n; r++)
         if (vm_global((u16)r) != rows[r].expected)
-            test_fail(__FILE__, __LINE__, rows[r].what);
+            test_fail(__FILE__, __LINE__, text_format("%s [row %u]", rows[r].what, r));
     CHECK_WARNED(before, 0);
 }
 
@@ -674,6 +754,178 @@ static void bitwise_and_shift_ops(void) {
     check_rows(bitwise_rows, sizeof bitwise_rows / sizeof bitwise_rows[0]);
 }
 
+// vm.md "Arithmetic, logic, comparison" (LSH): Lua 5.4's shifts with 32-bit
+// integers. The Lua 5.4 manual (3.4.2): "Both right and left shifts fill the
+// vacant bits with zeros. Negative displacements shift to the other direction;
+// displacements with absolute values equal to or higher than the number of
+// bits in an integer result in zero." So for a count n from 0 to 31, a << n is
+// a times 2^n, modulo 2^32; from -31 to -1 it is the unsigned value of a
+// divided by 2^-n, rounded down; 32 or more either way gives 0. The values
+// below were worked out that way, for n = -33 to 33 in order.
+enum { SHIFT_MIN = -33, SHIFT_COUNTS = 67 };
+static const struct {
+    s32 a;
+    const char* what;
+    u32 expected[SHIFT_COUNTS]; // for n = SHIFT_MIN + index
+} shift_sweeps[] = {
+    {
+        1,
+        "LSH 1, n",
+        {
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000002,
+            0x00000004, 0x00000008, 0x00000010, 0x00000020, 0x00000040, 0x00000080, 0x00000100,
+            0x00000200, 0x00000400, 0x00000800, 0x00001000, 0x00002000, 0x00004000, 0x00008000,
+            0x00010000, 0x00020000, 0x00040000, 0x00080000, 0x00100000, 0x00200000, 0x00400000,
+            0x00800000, 0x01000000, 0x02000000, 0x04000000, 0x08000000, 0x10000000, 0x20000000,
+            0x40000000, 0x80000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        -1,
+        "LSH -1, n: right shifts are logical",
+        {
+            0x00000000, 0x00000000, 0x00000001, 0x00000003, 0x00000007, 0x0000000F, 0x0000001F,
+            0x0000003F, 0x0000007F, 0x000000FF, 0x000001FF, 0x000003FF, 0x000007FF, 0x00000FFF,
+            0x00001FFF, 0x00003FFF, 0x00007FFF, 0x0000FFFF, 0x0001FFFF, 0x0003FFFF, 0x0007FFFF,
+            0x000FFFFF, 0x001FFFFF, 0x003FFFFF, 0x007FFFFF, 0x00FFFFFF, 0x01FFFFFF, 0x03FFFFFF,
+            0x07FFFFFF, 0x0FFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF, 0xFFFFFFFF, 0xFFFFFFFE,
+            0xFFFFFFFC, 0xFFFFFFF8, 0xFFFFFFF0, 0xFFFFFFE0, 0xFFFFFFC0, 0xFFFFFF80, 0xFFFFFF00,
+            0xFFFFFE00, 0xFFFFFC00, 0xFFFFF800, 0xFFFFF000, 0xFFFFE000, 0xFFFFC000, 0xFFFF8000,
+            0xFFFF0000, 0xFFFE0000, 0xFFFC0000, 0xFFF80000, 0xFFF00000, 0xFFE00000, 0xFFC00000,
+            0xFF800000, 0xFF000000, 0xFE000000, 0xFC000000, 0xF8000000, 0xF0000000, 0xE0000000,
+            0xC0000000, 0x80000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        INT32_MIN,
+        "LSH INT32_MIN, n",
+        {
+            0x00000000, 0x00000000, 0x00000001, 0x00000002, 0x00000004, 0x00000008, 0x00000010,
+            0x00000020, 0x00000040, 0x00000080, 0x00000100, 0x00000200, 0x00000400, 0x00000800,
+            0x00001000, 0x00002000, 0x00004000, 0x00008000, 0x00010000, 0x00020000, 0x00040000,
+            0x00080000, 0x00100000, 0x00200000, 0x00400000, 0x00800000, 0x01000000, 0x02000000,
+            0x04000000, 0x08000000, 0x10000000, 0x20000000, 0x40000000, 0x80000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        },
+    },
+    {
+        0x12345678,
+        "LSH 0x12345678, n",
+        {
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000002,
+            0x00000004, 0x00000009, 0x00000012, 0x00000024, 0x00000048, 0x00000091, 0x00000123,
+            0x00000246, 0x0000048D, 0x0000091A, 0x00001234, 0x00002468, 0x000048D1, 0x000091A2,
+            0x00012345, 0x0002468A, 0x00048D15, 0x00091A2B, 0x00123456, 0x002468AC, 0x0048D159,
+            0x0091A2B3, 0x01234567, 0x02468ACF, 0x048D159E, 0x091A2B3C, 0x12345678, 0x2468ACF0,
+            0x48D159E0, 0x91A2B3C0, 0x23456780, 0x468ACF00, 0x8D159E00, 0x1A2B3C00, 0x34567800,
+            0x68ACF000, 0xD159E000, 0xA2B3C000, 0x45678000, 0x8ACF0000, 0x159E0000, 0x2B3C0000,
+            0x56780000, 0xACF00000, 0x59E00000, 0xB3C00000, 0x67800000, 0xCF000000, 0x9E000000,
+            0x3C000000, 0x78000000, 0xF0000000, 0xE0000000, 0xC0000000, 0x80000000, 0x00000000,
+            0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        },
+    },
+};
+
+// Counts no sweep reaches: the most negative and positive cells (a >> b
+// compiles to LSH a, -b, and -INT32_MIN wraps to INT32_MIN: still 0, as in
+// Lua, whose >> negates the count the same way), and zero shifted.
+static const OpRow shift_edge_rows[] = {
+    {VM_OP_LSH, 1, INT32_MIN, 0, "LSH 1, INT32_MIN"},
+    {VM_OP_LSH, -1, INT32_MIN, 0, "LSH -1, INT32_MIN"},
+    {VM_OP_LSH, 1, INT32_MAX, 0, "LSH 1, INT32_MAX"},
+    {VM_OP_LSH, -1, 1000, 0, "LSH -1, 1000"},
+    {VM_OP_LSH, -1, -1000, 0, "LSH -1, -1000"},
+    {VM_OP_LSH, 0, 5, 0, "LSH 0, 5"},
+    {VM_OP_LSH, 0, -5, 0, "LSH 0, -5"},
+    {VM_OP_LSH, 0, 0, 0, "LSH 0, 0"},
+    {VM_OP_LSH, -7, -1, 0x7FFFFFFC, "LSH -7, -1: logical"},
+    {VM_OP_LSH, -7, 31, INT32_MIN, "LSH -7, 31"},
+    {VM_OP_LSH, INT32_MAX, 1, -2, "LSH INT32_MAX, 1 wraps"},
+};
+
+static void lua_shift_op(void) {
+    static OpRow rows[SHIFT_COUNTS];
+    for (u32 t = 0; t < sizeof shift_sweeps / sizeof shift_sweeps[0]; t++) {
+        for (u32 k = 0; k < SHIFT_COUNTS; k++)
+            rows[k] = (OpRow){VM_OP_LSH, shift_sweeps[t].a, SHIFT_MIN + (s32)k,
+                              (s32)shift_sweeps[t].expected[k], shift_sweeps[t].what};
+        check_rows(rows, SHIFT_COUNTS);
+    }
+    check_rows(shift_edge_rows, sizeof shift_edge_rows / sizeof shift_edge_rows[0]);
+}
+
+// vm.md "Arithmetic, logic, comparison" (IDIV, IMOD): Lua 5.4's // and % with
+// 32-bit integers. The manual (3.4.1): "Floor division (//) is a division
+// that rounds the quotient towards minus infinity", and modulo "is defined as
+// the remainder of a division that rounds the quotient towards minus
+// infinity": a % b = a - (a // b) * b, so a nonzero remainder has b's sign.
+// Integer arithmetic wraps around (3.4.1), so INT32_MIN // -1 is INT32_MIN
+// (2^31 wrapped) and INT32_MIN % -1 is 0, as vm.md says.
+static const OpRow floored_rows[] = {
+    {VM_OP_IDIV, 7, 2, 3, "IDIV 7 // 2"},
+    {VM_OP_IMOD, 7, 2, 1, "IMOD 7 % 2"},
+    {VM_OP_IDIV, -7, 2, -4, "IDIV -7 // 2 rounds down"},
+    {VM_OP_IMOD, -7, 2, 1, "IMOD -7 % 2 has the divisor's sign"},
+    {VM_OP_IDIV, 7, -2, -4, "IDIV 7 // -2 rounds down"},
+    {VM_OP_IMOD, 7, -2, -1, "IMOD 7 % -2 has the divisor's sign"},
+    {VM_OP_IDIV, -7, -2, 3, "IDIV -7 // -2"},
+    {VM_OP_IMOD, -7, -2, -1, "IMOD -7 % -2"},
+    {VM_OP_IDIV, 6, 3, 2, "IDIV 6 // 3"},
+    {VM_OP_IMOD, 6, 3, 0, "IMOD 6 % 3"},
+    {VM_OP_IDIV, -6, 3, -2, "IDIV -6 // 3: exact, no correction"},
+    {VM_OP_IMOD, -6, 3, 0, "IMOD -6 % 3: 0, no correction"},
+    {VM_OP_IDIV, 6, -3, -2, "IDIV 6 // -3"},
+    {VM_OP_IMOD, 6, -3, 0, "IMOD 6 % -3"},
+    {VM_OP_IDIV, -1, 2, -1, "IDIV -1 // 2 is -1"},
+    {VM_OP_IMOD, -1, 2, 1, "IMOD -1 % 2 is 1"},
+    {VM_OP_IDIV, 1, -2, -1, "IDIV 1 // -2 is -1"},
+    {VM_OP_IMOD, 1, -2, -1, "IMOD 1 % -2 is -1"},
+    {VM_OP_IDIV, 0, 5, 0, "IDIV 0 // 5"},
+    {VM_OP_IMOD, 0, 5, 0, "IMOD 0 % 5"},
+    {VM_OP_IDIV, 0, -5, 0, "IDIV 0 // -5"},
+    {VM_OP_IMOD, 0, -5, 0, "IMOD 0 % -5"},
+    {VM_OP_IDIV, INT32_MIN, -1, INT32_MIN, "IDIV INT32_MIN // -1 wraps"},
+    {VM_OP_IMOD, INT32_MIN, -1, 0, "IMOD INT32_MIN % -1"},
+    {VM_OP_IDIV, INT32_MIN, 1, INT32_MIN, "IDIV INT32_MIN // 1"},
+    {VM_OP_IMOD, INT32_MIN, 1, 0, "IMOD INT32_MIN % 1"},
+    {VM_OP_IDIV, INT32_MIN, 2, -1073741824, "IDIV INT32_MIN // 2"},
+    {VM_OP_IMOD, INT32_MIN, 2, 0, "IMOD INT32_MIN % 2"},
+    {VM_OP_IDIV, INT32_MIN, 3, -715827883, "IDIV INT32_MIN // 3 rounds down"},
+    {VM_OP_IMOD, INT32_MIN, 3, 1, "IMOD INT32_MIN % 3"},
+    {VM_OP_IDIV, INT32_MIN, INT32_MIN, 1, "IDIV INT32_MIN // INT32_MIN"},
+    {VM_OP_IMOD, INT32_MIN, INT32_MIN, 0, "IMOD INT32_MIN % INT32_MIN"},
+    {VM_OP_IDIV, INT32_MIN, INT32_MAX, -2, "IDIV INT32_MIN // INT32_MAX rounds down"},
+    {VM_OP_IMOD, INT32_MIN, INT32_MAX, 2147483646, "IMOD INT32_MIN % INT32_MAX"},
+    {VM_OP_IDIV, INT32_MAX, INT32_MIN, -1, "IDIV INT32_MAX // INT32_MIN"},
+    {VM_OP_IMOD, INT32_MAX, INT32_MIN, -1, "IMOD INT32_MAX % INT32_MIN"},
+    {VM_OP_IDIV, 1, INT32_MIN, -1, "IDIV 1 // INT32_MIN"},
+    {VM_OP_IMOD, 1, INT32_MIN, -2147483647, "IMOD 1 % INT32_MIN"},
+    {VM_OP_IDIV, -1, INT32_MIN, 0, "IDIV -1 // INT32_MIN"},
+    {VM_OP_IMOD, -1, INT32_MIN, -1, "IMOD -1 % INT32_MIN"},
+    {VM_OP_IDIV, INT32_MAX, -1, -INT32_MAX, "IDIV INT32_MAX // -1"},
+    {VM_OP_IMOD, INT32_MAX, -1, 0, "IMOD INT32_MAX % -1"},
+    {VM_OP_IDIV, INT32_MAX, 2, 1073741823, "IDIV INT32_MAX // 2"},
+    {VM_OP_IMOD, INT32_MAX, 2, 1, "IMOD INT32_MAX % 2"},
+    {VM_OP_IDIV, -2147483647, 2, -1073741824, "IDIV -INT32_MAX // 2 rounds down"},
+    {VM_OP_IMOD, -2147483647, 2, 1, "IMOD -INT32_MAX % 2"},
+    {VM_OP_IDIV, -3, INT32_MAX, -1, "IDIV -3 // INT32_MAX"},
+    {VM_OP_IMOD, -3, INT32_MAX, 2147483644, "IMOD -3 % INT32_MAX"},
+    {VM_OP_IDIV, 100, -7, -15, "IDIV 100 // -7"},
+    {VM_OP_IMOD, 100, -7, -5, "IMOD 100 % -7"},
+};
+
+static void floored_division_ops(void) {
+    check_rows(floored_rows, sizeof floored_rows / sizeof floored_rows[0]);
+}
+
 // vm.md "Arithmetic, logic, comparison": signed comparisons, a op b, pushing 1
 // or 0.
 static const OpRow comparison_rows[] = {
@@ -700,40 +952,36 @@ static void comparison_ops(void) {
     check_rows(comparison_rows, sizeof comparison_rows / sizeof comparison_rows[0]);
 }
 
-// vm.md "Arithmetic, logic, comparison": DIV, MOD and FXDIV by zero give 0
-// and warn once (one kind of problem: "Warnings repeat once per problem, per
-// loaded blob"); the context goes on.
+// vm.md "Arithmetic, logic, comparison": DIV, MOD, FXDIV, IDIV and IMOD by
+// zero give 0 and warn once (one kind of problem: "Warnings repeat once per
+// problem, per loaded blob"); the context goes on.
 static void division_by_zero(void) {
+    static const u8 divisions[] = {VM_OP_DIV, VM_OP_MOD, VM_OP_FXDIV, VM_OP_IDIV, VM_OP_IMOD};
+    enum { N = sizeof divisions };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
     for (u32 round = 0; round < 2; round++) {
-        push8(7);       // 7
-        push8(0);       // 7 0
-        op(VM_OP_DIV);  // 0
-        stg(3 * round); // glob[0 or 3] = 0
-        push8(-7);      // -7
-        push8(0);       // -7 0
-        op(VM_OP_MOD);  // 0
-        stg(3 * round + 1);
-        push32(FX(3));   // 3.0
-        push8(0);        // 3.0 0
-        op(VM_OP_FXDIV); // 0
-        stg(3 * round + 2);
+        for (u32 k = 0; k < N; k++) {
+            push8(k % 2 ? -7 : 7); // a
+            push8(0);              // a 0
+            op(divisions[k]);      // 0
+            stg(N * round + k);    // glob[N * round + k] = 0
+        }
     }
-    store(6, 1);    // carried on
-    op(VM_OP_HALT); //
+    store(2 * N, 1); // carried on
+    op(VM_OP_HALT);  //
     CHECK(load());
-    for (u16 g = 0; g < 7; g++)
+    for (u16 g = 0; g <= 2 * N; g++)
         vm_set_global(g, 99);
     start(0);
     u32 before = debug_warning_count();
     vm_step();
     u32 wrong = 0;
-    for (u16 g = 0; g < 6; g++)
+    for (u16 g = 0; g < 2 * N; g++)
         wrong += vm_global(g) != 0;
     CHECK(wrong == 0);
-    CHECK(vm_global(6) == 1);
+    CHECK(vm_global(2 * N) == 1);
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
 }
@@ -747,6 +995,7 @@ static void control_flow(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 1);             // local 0
     jump(VM_OP_JMP, L_OVER); // forward
     store(0, 99);            // skipped
     label(L_OVER);           //
@@ -839,19 +1088,197 @@ static void ret_with_empty_call_stack_halts(void) {
     CHECK_WARNED(before, 0);
 }
 
+// vm.md "Frames", "Exact semantics: Frames": ENTER p, n makes the top p
+// cells (the caller's arguments) the frame's first locals and pushes n zeroed
+// ones; RETV pops a value, drops the callee's whole frame (arguments, locals,
+// temporaries) and pushes the value; RET drops the frame. A callee without
+// ENTER has a frame that starts at the stack top, so RET leaves the caller's
+// arguments to the caller. The caller's locals and temporaries come through
+// untouched.
+static void frames_hold_arguments_and_locals(void) {
+    enum { L_ADD3, L_DROPS, L_KEEPS };
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    enter(0, 1);    // c0
+    push8(77);      //
+    stl(0);         // c0 = 77
+    push8(100);     // c0 100: a temporary
+    push8(3);       // c0 100 3
+    push8(4);       // c0 100 3 4: arguments
+    call(L_ADD3);   // c0 100 17
+    stg(0);         // glob[0] = 17
+    stg(1);         // glob[1] = 100
+    ldl(0);         //
+    stg(2);         // glob[2] = 77
+    push8(5);       // c0 5: an argument
+    call(L_DROPS);  // c0: RET dropped it with the frame
+    push8(9);       // c0 9
+    ldl(1);         // c0 9 9 (5 if the argument were still there)
+    stg(3);         // glob[3] = 9
+    op(VM_OP_DROP); // c0
+    push8(6);       // c0 6
+    call(L_KEEPS);  // c0 6: no ENTER, so the 6 was never the callee's
+    stg(4);         // glob[4] = 6
+    ldl(0);         //
+    stg(5);         // glob[5] = 77
+    op(VM_OP_HALT); //
+    label(L_ADD3);  // (a, b): a + b + 10
+    enter(2, 1);    // a b l2
+    ldl(2);         // a b l2 0
+    stg(6);         // glob[6] = 0: zeroed
+    push8(10);      //
+    stl(2);         // l2 = 10
+    ldl(0);         //
+    ldl(1);         //
+    op(VM_OP_ADD);  //
+    ldl(2);         //
+    op(VM_OP_ADD);  // a b l2 17
+    push8(55);      // a b l2 17 55: a temporary left behind
+    op(VM_OP_SWAP); // a b l2 55 17
+    op(VM_OP_RETV); //
+    label(L_DROPS); // (n)
+    enter(1, 2);    // n l1 l2
+    push8(1);       //
+    push8(2);       // n l1 l2 1 2
+    op(VM_OP_RET);  //
+    label(L_KEEPS); // a frame starting at the stack top
+    push8(1);       //
+    push8(2);       //
+    op(VM_OP_RET);  //
+    CHECK(load());
+    vm_set_global(6, 99);
+    u32 before = debug_warning_count();
+    start(0);
+    vm_step();
+    static const s32 expected[] = {17, 100, 77, 9, 6, 77, 0};
+    u32 wrong = 0;
+    for (u16 g = 0; g < sizeof expected / sizeof expected[0]; g++)
+        wrong += vm_global(g) != expected[g];
+    CHECK(wrong == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Frames": recursion works to the depth VM_CALLS and VM_STACK allow.
+// sum(n) = n + sum(n - 1), sum(0) = 0, is VM_CALLS calls deep for sum(VM_CALLS
+// - 1) and fits; one deeper overflows the call stack. A function whose frame
+// holds 8 locals runs out of stack after VM_STACK / 8 levels instead. Each
+// warns and halts only its own context.
+static void recursion_to_the_limits(void) {
+    enum { L_SUM, L_MORE, L_DEEP };
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(VM_CALLS - 1); // n
+    call(L_SUM);         // sum(n)
+    stg(0);              // glob[0]
+    op(VM_OP_HALT);      //
+    handler(1, VM_EV_CREATE);
+    store(1, 1);     //
+    push8(VM_CALLS); // one call deeper
+    call(L_SUM);     // overflows the call stack: warns, halts
+    store(1, 2);     // never runs
+    op(VM_OP_HALT);  //
+    handler(2, VM_EV_CREATE);
+    call(L_DEEP);   // overflows the stack: warns, halts
+    store(3, 1);    // never runs
+    op(VM_OP_HALT); //
+    label(L_SUM);   // (n)
+    enter(1, 0);    // n
+    ldl(0);         //
+    jump(VM_OP_JNZ, L_MORE);
+    push8(0);       // n 0
+    op(VM_OP_RETV); //
+    label(L_MORE);  //
+    ldl(0);         // n n
+    ldl(0);         //
+    push8(1);       //
+    op(VM_OP_SUB);  // n n n-1
+    call(L_SUM);    // n n sum(n-1)
+    op(VM_OP_ADD);  // n n+sum(n-1)
+    op(VM_OP_RETV); //
+    label(L_DEEP);  //
+    count(2);       // glob[2]: levels reached
+    enter(0, 8);    // 8 cells a level
+    call(L_DEEP);   //
+    op(VM_OP_RET);  //
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == (VM_CALLS - 1) * VM_CALLS / 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    start(1);
+    vm_step();
+    CHECK(vm_global(1) == 1 && vm_idle());
+    CHECK_WARNED(before, 1);
+    start(2);
+    vm_step();
+    CHECK(vm_global(2) == VM_STACK / 8); // the next level has no room left
+    CHECK(vm_global(3) == 0 && vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// vm.md "Exact semantics: Frames": RET and RETV at the handler's own level
+// end the handler, whatever its stack holds, without a warning (RETV's value
+// is discarded, and it needs none).
+static void handler_level_returns_end_the_handler(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);    //
+    push8(5);       //
+    push8(6);       // 5 6
+    op(VM_OP_RETV); // ends the handler
+    store(0, 2);    // never runs
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    store(1, 1);    //
+    op(VM_OP_RETV); // an empty stack: ends the handler all the same
+    store(1, 2);    // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    start(0);
+    start(1);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 1 && vm_global(1) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Control flow" (ENTER): fewer than p cells in the activation warns
+// and halts (a stack underflow), only that context.
+static void enter_needs_its_arguments(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    witness(0);
+    handler(1, VM_EV_CREATE);
+    store(1, 1);    //
+    push8(1);       // one cell
+    enter(2, 0);    // two arguments: warns, halts
+    store(1, 2);    // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    expect_faults_halt_only_themselves(1);
+    CHECK(vm_global(1) == 1);
+}
+
 // --- Runtime safety ----------------------------------------------------------
 
 // vm.md "Opcode reference": stack overflow on any op warns and halts the
-// context; VM_STACK cells fit.
+// context; VM_STACK cells fit (ENTER's included).
 static void stack_overflow_halts_only_its_context(void) {
     reset();
-    blob_begin(3, 0, GLOBALS);
+    blob_begin(4, 0, GLOBALS);
     witness(0);
     handler(1, VM_EV_CREATE);
     store(1, 1);                        //
     for (s32 v = 1; v <= VM_STACK; v++) //
-        push8(v);                       // a full stack: 1 .. 8
-    stg(3);                             // glob[3] = 8: they all fit
+        push8(v);                       // a full stack: 1 .. VM_STACK
+    stg(3);                             // glob[3] = VM_STACK: they all fit
     push8(9);                           // full again
     push8(10);                          // one too many: warns, halts
     store(1, 2);                        // never runs
@@ -863,9 +1290,15 @@ static void stack_overflow_halts_only_its_context(void) {
     op(VM_OP_DUP);                      // overflows too
     store(2, 2);                        // never runs
     op(VM_OP_HALT);                     //
+    handler(3, VM_EV_CREATE);
+    store(4, 1);            //
+    enter(0, VM_STACK - 1); // all but one cell: fits
+    enter(0, 2);            // one cell left: overflows
+    store(4, 2);            // never runs
+    op(VM_OP_HALT);         //
     CHECK(load());
-    expect_faults_halt_only_themselves(2);
-    CHECK(vm_global(1) == 1 && vm_global(2) == 1);
+    expect_faults_halt_only_themselves(3);
+    CHECK(vm_global(1) == 1 && vm_global(2) == 1 && vm_global(4) == 1);
     CHECK(vm_global(3) == VM_STACK);
 }
 
@@ -897,8 +1330,8 @@ static void stack_underflow_halts_only_its_context(void) {
     CHECK(vm_global(1) == 1 && vm_global(2) == 1 && vm_global(3) == 1);
 }
 
-// vm.md "Opcode reference": CALL deeper than VM_CALLS overflows the call
-// stack: warns, halts.
+// vm.md "Control flow": CALL deeper than VM_CALLS overflows the call stack:
+// warns, halts.
 static void call_depth_is_limited(void) {
     enum { L_F };
     reset();
@@ -911,7 +1344,7 @@ static void call_depth_is_limited(void) {
     op(VM_OP_HALT); //
     label(L_F);     //
     count(2);       // glob[2] = the depth reached
-    call(L_F);      // the fifth nested CALL overflows
+    call(L_F);      // nested call VM_CALLS + 1 overflows
     op(VM_OP_RET);  //
     CHECK(load());
     expect_faults_halt_only_themselves(1);
@@ -920,8 +1353,9 @@ static void call_depth_is_limited(void) {
 }
 
 // vm.md "Opcode reference": an unknown opcode warns and halts the context.
+// 0x33 held INTERRUPTIBLE before v1 was released: unassigned now ("Waits").
 static void unknown_opcode_halts_only_its_context(void) {
-    static const u8 unknown[] = {0x0C, 0x1F, 0x41, 0xFF};
+    static const u8 unknown[] = {0x0F, 0x2F, 0x33, 0x3F, 0x41, 0xFF};
     reset();
     blob_begin(1 + sizeof unknown, 0, GLOBALS);
     witness(0);
@@ -940,34 +1374,53 @@ static void unknown_opcode_halts_only_its_context(void) {
     CHECK(wrong == 0);
 }
 
-// vm.md "Stack and variables": LDL n >= VM_LOCALS warns and pushes 0, STL
-// warns and drops the value. Neither halts: the context goes on. Both are one
-// kind of problem (no such local): one warning.
+// vm.md "Stack and variables", "Exact semantics: Frames": LDL and STL n
+// need fp + n < sp (after STL's pop): the frame is ENTER's locals and anything
+// above them. Outside it, LDL warns and pushes 0, STL warns and drops the
+// value. Neither halts: the context goes on. Both are one kind of problem: one
+// warning.
 static void locals_out_of_range(void) {
+    enum { L_F };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
-    push8(5);           // 5
-    ldl(VM_LOCALS);     // warns: 5 0
-    stg(0);             // glob[0] = 0
-    stg(1);             // glob[1] = 5
-    push8(7);           // 7
-    push8(9);           // 7 9
-    stl(VM_LOCALS);     // warns, pops the 9: 7
-    stg(2);             // glob[2] = 7
-    push8(42);          // 42
-    stl(VM_LOCALS - 1); // the last local is fine
-    ldl(VM_LOCALS - 1); // 42
-    stg(3);             // glob[3] = 42
-    store(4, 1);        // carried on
-    op(VM_OP_HALT);     //
+    enter(0, 2);    // l0 l1: sp 2
+    push8(5);       // l0 l1 5
+    ldl(3);         // fp + 3 is sp: warns, l0 l1 5 0
+    stg(0);         // glob[0] = 0
+    stg(1);         // glob[1] = 5
+    push8(7);       // l0 l1 7
+    push8(9);       // l0 l1 7 9
+    stl(3);         // pops the 9; fp + 3 is sp again: warns (no repeat), dropped
+    stg(2);         // glob[2] = 7
+    push8(42);      // l0 l1 42
+    stl(1);         // local 1 = 42
+    ldl(1);         // l0 l1 42
+    stg(3);         // glob[3] = 42
+    push8(11);      // l0 l1 11: a cell above the locals is in the frame too
+    ldl(2);         // l0 l1 11 11
+    stg(4);         // glob[4] = 11
+    op(VM_OP_DROP); // l0 l1
+    push8(3);       // l0 l1 3: an argument
+    call(L_F);      //
+    store(8, 1);    // carried on
+    op(VM_OP_HALT); //
+    label(L_F);     // the callee's frame starts at the stack top
+    ldl(0);         // l0 l1 3 0: outside its frame (warns, no repeat)
+    stg(6);         // glob[6] = 0
+    enter(1, 0);    // the argument becomes local 0
+    ldl(0);         // l0 l1 3 3
+    stg(7);         // glob[7] = 3
+    op(VM_OP_RET);  // drops the frame, argument and all
     CHECK(load());
     vm_set_global(0, 99);
+    vm_set_global(6, 99);
     start(0);
     u32 before = debug_warning_count();
     vm_step();
     CHECK(vm_global(0) == 0 && vm_global(1) == 5 && vm_global(2) == 7);
-    CHECK(vm_global(3) == 42 && vm_global(4) == 1);
+    CHECK(vm_global(3) == 42 && vm_global(4) == 11);
+    CHECK(vm_global(6) == 0 && vm_global(7) == 3 && vm_global(8) == 1);
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
 }
@@ -1034,9 +1487,17 @@ static void truncated_operand_halts_its_context(void) {
 // alike); GETP pushes 0 and SETP drops the value (both pop as usual) and the
 // context goes on.
 static void unknown_property_warns(void) {
+    // The first engine property not assigned, the last one reserved for the
+    // engine, the first past the instance fields, the last a u8 can name.
+    static const u8 unknown[] = {VM_P_COUNT, VM_P_FIELD0 - 1, VM_P_FIELD(VM_FIELDS), 255};
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    for (u32 k = 0; k < sizeof unknown; k++) {
+        ldg(0);           // e
+        getp(unknown[k]); // warns (once): 0
+        stg(4 + k);       // glob[4 + k] = 0
+    }
     ldg(0);           // e
     getp(VM_P_COUNT); // warns: 0
     stg(1);           // glob[1] = 0
@@ -1050,11 +1511,17 @@ static void unknown_property_warns(void) {
     CHECK(load());
     Entity e = entity_create(C_POS | C_VEL | C_SPR);
     u32 i = entity_index(e);
+    vm_attach(e, 0); // attached: instance fields would be readable
     vm_set_global(0, e);
     vm_set_global(1, 99);
-    start(0);
+    for (u16 k = 0; k < sizeof unknown; k++)
+        vm_set_global(4 + k, 99);
     u32 before = debug_warning_count();
     vm_step();
+    u32 wrong = 0;
+    for (u16 k = 0; k < sizeof unknown; k++)
+        wrong += vm_global(4 + k) != 0;
+    CHECK(wrong == 0);
     CHECK(vm_global(1) == 0 && vm_global(2) == 66 && vm_global(3) == 1);
     CHECK(vm_idle());
     CHECK(pos_x[i] == 0 && pos_y[i] == 0 && vel_x[i] == 0 && vel_y[i] == 0);
@@ -1239,10 +1706,11 @@ static void contexts_resume_in_pool_order(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": every frame after the resume pass,
-// in entity index order, for attached entities with a Step handler and no
-// live context; skipped while one waits.
-static void step_handlers_run_every_frame_unless_live(void) {
+// vm.md "Behaviours and reactions", "Exact semantics: Step reactions": every
+// frame after the first drain, in entity index order, for attached entities
+// with a Step handler, also while their behaviour waits (on top of it).
+static void step_reactions_run_every_frame(void) {
+    enum { L_AGAIN };
     reset();
     blob_begin(4, 0, GLOBALS);
     handler(0, VM_EV_STEP);
@@ -1251,10 +1719,13 @@ static void step_handlers_run_every_frame_unless_live(void) {
     handler(1, VM_EV_STEP);
     append(0, 2);   //
     op(VM_OP_HALT); //
+    handler(2, VM_EV_CREATE);
+    label(L_AGAIN);           // a behaviour waiting most of the time:
+    count(2);                 // glob[2]: its rounds
+    wait_frames(3);           //
+    jump(VM_OP_JMP, L_AGAIN); //
     handler(2, VM_EV_STEP);
-    count(1);       // glob[1]: Step runs
-    wait_frames(3); // live for three frames: Step skipped meanwhile
-    count(2);       // glob[2]: resumes
+    count(1);       // glob[1]: Step runs, every frame
     op(VM_OP_HALT); //
     // Object 3 has no handlers.
     CHECK(load());
@@ -1267,24 +1738,24 @@ static void step_handlers_run_every_frame_unless_live(void) {
     vm_attach(e0, 0);
     vm_attach(e2, 2);
     vm_attach(e3, 3);
-    vm_events(); // drains the Create events (no Create handlers)
+    vm_events(); // drains the Create events: e2's behaviour starts and waits
+    CHECK(vm_global(2) == 1);
     u32 before = debug_warning_count();
-    static const s32 runs[] = {1, 1, 1, 2, 2, 2, 3};    // glob[1] after frames 1-7
-    static const s32 resumes[] = {0, 0, 0, 1, 1, 1, 2}; // glob[2]
-    for (u32 f = 0; f < 7; f++) {
+    static const s32 rounds[] = {1, 1, 2, 2, 2, 3, 3}; // glob[2] after frames 1-7
+    for (s32 f = 1; f <= 7; f++) {
         vm_set_global(0, 0);
         vm_step();
         CHECK(vm_global(0) == 12); // e0 then e1, once each
-        CHECK(vm_global(1) == runs[f] && vm_global(2) == resumes[f]);
+        CHECK(vm_global(1) == f);  // e2's Step, on top of its waiting behaviour
+        CHECK(vm_global(2) == rounds[f - 1]);
         vm_events();
     }
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Scheduling", "Exact semantics: Step handlers": an entity attached
-// before vm_step() runs its Create in the first drain and, if Create doesn't
-// wait, its first Step in the same vm_step(). A Create that waits holds Step
-// back until it ends (one script per entity).
+// vm.md "Scheduling", "Exact semantics: Step reactions": an entity attached
+// before vm_step() runs its Create in the first drain and its first Step in
+// the same vm_step(), on top of the Create if that waits.
 static void create_runs_before_the_first_step(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -1310,18 +1781,18 @@ static void create_runs_before_the_first_step(void) {
     u32 before = debug_warning_count();
     vm_step();
     CHECK(vm_global(0) == 12); // Create, then Step, in the same vm_step()
-    CHECK(vm_global(1) == 1);  // Create waits: no Step
+    CHECK(vm_global(1) == 13); // Create waits; Step runs on top of it
     vm_events();
     vm_step();
     CHECK(vm_global(0) == 122);
-    CHECK(vm_global(1) == 123); // Create ends in the resume pass, then Step
+    CHECK(vm_global(1) == 1323); // Create ends in the resume pass, then Step
     vm_events();
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": an entity a Step handler spawns runs
-// its Create in vm_step()'s second drain and its first Step in the next
-// frame, even from a slot the Step handlers have yet to reach.
+// vm.md "Exact semantics: Step reactions": an entity a Step reaction spawns
+// runs its Create in vm_step()'s second drain and its first Step in the next
+// frame, even from a slot the Step reactions have yet to reach.
 static void entity_spawned_by_step_steps_next_frame(void) {
     enum { L_DONE };
     reset();
@@ -1360,7 +1831,7 @@ static void entity_spawned_by_step_steps_next_frame(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Step handlers": Step never runs before Create.
+// vm.md "Exact semantics: Step reactions": Step never runs before Create.
 // Spawned and C-attached entities' Step handlers check that their Create has
 // run (it sets their depth to 1). The Create-pending flag clears when the
 // Create is drained even if the object has no Create handler: such an entity
@@ -1413,40 +1884,257 @@ static void step_never_runs_before_create(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Contexts" (one script per entity), "Exact semantics: Draining": an
-// event for an entity whose context is live is dropped with a warning (not
-// deferred); one its object has no handler for is skipped silently.
-static void event_for_a_live_entity_is_dropped(void) {
+// vm.md "Behaviours and reactions", "Exact semantics: Reactions on top of a
+// behaviour": reactions (Step, Collision, Animation End) for an entity whose
+// behaviour waits run on top of it, on the same context: their activation
+// starts at the behaviour's stack top (its zeroed locals don't touch the
+// behaviour's cells, and it can't pop them: underflow), and when they end -
+// HALT, RET at their own level, or a fault - the behaviour's pc, stack,
+// frame, call depth and wait are back exactly as they were. Here it waits
+// inside a CALL, with locals and a temporary on its stack, and resumes in the
+// frame its WAIT 3 named, then returns and finds everything in place.
+static void reactions_run_on_top_of_a_waiting_behaviour(void) {
+    enum { L_SUB, L_SUB2 };
     reset();
     blob_begin(1, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
-    store(0, 1);    //
-    wait_frames(5); //
-    store(0, 2);    //
+    enter(0, 2);    // l0 l1
+    push8(11);      //
+    stl(0);         // l0 = 11
+    push8(22);      //
+    stl(1);         // l1 = 22
+    push8(33);      // l0 l1 33: a temporary
+    call(L_SUB);    // waits in there; returns 44: l0 l1 33 44
+    stg(3);         // glob[3] = 44
+    stg(4);         // glob[4] = 33
+    ldl(0);         //
+    stg(5);         // glob[5] = 11
+    ldl(1);         //
+    stg(6);         // glob[6] = 22
+    store(0, 2);    // glob[0] = 2: the behaviour has ended
+    op(VM_OP_HALT); //
+    label(L_SUB);   // a frame of its own
+    enter(0, 1);    // l0 l1 33 | s0
+    push8(44);      //
+    stl(0);         // s0 = 44
+    store(0, 1);    // glob[0] = 1: waiting
+    wait_frames(3); //
+    ldl(0);         // 44
+    op(VM_OP_RETV); // drops the frame, pushes 44
+
+    handler(0, VM_EV_STEP);
+    count(7);       // glob[7]: Step runs, every frame
+    op(VM_OP_HALT); //
+
+    handler(0, VM_EV_COLLISION);
+    enter(0, 3);     // three zeroed locals, above the behaviour's cells
+    ldl(0);          //
+    ldl(1);          //
+    op(VM_OP_ADD);   //
+    ldl(2);          //
+    op(VM_OP_ADD);   // 0
+    stg(8);          // glob[8] = 0
+    push8(-1);       //
+    stl(0);          // writes its own local, not the behaviour's
+    op(VM_OP_OTHER); //
+    stg(9);          // glob[9] = other
+    push8(1);        // temporaries left on the stack
+    push8(2);        //
+    call(L_SUB2);    // a call of its own
+    count(10);       // glob[10]: Collisions that ran to their end
+    op(VM_OP_RET);   // at its own level: the reaction ends
+    label(L_SUB2);   //
+    push8(5);        //
+    op(VM_OP_RET);   //
+
+    handler(0, VM_EV_ANIM_END);
+    count(11);      // glob[11]: it ran
+    op(VM_OP_DROP); // nothing in its own activation: underflow, halts it
+    store(11, 99);  // never runs
+    op(VM_OP_HALT); //
+    CHECK(load());
+    vm_set_global(8, 99);
+    Entity e = entity_create(C_POS);
+    Entity o = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // Create runs and waits (3 frames)
+    CHECK(vm_global(0) == 1);
+    u32 before = debug_warning_count();
+    vm_step(); // frame 1: 2 frames left; Step on top
+    CHECK(vm_global(7) == 1);
+    vm_event(e, o, VM_EV_COLLISION);
+    vm_event(e, o, VM_EV_ANIM_END);
+    vm_events();
+    CHECK(vm_global(8) == 0 && vm_global(9) == o && vm_global(10) == 1);
+    CHECK(vm_global(11) == 1);
+    CHECK_WARNED(before, 1); // the underflow
+    vm_step();               // frame 2: 1 frame left
+    CHECK(vm_global(0) == 1 && vm_global(7) == 2);
+    vm_event(e, o, VM_EV_COLLISION); // again, while it still waits
+    vm_events();
+    CHECK(vm_global(10) == 2);
+    vm_step(); // frame 3: the behaviour resumes, returns and ends; then Step
+    CHECK(vm_global(0) == 2);
+    CHECK(vm_global(3) == 44 && vm_global(4) == 33);
+    CHECK(vm_global(5) == 11 && vm_global(6) == 22);
+    CHECK(vm_global(7) == 3);
+    CHECK(vm_global(11) == 1);
+    vm_events();
+    CHECK(vm_idle());                // Step's own context is freed
+    vm_event(e, o, VM_EV_COLLISION); // no behaviour now: a context of its own
+    vm_events();
+    CHECK(vm_global(10) == 3);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Exact semantics: Frames": a reaction on top of a behaviour has an
+// activation of its own, from the behaviour's stack top: ENTER can't take the
+// behaviour's cells as arguments, nor SWAP or DROP reach them (stack
+// underflow: warns once, halts the reaction), and LDL and STL see no local
+// below its frame. The behaviour's cells come through untouched.
+static void reactions_cannot_reach_below_their_activation(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(7);       //
+    push8(8);       //
+    push8(9);       // 7 8 9
+    wait_frames(2); //
+    stg(2);         // glob[2] = 9
+    stg(1);         // glob[1] = 8
+    stg(0);         // glob[0] = 7
     op(VM_OP_HALT); //
     handler(0, VM_EV_COLLISION);
+    count(3);       // glob[3]: it ran
+    enter(1, 0);    // no cell of its own to take: halted
+    store(3, 99);   // never runs
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_ANIM_END);
+    count(4);       // glob[4]
+    push8(1);       // one cell of its own
+    op(VM_OP_SWAP); // needs two: halted
+    store(4, 99);   // never runs
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_STEP);
+    count(5);       // glob[5]
+    push8(-1);      //
+    stl(1);         // outside its frame: dropped (warns)
+    ldl(1);         // 0 (no repeat)
+    stg(6);         // glob[6] = 0
+    op(VM_OP_HALT); //
+    CHECK(load());
+    vm_set_global(6, 99);
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // the behaviour waits on 7 8 9
+    u32 before = debug_warning_count();
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    vm_event(e, ENTITY_NONE, VM_EV_ANIM_END);
+    vm_events();
+    CHECK(vm_global(3) == 1 && vm_global(4) == 1);
+    CHECK_WARNED(before, 1); // underflow
+    vm_step();               // Step, on top of the behaviour's last frame of waiting
+    CHECK(vm_global(5) == 1 && vm_global(6) == 0);
+    CHECK_WARNED(before, 2); // the local
+    vm_events();
+    vm_step(); // the behaviour resumes and ends; then Step, alone
+    CHECK(vm_global(0) == 7 && vm_global(1) == 8 && vm_global(2) == 9);
+    CHECK(vm_global(5) == 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+static const PathStep move_steps[] = {{.frames = 3, .speed = FX(1)}};
+static const Path move_path = {PATH_STEPS(move_steps)};
+
+// vm.md "Exact semantics: Reactions on top of a behaviour": a reaction leaves
+// the behaviour's kind of wait alone too: a WAIT_MOVE resumes when the path
+// ends, not before, though a Step and a Collision run on top of it every
+// frame.
+static void reactions_keep_a_behaviours_wait(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_WAIT_MOVE); //
+    store(0, 1);         //
+    op(VM_OP_HALT);      //
+    handler(0, VM_EV_STEP);
     count(1);       //
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_COLLISION);
+    count(2);       //
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_VEL);
+    path_start(e, &move_path, 0);
+    vm_attach(e, 0);
+    u32 before = debug_warning_count();
+    for (s32 f = 1; f <= 4; f++) {
+        vm_step();
+        CHECK(vm_global(0) == (f == 4)); // the 3-frame path ends in frame 3's sys_path
+        CHECK(vm_global(1) == f);
+        sys_path();
+        sys_movement();
+        vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+        vm_events();
+        CHECK(vm_global(2) == f);
+    }
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Behaviours and reactions", "Exact semantics: Budget": a wait that
+// would suspend a reaction, or a reaction running past its budget, warns and
+// halts the reaction, not the behaviour beneath it (which goes on counting
+// frames). A wait that continues at once (WAIT 0, WAIT_MOVE with no path) is
+// fine. A reaction with no behaviour beneath it (object 1) is halted the same
+// way, and its context freed.
+static void reaction_waits_and_overruns_halt_only_the_reaction(void) {
+    enum { L_AGAIN, L_LOOP };
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    label(L_AGAIN);           // the behaviour: counts frames forever
+    count(0);                 //
+    wait_frames(1);           //
+    jump(VM_OP_JMP, L_AGAIN); //
+    handler(0, VM_EV_STEP);
+    count(1);            // glob[1]: Step runs
+    wait_frames(0);      // continues at once
+    op(VM_OP_WAIT_MOVE); // no path: continues at once
+    count(2);            // glob[2]
+    wait_frames(2);      // would suspend: warns, halts the reaction
+    store(3, 99);        // never runs
+    op(VM_OP_HALT);      //
+    handler(0, VM_EV_COLLISION);
+    label(L_LOOP);           // an endless loop
+    count(4);                // 5 ops a round
+    jump(VM_OP_JMP, L_LOOP); //
+    handler(1, VM_EV_STEP);
+    count(5);       // glob[5]
+    wait_frames(1); // warns (the same kind), halts
+    store(6, 99);   // never runs
     op(VM_OP_HALT); //
     CHECK(load());
     Entity e = entity_create(C_POS);
+    Entity alone = entity_create(C_POS);
     vm_attach(e, 0);
-    vm_events(); // Create runs and waits
-    CHECK(vm_global(0) == 1);
+    vm_attach(alone, 1);
+    vm_events(); // e's behaviour counts frame 0
     u32 before = debug_warning_count();
-    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
-    vm_events(); // dropped, with a warning
-    CHECK(vm_global(1) == 0);
-    CHECK_WARNED(before, 1);
-    vm_event(e, ENTITY_NONE, VM_EV_ANIM_END);
-    vm_events(); // no handler: skipped silently
-    CHECK_WARNED(before, 1);
-    frames(5);
-    CHECK(vm_global(0) == 2); // Create finished...
-    CHECK(vm_global(1) == 0); // ...and the dropped event stayed dropped
-    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
-    vm_events(); // free again: it runs
-    CHECK(vm_global(1) == 1);
-    CHECK_WARNED(before, 1);
+    for (s32 f = 1; f <= 3; f++) {
+        vm_step();
+        vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+        vm_events();
+        CHECK(vm_global(0) == 1 + f); // the behaviour, every frame
+        CHECK(vm_global(1) == f && vm_global(2) == f && vm_global(3) == 0);
+        CHECK(vm_global(4) == 51 * f); // 51 rounds and an LDG, then halted
+        CHECK(vm_global(5) == f && vm_global(6) == 0);
+    }
+    CHECK_WARNED(before, 2); // a wait in a reaction; a reaction over budget
+    vm_detach(e);
+    CHECK(vm_idle()); // object 1's reactions left nothing behind
 }
 
 // vm.md "Exact semantics: Draining": FIFO, from vm_events() and from
@@ -1524,38 +2212,48 @@ static void events_queued_while_draining_run_in_the_same_phase(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Contexts": Destroy (queued by KILL) force-halts the entity's live
-// context first, then runs the Destroy handler, then destroys the entity.
-static void kill_force_halts_a_waiting_script(void) {
+// vm.md "Entities" (KILL), "Exact semantics: Draining": Destroy (queued by
+// KILL) runs the Destroy reaction on top of the entity's waiting behaviour,
+// then halts the behaviour, then destroys the entity. The reaction sees the
+// entity alive, and its activation starts above the behaviour's cells.
+static void kill_runs_destroy_then_halts_the_behaviour(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
+    enter(0, 3);    // three cells on the behaviour's stack
     store(0, 1);    //
     wait_frames(5); //
     store(0, 2);    // never runs: killed while waiting
     op(VM_OP_HALT); //
     handler(0, VM_EV_DESTROY);
-    store(1, 1);    //
-    op(VM_OP_HALT); //
+    op(VM_OP_SELF);         // self
+    getp(VM_P_X);           // still alive: its x
+    stg(2);                 // glob[2] = 6.0
+    enter(0, VM_STACK - 3); // exactly what is left above the behaviour's cells
+    store(1, 1);            // one more cell: overflows (warns), so never runs
+    op(VM_OP_HALT);         //
     handler(1, VM_EV_CREATE);
     ldg(5);         // e
     op(VM_OP_KILL); // queues e's Destroy
     op(VM_OP_HALT); //
     CHECK(load());
     Entity e = entity_create(C_POS);
+    pos_x[entity_index(e)] = FX(6);
     vm_attach(e, 0);
     vm_events(); // Create runs and waits
     vm_set_global(5, e);
     u32 before = debug_warning_count();
     start(1);
-    vm_step(); // the thread queues Destroy; the drain halts e's wait, runs Destroy
-    CHECK(vm_global(1) == 1);
+    vm_step(); // the thread queues Destroy; the drain runs it, then halts e's wait
+    CHECK(vm_global(2) == FX(6));
+    CHECK(vm_global(1) == 0);
+    CHECK_WARNED(before, 1); // the overflow
     CHECK(!entity_alive(e));
     CHECK(vm_idle());
     vm_events();
     frames(6);
     CHECK(vm_global(0) == 1);
-    CHECK_WARNED(before, 0);
+    CHECK_WARNED(before, 1);
 }
 
 // vm.md "Entities" (KILL), "Exact semantics: Draining": KILL queues Destroy
@@ -1611,8 +2309,8 @@ static void kill_destroys_an_unattached_entity(void) {
     CHECK_WARNED(before, 0);
 }
 
-// vm.md "Exact semantics: Draining": a wait inside Destroy warns and halts
-// the handler; the entity is destroyed all the same.
+// vm.md "Behaviours and reactions": a wait inside a Destroy reaction warns and
+// halts it; the entity is destroyed all the same.
 static void wait_inside_destroy_warns_and_halts(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -1755,8 +2453,9 @@ static void vm_event_rejects_unknown_events(void) {
 }
 
 // vm.md "Exact semantics: vm_kill": from C, outside the phases, the Destroy
-// logic runs at once: force-halt, Destroy handler (if any), entity_destroy;
-// an unattached entity is just destroyed.
+// logic runs at once: the Destroy reaction (if any, on top of the waiting
+// behaviour), the behaviour halted, entity_destroy; an unattached entity is
+// just destroyed.
 static void vm_kill_runs_destroy_at_once(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
@@ -1861,6 +2560,80 @@ static void attach_rebinds_an_attached_entity(void) {
     frames(4);
     CHECK(vm_global(0) == 1);
     CHECK(vm_global(2) == 4); // object 1's Step, every frame
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Exact semantics: Starting scripts": attaching twice before a drain
+// queues one Create, whether the entity is attached to the same object again,
+// rebound to another (then the other's Create runs), or detached and attached
+// again in between.
+static void double_attach_queues_one_create(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    count(0);       // glob[0]: object 0's Creates
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    count(1);       // glob[1]: object 1's Creates
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity c = entity_create(C_POS);
+    u32 before = debug_warning_count();
+    vm_attach(a, 0);
+    vm_attach(a, 0); // the same object again
+    vm_attach(b, 0);
+    vm_attach(b, 1); // rebound before its Create ran
+    vm_attach(c, 1);
+    vm_detach(c);
+    vm_attach(c, 1); // detached and attached again
+    vm_events();
+    CHECK(vm_global(0) == 1); // a's
+    CHECK(vm_global(1) == 2); // b's (object 1's) and c's
+    vm_attach(a, 0);          // after the drain: a new Create
+    vm_events();
+    CHECK(vm_global(0) == 2);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Behaviours and reactions", "Exact semantics: Draining": an instance
+// has at most one behaviour. A Room Start event for an instance whose Create
+// waits halts it and starts the Room Start behaviour; one its object has no
+// handler for leaves the behaviour alone.
+static void a_behaviour_event_replaces_the_live_behaviour(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    store(0, 1);    //
+    wait_frames(2); //
+    store(0, 2);    // never runs: replaced
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_ROOM_START);
+    store(1, 1);    //
+    wait_frames(2); //
+    store(1, 2);    // runs
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    store(2, 1);    //
+    wait_frames(2); //
+    store(2, 2);    // runs: object 1 has no Room Start handler
+    op(VM_OP_HALT); //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_events(); // both Creates run and wait
+    u32 before = debug_warning_count();
+    vm_event(a, ENTITY_NONE, VM_EV_ROOM_START);
+    vm_event(b, ENTITY_NONE, VM_EV_ROOM_START);
+    vm_events();
+    CHECK(vm_global(1) == 1);
+    frames(3);
+    CHECK(vm_global(0) == 1 && vm_global(1) == 2 && vm_global(2) == 2);
+    CHECK(vm_idle());
     CHECK_WARNED(before, 0);
 }
 
@@ -2105,8 +2878,8 @@ static void budget_warns_once_per_loaded_blob(void) {
     CHECK_WARNED(before, 2);
 }
 
-// vm.md "Exact semantics: Budget": inside a Destroy handler, which cannot
-// wait, the op over the budget halts the handler instead (a loop that would
+// vm.md "Exact semantics: Budget": inside a Destroy reaction, which cannot
+// wait, the op over the budget halts the reaction instead (a loop that would
 // end after 60 rounds stops in round 32); the entity is destroyed all the
 // same.
 static void budget_halts_a_destroy_handler(void) {
@@ -2239,7 +3012,8 @@ static void self_and_other(void) {
 
 // vm.md "Entities": GETP and SETP reach the ECS arrays of the same names.
 // Writes truncate to the array's type; reads extend it back to a cell (sign-
-// extending s16, zero-extending u8 and u16).
+// extending s16, zero-extending u8 and u16). VM_P_TAGS is C_GAME(0) to
+// C_GAME(14) of ent_mask as bits 0 to 14; SETP changes only those bits.
 static const struct {
     s32 written;
     s32 read; // what GETP then gives
@@ -2257,6 +3031,9 @@ static const struct {
     [VM_P_SCALE] = {0xFFFF, -1, "VM_P_SCALE truncates to s16, reads sign-extended"},
     [VM_P_BODY_W] = {0x1FE, 0xFE, "VM_P_BODY_W truncates to u8, reads unsigned"},
     [VM_P_BODY_H] = {-1, 0xFF, "VM_P_BODY_H truncates to u8, reads unsigned"},
+    [VM_P_TAGS] = {-1, 0x7FFF, "VM_P_TAGS keeps bits 0 to 14"},
+    [VM_P_ANIM_TIME] = {0x1FF, 0xFF, "VM_P_ANIM_TIME truncates to u8, reads unsigned"},
+    [VM_P_ANIM_STEP] = {-2, 0xFE, "VM_P_ANIM_STEP truncates to u8, reads unsigned"},
 };
 
 // Where properties_read_and_write_the_ecs stores what it reads: GETP of
@@ -2287,7 +3064,8 @@ static void properties_read_and_write_the_ecs(void) {
     }
     op(VM_OP_HALT);
     CHECK(load());
-    Entity e = entity_create(C_POS | C_VEL | C_SPR | C_BODY);
+    u32 components = C_POS | C_VEL | C_SPR | C_BODY | C_ANIM;
+    Entity e = entity_create(components);
     u32 i = entity_index(e);
     vm_set_global(0, e);
     u32 before = debug_warning_count();
@@ -2298,6 +3076,10 @@ static void properties_read_and_write_the_ecs(void) {
     CHECK(spr_id[i] == 0x2345 && spr_frame[i] == 0xFF && spr_flags[i] == 0xFFFF);
     CHECK(spr_angle[i] == 0x8000 && spr_depth[i] == -32768 && spr_scale[i] == -1);
     CHECK(body_w[i] == 0xFE && body_h[i] == 0xFF);
+    CHECK(spr_anim_time[i] == 0xFF && spr_anim_step[i] == 0xFE);
+    // Every game component set; the engine's and C_ALIVE as they were.
+    CHECK(ent_mask[i] == (components | C_ALIVE | 0x7FFFu << 16));
+    CHECK(ent_has(i, C_GAME(0) | C_GAME(14)));
     for (u32 p = 0; p < VM_P_COUNT; p++)
         if (vm_global((u16)(READ_BY_SCRIPT + p)) != prop_rows[p].read)
             test_fail(__FILE__, __LINE__, prop_rows[p].what);
@@ -2314,8 +3096,12 @@ static void properties_read_and_write_the_ecs(void) {
     spr_scale[i] = -32768;
     body_w[i] = 200;
     body_h[i] = 7;
-    static const s32 from_c[VM_P_COUNT] = {-FX(7), 3,      1,  -1,     0xFFFF, 200,
-                                           0x8001, 0xFFFF, -2, -32768, 200,    7};
+    ent_mask[i] = components | C_ALIVE | C_GAME(1) | C_GAME(13);
+    spr_anim_time[i] = 250;
+    spr_anim_step[i] = 3;
+    static const s32 from_c[VM_P_COUNT] = {-FX(7),           3,      1,  -1,     0xFFFF, 200,
+                                           0x8001,           0xFFFF, -2, -32768, 200,    7,
+                                           1 << 1 | 1 << 13, 250,    3};
     start(1);
     vm_step();
     u32 wrong = 0;
@@ -2478,10 +3264,181 @@ static void body_size_properties(void) {
     CHECK_WARNED(before, 1);
 }
 
-// --- Waits on the engine -----------------------------------------------------
+// vm.md "Entities": VM_P_TAGS reads C_GAME(0) to C_GAME(14) as bits 0 to 14,
+// and SETP changes only those components: the engine's, and C_ALIVE, stay
+// (bit 15 and up of the value are ignored). Systems see the change at once.
+// No component is needed: no warning.
+static void tags_are_the_game_components(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);  // self
+    getp(VM_P_TAGS); // tags
+    stg(0);          // glob[0]
+    op(VM_OP_SELF);  // self
+    push32(0x18001); // self 0x18001: bits 0 and 15 (no C_GAME(15)), and 16
+    setp(VM_P_TAGS); //
+    op(VM_OP_SELF);  // self
+    getp(VM_P_TAGS); // 1
+    stg(1);          // glob[1]
+    op(VM_OP_HALT);  //
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_VEL | C_GAME(2) | C_GAME(14));
+    u32 i = entity_index(e);
+    u32 before = debug_warning_count();
+    vm_attach(e, 0);
+    vm_events();
+    CHECK(vm_global(0) == (1 << 2 | 1 << 14));
+    CHECK(vm_global(1) == 1);
+    CHECK(ent_mask[i] == (C_POS | C_VEL | C_GAME(0) | C_ALIVE));
+    CHECK(ecs_count(C_GAME(0)) == 1 && ecs_count(C_GAME(2)) == 0);
+    CHECK(entity_alive(e));
+    CHECK_WARNED(before, 0);
+}
 
-static const PathStep move_steps[] = {{.frames = 3, .speed = FX(1)}};
-static const Path move_path = {PATH_STEPS(move_steps)};
+// vm.md "Entities": instance fields (VM_P_FIELD0 on) are VM_FIELDS cells of
+// each attached entity: zeroed when it is attached (again, too), its own
+// (another instance's are readable by handle, from any script), and not there
+// for an unattached entity (warns once; reads 0, writes nothing).
+static void instance_fields(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);                  // self
+    getp(VM_P_FIELD0);               // 0: zeroed at attach
+    ldg(0);                          //
+    op(VM_OP_ADD);                   //
+    stg(0);                          // glob[0] += field 0
+    op(VM_OP_SELF);                  // self
+    op(VM_OP_SELF);                  // self self
+    getp(VM_P_X);                    // self x
+    setp(VM_P_FIELD0);               // field 0 = x
+    op(VM_OP_SELF);                  // self
+    push8(6);                        // self 6
+    setp(VM_P_FIELD(VM_FIELDS - 1)); // the last field = 6
+    op(VM_OP_HALT);                  //
+    handler(0, VM_EV_COLLISION);
+    op(VM_OP_OTHER);                 // other
+    getp(VM_P_FIELD(VM_FIELDS - 1)); // 6
+    stg(1);                          // glob[1]: another instance's field
+    op(VM_OP_SELF);                  // self
+    getp(VM_P_FIELD0);               // its x
+    stg(2);                          // glob[2]
+    op(VM_OP_HALT);                  //
+    handler(1, VM_EV_CREATE);        // a thread
+    ldg(5);                          // an unattached entity
+    getp(VM_P_FIELD0);               // warns: 0
+    stg(3);                          // glob[3] = 0
+    ldg(5);                          //
+    push8(1);                        //
+    setp(VM_P_FIELD(1));             // warns (no repeat), nothing written
+    ldg(6);                          // an attached one
+    getp(VM_P_FIELD0);               // its x
+    stg(4);                          // glob[4]
+    op(VM_OP_HALT);                  //
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    Entity loose = entity_create(C_POS);
+    pos_x[entity_index(a)] = 1;
+    pos_x[entity_index(b)] = 2;
+    u32 before = debug_warning_count();
+    vm_attach(a, 0);
+    vm_attach(b, 0);
+    vm_events();
+    CHECK(vm_global(0) == 0);
+    vm_event(a, b, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(1) == 6 && vm_global(2) == 1);
+    vm_event(b, a, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(1) == 6 && vm_global(2) == 2);
+    vm_attach(a, 0); // attached again: zeroed, then its Create sets them
+    vm_events();
+    CHECK(vm_global(0) == 0);
+    CHECK_WARNED(before, 0);
+    vm_set_global(3, 99);
+    vm_set_global(5, loose);
+    vm_set_global(6, b);
+    start(1);
+    vm_step();
+    CHECK(vm_global(3) == 0 && vm_global(4) == 2);
+    CHECK_WARNED(before, 1);
+    vm_detach(b); // b's fields go with its binding
+    vm_set_global(5, b);
+    start(1);
+    vm_step();
+    CHECK(vm_global(3) == 0);
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Entities" (NEXTI), "Exact semantics: Arrays, fields, instances":
+// NEXTI e gives the next attached instance of the object after e in slot
+// order (0: from the first), and 0 when none is left: a loop over every
+// instance, skipping other objects' and unattached entities. Slots are
+// compared, so it goes on from an entity that is dead by now, and a loop that
+// KILLs each instance it visits (queued) still visits them all. An object the
+// blob doesn't have warns and gives 0.
+static void nexti_loops_over_an_objects_instances(void) {
+    enum { L_NEXT, L_DONE };
+    reset();
+    blob_begin(4, 0, GLOBALS);
+    handler(2, VM_EV_CREATE);
+    push8(0);                // 0: from the first
+    label(L_NEXT);           //
+    nexti(0);                // e
+    op(VM_OP_DUP);           // e e
+    jump(VM_OP_JZ, L_DONE);  // e
+    op(VM_OP_DUP);           // e e
+    getp(VM_P_X);            // e x
+    append_top(0);           // e: glob[0] = glob[0] * 10 + x
+    op(VM_OP_DUP);           // e e
+    op(VM_OP_KILL);          // e: its Destroy is queued
+    jump(VM_OP_JMP, L_NEXT); //
+    label(L_DONE);           // 0
+    op(VM_OP_DROP);          //
+    op(VM_OP_HALT);          //
+    handler(3, VM_EV_CREATE);
+    ldg(5);         // a dead entity's handle
+    nexti(0);       // the next instance after its slot
+    stg(1);         // glob[1]
+    push8(0);       //
+    nexti(7);       // no object 7: warns, 0
+    stg(2);         // glob[2] = 0
+    op(VM_OP_HALT); //
+    CHECK(load());
+    static const u16 objects[] = {0, 1, 0, 0xFFFF, 0, 0}; // 0xFFFF: not attached
+    Entity e[6];
+    for (u32 k = 0; k < 6; k++) {
+        e[k] = entity_create(C_POS);
+        pos_x[entity_index(e[k])] = (FIXED)(k + 1);
+    }
+    for (u32 k = 6; k-- > 0;) // attached out of slot order
+        if (objects[k] != 0xFFFF)
+            vm_attach(e[k], objects[k]);
+    vm_events();
+    vm_kill(e[2]); // dead now
+    u32 before = debug_warning_count();
+    vm_set_global(5, e[2]);
+    vm_set_global(2, 99);
+    start(3);
+    vm_step();
+    CHECK(vm_global(1) == e[4] && vm_global(2) == 0);
+    CHECK_WARNED(before, 1);
+    start(2);
+    vm_step(); // e[0], e[4] and e[5], then their Destroys
+    CHECK(vm_global(0) == 156);
+    CHECK(!entity_alive(e[0]) && !entity_alive(e[4]) && !entity_alive(e[5]));
+    CHECK(entity_alive(e[1]) && entity_alive(e[3]));
+    vm_set_global(0, 0);
+    start(2);
+    vm_step(); // none left
+    CHECK(vm_global(0) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+}
+
+// --- Waits on the engine -----------------------------------------------------
 
 // vm.md "Waits": WAIT_MOVE resumes once self has no C_PATH (sys_path removes
 // it when the path ends); a pathless entity goes on at once.
@@ -2512,93 +3469,6 @@ static void wait_move_resumes_when_the_path_ends(void) {
     CHECK(!path_active(mover));
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
-}
-
-// vm.md "Waits" (INTERRUPTIBLE), "Exact semantics: Draining": once a script
-// has run INTERRUPTIBLE with a nonzero value, an event for its entity that
-// arrives while it waits (WAIT, WAIT_MOVE, ...) halts it for good and runs
-// instead of being dropped. An event the object has no handler for leaves
-// the wait alone; INTERRUPTIBLE 0 makes events drop again (with the usual
-// warning); in a thread, which no event reaches, it does nothing.
-static void interruptible_waits_let_events_in(void) {
-    reset();
-    blob_begin(4, 0, GLOBALS);
-    handler(0, VM_EV_CREATE); // interruptible WAIT
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  //
-    count(0);                 // glob[0]: Creates of object 0
-    wait_frames(3);           //
-    count(6);                 // glob[6]: waits that ran to their end
-    op(VM_OP_HALT);           //
-    handler(0, VM_EV_COLLISION);
-    op(VM_OP_OTHER);          // other
-    stg(1);                   // glob[1] = other
-    count(2);                 // glob[2]: object 0's Collisions
-    op(VM_OP_HALT);           //
-    handler(1, VM_EV_CREATE); // interruptible, then not again
-    push8(5);                 // 5: any nonzero value
-    op(VM_OP_INTERRUPTIBLE);  //
-    push8(0);                 // 0
-    op(VM_OP_INTERRUPTIBLE);  //
-    wait_frames(3);           //
-    count(7);                 // glob[7]: object 1's wait ran to its end
-    op(VM_OP_HALT);           //
-    handler(1, VM_EV_COLLISION);
-    count(3);                 // glob[3]: never (dropped)
-    op(VM_OP_HALT);           //
-    handler(2, VM_EV_CREATE); // interruptible WAIT_MOVE
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  //
-    op(VM_OP_WAIT_MOVE);      //
-    count(4);                 // glob[4]: never (interrupted)
-    op(VM_OP_HALT);           //
-    handler(2, VM_EV_COLLISION);
-    count(5);                 // glob[5]: object 2's Collisions
-    op(VM_OP_HALT);           //
-    handler(3, VM_EV_CREATE); // a thread
-    push8(1);                 // 1
-    op(VM_OP_INTERRUPTIBLE);  // nothing to interrupt: no effect, no warning
-    store(8, 1);              //
-    op(VM_OP_HALT);           //
-    CHECK(load());
-    Entity a = entity_create(C_POS);
-    Entity d = entity_create(C_POS);
-    Entity b = entity_create(C_POS);
-    Entity c = entity_create(C_POS | C_VEL);
-    Entity o = entity_create(C_POS);
-    path_start(c, &move_path, 0);
-    vm_attach(a, 0);
-    vm_attach(d, 0);
-    vm_attach(b, 1);
-    vm_attach(c, 2);
-    u32 before = debug_warning_count();
-    vm_events(); // every Create runs and waits
-    CHECK(vm_global(0) == 2);
-    CHECK_WARNED(before, 0);
-    vm_event(a, o, VM_EV_COLLISION); // cuts into a's WAIT
-    vm_event(d, o, VM_EV_ANIM_END);  // no handler: d waits on
-    vm_event(b, o, VM_EV_COLLISION); // b isn't interruptible any more: dropped
-    vm_event(c, o, VM_EV_COLLISION); // cuts into c's WAIT_MOVE
-    vm_events();
-    CHECK(vm_global(1) == o && vm_global(2) == 1);
-    CHECK(vm_global(3) == 0 && vm_global(5) == 1);
-    CHECK_WARNED(before, 1);
-    for (u32 f = 0; f < 4; f++) { // the waits end; c's path ends in frame 3
-        vm_step();
-        sys_path();
-        sys_movement();
-        vm_events();
-    }
-    CHECK(!path_active(c));
-    CHECK(vm_global(6) == 1); // d's wait ran to its end, a's never resumed
-    CHECK(vm_global(7) == 1); // b's too
-    CHECK(vm_global(4) == 0); // c's WAIT_MOVE never resumed
-    CHECK(vm_idle());
-    start(3);
-    vm_step();
-    CHECK(vm_global(8) == 1);
-    CHECK(vm_idle());
-    CHECK_WARNED(before, 1);
 }
 
 static const u32 anim_tiles[8 * 3];
@@ -2769,6 +3639,51 @@ static void animation_end_is_raised_when_an_animation_finishes(void) {
     restore_sprites();
 }
 
+// vm.md "Entities": VM_P_ANIM_TIME and VM_P_ANIM_STEP are spr_anim_time and
+// spr_anim_step; with VM_P_FRAME, what restarting an animation sets. A script
+// that restarts its one-shot animation in its Animation End reaction gets
+// another Animation End when it finishes again.
+static void animation_properties_restart_an_animation(void) {
+    reset();
+    use_anim_sprites();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_ANIM_END);
+    count(0);             // glob[0]: Animation Ends
+    op(VM_OP_SELF);       // self
+    getp(VM_P_ANIM_TIME); // 0: sys_animate leaves it there on the last frame
+    stg(1);               // glob[1]
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_FRAME);     // restart: frame 0...
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_ANIM_TIME); // ...shown for no frames yet
+    op(VM_OP_SELF);       //
+    push8(0);             //
+    setp(VM_P_ANIM_STEP); // (no frame_order: unused)
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_SPR | C_ANIM);
+    u32 i = entity_index(e);
+    spr_id[i] = SPR_ONCE;
+    vm_attach(e, 0);
+    u32 before = debug_warning_count();
+    // As in animation_end_is_raised_when_an_animation_finishes: it finishes
+    // in frame 3's vm_step(); restarted there, it finishes again two frames
+    // later, and so on.
+    static const s32 ends[] = {0, 0, 1, 1, 2, 2, 3, 3, 4};
+    vm_set_global(1, 99);
+    for (u32 f = 0; f < sizeof ends / sizeof ends[0]; f++) {
+        vm_step();
+        CHECK(vm_global(0) == ends[f]);
+        vm_events();
+        sys_animate();
+    }
+    CHECK(vm_global(1) == 0);
+    CHECK_WARNED(before, 0);
+    restore_sprites();
+}
+
 // --- SYS ---------------------------------------------------------------------
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -2935,10 +3850,14 @@ static void sys_bad_string_or_song_index(void) {
 
 #ifndef SERVAL_GBA
 // The platform's latest call, as src/host/platform.c recorded it.
-static bool last_call(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, const void* ptr) {
+static bool last_call4(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, s32 a3, const void* ptr) {
     const ServalHostVmCalls* r = &serval_host_vm_calls;
     return r->calls == calls && r->fn == fn && r->args[0] == a0 && r->args[1] == a1 &&
-           r->args[2] == a2 && r->ptr == ptr;
+           r->args[2] == a2 && r->args[3] == a3 && r->ptr == ptr;
+}
+
+static bool last_call(u32 calls, u32 fn, s32 a0, s32 a1, s32 a2, const void* ptr) {
+    return last_call4(calls, fn, a0, a1, a2, 0, ptr);
 }
 #endif
 
@@ -3017,9 +3936,9 @@ static void platform_sys_calls_reach_the_platform(void) {
 #endif
 }
 
-// vm.md "Engine calls": SYS text_print_number(col, row, value) pops three and
-// pushes nothing; it is a platform call (vm_internal.h), so on the host the
-// recorder sees its arguments in push order, with no string or song.
+// vm.md "Engine calls": SYS text_print_number(col, row, value, width) pops
+// four and pushes nothing; it is a platform call (vm_internal.h), so on the
+// host the recorder sees its arguments in push order, with no string or song.
 // tests/rom/vm_platform_tests.c checks what the GBA prints.
 static void sys_text_print_number(void) {
     reset();
@@ -3029,12 +3948,14 @@ static void sys_text_print_number(void) {
     push8(3);                      // 55 col
     push8(4);                      // 55 col row
     push16(-1234);                 // 55 col row value
+    push8(0);                      // 55 col row value width
     sys(VM_SYS_TEXT_PRINT_NUMBER); // 55: frame 1
     stg(0);                        // glob[0] = 55
     wait_frames(1);                //
     push8(5);                      // col
     push8(6);                      // col row
     push32(INT32_MIN);             // col row value
+    push8(12);                     // col row value width
     sys(VM_SYS_TEXT_PRINT_NUMBER); // frame 2
     store(1, 1);                   // carried on
     op(VM_OP_HALT);                //
@@ -3047,15 +3968,259 @@ static void sys_text_print_number(void) {
     vm_step();
     CHECK(vm_global(0) == 55);
 #ifndef SERVAL_GBA
-    CHECK(last_call(1, VM_SYS_TEXT_PRINT_NUMBER, 3, 4, -1234, NULL));
+    CHECK(last_call4(1, VM_SYS_TEXT_PRINT_NUMBER, 3, 4, -1234, 0, NULL));
 #endif
     frame();
     CHECK(vm_global(1) == 1);
 #ifndef SERVAL_GBA
-    CHECK(last_call(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, NULL));
+    CHECK(last_call4(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, 12, NULL));
 #endif
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
+}
+
+// vm.md "Engine calls": SYS path_stop(entity) is path.h's path_stop: the path
+// ends where it is (a WAIT_MOVE on it resumes in the next pass). A dead or no
+// entity is ignored, as path_stop does. Pops one, pushes nothing.
+static void sys_path_stop(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_WAIT_MOVE); // until the path ends
+    store(0, 1);         //
+    op(VM_OP_HALT);      //
+    handler(1, VM_EV_CREATE);
+    push8(55);             // 55
+    ldg(5);                // 55 e
+    sys(VM_SYS_PATH_STOP); // 55
+    push8(0);              // 55 0: no entity
+    sys(VM_SYS_PATH_STOP); // 55
+    stg(1);                // glob[1] = 55
+    op(VM_OP_HALT);        //
+    CHECK(load());
+    vm_bind(&(VmBindings){.paths = sys_paths, .path_count = 2});
+    Entity e = entity_create(C_POS | C_VEL);
+    path_start(e, &sys_path_down, 0); // 10 frames
+    vm_attach(e, 0);
+    vm_set_global(5, e);
+    u32 before = debug_warning_count();
+    frame(); // e waits on its path
+    sys_path();
+    CHECK(path_active(e) && vm_global(0) == 0);
+    start(1);
+    frame(); // the thread stops the path
+    CHECK(!path_active(e) && vm_global(1) == 55);
+    CHECK(vm_global(0) == 0);
+    vm_step(); // the wait ends
+    CHECK(vm_global(0) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    vm_bind(NULL);
+}
+
+// --- Arrays ------------------------------------------------------------------
+
+// vm.md "Stack and variables" (LDA, STA, LEN), "Array table": RAM arrays are
+// cells of the pool from their first cell (ranges may overlap), 0-based. An
+// index outside the array warns (once, for LDA and STA alike): LDA pushes 0,
+// STA drops the value. An array the blob doesn't have warns (once): LDA and
+// LEN push 0, STA drops. Cells outlast the handler that wrote them.
+static void ram_arrays(void) {
+    reset();
+    blob_begin_arrays(2, 0, GLOBALS, 2);
+    ram_array(0, 4, 10); // cells 10-13
+    ram_array(1, 3, 12); // cells 12-14: overlaps the last two
+    handler(0, VM_EV_CREATE);
+    for (s32 k = 0; k < 4; k++) {
+        push8(k);      // i
+        push8(10 * k); // i v
+        sta(0);        // array 0 [i] = 10i
+    }
+    push8(0);       // array 1's 0 is array 0's 2
+    lda(1);         // 20
+    stg(0);         // glob[0] = 20
+    len(0);         //
+    stg(1);         // glob[1] = 4
+    len(1);         //
+    stg(2);         // glob[2] = 3
+    push8(4);       // one past the end
+    lda(0);         // warns: 0
+    stg(3);         // glob[3] = 0
+    push8(-1);      //
+    lda(0);         // 0 (no repeat)
+    stg(4);         // glob[4] = 0
+    push8(4);       //
+    push8(99);      //
+    sta(0);         // dropped
+    push8(55);      // 55
+    push8(0);       // 55 0
+    lda(2);         // no array 2: warns, 55 0
+    stg(5);         // glob[5] = 0
+    push8(0);       // 55 0
+    push8(1);       // 55 0 1
+    sta(2);         // dropped: 55
+    len(2);         // 55 0
+    stg(6);         // glob[6] = 0
+    stg(7);         // glob[7] = 55
+    op(VM_OP_HALT); //
+    handler(1, VM_EV_CREATE);
+    push8(3);       //
+    lda(0);         // 30, from the other handler
+    stg(8);         //
+    push8(2);       //
+    lda(1);         // cell 14: never written, 0
+    stg(9);         //
+    op(VM_OP_HALT); //
+    CHECK(load());
+    for (u16 g = 3; g <= 9; g++)
+        vm_set_global(g, 99);
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    static const s32 expected[] = {20, 4, 3, 0, 0, 0, 0, 55};
+    for (u16 g = 0; g < sizeof expected / sizeof expected[0]; g++)
+        if (vm_global(g) != expected[g])
+            test_fail(__FILE__, __LINE__, text_format("glob[%u] is %d", g, vm_global(g)));
+    CHECK_WARNED(before, 2);
+    start(1);
+    vm_step();
+    CHECK(vm_global(8) == 30 && vm_global(9) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// The ROM arrays' elements, one array per kind, in the narrowest kind's
+// extremes.
+static const s32 rom_s8[] = {-128, 127, -1};
+static const s32 rom_u8[] = {0, 255, 128};
+static const s32 rom_s16[] = {-32768, 32767, -2};
+static const s32 rom_u16[] = {65535, 0, 32768};
+static const s32 rom_s32[] = {INT32_MIN, INT32_MAX, -3};
+
+// vm.md "Array table": ROM arrays are constant data read in place, in each
+// kind (s8 and s16 sign-extended, u8 and u16 zero-extended). STA to one warns
+// and writes nothing; an index outside it warns and reads 0. The last array
+// ends the blob, so reading its last element reads the blob's last bytes and
+// no further (ASan, on the host).
+static void rom_arrays_of_every_kind(void) {
+    static const s32* const values[] = {rom_s8, rom_u8, rom_s16, rom_u16, rom_s32};
+    static const u8 kinds[] = {ARRAY_S8, ARRAY_U8, ARRAY_S16, ARRAY_U16, ARRAY_S32};
+    reset();
+    blob_begin_arrays(1, 0, GLOBALS, 5);
+    for (u32 n = 0; n < 4; n++)
+        rom_array(n, kinds[n], values[n], 3);
+    handler(0, VM_EV_CREATE);
+    for (u32 n = 0; n < 5; n++) {
+        for (s32 i = 0; i < 3; i++) {
+            push8(i);            // i
+            lda(n);              // element i
+            stg(3 * n + (u32)i); // glob[3n + i]
+        }
+        len(n);      //
+        stg(16 + n); // glob[16 + n] = 3
+    }
+    push8(1);                            // i
+    push8(7);                            // i 7
+    sta(0);                              // a ROM array: warns, nothing written
+    push8(1);                            //
+    lda(0);                              // still 127
+    stg(21);                             //
+    push8(3);                            // one past the end
+    lda(4);                              // warns: 0
+    stg(22);                             //
+    op(VM_OP_HALT);                      //
+    rom_array(4, ARRAY_S32, rom_s32, 3); // the blob's last 12 bytes
+    CHECK(load());
+    vm_set_global(22, 99);
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    u32 wrong = 0;
+    for (u32 n = 0; n < 5; n++) {
+        for (u32 i = 0; i < 3; i++)
+            wrong += vm_global((u16)(3 * n + i)) != values[n][i];
+        wrong += vm_global((u16)(16 + n)) != 3;
+    }
+    CHECK(wrong == 0);
+    CHECK(vm_global(21) == 127 && vm_global(22) == 0);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// A blob for the array reload cases: object 0's Create adds 1 to cell 0 of
+// its RAM array and copies it to glob[0]. `length` and `first` lay the RAM
+// array out; `rom` puts a ROM array of that many elements before it (array 0,
+// making the RAM array number 1), or after it with `rom_after`.
+static void build_counter_array_with(u16 length, u16 first, u16 rom, bool rom_after) {
+    static const s32 data[] = {1, 2, 3};
+    u32 n = rom && !rom_after ? 1 : 0;
+    blob_begin_arrays(1, 0, GLOBALS, rom ? 2 : 1);
+    if (rom)
+        rom_array(1 - n, ARRAY_U8, data, rom);
+    ram_array(n, length, first);
+    handler(0, VM_EV_CREATE);
+    push8(0);       // 0
+    push8(0);       // 0 0
+    lda(n);         // 0 a[0]
+    push8(1);       //
+    op(VM_OP_ADD);  // 0 a[0]+1
+    sta(n);         // a[0] += 1
+    push8(0);       //
+    lda(n);         // a[0]
+    stg(0);         // glob[0]
+    op(VM_OP_HALT); //
+}
+
+static void build_counter_array(u16 length, u16 first, u16 rom) {
+    build_counter_array_with(length, first, rom, false);
+}
+
+// Runs object 0's Create `times` times; returns glob[0], the counter.
+static s32 count_up(u32 times) {
+    for (u32 k = 0; k < times; k++)
+        start(0);
+    vm_step();
+    return vm_global(0);
+}
+
+// vm.md "Array table", "Hot reload": vm_load zeroes the RAM arrays' cells;
+// vm_reload keeps them when the new blob's RAM arrays are laid out the same
+// (the array count, each array's kind, each RAM array's length and first
+// cell; ROM data may change), and zeroes them with a warning otherwise.
+static void ram_arrays_across_loads(void) {
+    reset();
+    build_counter_array(4, 8, 0);
+    CHECK(load());
+    u32 before = debug_warning_count();
+    CHECK(count_up(2) == 2);
+    build_counter_array(4, 8, 0);
+    CHECK(reload()); // the same layout: kept
+    CHECK(count_up(1) == 3);
+    CHECK_WARNED(before, 0);
+    build_counter_array(5, 8, 0); // longer: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 1);
+    CHECK(count_up(1) == 1);
+    build_counter_array(5, 9, 0); // moved: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 2);
+    CHECK(count_up(2) == 2);
+    build_counter_array(5, 9, 2); // a ROM array before it: zeroed
+    CHECK(reload());
+    CHECK_WARNED(before, 3);
+    CHECK(count_up(1) == 1);
+    build_counter_array(5, 9, 3); // only the ROM array changed: kept
+    CHECK(reload());
+    CHECK(count_up(1) == 2);
+    CHECK_WARNED(before, 3);
+    build_counter_array_with(5, 9, 3, true); // as many arrays, but array 0 is RAM now
+    CHECK(reload());
+    CHECK_WARNED(before, 4);
+    CHECK(count_up(1) == 1);
+    build_counter_array_with(5, 9, 3, true);
+    CHECK(load()); // vm_load: zeroed, no warning
+    CHECK(count_up(1) == 1);
+    CHECK_WARNED(before, 4);
 }
 
 // --- Hot reload --------------------------------------------------------------
@@ -3120,6 +4285,52 @@ static void reload_keeps_attachments_to_objects_that_remain(void) {
     CHECK(vm_global(0) == 133); // e0, then e2: no Create to wait for any more
     CHECK(vm_global(1) == 2);
     CHECK(entity_alive(e0) && entity_alive(e1) && entity_alive(e2));
+}
+
+// Objects whose Create sets the instance's field 3 to 7; object 0's Room
+// Start, run as a thread, reads that field of the entities in glob[5] and
+// glob[6] into glob[0] and glob[1].
+static void build_fielders(u16 objects) {
+    blob_begin(objects, 0, GLOBALS);
+    for (u16 obj = 0; obj < objects; obj++) {
+        handler(obj, VM_EV_CREATE);
+        op(VM_OP_SELF);
+        push8(7);
+        setp(VM_P_FIELD(3));
+        op(VM_OP_HALT);
+    }
+    handler(0, VM_EV_ROOM_START);
+    ldg(5);
+    getp(VM_P_FIELD(3));
+    stg(0);
+    ldg(6);
+    getp(VM_P_FIELD(3));
+    stg(1);
+    op(VM_OP_HALT);
+}
+
+// vm.md "Hot reload": instance fields are kept for the entities the reload
+// keeps attached; an entity the reload detaches has none any more.
+static void reload_keeps_the_kept_instances_fields(void) {
+    reset();
+    build_fielders(2);
+    CHECK(load());
+    Entity a = entity_create(C_POS);
+    Entity b = entity_create(C_POS);
+    vm_attach(a, 0);
+    vm_attach(b, 1);
+    vm_events();
+    vm_set_global(5, a);
+    vm_set_global(6, b);
+    build_fielders(1); // object 1 is gone: b is detached
+    CHECK(reload());
+    vm_set_global(1, 99);
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_ROOM_START) >= 0);
+    vm_step();
+    CHECK(vm_global(0) == 7); // a's, kept
+    CHECK(vm_global(1) == 0); // b is unattached: warns
+    CHECK_WARNED(before, 1);
 }
 
 // A Collision handler for object 0 (glob[1] = 1) and a thread, object 1,
@@ -3245,6 +4456,89 @@ static void loading_during_a_phase_is_refused(void) {
 #endif
 }
 
+// vm.md "Exact semantics: vm_kill": called outside the phases, vm_kill runs
+// the Destroy reaction at once; while it runs, loading is refused just as in
+// a phase (the blob would be pulled from under it), with one warning.
+static void loading_during_vm_kill_is_refused(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_DESTROY);
+    store(0, 1);          //
+    push8(5);             // sound 5
+    sys(VM_SYS_PSG_PLAY); // the hook tries to load, reload and unload
+    store(0, 2);          // the same blob runs on
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events();
+    vm_set_global(5, 77); // vm_load would zero it
+    serval_host_vm_calls = (ServalHostVmCalls){.during = load_during_the_phase};
+    loads_refused = 0;
+    u32 before = debug_warning_count();
+    vm_kill(e);
+    serval_host_vm_calls.during = NULL;
+    CHECK(loads_refused == 2);
+    CHECK(vm_global(0) == 2 && vm_global(5) == 77);
+    CHECK(!entity_alive(e) && vm_idle());
+    CHECK_WARNED(before, 1);
+    CHECK(vm_load(placed, placed_size)); // afterwards: fine
+    CHECK_WARNED(before, 1);
+#endif
+}
+
+#ifndef SERVAL_GBA
+// Stands in for game C code run during a phase that starts another (none can
+// in v1).
+static void phase_during_the_phase(void) {
+    vm_events();
+    vm_step();
+}
+#endif
+
+// vm.md "Exact semantics: Reactions on top of a behaviour" saves one
+// behaviour per context, which is enough because events are never dispatched
+// while a script runs. So vm_step and vm_events called from inside a phase
+// (by C code a script reached, as the recorder's hook does here on the host)
+// warn once and do nothing: the second Collision, queued while the first one
+// runs on top of the entity's behaviour, runs after it, not on top of it. The
+// behaviour beneath is untouched and still resumes.
+static void phases_do_not_nest(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    enter(0, 2);    // two cells on its stack
+    wait_frames(2); //
+    store(0, 1);    // resumes
+    op(VM_OP_HALT); //
+    handler(0, VM_EV_COLLISION);
+    count(1);             // glob[1]: Collisions begun
+    push8(5);             // sound 5
+    sys(VM_SYS_PSG_PLAY); // the hook tries to run a phase
+    count(2);             // glob[2]: Collisions ended
+    op(VM_OP_HALT);       //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events(); // the behaviour waits
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    vm_event(e, ENTITY_NONE, VM_EV_COLLISION);
+    serval_host_vm_calls = (ServalHostVmCalls){.during = phase_during_the_phase};
+    u32 before = debug_warning_count();
+    vm_events();
+    serval_host_vm_calls.during = NULL;
+    CHECK(vm_global(1) == 2 && vm_global(2) == 2);
+    CHECK(serval_host_vm_calls.calls == 2);
+    CHECK_WARNED(before, 1);
+    frames(2);
+    CHECK(vm_global(0) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 1);
+#endif
+}
+
 // --- Loader ------------------------------------------------------------------
 
 typedef struct {
@@ -3263,9 +4557,16 @@ static const u8* golden_with(const Patch* patch) {
 }
 
 // vm.md "Load-time validation". The golden blob's tables end at 0x34; its
-// Create handler offset is at 0x18, Room Start's at 0x2C, string 0's at 0x30.
+// Create handler offset is at 0x18, Room Start's at 0x2C, string 0's at 0x30;
+// the header's flags are at 6, its array count at 14, object 0's reserved
+// field at 0x16.
 static const Patch bad_patches[] = {
     {0, 'X', 1, "bad magic"},
+    {6, 1, 2, "header flags not 0"},
+    {6, 0x8000, 2, "header flags not 0 (top bit)"},
+    {0x16, 1, 2, "object reserved field not 0"},
+    {14, 1, 2, "an array table over the code and the string"},
+    {14, 0xFFFF, 2, "array table past the end"},
     {3, 'b', 1, "bad magic (last byte)"},
     {4, 0, 1, "version 0"},
     {4, 2, 1, "version 2"},
@@ -3361,6 +4662,69 @@ static void loader_rejects_a_string_without_its_nul(void) {
     CHECK(vm_start(0, VM_EV_CREATE) == -1); // nothing loaded
 }
 
+// One array record, and whether vm_load must accept it, in a blob whose
+// tables end at 0x38 and whose last byte is at 0x3F (size 0x40).
+static const struct {
+    u32 length, kind, reserved, where;
+    bool good;
+    const char* what;
+} array_cases[] = {
+    {4, ARRAY_RAM, 0, 0, true, "a RAM array at cell 0"},
+    {24, ARRAY_RAM, 0, VM_ARRAY_CELLS - 24, true, "a RAM array ending at the pool's end"},
+    {0, ARRAY_RAM, 0, VM_ARRAY_CELLS, true, "an empty RAM array at the pool's end"},
+    {VM_ARRAY_CELLS, ARRAY_RAM, 0, 0, true, "the whole pool"},
+    {25, ARRAY_RAM, 0, VM_ARRAY_CELLS - 24, false, "a RAM array past the pool's end"},
+    {0, ARRAY_RAM, 0, VM_ARRAY_CELLS + 1, false, "an empty RAM array past the pool"},
+    {1, ARRAY_RAM, 0, 0xFFFFFFFF, false, "a RAM array at cell 2^32 - 1"},
+    {0xFFFF, ARRAY_RAM, 0, 0, false, "a RAM array longer than the pool"},
+    {8, ARRAY_U8, 0, 0x38, true, "u8 data filling the rest of the blob"},
+    {2, ARRAY_S32, 0, 0x38, true, "s32 data filling the rest of the blob"},
+    {4, ARRAY_S16, 0, 0x38, true, "s16 data filling the rest of the blob"},
+    {0, ARRAY_S8, 0, 0x40, true, "empty data at the blob's end"},
+    {9, ARRAY_U8, 0, 0x38, false, "u8 data one byte past the end"},
+    {3, ARRAY_S32, 0, 0x38, false, "s32 data past the end"},
+    {5, ARRAY_U16, 0, 0x38, false, "u16 data past the end"},
+    {1, ARRAY_S8, 0, 0x37, false, "data in the array table"},
+    {1, ARRAY_S8, 0, 0x10, false, "data in the object table"},
+    {0, ARRAY_S8, 0, 0x41, false, "empty data past the blob's end"},
+    {1, ARRAY_S8, 0, 0xFFFFFFFF, false, "data at 2^32 - 1"},
+    {0xFFFF, ARRAY_S32, 0, 0x38, false, "65535 s32s"},
+    {1, ARRAY_S32 + 1, 0, 0x38, false, "an unknown kind"},
+    {1, 255, 0, 0x38, false, "kind 255"},
+    {1, ARRAY_RAM, 1, 0, false, "a RAM array's reserved byte not 0"},
+    {1, ARRAY_U8, 0x80, 0x38, false, "a ROM array's reserved byte not 0"},
+};
+
+// vm.md "Load-time validation": every array record must be valid: a known
+// kind, its reserved byte 0, a RAM range inside VM_ARRAY_CELLS, ROM data
+// inside the blob past the tables. One warning per rejected blob.
+static void loader_checks_array_records(void) {
+    reset();
+    u32 before = debug_warning_count();
+    u32 rejected = 0;
+    for (u32 k = 0; k < sizeof array_cases / sizeof array_cases[0]; k++) {
+        blob_begin_arrays(1, 0, GLOBALS, 1); // tables: 0x10 + 0x20 + 8 = 0x38
+        handler(0, VM_EV_CREATE);
+        for (u32 b = 0; b < 7; b++)
+            op(VM_OP_NOP);
+        op(VM_OP_HALT); // 0x38 to 0x3F
+        put16(array_record(0), array_cases[k].length);
+        bld.bytes[array_record(0) + 2] = (u8)array_cases[k].kind;
+        bld.bytes[array_record(0) + 3] = (u8)array_cases[k].reserved;
+        put32(array_record(0) + 4, array_cases[k].where);
+        if (load() != array_cases[k].good)
+            test_fail(__FILE__, __LINE__, array_cases[k].what);
+        rejected += !array_cases[k].good;
+        vm_unload();
+    }
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() - before == rejected);
+#else
+    (void)rejected;
+    CHECK(debug_warning_count() == before);
+#endif
+}
+
 // --- Determinism -------------------------------------------------------------
 
 // Runs a program that spawns movers at random places, a frame apart, from a
@@ -3372,6 +4736,7 @@ static void run_spawners(s32* out) {
     blob_begin(2, 0, GLOBALS);
     object(1, C_POS | C_VEL, 0);
     handler(0, VM_EV_CREATE); // spawns 6 movers, a frame apart
+    enter(0, 1);              // loc[0]
     push8(6);                 // 6
     stl(0);                   // loc[0] = movers left
     label(L_NEXT);            //
@@ -3491,86 +4856,107 @@ static void unload_stops_everything(void) {
     ecs_reset();
 }
 
-TEST_SUITE(vm_tests, "vm", {"golden_example", golden_example},
-           {"stack_and_variable_ops", stack_and_variable_ops},
-           {"push_sign_extension", push_sign_extension}, {"arithmetic_ops", arithmetic_ops},
-           {"fixed_point_ops", fixed_point_ops}, {"bitwise_and_shift_ops", bitwise_and_shift_ops},
-           {"comparison_ops", comparison_ops}, {"division_by_zero", division_by_zero},
-           {"control_flow", control_flow},
-           {"ret_with_empty_call_stack_halts", ret_with_empty_call_stack_halts},
-           {"stack_overflow_halts_only_its_context", stack_overflow_halts_only_its_context},
-           {"stack_underflow_halts_only_its_context", stack_underflow_halts_only_its_context},
-           {"call_depth_is_limited", call_depth_is_limited},
-           {"unknown_opcode_halts_only_its_context", unknown_opcode_halts_only_its_context},
-           {"locals_out_of_range", locals_out_of_range},
-           {"pc_escaping_the_blob_halts_its_context", pc_escaping_the_blob_halts_its_context},
-           {"truncated_operand_halts_its_context", truncated_operand_halts_its_context},
-           {"unknown_property_warns", unknown_property_warns},
-           {"unknown_sys_halts_only_its_context", unknown_sys_halts_only_its_context},
-           {"wait_counts_frames", wait_counts_frames},
-           {"wait_counter_is_clamped", wait_counter_is_clamped},
-           {"vm_start_first_runs_in_the_next_vm_step", vm_start_first_runs_in_the_next_vm_step},
-           {"vm_start_without_a_handler_fails", vm_start_without_a_handler_fails},
-           {"contexts_resume_in_pool_order", contexts_resume_in_pool_order},
-           {"step_handlers_run_every_frame_unless_live", step_handlers_run_every_frame_unless_live},
-           {"create_runs_before_the_first_step", create_runs_before_the_first_step},
-           {"entity_spawned_by_step_steps_next_frame", entity_spawned_by_step_steps_next_frame},
-           {"step_never_runs_before_create", step_never_runs_before_create},
-           {"event_for_a_live_entity_is_dropped", event_for_a_live_entity_is_dropped},
-           {"events_drain_in_fifo_order", events_drain_in_fifo_order},
-           {"events_queued_while_draining_run_in_the_same_phase",
-            events_queued_while_draining_run_in_the_same_phase},
-           {"kill_force_halts_a_waiting_script", kill_force_halts_a_waiting_script},
-           {"kill_runs_destroy_before_destroying", kill_runs_destroy_before_destroying},
-           {"kill_destroys_an_unattached_entity", kill_destroys_an_unattached_entity},
-           {"wait_inside_destroy_warns_and_halts", wait_inside_destroy_warns_and_halts},
-           {"kill_of_no_entity_warns_but_of_a_dead_one_is_silent",
-            kill_of_no_entity_warns_but_of_a_dead_one_is_silent},
-           {"destroy_event_behaves_like_kill", destroy_event_behaves_like_kill},
-           {"vm_event_rejects_unknown_events", vm_event_rejects_unknown_events},
-           {"vm_kill_runs_destroy_at_once", vm_kill_runs_destroy_at_once},
-           {"detach_stops_the_script_without_destroy", detach_stops_the_script_without_destroy},
-           {"attach_rebinds_an_attached_entity", attach_rebinds_an_attached_entity},
-           {"attach_misuse_is_ignored", attach_misuse_is_ignored},
-           {"spawn_creates_an_attached_entity", spawn_creates_an_attached_entity},
-           {"spawn_failures_push_zero", spawn_failures_push_zero},
-           {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
-           {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
-           {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
-           {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
-           {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
-           {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
-           {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
-           {"self_and_other", self_and_other},
-           {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
-           {"properties_of_dead_entities", properties_of_dead_entities},
-           {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
-           {"property_without_its_component_warns", property_without_its_component_warns},
-           {"body_size_properties", body_size_properties},
-           {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
-           {"interruptible_waits_let_events_in", interruptible_waits_let_events_in},
-           {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
-           {"wait_anim_without_a_one_shot_animation_continues",
-            wait_anim_without_a_one_shot_animation_continues},
-           {"wait_anim_continues_if_the_sprite_stops_being_one_shot",
-            wait_anim_continues_if_the_sprite_stops_being_one_shot},
-           {"animation_end_is_raised_when_an_animation_finishes",
-            animation_end_is_raised_when_an_animation_finishes},
-           {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
-           {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
-           {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
-           {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
-           {"sys_text_print_number", sys_text_print_number},
-           {"reload_keeps_globals_if_their_count_matches",
-            reload_keeps_globals_if_their_count_matches},
-           {"reload_keeps_attachments_to_objects_that_remain",
-            reload_keeps_attachments_to_objects_that_remain},
-           {"reload_halts_contexts_and_empties_the_queue",
-            reload_halts_contexts_and_empties_the_queue},
-           {"load_resets_everything", load_resets_everything},
-           {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
-           {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
-           {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
-           {"runs_are_deterministic", runs_are_deterministic},
-           {"debug_ops_log_and_continue", debug_ops_log_and_continue},
-           {"unload_stops_everything", unload_stops_everything});
+TEST_SUITE(
+    vm_tests, "vm", {"golden_example", golden_example},
+    {"stack_and_variable_ops", stack_and_variable_ops},
+    {"push_sign_extension", push_sign_extension}, {"arithmetic_ops", arithmetic_ops},
+    {"fixed_point_ops", fixed_point_ops}, {"bitwise_and_shift_ops", bitwise_and_shift_ops},
+    {"lua_shift_op", lua_shift_op}, {"floored_division_ops", floored_division_ops},
+    {"comparison_ops", comparison_ops}, {"division_by_zero", division_by_zero},
+    {"control_flow", control_flow},
+    {"ret_with_empty_call_stack_halts", ret_with_empty_call_stack_halts},
+    {"frames_hold_arguments_and_locals", frames_hold_arguments_and_locals},
+    {"recursion_to_the_limits", recursion_to_the_limits},
+    {"handler_level_returns_end_the_handler", handler_level_returns_end_the_handler},
+    {"enter_needs_its_arguments", enter_needs_its_arguments},
+    {"stack_overflow_halts_only_its_context", stack_overflow_halts_only_its_context},
+    {"stack_underflow_halts_only_its_context", stack_underflow_halts_only_its_context},
+    {"call_depth_is_limited", call_depth_is_limited},
+    {"unknown_opcode_halts_only_its_context", unknown_opcode_halts_only_its_context},
+    {"locals_out_of_range", locals_out_of_range},
+    {"pc_escaping_the_blob_halts_its_context", pc_escaping_the_blob_halts_its_context},
+    {"truncated_operand_halts_its_context", truncated_operand_halts_its_context},
+    {"unknown_property_warns", unknown_property_warns},
+    {"unknown_sys_halts_only_its_context", unknown_sys_halts_only_its_context},
+    {"wait_counts_frames", wait_counts_frames},
+    {"wait_counter_is_clamped", wait_counter_is_clamped},
+    {"vm_start_first_runs_in_the_next_vm_step", vm_start_first_runs_in_the_next_vm_step},
+    {"vm_start_without_a_handler_fails", vm_start_without_a_handler_fails},
+    {"contexts_resume_in_pool_order", contexts_resume_in_pool_order},
+    {"step_reactions_run_every_frame", step_reactions_run_every_frame},
+    {"create_runs_before_the_first_step", create_runs_before_the_first_step},
+    {"entity_spawned_by_step_steps_next_frame", entity_spawned_by_step_steps_next_frame},
+    {"step_never_runs_before_create", step_never_runs_before_create},
+    {"reactions_run_on_top_of_a_waiting_behaviour", reactions_run_on_top_of_a_waiting_behaviour},
+    {"reactions_keep_a_behaviours_wait", reactions_keep_a_behaviours_wait},
+    {"reactions_cannot_reach_below_their_activation",
+     reactions_cannot_reach_below_their_activation},
+    {"reaction_waits_and_overruns_halt_only_the_reaction",
+     reaction_waits_and_overruns_halt_only_the_reaction},
+    {"events_drain_in_fifo_order", events_drain_in_fifo_order},
+    {"events_queued_while_draining_run_in_the_same_phase",
+     events_queued_while_draining_run_in_the_same_phase},
+    {"kill_runs_destroy_then_halts_the_behaviour", kill_runs_destroy_then_halts_the_behaviour},
+    {"kill_runs_destroy_before_destroying", kill_runs_destroy_before_destroying},
+    {"kill_destroys_an_unattached_entity", kill_destroys_an_unattached_entity},
+    {"wait_inside_destroy_warns_and_halts", wait_inside_destroy_warns_and_halts},
+    {"kill_of_no_entity_warns_but_of_a_dead_one_is_silent",
+     kill_of_no_entity_warns_but_of_a_dead_one_is_silent},
+    {"destroy_event_behaves_like_kill", destroy_event_behaves_like_kill},
+    {"vm_event_rejects_unknown_events", vm_event_rejects_unknown_events},
+    {"vm_kill_runs_destroy_at_once", vm_kill_runs_destroy_at_once},
+    {"detach_stops_the_script_without_destroy", detach_stops_the_script_without_destroy},
+    {"attach_rebinds_an_attached_entity", attach_rebinds_an_attached_entity},
+    {"double_attach_queues_one_create", double_attach_queues_one_create},
+    {"a_behaviour_event_replaces_the_live_behaviour",
+     a_behaviour_event_replaces_the_live_behaviour},
+    {"attach_misuse_is_ignored", attach_misuse_is_ignored},
+    {"spawn_creates_an_attached_entity", spawn_creates_an_attached_entity},
+    {"spawn_failures_push_zero", spawn_failures_push_zero},
+    {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
+    {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
+    {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
+    {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
+    {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
+    {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
+    {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
+    {"self_and_other", self_and_other},
+    {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
+    {"properties_of_dead_entities", properties_of_dead_entities},
+    {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
+    {"property_without_its_component_warns", property_without_its_component_warns},
+    {"body_size_properties", body_size_properties},
+    {"tags_are_the_game_components", tags_are_the_game_components},
+    {"instance_fields", instance_fields},
+    {"nexti_loops_over_an_objects_instances", nexti_loops_over_an_objects_instances},
+    {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
+    {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},
+    {"wait_anim_without_a_one_shot_animation_continues",
+     wait_anim_without_a_one_shot_animation_continues},
+    {"wait_anim_continues_if_the_sprite_stops_being_one_shot",
+     wait_anim_continues_if_the_sprite_stops_being_one_shot},
+    {"animation_end_is_raised_when_an_animation_finishes",
+     animation_end_is_raised_when_an_animation_finishes},
+    {"animation_properties_restart_an_animation", animation_properties_restart_an_animation},
+    {"sys_random_range", sys_random_range}, {"sys_camera_set", sys_camera_set},
+    {"sys_path_start_uses_bindings", sys_path_start_uses_bindings},
+    {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
+    {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
+    {"sys_text_print_number", sys_text_print_number}, {"sys_path_stop", sys_path_stop},
+    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"ram_arrays_across_loads", ram_arrays_across_loads},
+    {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
+    {"reload_keeps_attachments_to_objects_that_remain",
+     reload_keeps_attachments_to_objects_that_remain},
+    {"reload_keeps_the_kept_instances_fields", reload_keeps_the_kept_instances_fields},
+    {"reload_halts_contexts_and_empties_the_queue", reload_halts_contexts_and_empties_the_queue},
+    {"load_resets_everything", load_resets_everything},
+    {"loading_during_a_phase_is_refused", loading_during_a_phase_is_refused},
+    {"loading_during_vm_kill_is_refused", loading_during_vm_kill_is_refused},
+    {"phases_do_not_nest", phases_do_not_nest},
+    {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
+    {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
+    {"loader_checks_array_records", loader_checks_array_records},
+    {"runs_are_deterministic", runs_are_deterministic},
+    {"debug_ops_log_and_continue", debug_ops_log_and_continue},
+    {"unload_stops_everything", unload_stops_everything});

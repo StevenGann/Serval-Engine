@@ -27,6 +27,11 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
   .string NAME "text"                  a string, numbered from 0: printable
                                        ASCII, with \\" and \\\\ for those two
   .globals NAME NAME ...               globals, numbered from 0 (may repeat)
+  .array NAME length [at=expr]         a RAM array, numbered from 0 with the
+                                       .rom arrays; its cells follow the previous
+                                       .array's in the pool unless at= says where
+  .rom NAME kind expr, expr, ...       a ROM array of s8, u8, s16, u16 or s32
+                                       values (range-checked), numbered likewise
   .handler OBJECT EVENT                the code that follows is OBJECT's handler
                                        for EVENT: CREATE STEP DESTROY COLLISION
                                        ANIM_END ROOM_START
@@ -39,19 +44,23 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
   .strings [NAME ...]                  the named strings' bytes (none named: all
                                        not yet placed) here instead of after the
                                        code
+  .data [NAME ...]                     the same for ROM arrays' data
 
-Operands: GETP and SETP take a property (X, BODY_W, ...), SYS an engine call
-(TEXT_PRINT, ...), SPAWN an object, TRACE a string, LDG and STG a global, LDL
-and STL a number, JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an expression; a
-number or an expression works wherever a name does. In expressions, objects,
-strings and globals are named OBJ_NAME, STR_NAME and G_NAME, as the header
---defs writes them. Expressions: integers (decimal or 0x hex, a trailing u
-ignored), names (the listing's, then --header constants in the order given,
-then vm.h's VM_* names), the operators + - * / << >> | & ~ and parentheses
-with C precedence, and the engine's macros FX(n) = n * 256 and C_GAME(n) = 1 <<
-(16 + n). Names must be defined before they are used. The result must fit in
-32 bits (signed or unsigned). Layout: the header, the object table, the string
-table, the code in listing order, then the string bytes.
+Operands: GETP and SETP take a property (X, BODY_W, FIELD0, ...), SYS an
+engine call (TEXT_PRINT, ...), SPAWN and NEXTI an object, TRACE a string, LDG
+and STG a global, LDA, STA and LEN an array, LDL and STL a number, ENTER two
+numbers (ENTER 0, 3), JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an
+expression; a number or an expression works wherever a name does. In
+expressions, objects, strings, globals and arrays are named OBJ_NAME,
+STR_NAME, G_NAME and ARR_NAME, as the header --defs writes them. Expressions:
+integers (decimal or 0x hex, a trailing u ignored), names (the listing's, then
+--header constants in the order given, then vm.h's VM_* names), the operators
++ - * / << >> | & ~ and parentheses with C precedence, and the engine's macros
+FX(n) = n * 256 and C_GAME(n) = 1 << (16 + n). Names must be defined before
+they are used. The result must fit in
+32 bits (signed or unsigned). Layout: the header, the object, string and
+array tables, the code in listing order, then the ROM arrays' data, then the
+string bytes.
 
 --header FILE scrapes integer constants from a C header, nothing more:
 `#define NAME expr` with expr in the grammar above, and the enumerators of
@@ -74,63 +83,75 @@ MAGIC = b"SVMB"
 MAX_TABLE_ENTRIES = 0xFFFF  # objects and strings: 16-bit counts
 
 # The one hand-written table: each opcode's operand layout from docs/vm.md's
-# opcode reference, and what a name in that operand refers to. check_operands()
-# makes sure it matches vm.h's VM_OP_* list, so this is the only thing that can
-# drift and it can't drift silently.
+# opcode reference, a sequence of fields (kind, and what a name in that field
+# refers to). check_operands() makes sure it matches vm.h's VM_OP_* list, so
+# this is the only thing that can drift and it can't drift silently.
+NONE = ()
 OPERANDS = {
-    "NOP": ("none", None),
-    "HALT": ("none", None),
-    "PUSH8": ("s8", None),
-    "PUSH16": ("s16", None),
-    "PUSH32": ("s32", None),
-    "DUP": ("none", None),
-    "DROP": ("none", None),
-    "SWAP": ("none", None),
-    "LDG": ("u8", "global"),
-    "STG": ("u8", "global"),
-    "LDL": ("u8", None),
-    "STL": ("u8", None),
-    "ADD": ("none", None),
-    "SUB": ("none", None),
-    "MUL": ("none", None),
-    "DIV": ("none", None),
-    "MOD": ("none", None),
-    "NEG": ("none", None),
-    "FXMUL": ("none", None),
-    "FXDIV": ("none", None),
-    "AND": ("none", None),
-    "OR": ("none", None),
-    "XOR": ("none", None),
-    "BNOT": ("none", None),
-    "SHL": ("none", None),
-    "SHR": ("none", None),
-    "LNOT": ("none", None),
-    "EQ": ("none", None),
-    "NE": ("none", None),
-    "LT": ("none", None),
-    "LE": ("none", None),
-    "GT": ("none", None),
-    "GE": ("none", None),
-    "JMP": ("rel16", "label"),
-    "JZ": ("rel16", "label"),
-    "JNZ": ("rel16", "label"),
-    "CALL": ("u32", "label"),
-    "RET": ("none", None),
-    "WAIT": ("none", None),
-    "WAIT_ANIM": ("none", None),
-    "WAIT_MOVE": ("none", None),
-    "INTERRUPTIBLE": ("none", None),
-    "SELF": ("none", None),
-    "OTHER": ("none", None),
-    "GETP": ("u8", "prop"),
-    "SETP": ("u8", "prop"),
-    "SPAWN": ("u16", "object"),
-    "KILL": ("none", None),
-    "SYS": ("u8", "sys"),
-    "BRK": ("none", None),
-    "TRACE": ("u16", "string"),
+    "NOP": NONE,
+    "HALT": NONE,
+    "PUSH8": (("s8", None),),
+    "PUSH16": (("s16", None),),
+    "PUSH32": (("s32", None),),
+    "DUP": NONE,
+    "DROP": NONE,
+    "SWAP": NONE,
+    "LDG": (("u8", "global"),),
+    "STG": (("u8", "global"),),
+    "LDL": (("u8", None),),
+    "STL": (("u8", None),),
+    "LDA": (("u16", "array"),),
+    "STA": (("u16", "array"),),
+    "LEN": (("u16", "array"),),
+    "ADD": NONE,
+    "SUB": NONE,
+    "MUL": NONE,
+    "DIV": NONE,
+    "MOD": NONE,
+    "NEG": NONE,
+    "FXMUL": NONE,
+    "FXDIV": NONE,
+    "AND": NONE,
+    "OR": NONE,
+    "XOR": NONE,
+    "BNOT": NONE,
+    "SHL": NONE,
+    "SHR": NONE,
+    "LNOT": NONE,
+    "LSH": NONE,
+    "EQ": NONE,
+    "NE": NONE,
+    "LT": NONE,
+    "LE": NONE,
+    "GT": NONE,
+    "GE": NONE,
+    "IDIV": NONE,
+    "IMOD": NONE,
+    "JMP": (("rel16", "label"),),
+    "JZ": (("rel16", "label"),),
+    "JNZ": (("rel16", "label"),),
+    "CALL": (("u32", "label"),),
+    "RET": NONE,
+    "RETV": NONE,
+    "ENTER": (("u8", None), ("u8", None)),  # p arguments, n locals
+    "WAIT": NONE,
+    "WAIT_ANIM": NONE,
+    "WAIT_MOVE": NONE,
+    "SELF": NONE,
+    "OTHER": NONE,
+    "GETP": (("u8", "prop"),),
+    "SETP": (("u8", "prop"),),
+    "SPAWN": (("u16", "object"),),
+    "KILL": NONE,
+    "NEXTI": (("u16", "object"),),
+    "SYS": (("u8", "sys"),),
+    "BRK": NONE,
+    "TRACE": (("u16", "string"),),
 }
-OPERAND_SIZE = {"none": 0, "s8": 1, "u8": 1, "s16": 2, "u16": 2, "rel16": 2, "s32": 4, "u32": 4}
+OPERAND_SIZE = {"s8": 1, "u8": 1, "s16": 2, "u16": 2, "rel16": 2, "s32": 4, "u32": 4}
+SIGNED = ("s8", "s16", "s32", "rel16")
+# Array kinds by their listing name; vm.h names their numbers VM_ARRAY_<KIND>.
+ROM_KINDS = ("s8", "u8", "s16", "u16", "s32")
 OPERAND_RANGE = {
     "s8": (-0x80, 0x7F),
     "s16": (-0x8000, 0x7FFF),
@@ -141,7 +162,12 @@ OPERAND_RANGE = {
     "rel16": (-0x8000, 0x7FFF),
 }
 # A handler that ends in one of these can't fall off the end of the blob.
-HANDLER_ENDS = ("HALT", "RET", "JMP")
+HANDLER_ENDS = ("HALT", "RET", "RETV", "JMP")
+
+
+def operand_size(mnemonic):
+    """The bytes after the opcode."""
+    return sum(OPERAND_SIZE[kind] for kind, _ in OPERANDS[mnemonic])
 
 
 class SvmError(Exception):
@@ -505,17 +531,29 @@ class Vm:
             self.cell_bytes = names["VM_CELL_BYTES"]
             self.header_size = names["VM_HEADER_SIZE"]
             self.object_size = names["VM_OBJECT_SIZE"]
+            self.array_record_size = names["VM_ARRAY_RECORD_SIZE"]
             self.max_globals = names["VM_GLOBALS"]
+            self.array_cells = names["VM_ARRAY_CELLS"]
+            self.field0 = names["VM_P_FIELD0"]
+            self.fields = names["VM_FIELDS"]
             self.event_count = names["VM_EV_COUNT"]
             self.prop_count = names["VM_P_COUNT"]
             self.sys_count = names["VM_SYS_COUNT"]
+            self.array_ram = names["VM_ARRAY_RAM"]
+            # kind number -> (listing name, bytes per element)
+            self.rom_kinds = {names["VM_ARRAY_" + kind.upper()]: (kind, int(kind[1:]) // 8)
+                              for kind in ROM_KINDS}
+            self.kind_count = names["VM_ARRAY_KIND_COUNT"]
         except KeyError as e:
             raise SvmError(f"vm.h does not define {e.args[0]}") from None
         if not self.ops or self.event_count <= 0:
             raise SvmError("vm.h defines no opcodes or events")
+        self.kind_numbers = {name: number for number, (name, _) in self.rom_kinds.items()}
         self.op_names = {v: n for n, v in self.ops.items()}
         self.event_names = {v: n for n, v in self.events.items()}
         self.prop_names = {v: n for n, v in self.props.items()}
+        for k in range(1, self.fields):  # the instance fields after the first
+            self.prop_names[self.field0 + k] = f"VM_P_FIELD0 + {k}"
         self.sys_names = {v: n for n, v in self.sys.items()}
 
 
@@ -573,6 +611,21 @@ def _strip_comment(line):
     return line
 
 
+def _split_operands(text):
+    """An operand list's fields, split at the commas outside parentheses."""
+    fields, depth, start = [], 0, 0
+    for i, c in enumerate(text):
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "," and depth == 0:
+            fields.append(text[start:i].strip())
+            start = i + 1
+    fields.append(text[start:].strip())
+    return fields
+
+
 def _unescape_string(text):
     """The bytes of a .string literal: printable ASCII, with \\" and \\\\."""
     out = bytearray()
@@ -613,13 +666,27 @@ class _Handler:
 class Assembled:
     """What assemble() returns."""
 
-    def __init__(self, blob, objects, strings, globals_, code_size, warnings):
+    def __init__(self, blob, objects, strings, globals_, arrays, code_size, warnings):
         self.blob = blob
         self.objects = objects  # names (None for a numbered one), in order
         self.strings = strings
         self.globals = globals_
+        self.arrays = arrays
         self.code_size = code_size  # bytes between the tables and the end
         self.warnings = warnings  # [(file, line, message)]
+
+
+class _Array:
+    """An .array (RAM: data is None) or a .rom (data: its bytes)."""
+
+    __slots__ = ("name", "kind", "length", "first", "data")
+
+    def __init__(self, name, kind, length, first=0, data=None):
+        self.name = name
+        self.kind = kind
+        self.length = length
+        self.first = first  # RAM: the first cell in the pool
+        self.data = data
 
 
 class Assembler:
@@ -634,11 +701,15 @@ class Assembler:
         self.string_index = {}
         self.globals = []
         self.global_index = {}
+        self.arrays = []  # _Array
+        self.array_index = {}
+        self.next_cell = 0  # where the next .array without at= starts
         self.code = bytearray()
         self.labels = {}  # name -> code offset
         self.label_lines = {}
         self.fixups = []  # (code offset of the operand, kind, label, line)
         self.placed = {}  # string index -> code offset of its bytes
+        self.placed_data = {}  # ROM array index -> code offset of its bytes
         self.handlers = []  # _Handler groups in order
         self.handler_lines = {}  # (object, event) -> line
         self.errors = []
@@ -788,6 +859,79 @@ class Assembler:
                 self.global_index[name] = index
             self.globals.append(name)
 
+    def new_array(self, text):
+        """The array number for a new .array or .rom, and its name (None for a
+        number)."""
+        index = len(self.arrays)
+        if index >= MAX_TABLE_ENTRIES:
+            self.error(f"more than {MAX_TABLE_ENTRIES} arrays")
+        name = self.name_or_index(text, "array", index)
+        if name is not None:
+            if name in self.array_index:
+                self.error(f"array {name} is already defined")
+            self.define("ARR_" + name, index)
+            self.array_index[name] = index
+        return index, name
+
+    def directive_array(self, rest):
+        m = re.match(rf"^(\S+)\s+(.+?)(?:\s+at=(.+))?$", rest)
+        if not m:
+            self.error(".array takes a NAME and a length, then at=expr if it doesn't start where "
+                       "the previous one ended")
+        length = self.value(m.group(2))
+        if not 0 <= length <= 0xFFFF:
+            self.error(f"array length {length} doesn't fit 16 bits")
+        first = self.next_cell if m.group(3) is None else self.value(m.group(3))
+        cells = self.vm.array_cells
+        if not 0 <= first <= cells or length > cells - first:
+            self.error(f"cells {first} to {first + length - 1} are outside the RAM arrays' pool "
+                       f"(0 to {cells - 1}, VM_ARRAY_CELLS)")
+        _, name = self.new_array(m.group(1))
+        self.arrays.append(_Array(name, self.vm.array_ram, length, first))
+        self.next_cell = first + length
+
+    def directive_rom(self, rest):
+        parts = rest.split(None, 2)
+        if len(parts) < 2:
+            self.error(".rom takes a NAME, a kind (" + " ".join(ROM_KINDS) + ") and its values")
+        if parts[1] not in self.vm.kind_numbers:
+            self.error(f"no array kind {parts[1]} (" + " ".join(ROM_KINDS) + ")")
+        kind = self.vm.kind_numbers[parts[1]]
+        size = self.vm.rom_kinds[kind][1]
+        values = []
+        if len(parts) > 2:
+            try:
+                values = evaluate_list(parts[2], self.resolve)
+            except ExprError as e:
+                self.error(str(e))
+        low, high = OPERAND_RANGE[parts[1]]
+        for value in values:
+            if not low <= value <= high:
+                self.error(f".rom: {value} doesn't fit {parts[1]} ({low} to {high})")
+        if len(values) > 0xFFFF:
+            self.error(f"{len(values)} values; an array holds at most 65535")
+        data = b"".join((v & ((1 << (8 * size)) - 1)).to_bytes(size, "little") for v in values)
+        _, name = self.new_array(parts[0])
+        self.arrays.append(_Array(name, kind, len(values), data=data))
+
+    def directive_data(self, rest):
+        if rest:
+            indices = [self.operand_value(text, "u16", "array") for text in rest.split()]
+        else:
+            indices = [i for i, a in enumerate(self.arrays)
+                       if a.data is not None and i not in self.placed_data]
+        for index in indices:
+            if self.arrays[index].data is None:
+                self.error(f"array {self.array_label(index)} is a RAM array: it has no data")
+            if index in self.placed_data:
+                self.error(f"array {self.array_label(index)}'s data is already placed")
+            self.place_data(index)
+        self.emitted(".data")
+
+    def place_data(self, index):
+        self.placed_data[index] = len(self.code)
+        self.code.extend(self.arrays[index].data)
+
     def directive_handler(self, rest):
         parts = rest.split()
         if len(parts) != 2:
@@ -869,27 +1013,35 @@ class Assembler:
             operand = str(value)
         if mnemonic not in self.vm.ops:
             self.error(f"unknown mnemonic {mnemonic}")
-        kind, names = OPERANDS[mnemonic]
-        if kind == "none":
-            if operand:
-                self.error(f"{mnemonic} takes no operand")
-            self.emit(self.vm.ops[mnemonic], kind, 0)
-        elif names == "label":
-            if not operand or not re.fullmatch(_IDENT, operand):
+        fields = OPERANDS[mnemonic]
+        texts = _split_operands(operand) if operand else []
+        if not fields and texts:
+            self.error(f"{mnemonic} takes no operand")
+        if fields and fields[0][1] == "label":
+            if len(texts) != 1 or not re.fullmatch(_IDENT, texts[0]):
                 self.error(f"{mnemonic} takes a label")
-            self.fixups.append((len(self.code) + 1, kind, operand, self.line))
-            self.emit(self.vm.ops[mnemonic], kind, 0)
+            self.fixups.append((len(self.code) + 1, fields[0][0], texts[0], self.line))
+            self.emit(self.vm.ops[mnemonic], [(fields[0][0], 0)])
+        elif fields:
+            if not texts:
+                self.error(f"{mnemonic} needs an operand" if len(fields) == 1
+                           else f"{mnemonic} needs {len(fields)} operands")
+            if len(texts) != len(fields) or not all(texts):
+                self.error(f"{mnemonic} takes {len(fields)} operand"
+                           f"{'s, separated by commas' if len(fields) > 1 else ''}")
+            values = [(kind, self.operand_value(text, kind, names))
+                      for (kind, names), text in zip(fields, texts)]
+            self.emit(self.vm.ops[mnemonic], values)
         else:
-            if not operand:
-                self.error(f"{mnemonic} needs an operand")
-            self.emit(self.vm.ops[mnemonic], kind, self.operand_value(operand, kind, names))
+            self.emit(self.vm.ops[mnemonic], [])
         self.emitted(mnemonic)
 
     def operand_value(self, text, kind, names):
         """A typed operand: a bare name from its table (object, string, global,
-        property or engine call), else an expression. Range-checked."""
+        array, property or engine call), else an expression. Range-checked."""
         tables = {"object": self.object_index, "string": self.string_index,
-                  "global": self.global_index, "prop": self.vm.props, "sys": self.vm.sys}
+                  "global": self.global_index, "array": self.array_index,
+                  "prop": self.vm.props, "sys": self.vm.sys}
         if names in tables and text in tables[names]:
             value = tables[names][text]
         else:
@@ -909,19 +1061,25 @@ class Assembler:
         elif names == "string" and value >= len(self.strings):
             self.error(f"no string {text} ({len(self.strings)} declared so far; "
                        "strings must be declared before use)")
+        elif names == "array" and value >= len(self.arrays):
+            self.error(f"no array {text} ({len(self.arrays)} declared so far; "
+                       "arrays must be declared before use)")
         elif names == "global" and value >= len(self.globals):
             self.warn(f"global {value} is past the {len(self.globals)} declared "
                       "(the header's count only matters to vm_reload)")
-        elif names == "prop" and value >= self.vm.prop_count:
-            self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1})")
+        elif names == "prop" and not (value < self.vm.prop_count or
+                                      0 <= value - self.vm.field0 < self.vm.fields):
+            self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1}, "
+                      f"fields {self.vm.field0} to {self.vm.field0 + self.vm.fields - 1})")
         elif names == "sys" and value >= self.vm.sys_count:
             self.warn(f"engine call {value} is not in vm.h's page (0 to {self.vm.sys_count - 1})")
         return value
 
-    def emit(self, opcode, kind, value):
+    def emit(self, opcode, fields):
+        """The opcode, then each (kind, value) operand field."""
         self.code.append(opcode)
-        size = OPERAND_SIZE[kind]
-        if size:
+        for kind, value in fields:
+            size = OPERAND_SIZE[kind]
             self.code.extend((value & ((1 << (8 * size)) - 1)).to_bytes(size, "little"))
 
     # --- The blob ---
@@ -934,6 +1092,10 @@ class Assembler:
         name = self.strings[index][0]
         return name if name is not None else str(index)
 
+    def array_label(self, index):
+        name = self.arrays[index].name
+        return name if name is not None else str(index)
+
     def event_label(self, event):
         return self.vm.event_names.get(event, str(event))
 
@@ -944,14 +1106,18 @@ class Assembler:
             elif handler.last_op is None:
                 self.warn(f"handler {handler.label} has no ops, only bytes", handler.line)
             elif handler.last_op not in HANDLER_ENDS:
-                self.warn(f"handler {handler.label} doesn't end in HALT or RET "
+                self.warn(f"handler {handler.label} doesn't end in HALT, RET or RETV "
                           f"(its last op is {handler.last_op})", handler.line)
-        # The strings not placed by .strings go after the code, in order.
+        # The ROM arrays' data not placed by .data goes after the code, in
+        # order, then the strings not placed by .strings, in order.
+        for index, array in enumerate(self.arrays):
+            if array.data is not None and index not in self.placed_data:
+                self.place_data(index)
         for index in range(len(self.strings)):
             if index not in self.placed:
                 self.place_string(index)
         tables_end = (self.vm.header_size + self.vm.object_size * len(self.objects)
-                      + 4 * len(self.strings))
+                      + 4 * len(self.strings) + self.vm.array_record_size * len(self.arrays))
         # Jumps take a rel16 from just after the operand; CALL a blob offset.
         for at, kind, label, line in self.fixups:
             if label not in self.labels:
@@ -975,7 +1141,7 @@ class Assembler:
         blob += len(self.objects).to_bytes(2, "little")
         blob += len(self.strings).to_bytes(2, "little")
         blob += len(self.globals).to_bytes(2, "little")
-        blob += (0).to_bytes(2, "little")  # reserved
+        blob += len(self.arrays).to_bytes(2, "little")
         for _, mask, sprite, handlers in self.objects:
             blob += mask.to_bytes(4, "little")
             blob += sprite.to_bytes(2, "little")
@@ -984,10 +1150,16 @@ class Assembler:
                 blob += (0 if offset is None else tables_end + offset).to_bytes(4, "little")
         for index in range(len(self.strings)):
             blob += (tables_end + self.placed[index]).to_bytes(4, "little")
+        for index, array in enumerate(self.arrays):
+            where = array.first if array.data is None else tables_end + self.placed_data[index]
+            blob += array.length.to_bytes(2, "little")
+            blob += bytes((array.kind, 0))
+            blob += where.to_bytes(4, "little")
         assert len(blob) == tables_end
         blob += self.code
         return Assembled(bytes(blob), [o[0] for o in self.objects], [s[0] for s in self.strings],
-                         list(self.globals), len(self.code), self.warnings)
+                         list(self.globals), [a.name for a in self.arrays], len(self.code),
+                         self.warnings)
 
 
 class _LineError(Exception):
@@ -1020,13 +1192,14 @@ def defs_header(assembled, out_name, prefix, symbol, listing_name):
     guard = re.sub(r"\W", "_", os.path.basename(out_name)).upper()
     if not re.match(r"[A-Za-z_]", guard):
         guard = "_" + guard
-    lines = [f"// {os.path.basename(out_name)}: the objects, strings and globals of the script "
-             f"blob assembled by {TOOL} from {listing_name}.",
+    lines = [f"// {os.path.basename(out_name)}: the objects, strings, globals and arrays of the "
+             f"script blob assembled by {TOOL} from {listing_name}.",
              "// Generated; edit the listing instead.", "",
              f"#ifndef {guard}", f"#define {guard}", ""]
     for title, family, names in (("Objects", "OBJ", assembled.objects),
                                  ("Strings", "STR", assembled.strings),
-                                 ("Globals", "G", assembled.globals)):
+                                 ("Globals", "G", assembled.globals),
+                                 ("Arrays", "ARR", assembled.arrays)):
         lines.append(f"// {title}")
         for index, name in enumerate(names):
             if name is not None:
@@ -1051,15 +1224,17 @@ class Blob:
         self.vm = vm
         self.objects = []  # (mask, sprite, [handler offsets])
         self.strings = []  # (offset, bytes without the NUL)
+        self.arrays = []  # (kind, length, first cell or blob offset)
         self.globals = 0
         self.tables_end = 0
 
 
 def validate(data, vm):
-    """Checks a blob as vm_load does (magic, version, cell width, counts, the
-    tables inside the blob, offsets in range, strings NUL-terminated), plus
-    what the assembler can't reproduce (reserved fields not 0, overlapping
-    strings). Returns a Blob; raises SvmError."""
+    """Checks a blob as vm_load does (magic, version, cell width, flags and
+    reserved fields, counts, the tables inside the blob, offsets in range,
+    strings NUL-terminated, array records), plus what the assembler can't
+    reproduce (strings or ROM arrays that overlap). Returns a Blob; raises
+    SvmError."""
     if len(data) < vm.header_size:
         raise SvmError(f"{len(data)} bytes is shorter than the {vm.header_size}-byte header")
     if data[:4] != MAGIC:
@@ -1075,16 +1250,17 @@ def validate(data, vm):
     def le32(at):
         return int.from_bytes(data[at:at + 4], "little")
 
-    if le16(6) or le16(14):
-        raise SvmError("the header's flags or reserved field is not 0")
+    if le16(6):
+        raise SvmError("the header's flags are not 0")
     blob = Blob(data, vm)
-    objects, strings, blob.globals = le16(8), le16(10), le16(12)
+    objects, strings, blob.globals, arrays = le16(8), le16(10), le16(12), le16(14)
     if blob.globals > vm.max_globals:
         raise SvmError(f"{blob.globals} globals; the most is {vm.max_globals} (VM_GLOBALS)")
-    tables_end = vm.header_size + objects * vm.object_size + strings * 4
+    arrays_at = vm.header_size + objects * vm.object_size + strings * 4
+    tables_end = arrays_at + arrays * vm.array_record_size
     if tables_end > len(data):
-        raise SvmError(f"the tables ({objects} objects, {strings} strings) need {tables_end} "
-                       f"bytes, but the blob has {len(data)}")
+        raise SvmError(f"the tables ({objects} objects, {strings} strings, {arrays} arrays) need "
+                       f"{tables_end} bytes, but the blob has {len(data)}")
     blob.tables_end = tables_end
     for index in range(objects):
         record = vm.header_size + index * vm.object_size
@@ -1099,7 +1275,24 @@ def validate(data, vm):
                                f"0x{len(data):X})")
             handlers.append(offset)
         blob.objects.append((le32(record), le16(record + 4), handlers))
-    regions = []
+    regions = []  # (start, end, what): the bytes of strings and ROM arrays
+    for index in range(arrays):
+        record = arrays_at + index * vm.array_record_size
+        length, kind, where = le16(record), data[record + 2], le32(record + 4)
+        if kind >= vm.kind_count or data[record + 3]:
+            raise SvmError(f"array {index} has kind {kind} and reserved byte {data[record + 3]} "
+                           "(the kinds are 0 to {vm.kind_count - 1}; the reserved byte must be 0)")
+        if kind == vm.array_ram:
+            if where + length > vm.array_cells:
+                raise SvmError(f"array {index} (cells {where} to {where + length - 1}) is outside "
+                               f"the RAM arrays' pool (VM_ARRAY_CELLS, {vm.array_cells} cells)")
+        else:
+            end = where + length * vm.rom_kinds[kind][1]
+            if not tables_end <= where <= end <= len(data):
+                raise SvmError(f"array {index}'s data (0x{where:X} to 0x{end:X}) is outside the "
+                               f"blob's data (0x{tables_end:X} to 0x{len(data):X})")
+            regions.append((where, end, f"array {index}'s data"))
+        blob.arrays.append((kind, length, where))
     for index in range(strings):
         offset = le32(vm.header_size + objects * vm.object_size + index * 4)
         if not tables_end <= offset < len(data):
@@ -1109,123 +1302,167 @@ def validate(data, vm):
         if end < 0:
             raise SvmError(f"string {index} (at 0x{offset:X}) has no NUL before the end of the blob")
         blob.strings.append((offset, data[offset:end]))
-        regions.append((offset, end + 1, index))
-    regions.sort()
-    for (start, end, index), (next_start, _, next_index) in zip(regions, regions[1:]):
-        if next_start < end:
-            raise SvmError(f"strings {index} and {next_index} overlap (0x{start:X} to 0x{end:X} "
-                           f"and 0x{next_start:X}): the assembler can't lay that out")
+        regions.append((offset, end + 1, f"string {index}"))
+    # The assembler lays strings and ROM data out one after the other: they
+    # can't share bytes, and empty data can't sit inside another's bytes.
+    for a_start, a_end, a in regions:
+        for b_start, b_end, b in regions:
+            if a < b and (a_start < b_end and b_start < a_end
+                          or a_start == a_end and b_start < a_start < b_end
+                          or b_start == b_end and a_start < b_start < a_end):
+                raise SvmError(f"{a} and {b} overlap (0x{a_start:X} to 0x{a_end:X} and "
+                               f"0x{b_start:X} to 0x{b_end:X}): the assembler can't lay that out")
     return blob
 
 
 class _Item:
-    __slots__ = ("at", "size", "op", "value")
+    __slots__ = ("at", "size", "op", "values")
 
-    def __init__(self, at, size, op=None, value=None):
+    def __init__(self, at, size, op=None, values=None):
         self.at = at
         self.size = size
         self.op = op  # mnemonic, or None for a raw byte
-        self.value = value
+        self.values = values  # the operand fields' values
+
+
+def _rom_values(data, kind, length, where, vm):
+    """A ROM array's elements, as numbers."""
+    name, size = vm.rom_kinds[kind]
+    return [int.from_bytes(data[where + k * size:where + (k + 1) * size], "little",
+                           signed=name.startswith("s")) for k in range(length)]
 
 
 def disassemble(data, vm, source="blob"):
     """A listing that the assembler turns back into exactly these bytes."""
     blob = validate(data, vm)
     size = len(data)
-    string_at = {offset: index for index, (offset, _) in enumerate(blob.strings)}
-    string_end = {offset: offset + len(text) + 1 for offset, text in blob.strings}
+    # Regions: the bytes of strings ("strings") and ROM arrays ("data"),
+    # by where they start (empty arrays first, then the one region with
+    # bytes, if any) and where they end.
+    region_at = {}
+    region_end = {}
+    for index, (kind, length, where) in enumerate(blob.arrays):
+        if kind != vm.array_ram:
+            region_end["data", index] = where + length * vm.rom_kinds[kind][1]
+            region_at.setdefault(where, []).append((length > 0, "data", index))
+    for index, (offset, text) in enumerate(blob.strings):
+        region_end["strings", index] = offset + len(text) + 1
+        region_at.setdefault(offset, []).append((True, "strings", index))
+    for places in region_at.values():
+        places.sort()
     handlers_at = {}
     for index, (_, _, handlers) in enumerate(blob.objects):
         for event, offset in enumerate(handlers):
             if offset:
                 handlers_at.setdefault(offset, []).append((index, event))
+    for start, places in region_at.items():
+        for _, what, index in places:
+            if any(start < offset < region_end[what, index] for offset in handlers_at):
+                raise SvmError(f"a handler starts inside the bytes of {what} {index}: the "
+                               "assembler can't lay that out")
     lowest = min(handlers_at) if handlers_at else None
-    cuts = sorted(set(handlers_at) | set(string_at) | set(string_end.values()) | {size})
+    cuts = sorted(set(handlers_at) | set(region_at) | set(region_end.values()) | {size})
 
-    # Segments between string regions, split at handler offsets; the ones at
-    # or past the lowest handler are code, decoded linearly (an instruction
-    # that doesn't fit its segment, or an unknown opcode, is a raw byte).
-    items = []  # _Item or (offset, index) for a string region, in address order
+    # Segments between regions, split at handler offsets; the ones at or past
+    # the lowest handler are code, decoded linearly (an instruction that
+    # doesn't fit its segment, or an unknown opcode, is a raw byte).
+    items = []  # _Item, or (offset, what, index) for a region, in address order
     boundaries = set()
     pos = blob.tables_end
-    while pos < size:
-        if pos in string_at:
-            items.append((pos, string_at[pos]))
-            pos = string_end[pos]
+    seen = set()  # region starts already listed (empty arrays don't move pos)
+    while True:
+        if pos in region_at and pos not in seen:
+            seen.add(pos)
+            for nonempty, what, index in region_at[pos]:
+                items.append((pos, what, index))
+                if nonempty:
+                    pos = region_end[what, index]
             continue
+        if pos >= size:
+            break
         end = next(cut for cut in cuts if cut > pos)
         while pos < end:
             op = vm.op_names.get(data[pos]) if lowest is not None and pos >= lowest else None
-            length = 1 + OPERAND_SIZE[OPERANDS[op][0]] if op else 1
+            length = 1 + operand_size(op) if op else 1
             if op is None or pos + length > end:
                 items.append(_Item(pos, 1))
             else:
-                kind = OPERANDS[op][0]
-                raw = data[pos + 1:pos + length]
-                value = int.from_bytes(raw, "little", signed=kind in ("s8", "s16", "s32", "rel16"))
-                items.append(_Item(pos, length, op, value))
+                values, at = [], pos + 1
+                for kind, _ in OPERANDS[op]:
+                    n = OPERAND_SIZE[kind]
+                    values.append(int.from_bytes(data[at:at + n], "little", signed=kind in SIGNED))
+                    at += n
+                items.append(_Item(pos, length, op, values))
             boundaries.add(pos)
             pos += length
 
     # Jumps and calls whose target is an instruction boundary get a label;
-    # the rest, and SPAWN or TRACE of a table entry that doesn't exist, are
-    # kept as raw bytes, which always round-trip.
+    # the rest, and operands naming a table entry that doesn't exist (SPAWN,
+    # NEXTI, TRACE, LDA, STA, LEN), are kept as raw bytes, which always
+    # round-trip.
+    counts = {"object": len(blob.objects), "string": len(blob.strings), "array": len(blob.arrays)}
     targets = set()
     for item in items:
         if not isinstance(item, _Item) or item.op is None:
             continue
-        kind, names = OPERANDS[item.op]
-        target = None
-        if kind == "rel16":
-            target = item.at + item.size + item.value
-        elif names == "label":
-            target = item.value
-        elif names == "object" and item.value >= len(blob.objects):
-            item.op = None
-        elif names == "string" and item.value >= len(blob.strings):
-            item.op = None
-        if target is not None:
-            if target in boundaries:
-                item.value = target
-                targets.add(target)
-            else:
+        for (kind, names), value in zip(OPERANDS[item.op], item.values):
+            if names in counts and value >= counts[names]:
                 item.op = None
+            elif names == "label":
+                target = item.at + item.size + value if kind == "rel16" else value
+                if target in boundaries:
+                    item.values = [target]
+                    targets.add(target)
+                else:
+                    item.op = None
 
-    # The assembler puts the strings after the code, in index order, unless the
-    # listing places them: so .strings lines are needed only when the blob's
-    # strings aren't exactly that (or a handler points at the first one, which
-    # a .handler line with nothing after it can't say).
+    # The assembler puts the ROM arrays' data after the code, in index order,
+    # then the strings, in index order, unless the listing places them: so
+    # .data and .strings lines are needed only when the blob isn't laid out
+    # exactly that way (or a handler starts in that tail, which a .handler
+    # line with nothing after it can't say).
     code_end = max((item.at + item.size for item in items if isinstance(item, _Item)),
                    default=blob.tables_end)
-    default_strings = not (blob.strings and blob.strings[0][0] in handlers_at)
     expected = code_end
-    for position, offset in enumerate(sorted(string_at)):
-        if string_at[offset] != position or offset != expected:
-            default_strings = False
-        expected = string_end[offset]
+    default_layout = not any(offset >= code_end for offset in handlers_at)
+    tail = [("data", index) for index, (kind, _, _) in enumerate(blob.arrays)
+            if kind != vm.array_ram] + [("strings", index) for index in range(len(blob.strings))]
+    for what, index in tail:
+        start = blob.strings[index][0] if what == "strings" else blob.arrays[index][2]
+        if start != expected:
+            default_layout = False
+        expected = region_end[what, index]
     if expected != size:
-        default_strings = False
+        default_layout = False
 
     out = [f"; {source}: {size} bytes, {len(blob.objects)} objects, {len(blob.strings)} strings, "
-           f"{blob.globals} globals, disassembled by {TOOL}."]
+           f"{blob.globals} globals, {len(blob.arrays)} arrays, disassembled by {TOOL}."]
     for index, (mask, sprite, _) in enumerate(blob.objects):
         out.append(f".object {index} mask=0x{mask:08X} sprite={sprite}")
     for index, (_, text) in enumerate(blob.strings):
         out.append(f'.string {index} "{escape_string(text)}"')
     for start in range(0, blob.globals, 16):
         out.append(".globals " + " ".join(str(g) for g in range(start, min(start + 16, blob.globals))))
+    next_cell = 0
+    for index, (kind, length, where) in enumerate(blob.arrays):
+        if kind == vm.array_ram:
+            out.append(f".array {index} {length}" + (f" at={where}" if where != next_cell else ""))
+            next_cell = where + length
+        else:
+            values = _rom_values(data, kind, length, where, vm)
+            out.append(f".rom {index} {vm.rom_kinds[kind][0]} {', '.join(map(str, values))}".rstrip())
 
-    def operand_text(item):
-        kind, names = OPERANDS[item.op]
+    def operand_text(names, value):
         if names == "label":
-            return f"L_{item.value}"
+            return f"L_{value}"
         if names == "prop":
-            return vm.prop_names.get(item.value, str(item.value))
+            return vm.prop_names.get(value, str(value))
         if names == "sys":
-            return vm.sys_names.get(item.value, str(item.value))
-        return str(item.value)
+            return vm.sys_names.get(value, str(value))
+        return str(value)
 
     raw = []  # consecutive raw bytes, flushed as .byte lines
+    marked = set()
 
     def flush_raw():
         for start in range(0, len(raw), 16):
@@ -1233,28 +1470,30 @@ def disassemble(data, vm, source="blob"):
         raw.clear()
 
     def mark(at):
-        """The .handler lines and label at this offset."""
-        if at in handlers_at or at in targets:
-            flush_raw()
+        """The .handler lines and label at this offset (once)."""
+        if at in marked or not (at in handlers_at or at in targets):
+            return
+        marked.add(at)
+        flush_raw()
         for index, event in handlers_at.get(at, ()):
             out.append(f".handler {index} {vm.event_names[event]}")
-        if at in handlers_at or at in targets:
-            out.append(f"L_{at}:")
+        out.append(f"L_{at}:")
 
     for item in items:
         if isinstance(item, tuple):
-            offset, index = item
+            offset, what, index = item
             mark(offset)
-            if not default_strings:
+            if not default_layout:
                 flush_raw()
-                out.append(f"    .strings {index}")
+                out.append(f"    .{what} {index}")
             continue
         mark(item.at)
         if item.op is None:
             raw.extend(data[item.at:item.at + item.size])
         else:
             flush_raw()
-            text = operand_text(item) if OPERANDS[item.op][0] != "none" else ""
+            text = ", ".join(operand_text(names, value)
+                             for (_, names), value in zip(OPERANDS[item.op], item.values))
             out.append(f"    {item.op} {text}".rstrip())
     flush_raw()
     return "\n".join(out) + "\n"
@@ -1319,7 +1558,7 @@ def main(argv=None):
     asm.add_argument("--c", metavar="OUT.c", help="write the blob as a C array (needs --symbol)")
     asm.add_argument("--symbol", metavar="NAME", help="the C array's name; NAME_size is its size")
     asm.add_argument("--defs", metavar="OUT.h",
-                     help="write a header with OBJ_*, STR_* and G_* defines and the counts")
+                     help="write a header with OBJ_*, STR_*, G_* and ARR_* defines and the counts")
     asm.add_argument("--prefix", default="", metavar="P", help="prefix for the --defs names")
     dis = commands.add_parser("dis", help="disassemble a blob into a listing")
     dis.add_argument("blob", help="the blob (.bin)")
