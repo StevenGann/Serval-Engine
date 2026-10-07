@@ -58,7 +58,7 @@ The repository root contains `serval.json`, which describes the engine to the to
 - `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease. CMake reads it as `SERVAL_VERSION_STRING` (the full string) and `SERVAL_VERSION` (`X.Y.Z` only, for `project()`); anything other than `X.Y.Z[-pre][+build]` fails configuration.
 - `toolchain.gcc` is the minimum GCC version the engine needs (currently 15.3, the version CI builds and tests with). The editor bundles a single toolchain and warns when it is older than this; configuring the engine with an older `arm-none-eabi-gcc` also prints a CMake warning.
 
-No release has been published yet; `serval.json` says `0.1.0`.
+`serval.json` says `1.0.0-rc.1`: the first release is 1.0.0-rc.1, the release candidate of 1.0.0, whose API is frozen ([api-freeze.md](api-freeze.md)). 1.0.0 follows once Studio Advance has integrated against it ([handoff.md](handoff.md#from-rc1-to-100)).
 
 ## Release contents
 
