@@ -92,13 +92,14 @@ typedef struct {
                       // 7 up, 0 none
     u8 slide_size;    // PSG_SQUARE1: how far each slide step moves, 1 (big) to 7
                       // (small); 0 means 1
-    u16 frequency;    // pitch in Hz: squares 64 to 65535; noise 4 to 65535, higher is
-                      // hissier (the noise channel's rates are coarse: the closest
-                      // one is used); PSG_WAVE (planned) 32 to 65535
+    u16 frequency;    // pitch in Hz: squares 64 to 65535 (lower plays at 64, warns);
+                      // noise 4 to 65535, higher is hissier (the noise channel's
+                      // rates are coarse: the closest one is used); PSG_WAVE
+                      // (planned) 32 to 65535
     u16 frames;       // how long it plays (each note, for a melody, where it is
                       // required); 0: until it fades out, or until replaced
     const u16* notes; // optional melody: note_count frequencies in Hz (0 = rest),
-                      // played in turn instead of .frequency
+                      // played in turn instead of .frequency, in its range
     u8 note_count;
     u8 priority; // 0 (default) to 255: while this sound plays, sounds of lower
                  // priority on its channel are not played; equal or higher

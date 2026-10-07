@@ -159,6 +159,11 @@ static const PsgSound big_slide = {
 static const PsgSound endless_melody = {
     .channel = PSG_SQUARE2, .notes = two_notes, .note_count = 2}; // no .frames
 static const PsgSound no_notes = {.channel = PSG_SQUARE2, .frames = 2, .note_count = 2};
+static const u16 low_notes[] = {440, 0, 50};
+static const PsgSound low_square = {.channel = PSG_SQUARE2, .frequency = 40, .frames = 2};
+static const PsgSound low_note = {
+    .channel = PSG_SQUARE1, .frames = 2, .notes = low_notes, .note_count = 3};
+static const PsgSound low_noise = {.channel = PSG_NOISE, .frequency = 40, .frames = 2};
 enum {
     BAD_DUTY,
     BIG_FADE,
@@ -167,10 +172,14 @@ enum {
     ENDLESS_MELODY,
     NO_NOTES,
     NULL_SOUND,
+    LOW_SQUARE,
+    LOW_NOTE,
+    LOW_NOISE,
     BAD_COUNT
 };
 static const PsgSound* const bad_sounds[BAD_COUNT] = {
-    &bad_duty, &big_fade, &noise_slide, &big_slide, &endless_melody, &no_notes, NULL};
+    &bad_duty, &big_fade, &noise_slide, &big_slide, &endless_melody,
+    &no_notes, NULL,      &low_square,  &low_note,  &low_noise};
 
 // Plays a sound twice; returns how many warnings that reported.
 static u32 play_twice(u16 id) {
@@ -196,6 +205,12 @@ static void misused_fields_are_reported_and_clamped(void) {
     CHECK(VOLUME(REG_SND4CNT) == 15); // still plays, without the slide
     REPORTED_ONCE(play_twice(BIG_SLIDE));
     CHECK(REG_SND1SWEEP == (7 << 4 | 7)); // time 7, up, shift 7
+    // Square channels play 64 Hz and up: lower tones play at 64 Hz.
+    REPORTED_ONCE(play_twice(LOW_SQUARE));
+    CHECK(serval_psg_rate(PSG_SQUARE2) == 2048 - 131072 / 64);
+    psg_table_set(bad_sounds, BAD_COUNT); // reportable again, for a melody's note
+    REPORTED_ONCE(play_twice(LOW_NOTE));
+    CHECK(play_twice(LOW_NOISE) == 0); // the noise channel goes lower
     psg_stop_all();
 }
 

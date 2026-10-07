@@ -55,6 +55,7 @@ enum {
     WARN_TABLE = 1 << 10,
     WARN_SLIDE_CUTOFF = 1 << 11,
     WARN_WAVE = 1 << 12,
+    WARN_LOW_SQUARE = 1 << 13,
 };
 static u32 warned;
 
@@ -393,6 +394,25 @@ static bool playable(const PsgSound* s, u32 id) {
                   "psg_play: sound %u has .slide %d, .slide_size %u; use -7 to 7 and 0 to 7 "
                   "(clamped)",
                   id, s->slide, s->slide_size);
+    if (s->channel != PSG_NOISE && !(warned & WARN_LOW_SQUARE)) {
+        // square_rate() raises these to 64 Hz.
+        if (s->note_count) {
+            for (u32 i = 0; i < s->note_count; i++)
+                if (s->notes[i] && s->notes[i] < 64) {
+                    WARN_ONCE(WARN_LOW_SQUARE,
+                              "psg_play: sound %u has notes[%u] = %u Hz, below 64 Hz, the lowest "
+                              "a square channel plays (it plays as 64 Hz); double it to raise it "
+                              "an octave",
+                              id, i, s->notes[i]);
+                    break;
+                }
+        } else if (s->frequency && s->frequency < 64) {
+            WARN_ONCE(WARN_LOW_SQUARE,
+                      "psg_play: sound %u has .frequency %u, below 64 Hz, the lowest a square "
+                      "channel plays (it plays as 64 Hz); double it to raise it an octave",
+                      id, s->frequency);
+        }
+    }
     check_slide(s, id);
 #endif
     return true;

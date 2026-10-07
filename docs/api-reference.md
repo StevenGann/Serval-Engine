@@ -287,9 +287,9 @@ Two kinds of sound ([audio.md](audio.md)). **Implemented:** sound effects and mu
 | `s8 fade` | Envelope: −1 (fast) to −7 (slow) fades out, 1 (fast) to 7 (slow) fades in, 0 holds. Outside −7 to 7 is clamped (*warns*). |
 | `s8 slide` | `PSG_SQUARE1` only: pitch slide, −1 (fast) to −7 (slow) down, 1 to 7 up, 0 none. Outside −7 to 7 is clamped (*warns*); ignored on other channels (*warns*). |
 | `u8 slide_size` | `PSG_SQUARE1`: step size of the slide, 1 (big) to 7 (small); 0 means 1. Above 7 is clamped (*warns*). An upward slide that passes the highest pitch silences the channel; if that happens before the sound ends, `psg_play` *warns* (debug builds), naming the frame. |
-| `u16 frequency` | Pitch in Hz: squares 64-65,535 (lower is raised to 64); noise 4-65,535 (the closest of the channel's coarse rates; higher is hissier); `PSG_WAVE` (planned) 32-65,535. |
+| `u16 frequency` | Pitch in Hz: squares 64-65,535 (lower plays at 64, *warns*); noise 4-65,535 (the closest of the channel's coarse rates; higher is hissier); `PSG_WAVE` (planned) 32-65,535. |
 | `u16 frames` | How long it plays (each note, for a melody). 0: until the envelope fades it out (it holds its channel until then) or it is replaced. Required for a melody: one with `frames` 0 doesn't play (*warns*). |
-| `const u16* notes`, `u8 note_count` | Optional melody: `note_count` frequencies in Hz (0 = rest), played in turn instead of `.frequency`. |
+| `const u16* notes`, `u8 note_count` | Optional melody: `note_count` frequencies in Hz (0 = rest), played in turn instead of `.frequency`. On a square, a note below 64 Hz plays at 64 (*warns*). |
 | `u8 priority` | 0 (default) to 255. While the sound plays, `psg_play` of a sound with lower priority on its channel does nothing; equal or higher priority replaces it. On a channel the music uses, the sound plays only if its priority is at least the song's `priority`. |
 
 | Function | Description |
