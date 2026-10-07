@@ -43,6 +43,7 @@ enum {
     WARN_HIGH_NOTE = 1 << 8,
     WARN_TEMPO = 1 << 9,
     WARN_FIELDS = 1 << 10,
+    WARN_WAVE = 1 << 11,
 };
 static u32 warned;
 
@@ -145,6 +146,16 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
     u32 channels = 0;
     for (u32 i = 0; i < song->track_count; i++) {
         const PsgTrack* t = &song->tracks[i];
+        if (t->channel == PSG_WAVE) {
+            // Planned (audio.h): left out like an invalid channel until the
+            // wave channel is implemented, but reported as planned, and apart
+            // from invalid channels, so that each is reported once.
+            WARN_ONCE(WARN_WAVE,
+                      "psg_music_play: the PSG wave channel is planned, not implemented in this "
+                      "engine version; track %u (PSG_WAVE) is left out",
+                      i);
+            continue;
+        }
         if (t->channel >= SERVAL_PSG_CHANNELS) {
             WARN_ONCE(WARN_CHANNEL,
                       "psg_music_play: track %u has an invalid channel (%u); use PSG_SQUARE1, "

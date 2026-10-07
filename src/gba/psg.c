@@ -10,7 +10,9 @@
 // (noise). The hardware plays each tone and its volume envelope by itself;
 // the engine only times notes and lengths, once per frame (serval_psg_update,
 // called by frame_end). Music (music.c) plays on the same channels whenever
-// no sound effect holds them.
+// no sound effect holds them. Tone channel 3, the wave channel (PSG_WAVE,
+// psg_waves_set), is planned: sounds on it are refused, and nothing here
+// touches its registers or wave RAM.
 
 #define CHANNELS 3
 
@@ -52,6 +54,7 @@ enum {
     WARN_VOLUME = 1 << 9,
     WARN_TABLE = 1 << 10,
     WARN_SLIDE_CUTOFF = 1 << 11,
+    WARN_WAVE = 1 << 12,
 };
 static u32 warned;
 
@@ -342,6 +345,16 @@ static bool playable(const PsgSound* s, u32 id) {
                   id);
         return false;
     }
+    if (s->channel == PSG_WAVE) {
+        // Planned (audio.h): refused like an invalid channel until the wave
+        // channel is implemented, but reported as planned, and apart from
+        // invalid channels, so that each is reported once.
+        WARN_ONCE(WARN_WAVE,
+                  "psg_play: the PSG wave channel is planned, not implemented in this engine "
+                  "version; sound %u (PSG_WAVE) is skipped",
+                  id);
+        return false;
+    }
     if (s->channel >= CHANNELS) {
         WARN_ONCE(WARN_CHANNEL,
                   "psg_play: sound %u has an invalid channel (%u); use PSG_SQUARE1, PSG_SQUARE2 "
@@ -401,6 +414,22 @@ void psg_play(u16 sound_id) {
                 : (serval_music_channels & 1u << s->channel) && serval_music_priority > s->priority)
         return;
     play(s);
+}
+
+// Planned (audio.h, docs/audio.md#wave-channel): the wave channel isn't
+// implemented, so the table is ignored and wave RAM left alone. Warns on the
+// first call only (debug builds), whatever psg_table_set() does.
+void psg_waves_set(const u32* waves, u8 count) {
+    (void)waves;
+    (void)count;
+#ifdef SERVAL_DEBUG
+    static bool warned_waves;
+    if (!warned_waves) {
+        warned_waves = true;
+        SERVAL_WARN("psg_waves_set: the PSG wave channel is planned, not implemented in this "
+                    "engine version; the waveforms are ignored");
+    }
+#endif
 }
 
 void serval_psg_play_sound(const PsgSound* sound) {
