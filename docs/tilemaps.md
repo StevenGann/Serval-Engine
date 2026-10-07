@@ -255,10 +255,10 @@ Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` 
 
 ## Raster effects
 
-Per-scanline changes to the background registers, timed by the HBlank interrupt or HBlank DMA: wavy water, split-screen HUDs, multi-speed parallax from one layer. **Decided:** raster effects are declared now as planned API, in `screen.h` and described with the other screen effects in [runtime-systems.md](runtime-systems.md#special-effects); they are implemented in a later minor version.
+Per-scanline changes to the background registers, timed by the HBlank interrupt or HBlank DMA: wavy water, split-screen HUDs, multi-speed parallax from one layer. **Decided:** raster effects are declared now as planned API: `raster_scroll()` (a per-line scroll offset for one map layer), `raster_backdrop()` and `raster_clear()` in `screen.h`, described in [runtime-systems.md](runtime-systems.md#raster-effects); they are implemented in a later minor version.
 
 Design notes for the implementation, from the map side:
 
-- A per-line scroll offset on a streamed layer can show tiles outside the streamed window: streaming keeps valid only the 31×21 tiles the screen covers at the layer's own scroll position, and the screenblock's other entries hold stale tiles. A layer with a raster effect needs streaming to keep a wider window, or offsets limited to what the window covers.
+- A per-line scroll offset on a streamed layer can show tiles outside the streamed window: streaming keeps valid only the 31×21 tiles the screen covers at the layer's own scroll position, and the screenblock's other entries hold stale tiles. So `raster_scroll()` limits one frame's offsets to what VRAM holds around the window (within 9 pixels of each other horizontally and 89 vertically, any offsets on a wrapping axis whose map is 16, 8, 4, 2 or 1 metatiles long; its comment in `screen.h` gives the rule). Streaming a wider window would lift the limit; that is additive.
 - The web target draws each frame from the state at VBlank ([platforms.md](platforms.md#web)), so mid-frame register writes are not seen there; it needs per-line state in its renderer to show them.
 - The debugger should be able to show them ([debug-link.md](debug-link.md)).
