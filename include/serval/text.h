@@ -14,24 +14,28 @@
 
 // Writes a string starting at a character cell. Clipped at the screen's edges;
 // characters outside ASCII 32-127 are shown as '?' (127 is blank). The first
-// call that prints or clears sets up the font and turns layer 0 on.
+// call that prints or clears sets up the font and turns layer 0 on. A NULL
+// string (on the GBA, also a number passed for one) prints nothing and
+// changes nothing (warning in debug builds), in every print function here.
 void text_print(int col, int row, const char* s);
 
 // Like text_print, then blanks the rest of the row, so text that got shorter
 // (say a score going from 10 to 9) leaves nothing behind. Use it for lines
-// that are redrawn with changing content, such as a HUD.
+// that are redrawn with changing content, such as a HUD. A NULL string
+// changes nothing, the rest of the row included (warns).
 void text_print_line(int col, int row, const char* s);
 
 // Like text_print_line on the whole row, centered: blanks the row and writes
 // the string in its middle (one column left of center if the leftover space
-// is odd). A string wider than TEXT_COLS loses characters at both ends.
+// is odd). A string wider than TEXT_COLS loses characters at both ends. A
+// NULL string changes nothing, not even the row (warns).
 void text_print_centered(int row, const char* s);
 
 // Like text_print_centered within `width` columns starting at `col` (say a
 // field beside a HUD panel): blanks those cells of the row and writes the
 // string in their middle. Nothing outside the columns changes; a string wider
-// than `width` loses characters at both ends. A negative width is ignored
-// (warning in debug builds).
+// than `width` loses characters at both ends. A negative width, or a NULL
+// string, is ignored (warning in debug builds).
 void text_print_centered_in(int col, int width, int row, const char* s);
 
 // Clears every character cell.
@@ -90,6 +94,8 @@ void text_set_shadow(bool on);
 // Not checked by the compiler like printf, since its integer rules differ. A
 // NULL %s prints "(null)"; on the GBA, debug builds also catch a %s argument
 // that isn't a pointer at all (usually a number), printing "(?)" and warning.
+// A NULL fmt (on the GBA, also a number passed for one) returns "" (warning
+// in debug builds).
 #define TEXT_FORMAT_MAX 128
 const char* text_format(const char* fmt, ...);
 

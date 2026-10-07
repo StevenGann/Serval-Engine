@@ -34,7 +34,7 @@ static Color colors[TEXT_STYLES][2] = {
 };
 
 #ifdef SERVAL_DEBUG
-static bool warned_style, warned_area;
+static bool warned_style, warned_area, warned_string;
 #endif
 
 // A 4-bit pixel mask (bit 0 = leftmost pixel) spread to 4bpp pixels of color
@@ -189,13 +189,32 @@ static __attribute__((noinline)) void print(int col, int row, const char* s, u32
     print_within(col, row, s, 0, TEXT_COLS, base);
 }
 
+// A string to print: NULL, or a number passed for one, is refused (nothing
+// changes, not even the layer's setup), so no garbage is printed from
+// whatever it points at.
+static bool valid_string(const char* function, const char* s) {
+    if (serval_plausible_pointer(s))
+        return true;
+#ifdef SERVAL_DEBUG
+    if (!warned_string) {
+        warned_string = true;
+        SERVAL_WARN("%s: the string is NULL or not a valid pointer (0x%x); nothing printed",
+                    function, (u32)(uintptr_t)s);
+    }
+#else
+    (void)function;
+#endif
+    return false;
+}
+
 // For the splash screen: style 0's glyphs through another palette bank.
 void serval_text_print_bank(int col, int row, const char* s, u32 palbank) {
     print(col, row, s, entry_base(palbank, 0));
 }
 
 void text_print(int col, int row, const char* s) {
-    print(col, row, s, entry_base(TEXT_PALBANK, style));
+    if (valid_string("text_print", s))
+        print(col, row, s, entry_base(TEXT_PALBANK, style));
 }
 
 // Blanks columns lo to hi - 1 of a row, clipped to the screen.
@@ -207,7 +226,9 @@ static inline void blank(int row, int lo, int hi) {
 }
 
 void text_print_line(int col, int row, const char* s) {
-    text_print(col, row, s);
+    if (!valid_string("text_print_line", s))
+        return;
+    print(col, row, s, entry_base(TEXT_PALBANK, style));
     int end = col;
     while (*s++)
         end++;
@@ -244,8 +265,8 @@ void text_clear_area(int col, int row, int width, int height) {
         blank(r, col, col + width);
 }
 
-void text_print_centered_in(int col, int width, int row, const char* s) {
-    if (!valid_area("text_print_centered_in", width, 0))
+static void print_centered_in(const char* function, int col, int width, int row, const char* s) {
+    if (!valid_area(function, width, 0) || !valid_string(function, s))
         return;
     int length = 0;
     while (s[length])
@@ -258,6 +279,10 @@ void text_print_centered_in(int col, int width, int row, const char* s) {
                  entry_base(TEXT_PALBANK, style));
 }
 
+void text_print_centered_in(int col, int width, int row, const char* s) {
+    print_centered_in("text_print_centered_in", col, width, row, s);
+}
+
 void text_print_centered(int row, const char* s) {
-    text_print_centered_in(0, TEXT_COLS, row, s);
+    print_centered_in("text_print_centered", 0, TEXT_COLS, row, s);
 }

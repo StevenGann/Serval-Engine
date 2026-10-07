@@ -277,6 +277,19 @@ const char* text_format(const char* fmt, ...) {
     static u32 next;
     char* out = buffers[next];
     next = (next + 1) % 4;
+    if (!serval_plausible_pointer(fmt)) {
+#ifdef SERVAL_DEBUG
+        static bool warned_format;
+        if (!warned_format) {
+            warned_format = true;
+            SERVAL_WARN("text_format: the format string is NULL or not a valid pointer (0x%x); "
+                        "returns \"\"",
+                        (u32)(uintptr_t)fmt);
+        }
+#endif
+        out[0] = '\0';
+        return out;
+    }
 
     va_list args;
     va_start(args, fmt);

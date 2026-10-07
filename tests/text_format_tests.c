@@ -232,6 +232,19 @@ static void text_format_keeps_its_limit(void) {
     CHECK(equals(text_format("%.2000s", TWO_HUNDRED_FORTY), FORTY FORTY FORTY "0123456"));
 }
 
+// A NULL format string gives "" (reported once) instead of reading address 0.
+static void null_format_gives_an_empty_string(void) {
+    u32 warnings = debug_warning_count();
+    const char* volatile none = NULL; // not a constant the compiler could see
+    CHECK(equals(text_format(none), ""));
+    CHECK(equals(text_format(none, 5), ""));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+}
+
 TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_text_and_percent},
            {"integers", integers}, {"width_and_zero_padding", width_and_zero_padding},
            {"accepts_fixed_width_types", accepts_fixed_width_types},
@@ -248,4 +261,5 @@ TEST_SUITE(text_format_tests, "text_format", {"plain_text_and_percent", plain_te
            {"longer_warnings_are_cut_at_247", longer_warnings_are_cut_at_247},
            {"wide_fields_in_warnings", wide_fields_in_warnings},
            {"warning_while_formatting_a_warning", warning_while_formatting_a_warning},
-           {"text_format_keeps_its_limit", text_format_keeps_its_limit});
+           {"text_format_keeps_its_limit", text_format_keeps_its_limit},
+           {"null_format_gives_an_empty_string", null_format_gives_an_empty_string});

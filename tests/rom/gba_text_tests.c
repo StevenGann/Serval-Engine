@@ -202,6 +202,27 @@ static void clear_area_clears_only_the_rectangle(void) {
     text_clear();
 }
 
+// A NULL string prints nothing and changes nothing, in every print function;
+// reported once.
+static void null_strings_print_nothing(void) {
+    text_clear();
+    text_print(0, 7, "##############################");
+    u32 warnings = debug_warning_count();
+    const char* volatile none = NULL; // not a constant the compiler could see
+    text_print(0, 7, none);
+    text_print_line(4, 7, none);
+    text_print_centered(7, none);
+    text_print_centered_in(2, 10, 7, none);
+    for (int col = 0; col < TEXT_COLS; col++)
+        CHECK((ENTRY(col, 7) & SE_ID_MASK) == GLYPH('#'));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1);
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    text_clear();
+}
+
 TEST_SUITE(gba_text_tests, "gba_text",
            {"print_writes_glyphs_and_enables_layer", print_writes_glyphs_and_enables_layer},
            {"print_clips_and_replaces_unprintable", print_clips_and_replaces_unprintable},
@@ -211,4 +232,5 @@ TEST_SUITE(gba_text_tests, "gba_text",
            {"styles_print_their_own_glyphs_and_colors", styles_print_their_own_glyphs_and_colors},
            {"style_colors_and_shadow", style_colors_and_shadow},
            {"centered_in_keeps_to_its_columns", centered_in_keeps_to_its_columns},
-           {"clear_area_clears_only_the_rectangle", clear_area_clears_only_the_rectangle});
+           {"clear_area_clears_only_the_rectangle", clear_area_clears_only_the_rectangle},
+           {"null_strings_print_nothing", null_strings_print_nothing});
