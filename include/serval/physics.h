@@ -166,14 +166,16 @@ u32 body_hit_side(u32 a, u32 b);
 extern u8 body_contact[MAX_ENT];
 // In body_contact (with physics_set_contacts(true)), with the side bit of the
 // open edge (physics_set_open_edges) the body left through: set only on the
-// frame the body ends up entirely outside the bounds past that edge, e.g.
+// frame the body becomes entirely outside the bounds past that edge, e.g.
 // BODY_CONTACT_EXIT | BODY_SIDE_LEFT for a ball that left through the open
-// left edge.
-// Caveat: "entirely outside" includes touching the edge from outside: a body
-// at pos_x + body_w == left (or pos_x == right, and likewise for top and
-// bottom) has exited. A body that lands exactly there exits a frame earlier
-// than a game's own `pos_x < left - body_w` check says it is out; use one
-// test or the other, not both.
+// left edge. Entirely outside means, in pixels (bounds as given to
+// physics_set_bounds, right and bottom exclusive):
+//   left:   pos_x + body_w <= left     right:  pos_x >= right
+//   top:    pos_y + body_h <= top      bottom: pos_y >= bottom
+// At pos_x + body_w == left the body's last column is already outside, so a
+// game's own `pos_x < left - body_w` test is a frame late for a body that
+// lands exactly there. Use BODY_CONTACT_EXIT rather than a position test of
+// the game's own.
 #define BODY_CONTACT_EXIT (1 << 5)
 
 // Makes sys_physics() report contacts in body_contact (true) or not (false,

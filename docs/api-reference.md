@@ -158,7 +158,7 @@ An entity with `C_POS | C_VEL | C_BODY` is a body. Body pools, zeroed by `entity
 | `u8 body_friction[]` | Speed lost per frame while touching a floor, in 256ths (0 = none). The loss is rounded up, so any non-zero friction eventually stops a body. |
 | `u16 body_max_fall[]` | Maximum fall speed in pixels per frame, fixed point like velocities (`FX(5)`, or `FX(3) / 2` for 1.5; 0 = no limit; under 256): after gravity is added, the velocity in the direction gravity pulls is limited to it, on each axis gravity acts on. A faster speed the game sets (a jump against gravity) is kept until gravity is next applied. |
 | `s8 body_gravity[]` | How strongly gravity pulls the body, written with `BODY_GRAVITY(sixteenths)`: `BODY_GRAVITY(16)` normal, `(8)` half, `(0)` none, `(-16)` reversed (range −112 to 143). Stores the scale minus 16, so 0 (the default) is normal gravity. Floors follow the body's own gravity. While every body has normal gravity `sys_physics()` costs the same; otherwise it takes its general loop and moves scaled bodies out of line, in ROM (32 bodies, 4 scaled: ~4,000 cycles more). |
-| `u8 body_contact[]` | With `physics_set_contacts(true)`: the walls of the bounds the body touched in the last `sys_physics()`, as `BODY_SIDE_*` bits of the body's side (`BODY_SIDE_BOTTOM` for the bottom bound...), set on the frame it bounces and on every frame it rests against a wall. `BODY_CONTACT_EXIT` plus a side: the body ended up entirely outside through that open edge this frame (set on that frame only). A wrapping axis reports nothing. The same pool as map bodies' contacts ([map.h](#maph)); read only. |
+| `u8 body_contact[]` | With `physics_set_contacts(true)`: the walls of the bounds the body touched in the last `sys_physics()`, as `BODY_SIDE_*` bits of the body's side (`BODY_SIDE_BOTTOM` for the bottom bound...), set on the frame it bounces and on every frame it rests against a wall. `BODY_CONTACT_EXIT` plus a side: the body became entirely outside through that open edge this frame (set on that frame only; the exact test per edge is in the caveat below). A wrapping axis reports nothing. The same pool as map bodies' contacts ([map.h](#maph)); read only. |
 
 Map bodies use `body_bounce`, `body_friction`, `body_max_fall` and `body_gravity` too ([map.h](#maph)).
 
@@ -175,7 +175,7 @@ Map bodies use `body_bounce`, `body_friction`, `body_max_fall` and `body_gravity
 
 **Caveats**
 
-- `BODY_CONTACT_EXIT` counts a body touching the edge from outside as exited: `pos_x + body_w == left` (or `pos_x == right`; likewise top and bottom). A body that lands exactly there exits a frame earlier than a typical `pos_x < left - body_w` check in game code says it is out; use one test or the other, not both. (Wrapping is the other way round: a body touching the low edge from outside hasn't wrapped yet.)
+- `BODY_CONTACT_EXIT` is set on the frame a body becomes entirely outside past an open edge, in pixels: left `pos_x + body_w <= left`, right `pos_x >= right`, top `pos_y + body_h <= top`, bottom `pos_y >= bottom` (right and bottom are exclusive). At `pos_x + body_w == left` the body's last column is already outside, so a game's own `pos_x < left - body_w` test is a frame late for a body that lands exactly there: use `BODY_CONTACT_EXIT` rather than a position test of your own. (Wrapping is different: a body at exactly `pos_x + body_w == left` hasn't wrapped yet, so one standing there doesn't jump back and forth.)
 
 ## map.h
 
