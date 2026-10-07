@@ -49,8 +49,9 @@ u32 save_slot_capacity(void);
 // save_slot_count() - 1), tagged with the game's save format version (any
 // number the game picks, raised when the saved struct changes). Returns false
 // (warning in debug builds) for a bad slot, size or data pointer, or if the
-// save didn't verify (read back differently: no save memory of this type);
-// the slot then keeps its previous save. On the GBA with SRAM it takes about
+// save didn't verify (read back differently, or the memory reported a failure:
+// no save memory of this type, an unsupported Flash chip, a timeout); the
+// slot then keeps its previous save. On the GBA with SRAM it takes about
 // 1.4 ms for 100 bytes and 22 ms (over a frame) for a full slot; Flash and
 // EEPROM are slower (docs/runtime-systems.md#save-data): call it at a natural
 // pause (game over, a menu), not every frame.
@@ -66,12 +67,14 @@ bool save_write(u32 slot, const void* data, u32 size, u16 version);
 int save_read(u32 slot, void* data, u32 size, u16 version);
 
 // The version and size of the intact save in a slot, or 0 if it holds none
-// (empty or corrupt). A save's size is never 0, so save_slot_size(slot) != 0
-// tells whether the slot holds a save.
+// (empty or corrupt) or for a bad slot (warning in debug builds). A save's
+// size is never 0, so save_slot_size(slot) != 0 tells whether the slot holds
+// a save.
 u16 save_slot_version(u32 slot);
 u32 save_slot_size(u32 slot);
 
-// Empties a slot (both of its copies; all or nothing on power loss).
+// Empties a slot (both of its copies; all or nothing on power loss). A bad
+// slot is ignored (warning in debug builds).
 void save_erase(u32 slot);
 
 #endif // SERVAL_SAVE_H

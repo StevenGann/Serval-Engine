@@ -45,7 +45,7 @@ FIXED fx_cos(u16 angle);
 // right, ANGLE_DEG(90) down (y points down), ANGLE_DEG(180) left,
 // ANGLE_DEG(270) up. Aim at a target with angle_of(tx - x, ty - y). Accurate
 // to 0.1 degree for any vector, tiny or huge (any FIXED values); (0, 0) gives
-// 0. No division: shifts, one multiply and small tables.
+// 0. No division: shifts, two multiplies and small tables.
 u16 angle_of(FIXED dx, FIXED dy);
 
 // The length of the vector (dx, dy), e.g. the distance between two points,

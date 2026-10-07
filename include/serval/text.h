@@ -4,7 +4,7 @@
 // Minimal text for HUDs and debugging: a fixed 8x8 font on a grid of
 // TEXT_COLS x TEXT_ROWS characters, drawn on background layer 0 (the HUD layer,
 // docs/tilemaps.md). The full text system (variable-width fonts, dialogue
-// boxes) is planned separately; see docs/runtime-systems.md.
+// boxes) may come later, with no API yet; see docs/runtime-systems.md.
 
 #include "serval/platform.h"
 #include "serval/screen.h"
@@ -13,8 +13,8 @@
 #define TEXT_ROWS 20
 
 // Writes a string starting at a character cell. Clipped at the screen's edges;
-// characters outside printable ASCII are shown as '?'. The first text call
-// sets up the font and turns layer 0 on.
+// characters outside ASCII 32-127 are shown as '?' (127 is blank). The first
+// call that prints or clears sets up the font and turns layer 0 on.
 void text_print(int col, int row, const char* s);
 
 // Like text_print, then blanks the rest of the row, so text that got shorter
@@ -78,8 +78,9 @@ void text_set_shadow(bool on);
 // (%ld reads a long); %lld prints only the low 32 bits. Other conversions
 // (such as %f) are printed as written, and a precision on anything but %s is
 // ignored, with a warning in debug builds. Returns one of four rotating
-// static buffers of TEXT_FORMAT_MAX characters, so a few results can be used
-// together; longer output is truncated.
+// static buffers of TEXT_FORMAT_MAX characters (the terminating zero
+// included), so a few results can be used together; longer output is
+// truncated.
 //
 // Not checked by the compiler like printf, since its integer rules differ. A
 // NULL %s prints "(null)"; on the GBA, debug builds also catch a %s argument
