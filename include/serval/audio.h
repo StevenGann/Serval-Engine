@@ -218,9 +218,10 @@ typedef struct {
 // Starts a song from the beginning at its own tempo, replacing the one
 // playing (paused or not). Sound effects playing keep their channels; the
 // music comes in on each channel when its sound ends. Advanced by frame_end().
-// A NULL song, or one whose tracks are all invalid, plays nothing (warns);
-// invalid tracks are left out (warns). Tracker music (music_play()) is a
-// separate player and plays on.
+// A NULL song, one with no tracks (.track_count 0) or one whose tracks are
+// all invalid plays nothing (warns), and the song playing stops all the
+// same; invalid tracks are left out (warns). Tracker music (music_play()) is
+// a separate player and plays on.
 void psg_music_play(const PsgSong* song);
 
 // Stops the PSG music. Sound effects and tracker music keep playing.

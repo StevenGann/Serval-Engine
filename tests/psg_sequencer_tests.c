@@ -296,6 +296,11 @@ static void song_mistakes_are_reported_and_safe(void) {
     before = debug_warning_count();
     CHECK(serval_psg_seq_start(&seq, &no_tracks) == 0);
     REPORTED_ONCE(debug_warning_count() - before);
+    static const PsgSong empty = {.tempo = 100, .tracks = bad_tracks}; // .track_count 0
+    before = debug_warning_count();
+    CHECK(serval_psg_seq_start(&seq, &empty) == 0);
+    CHECK(serval_psg_seq_start(&seq, &empty) == 0);
+    REPORTED_ONCE(debug_warning_count() - before);
 }
 
 TEST_SUITE(psg_sequencer_tests, "psg_sequencer",

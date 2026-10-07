@@ -44,6 +44,7 @@ enum {
     WARN_TEMPO = 1 << 9,
     WARN_FIELDS = 1 << 10,
     WARN_WAVE = 1 << 11,
+    WARN_NO_TRACKS = 1 << 12,
 };
 static u32 warned;
 
@@ -130,7 +131,12 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
                              "plays");
         return 0;
     }
-    if (song->track_count && !serval_plausible_pointer(song->tracks)) {
+    if (song->track_count == 0) {
+        WARN_ONCE(WARN_NO_TRACKS, "psg_music_play: the song has no tracks (.track_count 0); "
+                                  "nothing plays. Set .tracks and .track_count");
+        return 0;
+    }
+    if (!serval_plausible_pointer(song->tracks)) {
         WARN_ONCE(WARN_TRACKS,
                   "psg_music_play: the song has .track_count %u but .tracks is not set; "
                   "nothing plays",
