@@ -40,7 +40,7 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        ANIM_END ROOM_START
   label:                               a label at the next byte (a jump or CALL
                                        target); it may precede an op on its line
-  MNEMONIC [operand]                   one opcode: a VM_OP_* name without the
+  MNEMONIC [operand, ...]              one opcode: a VM_OP_* name without the
                                        prefix; PUSH expr picks PUSH8, PUSH16 or
                                        PUSH32, the smallest that holds the value
   .byte expr, expr, ...                raw bytes, where they appear
@@ -53,11 +53,12 @@ Operands: GETP and SETP take a property (X, BODY_W, FIELD0, ...), SYS an
 engine call (TEXT_PRINT, ...), SPAWN and NEXTI an object, TRACE a string, LDG
 and STG a global, LDA, STA and LEN an array, LDL and STL a number, ENTER two
 numbers (ENTER 0, 3), JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an
-expression; a number or an expression works wherever a name does. In
-expressions, objects, strings, globals and arrays are named OBJ_NAME,
-STR_NAME, G_NAME and ARR_NAME, as the header --defs writes them. Expressions:
-integers (decimal or 0x hex, a trailing u ignored), names (the listing's, then
---header constants in the order given, then vm.h's VM_* names), the operators
+expression; a number or an expression works wherever a name does, except as
+a jump or call target. In expressions, objects, strings, globals and arrays
+are named OBJ_NAME, STR_NAME, G_NAME and ARR_NAME, as the header --defs
+writes them. Expressions: integers (decimal or 0x hex, a trailing u
+ignored), names (the listing's, then --header constants, then vm.h's VM_*
+names), the operators
 + - * / << >> | & ~ and parentheses with C precedence, and the engine's macros
 FX(n) = n * 256 and C_GAME(n) = 1 << (16 + n). Names must be defined before
 they are used. The result must fit in
