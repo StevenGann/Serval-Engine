@@ -107,9 +107,34 @@
 //     (map_collision_at below them)
 //   - A song in 6/8 (PsgSong.ticks_per_beat 3: a tick is an eighth note)
 //
-// Demonstrates in stage 1-4, the castle (stage_castle.c, boss.c): a
-// placeholder for now, on the underground's art: spikes, plank ledges, an
-// exit, and the ending hooks (StageDef.ending_start, ending_update).
+// Demonstrates in stage 1-4, the castle (stage_castle.c, boss.c):
+//   - Lava as a hazard: open metatiles tagged TAG_HAZARD, which the serval
+//     sinks into and dies in, big or small (the stage's hazard hook), over
+//     solid ones tagged too; the surface is only a picture, half a metatile
+//     below the floor, so standing on a pit's edge is safe. Enemies and fish
+//     that walk into it burn up (map_tags_in on their bodies). Its surface
+//     rolls and the torches flicker (tileset_set_tiles).
+//   - Fire bars: chains of fireballs turning about their blocks, placed with
+//     fx_cos and fx_sin and drawn by the stage's draw hook (sprite_draw), not
+//     entities; their contact with the serval is tested by hand
+//   - Embers: map bodies resting on the deep lava, drawn behind the playfield
+//     (SPRITE_BEHIND_PLAYFIELD) so the lava hides them until they leap out of
+//     it
+//   - color_mix() for the lava's glow: the backdrop swells and flickers (the
+//     effects hook) and flashes when the lever is pulled; the far colonnade's
+//     palette is the near stone's mixed toward the backdrop when the stage
+//     loads (the load hook)
+//   - A boss drawn as a metasprite (SPRITE_ASSET_METASPRITE): the 48x48
+//     dragon, nine 16x16 pieces a frame, one entity and one map body, flipped
+//     as a whole to face the serval; its fireballs aimed with angle_of(); a
+//     white flash drawn with another palette of its sprite group
+//     (SPRITE_PALETTE), its own mixed toward white with color_mix when the
+//     stage loads; sinking into the lava behind the playfield
+//   - camera_stop_x holding the camera at the boss's arena, and a bridge
+//     falling one metatile at a time (map_set_cell: 12 of the 64 changes
+//     MAP_MAX_CHANGES allows), its pieces tumbling away as debris
+//   - The ending hooks (StageDef.ending_start, ending_update): a placeholder
+//     for now, a message on a black screen
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
@@ -224,10 +249,40 @@
 //   - The end: a broad bough on a great tree, the goal pole with a golden
 //     acorn standing on a log end, and the great tree's trunk with a hollow
 //     at its foot, lit from within; the serval walks into it.
-//   Stage 1-4, the castle (a placeholder for now):
-//   - The underground's tiles over a red-black backdrop: a spike dip, a pit
-//     of spikes crossed on plank ledges, a woodlouse, and the timbered exit at
-//     the end. A short sketch of a tune in D minor.
+//   Stage 1-4, the castle:
+//   - Grey stone halls: through the arches of a dim colonnade scrolling
+//     behind, a red-black glow that swells and flickers every two seconds or
+//     so; a ceiling of dark masonry with hanging teeth, torches flickering on
+//     the walls, a floor of big grey blocks. A tense tune in C minor (melody,
+//     a bass in eighth notes, drums) that loops every 32 seconds, sped up from
+//     120 to 150 beats per minute when time runs low.
+//   - Pits of rolling orange lava, its surface half a metatile below the
+//     floor: falling in loses a life, big or small (the serval sinks a few
+//     pixels in, hops up and falls away). Embers leap out of some pits with a
+//     soft hiss, rise nearly five metatiles above the floor and fall back,
+//     every two seconds or so; fire bars of five fireballs turn about iron
+//     blocks, a turn in four seconds, some each way. Touching an ember or a
+//     fireball hurts.
+//   - Black salamanders with yellow blotches walk like beetles and go flat
+//     when stomped; one that walks into a pit vanishes in a sparkle.
+//     Grey-violet bricks, gold bonus blocks (one with a fish) and gems;
+//     one-way stone ledges over a wide lava lake, a low passage, stone pillars
+//     across another lake.
+//   - At the end the hall opens over a lava lake crossed by a stone bridge,
+//     and on it stands a teal dragon with ivory horns and magenta wings, three
+//     times as tall as the small serval. As the serval comes near, the dragon
+//     roars (a rumble and a falling alarm of notes), and the camera stops with
+//     a lever at the screen's right edge. The dragon paces its half of the
+//     bridge facing the serval, now throwing its head back and breathing a
+//     fireball (a hiss) that flies at the serval, now crouching and hopping
+//     straight up (a thud as it lands). Touching it or its fire hurts. Jump
+//     over it (most easily as it walks toward you) or run under it while it
+//     hops, and walk into the lever: the music stops, a clunk, the hall
+//     flashes white, the dragon flashes white and freezes, and the bridge
+//     breaks up from the lever's end into tumbling pieces. The dragon falls
+//     into the lava (a long hiss) and sinks out of sight, and the serval walks
+//     out through a gateway, its portcullis raised, into the moonlit night,
+//     with the fanfare.
 //   After the last stage:
 //   - "STAGE CLEAR!", then a fade to a black screen: "THE END", "THE SERVAL
 //     IS HOME AGAIN", "THANK YOU FOR PLAYING" with the fanfare, for ten

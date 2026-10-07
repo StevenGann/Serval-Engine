@@ -126,7 +126,14 @@ High in a forest: one-way canopies on rows 4 to 9 over bottomless gaps, caterpil
 
 #### Stage 1-4, the castle
 
-A placeholder for now: a short level on the underground's art ending at an exit, with an empty slot for the boss (`boss.c`) and a placeholder ending (`StageDef.ending_start`, `ending_update`).
+Grey stone halls over lava, with fire bars, leaping embers, salamanders and one-way stone ledges, and a dragon on a bridge at the end (`stage_castle.c`, `boss.c`); the ending is still a placeholder. What it used and exposed:
+
+- **A boss as a metasprite: worked.** The dragon is one entity and one map body (28x36) drawn as a 48x48 metasprite of nine 16x16 pieces, flipped as a whole to face the serval and drawn behind the playfield (`SPRITE_BEHIND_PLAYFIELD`) as it sinks, so the lava hides it. Its eight frames are cut into a 3x3 grid and share the parts that don't change (50 parts, 200 tiles of sprite VRAM): a job for an editor's build, done here by the example's conversion script. A metasprite has the same number of pieces in every frame, so a frame with an empty cell would still spend a hardware sprite on it (the dragon has none).
+- **Palette effects still wait on palette writes.** The dragon's white flash, when the lever is pulled, is its whole palette mixed toward white with `color_mix()` when the stage loads, into RAM its sprite group points at, and switched per draw with `SPRITE_PALETTE`. The lava's glow is the backdrop's (`screen_set_backdrop()`), seen through the far colonnade's arches, whose palette is the stone's dimmed toward it at load. Lava that glows on its own tiles, or torchlight flickering on the walls, needs `tileset_set_colors()` (planned).
+- **Hazards are per metatile.** A pit's lava is open metatiles tagged `TAG_HAZARD`, which the serval sinks into, over solid ones tagged too, on which embers (map bodies) rest out of sight. Its surface can't be tagged: the hazard test (`map_tags_in()` around the serval) includes the row under its feet, so a tagged row level with the floor would hurt a serval standing on the pit's edge. The surface is a picture half a metatile lower, and the hazard is the row below it.
+- **A bridge falling with `map_set_cell()`: worked.** It takes 12 of `MAP_MAX_CHANGES` (64); with every block, brick and gem of the stage changed too, the stage stays under 30.
+- **`camera_stop_x` only stops the camera.** The frame's camera follows the serval and never leads, so the arena holds once the serval is `CAMERA_LEAD` pixels from the screen's left edge: the bridge reaches back past that point, and the lever stands at the screen's right edge. Not an engine gap; a game wanting the arena framed before the fight would move the camera itself.
+- **Fire bars need no entities.** Their balls are placed with `fx_cos()` and `fx_sin()`, drawn with `sprite_draw()` in the stage's draw hook and tested against the serval by hand; the dragon aims its fireballs with `angle_of()`.
 
 ## What `breakout` exposed
 
