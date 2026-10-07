@@ -1,0 +1,1336 @@
+#!/usr/bin/env python3
+"""Assemble and disassemble script blobs for Serval Engine's VM.
+
+The reference implementation of the blob format in docs/vm.md (format v1), the
+spec made executable: `asm` turns a text listing into a blob, `dis` turns a
+blob back into a listing that reassembles to the same bytes. Every number
+(opcodes, events, properties, engine calls, limits) is read from
+include/serval/vm.h when the tool starts; the one table kept here is each
+opcode's operand layout, which is checked against vm.h's opcode list at start.
+
+This is an assembler, not a language: one mnemonic per opcode, labels,
+constants and directives for the blob's tables. There are no expressions
+beyond integer constant arithmetic, no if or while, no variables and no event
+blocks. Those are the job of Studio Advance's script compiler, which emits
+this format and is not part of this repository.
+
+Usage:
+  svm.py asm LISTING [--header FILE]... [-o OUT.bin] [--c OUT.c --symbol NAME]
+                     [--defs OUT.h] [--prefix P]
+  svm.py dis BLOB.bin [-o OUT.svm]
+
+Listing syntax, one statement per line; `;` starts a comment; case matters:
+
+  .const NAME expr                     a constant for expressions
+  .object NAME mask=expr sprite=expr   an object, numbered from 0 in order of
+                                       appearance (mask and sprite default to 0)
+  .string NAME "text"                  a string, numbered from 0: printable
+                                       ASCII, with \\" and \\\\ for those two
+  .globals NAME NAME ...               globals, numbered from 0 (may repeat)
+  .handler OBJECT EVENT                the code that follows is OBJECT's handler
+                                       for EVENT: CREATE STEP DESTROY COLLISION
+                                       ANIM_END ROOM_START
+  label:                               a label at the next byte (a jump or CALL
+                                       target); it may precede an op on its line
+  MNEMONIC [operand]                   one opcode: a VM_OP_* name without the
+                                       prefix; PUSH expr picks PUSH8, PUSH16 or
+                                       PUSH32, the smallest that holds the value
+  .byte expr, expr, ...                raw bytes, where they appear
+  .strings [NAME ...]                  the named strings' bytes (none named: all
+                                       not yet placed) here instead of after the
+                                       code
+
+Operands: GETP and SETP take a property (X, BODY_W, ...), SYS an engine call
+(TEXT_PRINT, ...), SPAWN an object, TRACE a string, LDG and STG a global, LDL
+and STL a number, JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an expression; a
+number or an expression works wherever a name does. In expressions, objects,
+strings and globals are named OBJ_NAME, STR_NAME and G_NAME, as the header
+--defs writes them. Expressions: integers (decimal or 0x hex, a trailing u
+ignored), names (the listing's, then --header constants in the order given,
+then vm.h's VM_* names), the operators + - * / << >> | & ~ and parentheses
+with C precedence, and the engine's macros FX(n) = n * 256 and C_GAME(n) = 1 <<
+(16 + n). Names must be defined before they are used. The result must fit in
+32 bits (signed or unsigned). Layout: the header, the object table, the string
+table, the code in listing order, then the string bytes.
+
+--header FILE scrapes integer constants from a C header, nothing more:
+`#define NAME expr` with expr in the grammar above, and the enumerators of
+enum blocks, valued as C values them. Everything else (function-like macros,
+casts, #if, which is ignored so both branches are read) is skipped. A name
+defined twice with different values is an error.
+
+Errors name the listing's file and line; exit status 1 and nothing written.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+TOOL = "tools/svm.py"
+VM_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "include", "serval", "vm.h")
+
+MAGIC = b"SVMB"
+MAX_TABLE_ENTRIES = 0xFFFF  # objects and strings: 16-bit counts
+
+# The one hand-written table: each opcode's operand layout from docs/vm.md's
+# opcode reference, and what a name in that operand refers to. check_operands()
+# makes sure it matches vm.h's VM_OP_* list, so this is the only thing that can
+# drift and it can't drift silently.
+OPERANDS = {
+    "NOP": ("none", None),
+    "HALT": ("none", None),
+    "PUSH8": ("s8", None),
+    "PUSH16": ("s16", None),
+    "PUSH32": ("s32", None),
+    "DUP": ("none", None),
+    "DROP": ("none", None),
+    "SWAP": ("none", None),
+    "LDG": ("u8", "global"),
+    "STG": ("u8", "global"),
+    "LDL": ("u8", None),
+    "STL": ("u8", None),
+    "ADD": ("none", None),
+    "SUB": ("none", None),
+    "MUL": ("none", None),
+    "DIV": ("none", None),
+    "MOD": ("none", None),
+    "NEG": ("none", None),
+    "FXMUL": ("none", None),
+    "FXDIV": ("none", None),
+    "AND": ("none", None),
+    "OR": ("none", None),
+    "XOR": ("none", None),
+    "BNOT": ("none", None),
+    "SHL": ("none", None),
+    "SHR": ("none", None),
+    "LNOT": ("none", None),
+    "EQ": ("none", None),
+    "NE": ("none", None),
+    "LT": ("none", None),
+    "LE": ("none", None),
+    "GT": ("none", None),
+    "GE": ("none", None),
+    "JMP": ("rel16", "label"),
+    "JZ": ("rel16", "label"),
+    "JNZ": ("rel16", "label"),
+    "CALL": ("u32", "label"),
+    "RET": ("none", None),
+    "WAIT": ("none", None),
+    "WAIT_ANIM": ("none", None),
+    "WAIT_MOVE": ("none", None),
+    "INTERRUPTIBLE": ("none", None),
+    "SELF": ("none", None),
+    "OTHER": ("none", None),
+    "GETP": ("u8", "prop"),
+    "SETP": ("u8", "prop"),
+    "SPAWN": ("u16", "object"),
+    "KILL": ("none", None),
+    "SYS": ("u8", "sys"),
+    "BRK": ("none", None),
+    "TRACE": ("u16", "string"),
+}
+OPERAND_SIZE = {"none": 0, "s8": 1, "u8": 1, "s16": 2, "u16": 2, "rel16": 2, "s32": 4, "u32": 4}
+OPERAND_RANGE = {
+    "s8": (-0x80, 0x7F),
+    "s16": (-0x8000, 0x7FFF),
+    "s32": (-0x80000000, 0xFFFFFFFF),  # a u32 bit pattern is accepted for a cell
+    "u8": (0, 0xFF),
+    "u16": (0, 0xFFFF),
+    "u32": (0, 0xFFFFFFFF),
+    "rel16": (-0x8000, 0x7FFF),
+}
+# A handler that ends in one of these can't fall off the end of the blob.
+HANDLER_ENDS = ("HALT", "RET", "JMP")
+
+
+class SvmError(Exception):
+    """One or more problems, each "file:line: error: message" (file and line
+    optional)."""
+
+    def __init__(self, message, file=None, line=None):
+        super().__init__(message)
+        self.errors = [(file, line, message)]
+
+    @classmethod
+    def many(cls, errors):
+        e = cls.__new__(cls)
+        Exception.__init__(e, errors[0][2])
+        e.errors = list(errors)
+        return e
+
+    def __str__(self):
+        return "\n".join(_located(f, l, "error", m) for f, l, m in self.errors)
+
+
+def _located(file, line, kind, message):
+    where = ""
+    if file is not None:
+        where = f"{file}:"
+        if line is not None:
+            where += f"{line}:"
+        where += " "
+    return f"{where}{kind}: {message}"
+
+
+# --- Expressions -------------------------------------------------------------
+
+
+class ExprError(Exception):
+    pass
+
+
+_TOKEN = re.compile(
+    r"\s*(?:(?P<num>0[xX][0-9A-Fa-f]+|[0-9]+)[uU]?|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    r"|(?P<op><<|>>|[-+*/|&~(),])|(?P<bad>\S))")
+
+INT32_MIN, UINT32_MAX = -0x80000000, 0xFFFFFFFF
+
+
+def _tokenize(text):
+    tokens = []
+    pos = 0
+    while pos < len(text):
+        m = _TOKEN.match(text, pos)
+        if m is None:  # only trailing whitespace is left
+            break
+        pos = m.end()
+        if m.group("num") is not None:
+            digits = m.group("num")
+            value = int(digits, 16) if digits[:2].lower() == "0x" else int(digits, 10)
+            tokens.append(("num", value))
+        elif m.group("name") is not None:
+            tokens.append(("name", m.group("name")))
+        elif m.group("op") is not None:
+            tokens.append(("op", m.group("op")))
+        elif m.group("bad") is not None:
+            raise ExprError(f"unexpected character {m.group('bad')!r}")
+    return tokens
+
+
+def _c_div(a, b):
+    """C's integer division: rounds toward zero."""
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+def _function(name, arg):
+    if name == "FX":
+        return arg * 256
+    if name == "C_GAME":
+        if not 0 <= arg <= 14:
+            raise ExprError(f"C_GAME({arg}): n must be 0 to 14")
+        return 1 << (16 + arg)
+    raise ExprError(f"unknown function {name}()")
+
+
+class _Parser:
+    """Recursive descent over the token list, C precedence: unary - ~ ; * / ;
+    + - ; << >> ; & ; |."""
+
+    def __init__(self, tokens, resolve):
+        self.tokens = tokens
+        self.pos = 0
+        self.resolve = resolve
+
+    def peek(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else ("end", None)
+
+    def take(self):
+        token = self.peek()
+        self.pos += 1
+        return token
+
+    def accept(self, *ops):
+        kind, value = self.peek()
+        if kind == "op" and value in ops:
+            self.pos += 1
+            return value
+        return None
+
+    def expect(self, op):
+        if self.accept(op) is None:
+            raise ExprError(f"expected {op!r}, found {self.describe(self.peek())}")
+
+    @staticmethod
+    def describe(token):
+        kind, value = token
+        if kind == "end":
+            return "the end of the expression"
+        if kind == "num":
+            return f"the number {value}"
+        return repr(value)
+
+    def expr(self):
+        value = self.band()
+        while self.accept("|"):
+            value |= self.band()
+        return value
+
+    def band(self):
+        value = self.shift()
+        while self.accept("&"):
+            value &= self.shift()
+        return value
+
+    def shift(self):
+        value = self.add()
+        while True:
+            op = self.accept("<<", ">>")
+            if op is None:
+                return value
+            count = self.add()
+            if not 0 <= count <= 63:
+                raise ExprError(f"shift count {count} is not 0 to 63")
+            value = value << count if op == "<<" else value >> count
+
+    def add(self):
+        value = self.mul()
+        while True:
+            op = self.accept("+", "-")
+            if op is None:
+                return value
+            right = self.mul()
+            value = value + right if op == "+" else value - right
+
+    def mul(self):
+        value = self.unary()
+        while True:
+            op = self.accept("*", "/")
+            if op is None:
+                return value
+            right = self.unary()
+            if op == "*":
+                value *= right
+            elif right == 0:
+                raise ExprError("division by zero")
+            else:
+                value = _c_div(value, right)
+
+    def unary(self):
+        op = self.accept("-", "~", "+")
+        if op == "-":
+            return -self.unary()
+        if op == "~":
+            return ~self.unary()
+        if op == "+":
+            return self.unary()
+        return self.primary()
+
+    def primary(self):
+        kind, value = self.take()
+        if kind == "num":
+            return value
+        if kind == "name":
+            if self.accept("("):
+                arg = self.expr()
+                self.expect(")")
+                return _function(value, arg)
+            return self.resolve(value)
+        if kind == "op" and value == "(":
+            inner = self.expr()
+            self.expect(")")
+            return inner
+        raise ExprError(f"unexpected {self.describe((kind, value))}")
+
+
+def evaluate(text, resolve):
+    """The value of an expression; resolve(name) gives a name's value or raises
+    ExprError. Raises ExprError on any problem, including a result outside the
+    32-bit range (signed or unsigned)."""
+    values = evaluate_list(text, resolve)
+    if len(values) != 1:
+        raise ExprError("one expression expected, not a list")
+    return values[0]
+
+
+def evaluate_list(text, resolve):
+    """The values of a comma-separated list of expressions (at least one)."""
+    tokens = _tokenize(text)
+    if not tokens:
+        raise ExprError("an expression is missing")
+    parser = _Parser(tokens, resolve)
+    values = [parser.expr()]
+    while parser.accept(","):
+        values.append(parser.expr())
+    if parser.peek()[0] != "end":
+        raise ExprError(f"unexpected {parser.describe(parser.peek())}")
+    for value in values:
+        if not INT32_MIN <= value <= UINT32_MAX:
+            raise ExprError(f"{value} is outside the 32-bit range")
+    return values
+
+
+# --- C headers ---------------------------------------------------------------
+
+
+class _Definition:
+    """A #define or an enumerator. expr is the value's text, or None for an
+    enumerator without one (the previous enumerator's value plus one, or 0)."""
+
+    __slots__ = ("name", "expr", "prev", "file")
+
+    def __init__(self, name, expr, prev, file):
+        self.name = name
+        self.expr = expr
+        self.prev = prev
+        self.file = file
+
+
+_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+_DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)(?:[ \t]+(.*?))?[ \t]*$", re.M)
+_ENUM = re.compile(r"\benum\b(?:\s+[A-Za-z_]\w*)?\s*\{([^{}]*)\}")
+_ENUMERATOR = re.compile(r"^([A-Za-z_]\w*)\s*(?:=\s*(.+?))?\s*$", re.S)
+
+
+class HeaderNames:
+    """Integer constants scraped from C headers, resolved lazily so a header
+    may use names from a header given after it; `fallback` (vm.h's names) is
+    consulted for names no header defines."""
+
+    def __init__(self, fallback=None):
+        self.fallback = fallback or {}
+        self.definitions = {}  # name -> [_Definition]
+        self.order = []  # names in order of first definition
+        self._memo = {}  # id(definition) -> value or None (not an integer constant)
+        self._resolving = set()
+
+    def load(self, path):
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        self.add_text(text, path)
+
+    def add_text(self, text, file):
+        text = _COMMENT.sub(" ", text).replace("\\\n", " ")
+        for m in _DEFINE.finditer(text):
+            name, expr = m.group(1), m.group(2)
+            if expr:
+                self._add(_Definition(name, expr, None, file))
+        for m in _ENUM.finditer(text):
+            prev = None
+            for item in m.group(1).split(","):
+                e = _ENUMERATOR.match(item.strip())
+                if e is None:
+                    continue
+                definition = _Definition(e.group(1), e.group(2), prev, file)
+                self._add(definition)
+                prev = definition
+
+    def _add(self, definition):
+        if definition.name not in self.definitions:
+            self.definitions[definition.name] = []
+            self.order.append(definition.name)
+        self.definitions[definition.name].append(definition)
+
+    def _value(self, definition):
+        key = id(definition)
+        if key in self._memo:
+            return self._memo[key]
+        if key in self._resolving:  # a cycle: not a constant
+            return None
+        self._resolving.add(key)
+        try:
+            if definition.expr is None:
+                if definition.prev is None:
+                    value = 0
+                else:
+                    before = self._value(definition.prev)
+                    value = None if before is None else before + 1
+            else:
+                try:
+                    value = evaluate(definition.expr, self._resolve)
+                except ExprError:
+                    value = None
+        finally:
+            self._resolving.discard(key)
+        self._memo[key] = value
+        return value
+
+    def _resolve(self, name):
+        value = self.lookup(name)
+        if value is None:
+            raise ExprError(f"unknown name {name}")
+        return value
+
+    def lookup(self, name):
+        """The name's value, or None if no header defines it as an integer
+        constant. Raises SvmError if headers define it with different values."""
+        values = {}
+        for definition in self.definitions.get(name, ()):
+            value = self._value(definition)
+            if value is not None:
+                values.setdefault(value, definition.file)
+        if len(values) > 1:
+            listed = ", ".join(f"{value} in {file}" for value, file in sorted(values.items()))
+            raise SvmError(f"{name} is defined twice with different values: {listed}")
+        if values:
+            return next(iter(values))
+        return self.fallback.get(name)
+
+    def check(self):
+        """Resolves every name now, so a conflicting definition is reported
+        whether or not a listing uses it."""
+        for name in self.order:
+            self.lookup(name)
+
+    def constants(self):
+        """{name: value} for every name that is an integer constant."""
+        result = {}
+        for name in self.order:
+            value = self.lookup(name)
+            if value is not None:
+                result[name] = value
+        return result
+
+
+# --- vm.h --------------------------------------------------------------------
+
+
+class Vm:
+    """The numbers vm.h defines, by family."""
+
+    def __init__(self, names):
+        self.names = dict(names)  # every VM_* constant, by its full name
+
+        def family(prefix):
+            return {n[len(prefix):]: v for n, v in names.items()
+                    if n.startswith(prefix) and n != prefix + "COUNT"}
+
+        self.ops = family("VM_OP_")
+        self.events = family("VM_EV_")
+        self.props = family("VM_P_")
+        self.sys = family("VM_SYS_")
+        try:
+            self.format_version = names["VM_FORMAT_VERSION"]
+            self.cell_bytes = names["VM_CELL_BYTES"]
+            self.header_size = names["VM_HEADER_SIZE"]
+            self.object_size = names["VM_OBJECT_SIZE"]
+            self.max_globals = names["VM_GLOBALS"]
+            self.event_count = names["VM_EV_COUNT"]
+            self.prop_count = names["VM_P_COUNT"]
+            self.sys_count = names["VM_SYS_COUNT"]
+        except KeyError as e:
+            raise SvmError(f"vm.h does not define {e.args[0]}") from None
+        if not self.ops or self.event_count <= 0:
+            raise SvmError("vm.h defines no opcodes or events")
+        self.op_names = {v: n for n, v in self.ops.items()}
+        self.event_names = {v: n for n, v in self.events.items()}
+        self.prop_names = {v: n for n, v in self.props.items()}
+        self.sys_names = {v: n for n, v in self.sys.items()}
+
+
+def check_operands(vm):
+    """Every VM_OP_* in vm.h has a row in OPERANDS and every row names an
+    opcode; otherwise the table has drifted from the spec."""
+    missing = sorted(set(vm.ops) - set(OPERANDS))
+    stale = sorted(set(OPERANDS) - set(vm.ops))
+    problems = []
+    if missing:
+        problems.append("no operand row for " + ", ".join(missing))
+    if stale:
+        problems.append("rows for opcodes vm.h doesn't have: " + ", ".join(stale))
+    if problems:
+        raise SvmError(f"{TOOL}: the operand table is out of date with vm.h: " + "; ".join(problems))
+
+
+def load_vm(path=VM_H):
+    """Reads vm.h and checks the operand table against it."""
+    if not os.path.exists(path):
+        raise SvmError(f"{path}: not found ({TOOL} expects include/serval/vm.h next to tools/)")
+    headers = HeaderNames()
+    headers.load(path)
+    headers.check()
+    vm = Vm(headers.constants())
+    check_operands(vm)
+    return vm
+
+
+# --- Assembler ---------------------------------------------------------------
+
+_IDENT = r"[A-Za-z_]\w*"
+_LABEL_LINE = re.compile(rf"^({_IDENT}):\s*(.*)$")
+_STATEMENT = re.compile(rf"^(\.?{_IDENT})\s*(.*)$")
+_NAME_OR_INDEX = re.compile(rf"^({_IDENT}|\d+)$")
+_STRING_DIRECTIVE = re.compile(rf'^({_IDENT}|\d+)\s+"((?:[^"\\]|\\.)*)"\s*$')
+
+
+def _strip_comment(line):
+    """The line without its `;` comment; a `;` inside a "string" is kept."""
+    quoted = False
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quoted:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                quoted = False
+        elif c == '"':
+            quoted = True
+        elif c == ";":
+            return line[:i]
+        i += 1
+    return line
+
+
+def _unescape_string(text):
+    """The bytes of a .string literal: printable ASCII, with \\" and \\\\."""
+    out = bytearray()
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            if i + 1 < len(text) and text[i + 1] in '"\\':
+                c = text[i + 1]
+                i += 1
+            else:
+                raise SvmError(f"unknown escape {text[i:i + 2]!r} in a string "
+                               '(only \\" and \\\\ exist; strings are printable ASCII)')
+        code = ord(c)
+        if not 0x20 <= code <= 0x7E:
+            raise SvmError(f"character {c!r} (0x{code:02X}) is not printable ASCII")
+        out.append(code)
+        i += 1
+    return bytes(out)
+
+
+def escape_string(data):
+    """A .string literal's text for these bytes."""
+    return "".join("\\" + chr(b) if chr(b) in '"\\' else chr(b) for b in data)
+
+
+class _Handler:
+    """A .handler line (or several in a row sharing their code), for the check
+    that the code ends in HALT or RET."""
+
+    def __init__(self, line, label):
+        self.line = line
+        self.label = label  # "OBJECT EVENT" for messages
+        self.last_op = None  # the last instruction's mnemonic (.byte and .strings don't count)
+        self.emitted = False  # any bytes at all
+
+
+class Assembled:
+    """What assemble() returns."""
+
+    def __init__(self, blob, objects, strings, globals_, code_size, warnings):
+        self.blob = blob
+        self.objects = objects  # names (None for a numbered one), in order
+        self.strings = strings
+        self.globals = globals_
+        self.code_size = code_size  # bytes between the tables and the end
+        self.warnings = warnings  # [(file, line, message)]
+
+
+class Assembler:
+    def __init__(self, vm, headers=None, file="listing"):
+        self.vm = vm
+        self.headers = headers or HeaderNames(vm.names)
+        self.file = file
+        self.consts = {}  # the listing's expression names: .const, OBJ_, STR_, G_
+        self.objects = []  # [name or None, mask, sprite, [handler code offset or None] * events]
+        self.object_index = {}
+        self.strings = []  # [name or None, bytes]
+        self.string_index = {}
+        self.globals = []
+        self.global_index = {}
+        self.code = bytearray()
+        self.labels = {}  # name -> code offset
+        self.label_lines = {}
+        self.fixups = []  # (code offset of the operand, kind, label, line)
+        self.placed = {}  # string index -> code offset of its bytes
+        self.handlers = []  # _Handler groups in order
+        self.handler_lines = {}  # (object, event) -> line
+        self.errors = []
+        self.warnings = []
+        self.line = 0
+
+    # Errors are collected and reported together; a line with an error emits
+    # nothing more.
+    def error(self, message, line=None):
+        self.errors.append((self.file, self.line if line is None else line, message))
+        raise _LineError()
+
+    def warn(self, message, line=None):
+        self.warnings.append((self.file, self.line if line is None else line, message))
+
+    def resolve(self, name):
+        if name in self.consts:
+            return self.consts[name][0]
+        value = self.headers.lookup(name)
+        if value is None:
+            raise ExprError(f"unknown name {name}")
+        return value
+
+    def value(self, text):
+        try:
+            return evaluate(text, self.resolve)
+        except ExprError as e:
+            self.error(str(e))
+
+    def define(self, name, value):
+        if name in self.consts:
+            self.error(f"{name} is already defined (line {self.consts[name][1]})")
+        self.consts[name] = (value, self.line)
+
+    # --- Statements ---
+
+    def assemble(self, text):
+        for number, raw in enumerate(text.splitlines(), 1):
+            self.line = number
+            line = _strip_comment(raw).strip()
+            if not line:
+                continue
+            try:
+                self.statement(line)
+            except _LineError:
+                pass
+        self.line = None
+        try:
+            return self.finish()
+        except _LineError:
+            pass
+        raise SvmError.many(self.errors)
+
+    def statement(self, line):
+        m = _LABEL_LINE.match(line)
+        if m:
+            self.bind_label(m.group(1))
+            line = m.group(2).strip()
+            if not line:
+                return
+        m = _STATEMENT.match(line)
+        if not m:
+            self.error(f"can't parse {line!r}")
+        head, rest = m.group(1), m.group(2).strip()
+        if head.startswith("."):
+            handler = getattr(self, "directive_" + head[1:], None)
+            if handler is None:
+                self.error(f"unknown directive {head}")
+            handler(rest)
+        else:
+            self.instruction(head, rest)
+
+    def name_or_index(self, text, what, index):
+        """A table entry's NAME, or its index as a number (dis output), which
+        must match. Returns the name, or None for a number."""
+        if not _NAME_OR_INDEX.match(text):
+            self.error(f"{what}: {text!r} is not a name")
+        if text[0].isdigit():
+            if int(text) != index:
+                self.error(f"{what}: this is {what} {index}, not {text}")
+            return None
+        return text
+
+    def directive_const(self, rest):
+        parts = rest.split(None, 1)
+        if len(parts) != 2 or not re.fullmatch(_IDENT, parts[0]):
+            self.error(".const takes a NAME and an expression")
+        self.define(parts[0], self.value(parts[1]))
+
+    def directive_object(self, rest):
+        parts = rest.split(None, 1)
+        if not parts:
+            self.error(".object takes a NAME, then mask=expr sprite=expr")
+        index = len(self.objects)
+        if index >= MAX_TABLE_ENTRIES:
+            self.error(f"more than {MAX_TABLE_ENTRIES} objects")
+        name = self.name_or_index(parts[0], "object", index)
+        fields = {"mask": 0, "sprite": 0}
+        if len(parts) > 1:
+            for field in re.split(rf"\s+(?={_IDENT}=)", parts[1].strip()):
+                m = re.match(rf"^({_IDENT})=(.*)$", field)
+                if not m or m.group(1) not in fields:
+                    self.error(f".object: expected mask=expr or sprite=expr, not {field!r}")
+                fields[m.group(1)] = self.value(m.group(2))
+        if not 0 <= fields["mask"] <= 0xFFFFFFFF:
+            self.error(f"mask {fields['mask']} doesn't fit 32 bits")
+        if not 0 <= fields["sprite"] <= 0xFFFF:
+            self.error(f"sprite {fields['sprite']} doesn't fit 16 bits")
+        if name is not None:
+            if name in self.object_index:
+                self.error(f"object {name} is already defined")
+            self.define("OBJ_" + name, index)
+            self.object_index[name] = index
+        self.objects.append([name, fields["mask"], fields["sprite"], [None] * self.vm.event_count])
+
+    def directive_string(self, rest):
+        m = _STRING_DIRECTIVE.match(rest)
+        if not m:
+            self.error('.string takes a NAME and a "quoted string"')
+        index = len(self.strings)
+        if index >= MAX_TABLE_ENTRIES:
+            self.error(f"more than {MAX_TABLE_ENTRIES} strings")
+        name = self.name_or_index(m.group(1), "string", index)
+        try:
+            data = _unescape_string(m.group(2))
+        except SvmError as e:
+            self.error(str(e.errors[0][2]))
+        if name is not None:
+            if name in self.string_index:
+                self.error(f"string {name} is already defined")
+            self.define("STR_" + name, index)
+            self.string_index[name] = index
+        self.strings.append([name, data])
+
+    def directive_globals(self, rest):
+        if not rest:
+            self.error(".globals takes one or more NAMEs")
+        for text in rest.split():
+            index = len(self.globals)
+            if index >= self.vm.max_globals:
+                self.error(f"more than {self.vm.max_globals} globals (VM_GLOBALS)")
+            name = self.name_or_index(text, "global", index)
+            if name is not None:
+                if name in self.global_index:
+                    self.error(f"global {name} is already defined")
+                self.define("G_" + name, index)
+                self.global_index[name] = index
+            self.globals.append(name)
+
+    def directive_handler(self, rest):
+        parts = rest.split()
+        if len(parts) != 2:
+            self.error(".handler takes an OBJECT and an EVENT")
+        obj = self.operand_value(parts[0], "u16", "object")
+        events = " ".join(name for _, name in sorted(self.vm.event_names.items()))
+        if parts[1] in self.vm.events:
+            event = self.vm.events[parts[1]]
+        else:
+            try:
+                event = evaluate(parts[1], self.resolve)
+            except ExprError:
+                self.error(f"no event {parts[1]} ({events})")
+            if not 0 <= event < self.vm.event_count:
+                self.error(f"no event {parts[1]} ({events})")
+        if self.objects[obj][3][event] is not None:
+            self.error(f"object {self.object_label(obj)} already has a {self.event_label(event)} "
+                       f"handler (line {self.handler_lines[obj, event]})")
+        self.objects[obj][3][event] = len(self.code)
+        self.handler_lines[obj, event] = self.line
+        label = f"{self.object_label(obj)} {self.event_label(event)}"
+        if self.handlers and not self.handlers[-1].emitted:
+            self.handlers[-1].label += ", " + label  # shares the code that follows
+        else:
+            self.handlers.append(_Handler(self.line, label))
+
+    def directive_byte(self, rest):
+        try:
+            values = evaluate_list(rest, self.resolve)
+        except ExprError as e:
+            self.error(str(e))
+        for value in values:
+            if not 0 <= value <= 0xFF:
+                self.error(f".byte: {value} doesn't fit a byte")
+        self.code.extend(values)
+        self.emitted(".byte")
+
+    def directive_strings(self, rest):
+        if rest:
+            indices = [self.operand_value(text, "u16", "string") for text in rest.split()]
+        else:
+            indices = [i for i in range(len(self.strings)) if i not in self.placed]
+        for index in indices:
+            if index in self.placed:
+                self.error(f"string {self.string_label(index)} is already placed")
+            self.place_string(index)
+        self.emitted(".strings")
+
+    def place_string(self, index):
+        self.placed[index] = len(self.code)
+        self.code.extend(self.strings[index][1])
+        self.code.append(0)
+
+    def bind_label(self, name):
+        if name in self.labels:
+            self.error(f"label {name} is already bound (line {self.label_lines[name]})")
+        self.labels[name] = len(self.code)
+        self.label_lines[name] = self.line
+
+    def emitted(self, what):
+        if self.handlers:
+            self.handlers[-1].emitted = True
+            if not what.startswith("."):
+                self.handlers[-1].last_op = what
+
+    # --- Instructions ---
+
+    def instruction(self, mnemonic, operand):
+        if mnemonic == "PUSH":
+            if not operand:
+                self.error("PUSH needs a value")
+            value = self.value(operand)
+            if OPERAND_RANGE["s8"][0] <= value <= OPERAND_RANGE["s8"][1]:
+                mnemonic = "PUSH8"
+            elif OPERAND_RANGE["s16"][0] <= value <= OPERAND_RANGE["s16"][1]:
+                mnemonic = "PUSH16"
+            else:
+                mnemonic = "PUSH32"
+            operand = str(value)
+        if mnemonic not in self.vm.ops:
+            self.error(f"unknown mnemonic {mnemonic}")
+        kind, names = OPERANDS[mnemonic]
+        if kind == "none":
+            if operand:
+                self.error(f"{mnemonic} takes no operand")
+            self.emit(self.vm.ops[mnemonic], kind, 0)
+        elif names == "label":
+            if not operand or not re.fullmatch(_IDENT, operand):
+                self.error(f"{mnemonic} takes a label")
+            self.fixups.append((len(self.code) + 1, kind, operand, self.line))
+            self.emit(self.vm.ops[mnemonic], kind, 0)
+        else:
+            if not operand:
+                self.error(f"{mnemonic} needs an operand")
+            self.emit(self.vm.ops[mnemonic], kind, self.operand_value(operand, kind, names))
+        self.emitted(mnemonic)
+
+    def operand_value(self, text, kind, names):
+        """A typed operand: a bare name from its table (object, string, global,
+        property or engine call), else an expression. Range-checked."""
+        tables = {"object": self.object_index, "string": self.string_index,
+                  "global": self.global_index, "prop": self.vm.props, "sys": self.vm.sys}
+        if names in tables and text in tables[names]:
+            value = tables[names][text]
+        else:
+            try:
+                value = evaluate(text, self.resolve)
+            except ExprError as e:
+                if names in tables and re.fullmatch(_IDENT, text):
+                    what = {"prop": "property", "sys": "engine call"}.get(names, names)
+                    self.error(f"no {what} {text} (and no constant of that name)")
+                self.error(str(e))
+        low, high = OPERAND_RANGE[kind]
+        if not low <= value <= high:
+            self.error(f"{value} doesn't fit a {kind} operand ({low} to {high})")
+        if names == "object" and value >= len(self.objects):
+            self.error(f"no object {text} ({len(self.objects)} declared so far; "
+                       "objects must be declared before use)")
+        elif names == "string" and value >= len(self.strings):
+            self.error(f"no string {text} ({len(self.strings)} declared so far; "
+                       "strings must be declared before use)")
+        elif names == "global" and value >= len(self.globals):
+            self.warn(f"global {value} is past the {len(self.globals)} declared "
+                      "(the header's count only matters to vm_reload)")
+        elif names == "prop" and value >= self.vm.prop_count:
+            self.warn(f"property {value} is not in vm.h's page (0 to {self.vm.prop_count - 1})")
+        elif names == "sys" and value >= self.vm.sys_count:
+            self.warn(f"engine call {value} is not in vm.h's page (0 to {self.vm.sys_count - 1})")
+        return value
+
+    def emit(self, opcode, kind, value):
+        self.code.append(opcode)
+        size = OPERAND_SIZE[kind]
+        if size:
+            self.code.extend((value & ((1 << (8 * size)) - 1)).to_bytes(size, "little"))
+
+    # --- The blob ---
+
+    def object_label(self, index):
+        name = self.objects[index][0]
+        return name if name is not None else str(index)
+
+    def string_label(self, index):
+        name = self.strings[index][0]
+        return name if name is not None else str(index)
+
+    def event_label(self, event):
+        return self.vm.event_names.get(event, str(event))
+
+    def finish(self):
+        for handler in self.handlers:
+            if not handler.emitted:
+                self.error(f"handler {handler.label} has no code", handler.line)
+            elif handler.last_op is None:
+                self.warn(f"handler {handler.label} has no ops, only bytes", handler.line)
+            elif handler.last_op not in HANDLER_ENDS:
+                self.warn(f"handler {handler.label} doesn't end in HALT or RET "
+                          f"(its last op is {handler.last_op})", handler.line)
+        # The strings not placed by .strings go after the code, in order.
+        for index in range(len(self.strings)):
+            if index not in self.placed:
+                self.place_string(index)
+        tables_end = (self.vm.header_size + self.vm.object_size * len(self.objects)
+                      + 4 * len(self.strings))
+        # Jumps take a rel16 from just after the operand; CALL a blob offset.
+        for at, kind, label, line in self.fixups:
+            if label not in self.labels:
+                self.error(f"label {label} is never bound", line)
+            target = self.labels[label]
+            if kind == "rel16":
+                offset = target - (at + 2)
+                low, high = OPERAND_RANGE["rel16"]
+                if not low <= offset <= high:
+                    self.error(f"{label} is {offset} bytes away, too far for a rel16 jump "
+                               f"({low} to {high})", line)
+                self.code[at:at + 2] = (offset & 0xFFFF).to_bytes(2, "little")
+            else:
+                self.code[at:at + 4] = (tables_end + target).to_bytes(4, "little")
+        if self.errors:
+            raise SvmError.many(self.errors)
+
+        blob = bytearray(MAGIC)
+        blob += bytes((self.vm.format_version, self.vm.cell_bytes))
+        blob += (0).to_bytes(2, "little")  # flags
+        blob += len(self.objects).to_bytes(2, "little")
+        blob += len(self.strings).to_bytes(2, "little")
+        blob += len(self.globals).to_bytes(2, "little")
+        blob += (0).to_bytes(2, "little")  # reserved
+        for _, mask, sprite, handlers in self.objects:
+            blob += mask.to_bytes(4, "little")
+            blob += sprite.to_bytes(2, "little")
+            blob += (0).to_bytes(2, "little")
+            for offset in handlers:
+                blob += (0 if offset is None else tables_end + offset).to_bytes(4, "little")
+        for index in range(len(self.strings)):
+            blob += (tables_end + self.placed[index]).to_bytes(4, "little")
+        assert len(blob) == tables_end
+        blob += self.code
+        return Assembled(bytes(blob), [o[0] for o in self.objects], [s[0] for s in self.strings],
+                         list(self.globals), len(self.code), self.warnings)
+
+
+class _LineError(Exception):
+    """Stops the current statement after Assembler.error recorded the problem."""
+
+
+def assemble(text, vm, headers=None, file="listing"):
+    """Assembles a listing's text. Returns an Assembled; raises SvmError
+    listing every problem with its line."""
+    return Assembler(vm, headers, file).assemble(text)
+
+
+# --- Generated files ---------------------------------------------------------
+
+
+def c_source(blob, symbol, listing_name):
+    lines = [f"// {symbol}: the script blob assembled by {TOOL} from {listing_name}.",
+             "// Generated; edit the listing instead.", "",
+             f"extern const unsigned char {symbol}[];",
+             f"extern const unsigned int {symbol}_size;", "",
+             f"const unsigned char {symbol}[] = {{"]
+    for offset in range(0, len(blob), 16):
+        chunk = ", ".join(f"0x{b:02X}" for b in blob[offset:offset + 16])
+        lines.append(f"    /* 0x{offset:04X} */ {chunk},")
+    lines += ["};", f"const unsigned int {symbol}_size = {len(blob)};", ""]
+    return "\n".join(lines)
+
+
+def defs_header(assembled, out_name, prefix, symbol, listing_name):
+    guard = re.sub(r"\W", "_", os.path.basename(out_name)).upper()
+    if not re.match(r"[A-Za-z_]", guard):
+        guard = "_" + guard
+    lines = [f"// {os.path.basename(out_name)}: the objects, strings and globals of the script "
+             f"blob assembled by {TOOL} from {listing_name}.",
+             "// Generated; edit the listing instead.", "",
+             f"#ifndef {guard}", f"#define {guard}", ""]
+    for title, family, names in (("Objects", "OBJ", assembled.objects),
+                                 ("Strings", "STR", assembled.strings),
+                                 ("Globals", "G", assembled.globals)):
+        lines.append(f"// {title}")
+        for index, name in enumerate(names):
+            if name is not None:
+                lines.append(f"#define {prefix}{family}_{name} {index}")
+        lines.append(f"#define {prefix}{family}_COUNT {len(names)}")
+        lines.append("")
+    if symbol:
+        lines += [f"extern const unsigned char {symbol}[];",
+                  f"extern const unsigned int {symbol}_size;", ""]
+    lines += [f"#endif // {guard}", ""]
+    return "\n".join(lines)
+
+
+# --- Disassembler ------------------------------------------------------------
+
+
+class Blob:
+    """A validated blob's tables."""
+
+    def __init__(self, data, vm):
+        self.data = data
+        self.vm = vm
+        self.objects = []  # (mask, sprite, [handler offsets])
+        self.strings = []  # (offset, bytes without the NUL)
+        self.globals = 0
+        self.tables_end = 0
+
+
+def validate(data, vm):
+    """Checks a blob as vm_load does (magic, version, cell width, counts, the
+    tables inside the blob, offsets in range, strings NUL-terminated), plus
+    what the assembler can't reproduce (reserved fields not 0, overlapping
+    strings). Returns a Blob; raises SvmError."""
+    if len(data) < vm.header_size:
+        raise SvmError(f"{len(data)} bytes is shorter than the {vm.header_size}-byte header")
+    if data[:4] != MAGIC:
+        raise SvmError('not a script blob (no "SVMB" at its start)')
+    if data[4] != vm.format_version:
+        raise SvmError(f"format version {data[4]}; this tool knows version {vm.format_version}")
+    if data[5] != vm.cell_bytes:
+        raise SvmError(f"{data[5]}-byte cells; this tool knows {vm.cell_bytes}-byte cells")
+    le16 = lambda at: int.from_bytes(data[at:at + 2], "little")  # noqa: E731
+    le32 = lambda at: int.from_bytes(data[at:at + 4], "little")  # noqa: E731
+    if le16(6) or le16(14):
+        raise SvmError("the header's flags or reserved field is not 0")
+    blob = Blob(data, vm)
+    objects, strings, blob.globals = le16(8), le16(10), le16(12)
+    if blob.globals > vm.max_globals:
+        raise SvmError(f"{blob.globals} globals; the most is {vm.max_globals} (VM_GLOBALS)")
+    tables_end = vm.header_size + objects * vm.object_size + strings * 4
+    if tables_end > len(data):
+        raise SvmError(f"the tables ({objects} objects, {strings} strings) need {tables_end} "
+                       f"bytes, but the blob has {len(data)}")
+    blob.tables_end = tables_end
+    for index in range(objects):
+        record = vm.header_size + index * vm.object_size
+        if le16(record + 6):
+            raise SvmError(f"object {index}'s reserved field is not 0")
+        handlers = []
+        for event in range(vm.event_count):
+            offset = le32(record + 8 + event * 4)
+            if offset and not tables_end <= offset < len(data):
+                raise SvmError(f"object {index}'s {vm.event_names.get(event, event)} handler is at "
+                               f"0x{offset:X}, outside the code (0x{tables_end:X} to "
+                               f"0x{len(data):X})")
+            handlers.append(offset)
+        blob.objects.append((le32(record), le16(record + 4), handlers))
+    regions = []
+    for index in range(strings):
+        offset = le32(vm.header_size + objects * vm.object_size + index * 4)
+        if not tables_end <= offset < len(data):
+            raise SvmError(f"string {index} is at 0x{offset:X}, outside the blob's data "
+                           f"(0x{tables_end:X} to 0x{len(data):X})")
+        end = data.find(b"\0", offset)
+        if end < 0:
+            raise SvmError(f"string {index} (at 0x{offset:X}) has no NUL before the end of the blob")
+        blob.strings.append((offset, data[offset:end]))
+        regions.append((offset, end + 1, index))
+    regions.sort()
+    for (start, end, index), (next_start, _, next_index) in zip(regions, regions[1:]):
+        if next_start < end:
+            raise SvmError(f"strings {index} and {next_index} overlap (0x{start:X} to 0x{end:X} "
+                           f"and 0x{next_start:X}): the assembler can't lay that out")
+    return blob
+
+
+class _Item:
+    __slots__ = ("at", "size", "op", "value")
+
+    def __init__(self, at, size, op=None, value=None):
+        self.at = at
+        self.size = size
+        self.op = op  # mnemonic, or None for a raw byte
+        self.value = value
+
+
+def disassemble(data, vm, source="blob"):
+    """A listing that the assembler turns back into exactly these bytes."""
+    blob = validate(data, vm)
+    size = len(data)
+    string_at = {offset: index for index, (offset, _) in enumerate(blob.strings)}
+    string_end = {offset: offset + len(text) + 1 for offset, text in blob.strings}
+    handlers_at = {}
+    for index, (_, _, handlers) in enumerate(blob.objects):
+        for event, offset in enumerate(handlers):
+            if offset:
+                handlers_at.setdefault(offset, []).append((index, event))
+    lowest = min(handlers_at) if handlers_at else None
+    cuts = sorted(set(handlers_at) | set(string_at) | set(string_end.values()) | {size})
+
+    # Segments between string regions, split at handler offsets; the ones at
+    # or past the lowest handler are code, decoded linearly (an instruction
+    # that doesn't fit its segment, or an unknown opcode, is a raw byte).
+    items = []  # _Item or (offset, index) for a string region, in address order
+    boundaries = set()
+    pos = blob.tables_end
+    while pos < size:
+        if pos in string_at:
+            items.append((pos, string_at[pos]))
+            pos = string_end[pos]
+            continue
+        end = next(cut for cut in cuts if cut > pos)
+        while pos < end:
+            op = vm.op_names.get(data[pos]) if lowest is not None and pos >= lowest else None
+            length = 1 + OPERAND_SIZE[OPERANDS[op][0]] if op else 1
+            if op is None or pos + length > end:
+                items.append(_Item(pos, 1))
+            else:
+                kind = OPERANDS[op][0]
+                raw = data[pos + 1:pos + length]
+                value = int.from_bytes(raw, "little", signed=kind in ("s8", "s16", "s32", "rel16"))
+                items.append(_Item(pos, length, op, value))
+            boundaries.add(pos)
+            pos += length
+
+    # Jumps and calls whose target is an instruction boundary get a label;
+    # the rest, and SPAWN or TRACE of a table entry that doesn't exist, are
+    # kept as raw bytes, which always round-trip.
+    targets = set()
+    for item in items:
+        if not isinstance(item, _Item) or item.op is None:
+            continue
+        kind, names = OPERANDS[item.op]
+        target = None
+        if kind == "rel16":
+            target = item.at + item.size + item.value
+        elif names == "label":
+            target = item.value
+        elif names == "object" and item.value >= len(blob.objects):
+            item.op = None
+        elif names == "string" and item.value >= len(blob.strings):
+            item.op = None
+        if target is not None:
+            if target in boundaries:
+                item.value = target
+                targets.add(target)
+            else:
+                item.op = None
+
+    # The assembler puts the strings after the code, in index order, unless the
+    # listing places them: so .strings lines are needed only when the blob's
+    # strings aren't exactly that (or a handler points at the first one, which
+    # a .handler line with nothing after it can't say).
+    code_end = max((item.at + item.size for item in items if isinstance(item, _Item)),
+                   default=blob.tables_end)
+    default_strings = not (blob.strings and blob.strings[0][0] in handlers_at)
+    expected = code_end
+    for position, offset in enumerate(sorted(string_at)):
+        if string_at[offset] != position or offset != expected:
+            default_strings = False
+        expected = string_end[offset]
+    if expected != size:
+        default_strings = False
+
+    out = [f"; {source}: {size} bytes, {len(blob.objects)} objects, {len(blob.strings)} strings, "
+           f"{blob.globals} globals, disassembled by {TOOL}."]
+    for index, (mask, sprite, _) in enumerate(blob.objects):
+        out.append(f".object {index} mask=0x{mask:08X} sprite={sprite}")
+    for index, (_, text) in enumerate(blob.strings):
+        out.append(f'.string {index} "{escape_string(text)}"')
+    for start in range(0, blob.globals, 16):
+        out.append(".globals " + " ".join(str(g) for g in range(start, min(start + 16, blob.globals))))
+
+    def operand_text(item):
+        kind, names = OPERANDS[item.op]
+        if names == "label":
+            return f"L_{item.value}"
+        if names == "prop":
+            return vm.prop_names.get(item.value, str(item.value))
+        if names == "sys":
+            return vm.sys_names.get(item.value, str(item.value))
+        return str(item.value)
+
+    raw = []  # consecutive raw bytes, flushed as .byte lines
+
+    def flush_raw():
+        for start in range(0, len(raw), 16):
+            out.append("    .byte " + ", ".join(f"0x{b:02X}" for b in raw[start:start + 16]))
+        raw.clear()
+
+    def mark(at):
+        """The .handler lines and label at this offset."""
+        if at in handlers_at or at in targets:
+            flush_raw()
+        for index, event in handlers_at.get(at, ()):
+            out.append(f".handler {index} {vm.event_names[event]}")
+        if at in handlers_at or at in targets:
+            out.append(f"L_{at}:")
+
+    for item in items:
+        if isinstance(item, tuple):
+            offset, index = item
+            mark(offset)
+            if not default_strings:
+                flush_raw()
+                out.append(f"    .strings {index}")
+            continue
+        mark(item.at)
+        if item.op is None:
+            raw.extend(data[item.at:item.at + item.size])
+        else:
+            flush_raw()
+            text = operand_text(item) if OPERANDS[item.op][0] != "none" else ""
+            out.append(f"    {item.op} {text}".rstrip())
+    flush_raw()
+    return "\n".join(out) + "\n"
+
+
+# --- Command line ------------------------------------------------------------
+
+
+def print_warnings(warnings):
+    for file, line, message in warnings:
+        print(_located(file, line, "warning", message), file=sys.stderr)
+
+
+def cmd_asm(args, vm):
+    if args.c and not args.symbol:
+        raise SvmError("--c needs --symbol NAME (the C array's name)")
+    headers = HeaderNames(vm.names)
+    for path in args.header:
+        headers.load(path)
+    headers.check()
+    with open(args.listing, encoding="utf-8") as f:
+        text = f.read()
+    assembled = assemble(text, vm, headers, args.listing)
+    print_warnings(assembled.warnings)
+    listing_name = os.path.basename(args.listing)
+    if args.output:
+        with open(args.output, "wb") as f:
+            f.write(assembled.blob)
+    if args.c:
+        with open(args.c, "w", encoding="utf-8") as f:
+            f.write(c_source(assembled.blob, args.symbol, listing_name))
+    if args.defs:
+        with open(args.defs, "w", encoding="utf-8") as f:
+            f.write(defs_header(assembled, args.defs, args.prefix, args.symbol, listing_name))
+    return 0
+
+
+def cmd_dis(args, vm):
+    with open(args.blob, "rb") as f:
+        data = f.read()
+    try:
+        text = disassemble(data, vm, os.path.basename(args.blob))
+    except SvmError as e:
+        raise SvmError.many([(args.blob, None, m) for _, _, m in e.errors]) from None
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
+                                     epilog="Run with a command and --help for its options.")
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    asm = commands.add_parser("asm", help="assemble a listing into a blob")
+    asm.add_argument("listing", help="the listing (.svm)")
+    asm.add_argument("--header", action="append", default=[], metavar="FILE",
+                     help="a C header whose integer constants the listing may use (repeatable)")
+    asm.add_argument("-o", "--output", metavar="OUT.bin", help="write the raw blob")
+    asm.add_argument("--c", metavar="OUT.c", help="write the blob as a C array (needs --symbol)")
+    asm.add_argument("--symbol", metavar="NAME", help="the C array's name; NAME_size is its size")
+    asm.add_argument("--defs", metavar="OUT.h",
+                     help="write a header with OBJ_*, STR_* and G_* defines and the counts")
+    asm.add_argument("--prefix", default="", metavar="P", help="prefix for the --defs names")
+    dis = commands.add_parser("dis", help="disassemble a blob into a listing")
+    dis.add_argument("blob", help="the blob (.bin)")
+    dis.add_argument("-o", "--output", metavar="OUT.svm", help="write the listing (default: stdout)")
+    args = parser.parse_args(argv)
+    try:
+        vm = load_vm()
+        if args.command == "asm":
+            return cmd_asm(args, vm)
+        return cmd_dis(args, vm)
+    except SvmError as e:
+        print(e, file=sys.stderr)
+    except OSError as e:
+        print(f"error: {e}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

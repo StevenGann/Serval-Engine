@@ -6,6 +6,13 @@
 # from CMAKE_CURRENT_FUNCTION_LIST_DIR and settings from cache variables or
 # target properties, never from variables of the engine's directory scope.
 
+# Python runs tools/gbafix.py after each ROM link and tools/svm.py, the script
+# assembler, in every kind of build (GBA, web and host). Cached so that
+# serval_add_rom() finds it when called from a game's own directory.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(SERVAL_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE INTERNAL
+    "Python interpreter that runs the engine's tools (gbafix.py, svm.py)")
+
 # Warning flags for engine code (not vendored third-party code). Link PRIVATE.
 add_library(serval_warnings INTERFACE)
 target_compile_options(serval_warnings INTERFACE
@@ -19,12 +26,6 @@ if(SERVAL_TARGET_GBA)
     # drop what a game does not use. This covers the engine and libtonc; game
     # code gets the same flags from the serval target (CMakeLists.txt).
     add_compile_options(-ffunction-sections -fdata-sections)
-
-    # gbafix.py fixes and pads every ROM. Cached so that serval_add_rom() finds
-    # it when called from a game's own directory.
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(SERVAL_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE INTERNAL
-        "Python interpreter that runs tools/gbafix.py")
 
     # libgcc (integer division and other helpers) must come last on the link
     # line, after every library that may need it. The toolchain file sets this

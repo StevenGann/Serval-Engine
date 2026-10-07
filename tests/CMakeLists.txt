@@ -111,6 +111,11 @@ else()
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
     add_test(NAME host_tests COMMAND serval_host_tests)
 
+    # The script assembler and disassembler (tools/svm.py) has its own tests:
+    # the golden bytes, every operand layout, the round trip, the errors.
+    add_test(NAME svm_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+
     # Games must never need a third-party header. libtonc is not on the host
     # include path, so these compile only if the public headers and the
     # examples use nothing but Serval's API.
