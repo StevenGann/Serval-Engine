@@ -1163,10 +1163,11 @@ class ObjectSym(Sym):
 class ArraySym(Sym):
     kind = "array"
 
-    def __init__(self, name, node, value, rom):
+    def __init__(self, name, node, value, rom, is_local=False):
         super().__init__(name, node)
         self.value = value  # the array(n) call or the table constructor
         self.rom = rom
+        self.is_local = is_local  # a top-level local
         self.length = None  # Const
         self.items = []  # ROM: Consts
         self.rom_kind = None  # s8 u8 s16 u16 s32
@@ -1373,7 +1374,7 @@ class Resolver:
         if kind == "object":
             sym = ObjectSym(name.name, name, value)
         elif kind in ("array", "rom"):
-            sym = ArraySym(name.name, name, value, rom=kind == "rom")
+            sym = ArraySym(name.name, name, value, rom=kind == "rom", is_local=is_local)
         else:
             sym = GlobalSym(name.name, name, value, is_local)
         category = {"object": "object", "array": "array", "rom": "array"}.get(kind, "global")

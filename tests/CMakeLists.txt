@@ -125,6 +125,14 @@ else()
     add_test(NAME svlua_tool
         COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
                 "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_test.py")
+    # docs/lua.md "Testing": the programs in svlua/diff/ run under real Lua
+    # (Lua 5.4 built with LUA_32BITS, named by SERVAL_LUA32 when the test
+    # runs; tools/setup-dev.sh --with-lua32) and compiled on the VM, frame by
+    # frame, and must agree. Skipped without SERVAL_LUA32.
+    add_test(NAME svlua_difftest
+        COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
+                "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_difftest.py")
+    set_tests_properties(svlua_difftest PROPERTIES SKIP_RETURN_CODE 77)
     # The logo PNGs in docs/images are the splash's own drawing, made by
     # tools/logo-png.py; this fails when splash_art.c changes until they are
     # regenerated.

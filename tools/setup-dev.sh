@@ -4,7 +4,7 @@
 # installed is checked and kept, so a second run only reports.
 #
 #   tools/setup-dev.sh [--prefix DIR] [--no-system] [--no-web] [--no-rom-tests]
-#                      [--add-to-shell]
+#                      [--with-lua32] [--add-to-shell]
 #
 # Installs:
 #   - system packages (apt, with sudo, only those missing): CMake, Ninja,
@@ -13,8 +13,12 @@
 #   - mgba-rom-test, built from mGBA's source into DIR/mgba-rom-test
 #     (tools/build-mgba-rom-test.sh); runs the test ROM
 #   - Emscripten (emsdk) into DIR/emsdk, for web builds
+#   - with --with-lua32: Lua 5.4 built with 32-bit integers (LUA_32BITS),
+#     checksum-verified, into DIR/lua-5.4.8-32 (tools/build-lua32.sh), for
+#     the Lua compiler's differential test (CTest svlua_difftest)
 # and writes DIR/serval-env.sh, which sets ARM_GNU_TOOLCHAIN,
-# MGBA_ROM_TEST_DIR and EMSDK for CMake and examples/build-all.sh. Source it
+# MGBA_ROM_TEST_DIR and EMSDK for CMake and examples/build-all.sh, and
+# SERVAL_LUA32 when that Lua is installed. Source it
 # from your shell startup (--add-to-shell does that for ~/.profile and
 # ~/.bashrc). DIR defaults to ~/opt.
 #
@@ -23,6 +27,7 @@
 #   --no-system      don't install system packages; only check for them
 #   --no-web         skip Emscripten
 #   --no-rom-tests   skip mgba-rom-test
+#   --with-lua32     also build Lua 5.4 with 32-bit integers (optional)
 #   --add-to-shell   source DIR/serval-env.sh from ~/.profile and ~/.bashrc
 #
 # Chromium (for tools/web-shots.py) is optional and not installed here.
@@ -38,15 +43,17 @@ MGBA_VERSION=0.10.5
 EMSDK_VERSION=6.0.11
 CLANG_FORMAT_MAJOR=18
 CMAKE_MIN=3.25
+LUA_VERSION=5.4.8 # tools/build-lua32.sh's; ci.yml's host job caches the same
 
 prefix="$HOME/opt"
-system=1 web=1 rom_tests=1 add_to_shell=0
+system=1 web=1 rom_tests=1 lua32=0 add_to_shell=0
 while (($#)); do
     case "$1" in
     --prefix) prefix="${2:?--prefix needs a directory}"; shift ;;
     --no-system) system=0 ;;
     --no-web) web=0 ;;
     --no-rom-tests) rom_tests=0 ;;
+    --with-lua32) lua32=1 ;;
     --add-to-shell) add_to_shell=1 ;;
     -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -178,6 +185,24 @@ if ((web)); then
     fi
 fi
 
+# --- Lua 5.4 with 32-bit integers (optional) ----------------------------------
+
+lua_dir="$prefix/lua-$LUA_VERSION-32"
+lua_bin="$lua_dir/bin/lua"
+lua32_ok() {
+    [[ -x "$lua_bin" && "$(cat "$lua_dir/.version" 2> /dev/null)" == "$LUA_VERSION" &&
+        "$("$lua_bin" -e "io.write(_VERSION, ' ', math.maxinteger)" 2> /dev/null)" == "Lua 5.4 2147483647" ]]
+}
+if ((lua32)); then
+    say "Lua $LUA_VERSION with 32-bit integers (LUA_32BITS)"
+    if lua32_ok; then
+        ok installed "$lua_dir"
+    else
+        "$repo/tools/build-lua32.sh" "$lua_dir" > /dev/null || die "building Lua $LUA_VERSION failed"
+        ok installed "$lua_dir"
+    fi
+fi
+
 # --- Chromium (optional) -----------------------------------------------------
 
 say "Chromium (optional, for tools/web-shots.py)"
@@ -197,7 +222,7 @@ fi
 env_file="$prefix/serval-env.sh"
 {
     echo "# Written by Serval Engine's tools/setup-dev.sh: where the toolchains are."
-    echo "# CMake and examples/build-all.sh read these. Safe to source more than once."
+    echo "# CMake, CTest and examples/build-all.sh read these. Safe to source more than once."
     echo "export ARM_GNU_TOOLCHAIN=\"$arm_dir\""
     if ((rom_tests)); then
         echo "export MGBA_ROM_TEST_DIR=\"$mgba_dir\""
@@ -209,6 +234,10 @@ env_file="$prefix/serval-env.sh"
     fi
     if [[ -n "$bin_dir" ]]; then
         echo "case \":\$PATH:\" in *\":$bin_dir:\"*) ;; *) export PATH=\"$bin_dir:\$PATH\" ;; esac"
+    fi
+    # Kept once installed, also when a later run doesn't ask for it.
+    if lua32_ok; then
+        echo "export SERVAL_LUA32=\"$lua_bin\""
     fi
 } > "$env_file"
 say "Environment"

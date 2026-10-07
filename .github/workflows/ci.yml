@@ -43,8 +43,21 @@ jobs:
       - name: Build
         run: cmake --build --preset host
 
-      - name: Test (AddressSanitizer + UBSan)
-        run: ctest --preset host
+      # The Lua compiler's differential test (CTest svlua_difftest) runs
+      # programs under real Lua built with 32-bit integers.
+      - name: Restore Lua 5.4 with 32-bit integers
+        id: lua32-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/lua-5.4.8-32
+          key: lua32-${{ runner.os }}-${{ hashFiles('tools/build-lua32.sh') }}
+
+      - name: Build Lua 5.4 with 32-bit integers
+        if: steps.lua32-cache.outputs.cache-hit != 'true'
+        run: tools/build-lua32.sh ~/lua-5.4.8-32 # downloads and checks lua.org's SHA-256
+
+      - name: Test (AddressSanitizer + UBSan; Lua differential test)
+        run: SERVAL_LUA32="$HOME/lua-5.4.8-32/bin/lua" ctest --preset host
 
   web:
     name: Web build
