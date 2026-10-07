@@ -54,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 REPO = "StevenGann/Serval-Engine"
 REPO_URL = f"https://github.com/{REPO}"
 BRANCH = "main"
-DEFAULT_BASE_URL = "https://stevengann.github.io/Serval-Engine/"
+DEFAULT_BASE_URL = "https://stevengann.com/Serval-Engine/"
 MERMAID_VERSION = "12.1.0"  # pinned; tools/site/static/diagrams.js loads it from jsDelivr
 
 # The docs sidebar, after docs/README.md's two audiences: what a game
@@ -280,6 +280,11 @@ ICON_THEME = ('<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true
 class Site:
     def __init__(self, out, base_url):
         self.out = out
+        # GitHub Pages serves every site over HTTPS, but configure-pages reports
+        # http:// for a custom domain whose HTTPS isn't enforced; canonical and
+        # og: URLs must not send readers (or link previews) to plain HTTP.
+        if base_url.startswith("http://"):
+            base_url = "https://" + base_url[len("http://"):]
         self.base_url = base_url.rstrip("/") + "/"
         self.layout = string.Template((HERE / "templates" / "layout.html").read_text(encoding="utf-8"))
         self.pages = []

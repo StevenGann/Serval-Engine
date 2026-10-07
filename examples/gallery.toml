@@ -1,5 +1,5 @@
 # The examples gallery on the documentation site (tools/site/build.py,
-# https://stevengann.github.io/Serval-Engine/examples/). Every example
+# https://stevengann.com/Serval-Engine/examples/). Every example
 # directory needs an entry here: the site's build fails without one.
 #
 # [examples.<directory>], in the order the gallery shows them (a teaching

@@ -215,7 +215,7 @@ Tests check state (OAM, VRAM, registers), not what the screen looks like or what
 
 ## Documentation site
 
-The docs and the examples are also a website, published on GitHub Pages: <https://stevengann.github.io/Serval-Engine/>. `tools/site/build.py` makes it: every `docs/*.md` as a page (links between docs become links between pages, links to other files in the repository become GitHub links, `mermaid` blocks become diagrams), a gallery in which every example runs in the browser next to its description (from its `main.c` header comment) and its source, and a front page. Search over the docs is Pagefind's. To build it and look at it (Python 3.11 or later):
+The docs and the examples are also a website, published on GitHub Pages: <https://stevengann.com/Serval-Engine/>. `tools/site/build.py` makes it: every `docs/*.md` as a page (links between docs become links between pages, links to other files in the repository become GitHub links, `mermaid` blocks become diagrams), a gallery in which every example runs in the browser next to its description (from its `main.c` header comment) and its source, and a front page. Search over the docs is Pagefind's. To build it and look at it (Python 3.11 or later):
 
 ```sh
 python3 -m venv build/site-venv && build/site-venv/bin/pip install -r tools/site/requirements.txt  # once
