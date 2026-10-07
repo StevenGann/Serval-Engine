@@ -1,6 +1,6 @@
 # Debug link (runtime side)
 
-**Status:** planned; nothing here is implemented. Today the engine writes warnings and `debug_log()` lines to mGBA's debug log ([api-reference.md](api-reference.md#debugh)).
+**Status:** planned; the protocol is not defined and nothing of it is implemented. Two runtime pieces it will use exist: `vm_reload()`, which swaps a running game's scripts and keeps their state ([vm.md](vm.md#hot-reload)), and the `BRK` opcode, which today only logs, in debug builds ([vm.md](vm.md#debug)). Today the engine writes warnings and `debug_log()` lines to mGBA's debug log, or to the browser's console on the web ([api-reference.md](api-reference.md#debugh)).
 
 The debug link connects the editor to a running game inside the emulator. The protocol is a shared contract between the engine, the emulator fork (mGBA, MPL 2.0) and the editor, so it is specified in this open repository.
 

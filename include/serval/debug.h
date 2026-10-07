@@ -6,7 +6,8 @@
 #include "serval/platform.h"
 
 // Writes a line to the emulator's debug log (mGBA: Tools > View Logs, or the
-// console of mgba-rom-test). Does nothing on hardware and other emulators.
+// console of mgba-rom-test; cut at 255 characters), or on the web to the
+// browser's console. Does nothing on hardware and other emulators.
 void debug_log(const char* message);
 
 // Number of warnings the engine has reported so far. Debug builds (SERVAL_DEBUG,

@@ -46,12 +46,14 @@ void frame_begin(void);
 void frame_end(void);
 
 // Frames since serval_init(): the number of frame_end() calls, so 0 during
-// the first frame. Wraps after about 2.2 years at 60 frames per second.
+// the first frame. Wraps after about 2.3 years at 60 frames per second.
 u32 frame_count(void);
 
-// CPU cycles the previous frame spent between frame_begin() and frame_end()
-// (the game's work, before waiting for VBlank). Measured with hardware timers
-// 2 and 3, which the engine reserves.
+// CPU cycles the previous frame spent between frame_begin() and frame_end()'s
+// wait for VBlank: the game's work, and frame_end()'s own before the wait
+// (sprite counts, map streaming). Measured with hardware timers 2 and 3,
+// which the engine reserves. On the web it is real time, which says nothing
+// about the GBA (docs/platforms.md).
 u32 frame_cpu_cycles(void);
 
 // frame_cpu_cycles() as thousandths of the frame budget: 500 means the previous
@@ -80,8 +82,8 @@ bool button_pressed(u16 buttons);
 bool button_repeat(u16 buttons);
 
 // The frames from a press to its first repeat, and between repeats after that
-// (each 1 to 65535). A wait already under way for a held button finishes
-// first. serval_init() sets the defaults.
+// (each 1 to 65535; other values are ignored, with a warning). A wait already
+// under way for a held button finishes first. serval_init() sets the defaults.
 void button_repeat_set(int delay, int interval);
 
 // Call when a screen opens, so a button held from the last screen doesn't
