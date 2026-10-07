@@ -249,6 +249,15 @@ class Errors(unittest.TestCase):
                                  "RAM array"),
         ".data placed twice": (".rom A u8 1\n.object X\n.handler X CREATE\n.data A\n.data A\n"
                                "HALT\n", 5, "already placed"),
+        "an initial value missing": (".globals A=\n" + OK, 1, "A= has no initial value"),
+        "an initial value with spaces": (".globals A=1 + 2\n" + OK, 1, "'\\+' is not a name"),
+        "an initial value past 32 bits": (".globals A=0x100000000\n" + OK, 1,
+                                          "4294967296 is outside the 32-bit range"),
+        "an initial value below 32 bits": (".globals A=-2147483649\n" + OK, 1,
+                                           "outside the 32-bit range"),
+        "an initial value naming nothing": (".globals A=NOPE\n" + OK, 1, "unknown name NOPE"),
+        "an initial value for a global defined twice": (".globals A B A=1\n" + OK, 1,
+                                                        "already defined"),
     }
 
     def test_each_error_names_its_line(self):
@@ -439,7 +448,8 @@ class Arrays(unittest.TestCase):
             "data past the end": good[:record] + le16(9) + good[record + 2:],
             "data in the tables": good[:record + 4] + le32(record) + good[record + 8:],
             "RAM past the pool": good[:record + 12] + le32(VM.array_cells - 2) + good[record + 16:],
-            "flags": good[:6] + le16(1) + good[8:],
+            "flags": good[:6] + le16(2) + good[8:],
+            "flags' top bit": good[:6] + le16(0x8000) + good[8:],
             "object reserved": good[:22] + le16(1) + good[24:],
         }
         for name, blob in bad.items():
@@ -455,6 +465,82 @@ class Arrays(unittest.TestCase):
         overlap = good[:b_record + 4] + le32(a_data + 1) + good[b_record + 8:]
         with self.assertRaisesRegex(svm.SvmError, "overlap"):
             svm.disassemble(overlap, VM)
+
+
+class GlobalValues(unittest.TestCase):
+    """vm.md "Array table": .globals NAME=expr starts a global at expr; when
+    one initial value isn't 0, header flag bit 0 is set and every global's
+    value follows the array table (global count x s32), before the code."""
+
+    LISTING = """
+.const BASE 40
+.object X
+.string S "hi"
+.globals LIVES=3 SCORE
+.globals SPEED=(FX(1) + 128) LOW=-2147483648 HIGH=0xFFFFFFFF ZERO=0 MORE=BASE+2
+.array A 2
+.rom R u8 7
+.handler X CREATE
+    CALL f
+    LDG MORE
+    HALT
+f:
+    RET
+"""
+
+    def test_tables_and_layout(self):
+        result = asm(self.LISTING)
+        blob = result.blob
+        self.assertEqual(VM.flag_global_values, 1)
+        self.assertEqual(blob[6:8], le16(1))  # flag bit 0
+        self.assertEqual(blob[12:14], le16(7))  # the global count
+        values_at = 16 + 32 + 4 + 2 * 8
+        values = [3, 0, 384, 0x80000000, 0xFFFFFFFF, 0, 42]
+        self.assertEqual(blob[values_at:values_at + 28], b"".join(le32(v) for v in values))
+        code_at = values_at + 28  # the code right after them
+        self.assertEqual(blob[16 + 8:16 + 12], le32(code_at))  # Create
+        self.assertEqual(blob[code_at:code_at + 5], bytes([VM.ops["CALL"]]) + le32(code_at + 8))
+        self.assertEqual(blob[code_at + 5:code_at + 9],
+                         bytes([VM.ops["LDG"], 6, VM.ops["HALT"], VM.ops["RET"]]))
+        data_at = code_at + 9
+        self.assertEqual(blob[16 + 32 + 4 + 8 + 4:16 + 32 + 4 + 16], le32(data_at))  # R's data
+        self.assertEqual(blob[16 + 32:16 + 32 + 4], le32(data_at + 1))  # the string after it
+        self.assertEqual(blob[data_at:], b"\x07hi\0")
+        self.assertEqual(result.global_values, [3, 0, 384, -0x80000000, -1, 0, 42])
+
+    def test_round_trip(self):
+        blob = asm(self.LISTING).blob
+        listing = svm.disassemble(blob, VM)
+        self.assertIn(".globals 0=3 1 2=384 3=-2147483648 4=-1 5 6=42\n", listing)
+        self.assertEqual(asm(listing).blob, blob)
+
+    def test_zero_values_lay_the_blob_out_as_before(self):
+        """No flag and no table when every initial value is 0, so blobs
+        without initial values (the golden bytes among them) are unchanged."""
+        plain = asm(".globals A B\n" + Errors.OK).blob
+        self.assertEqual(asm(".globals A=0 B=(1 - 1)\n" + Errors.OK).blob, plain)
+        self.assertEqual(plain[6:8], le16(0))
+        self.assertIn("\n.globals 0 1\n", svm.disassemble(plain, VM))
+
+    def test_many_globals(self):
+        names = " ".join(f"G{k}={k}" for k in range(VM.max_globals))
+        result = asm(f".globals {names}\n" + Errors.OK)
+        self.assertEqual(result.global_values, list(range(VM.max_globals)))
+        self.assertEqual(asm(svm.disassemble(result.blob, VM)).blob, result.blob)
+
+    def test_dis_checks_the_values(self):
+        good = asm(".globals A=5 B\n" + Errors.OK).blob
+        zeroed = good[:16 + 32] + le32(0) + good[16 + 32 + 4:]
+        with self.assertRaisesRegex(svm.SvmError, "every initial value is 0"):
+            svm.disassemble(zeroed, VM)
+        cut = good[:16 + 32 + 7]
+        with self.assertRaisesRegex(svm.SvmError, "initial values\\) need 56 bytes"):
+            svm.disassemble(cut, VM)
+        with self.assertRaisesRegex(svm.SvmError, "only bit 0"):
+            svm.disassemble(good[:6] + le16(3) + good[8:], VM)
+        handler_in_values = good[:24] + le32(16 + 32 + 4) + good[28:]
+        with self.assertRaisesRegex(svm.SvmError, "outside the code"):
+            svm.disassemble(handler_in_values, VM)
 
 
 HEADER = """

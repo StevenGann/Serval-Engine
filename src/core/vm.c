@@ -1533,10 +1533,11 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
                     who, (u32)b[5], VM_CELL_BYTES);
         return false;
     }
-    if (le16(b + 6)) {
-        SERVAL_WARN("%s: the blob's header flags are 0x%x, but this engine knows no flags (they "
-                    "must be 0); nothing is loaded",
-                    who, le16(b + 6));
+    u32 flags = le16(b + 6);
+    if (flags & ~(u32)VM_FLAG_GLOBAL_VALUES) {
+        SERVAL_WARN("%s: the blob's header flags are 0x%x, but this engine knows only bit 0 "
+                    "(the globals' initial values; the others must be 0); nothing is loaded",
+                    who, flags);
         return false;
     }
     u32 objects = le16(b + 8), strings = le16(b + 10), used_globals = le16(b + 12);
@@ -1547,11 +1548,14 @@ static bool valid_blob(const u8* b, u32 size, const char* who) {
         return false;
     }
     u32 arrays_at = VM_HEADER_SIZE + objects * VM_OBJECT_SIZE + strings * 4;
-    u32 tables_end = arrays_at + arrays * VM_ARRAY_RECORD_SIZE;
+    // The globals' initial values, if the flag says they are there, end the tables.
+    u32 values = flags & VM_FLAG_GLOBAL_VALUES ? used_globals * VM_CELL_BYTES : 0;
+    u32 tables_end = arrays_at + arrays * VM_ARRAY_RECORD_SIZE + values;
     if (tables_end > size) {
-        SERVAL_WARN("%s: the blob's tables (%u objects, %u strings, %u arrays) need %u bytes, but "
-                    "it has %u; nothing is loaded",
-                    who, objects, strings, arrays, tables_end, size);
+        SERVAL_WARN("%s: the blob's tables (%u objects, %u strings, %u arrays%s) need %u bytes, "
+                    "but it has %u; nothing is loaded",
+                    who, objects, strings, arrays, values ? ", the globals' initial values" : "",
+                    tables_end, size);
         return false;
     }
     for (u32 object = 0; object < objects; object++) {
@@ -1691,10 +1695,16 @@ static bool load(const u8* b, u32 size, bool keep, const char* who) {
     u32 used_globals = le16(b + 12);
     if (!(keep && blob && used_globals == global_count)) {
         if (keep && blob)
-            SERVAL_WARN("%s: the new blob uses %u globals, the old one %u; globals are zeroed", who,
-                        used_globals, global_count);
+            SERVAL_WARN("%s: the new blob uses %u globals, the old one %u; globals start again "
+                        "(at their initial values, else 0)",
+                        who, used_globals, global_count);
+        // The initial values follow the array table (valid_blob checked
+        // they are inside the blob).
+        const u8* values = b + VM_HEADER_SIZE + le16(b + 8) * VM_OBJECT_SIZE + le16(b + 10) * 4 +
+                           le16(b + 14) * VM_ARRAY_RECORD_SIZE;
+        bool initial = le16(b + 6) & VM_FLAG_GLOBAL_VALUES;
         for (u32 k = 0; k < VM_GLOBALS; k++)
-            globals[k] = 0;
+            globals[k] = initial && k < used_globals ? (s32)le32(values + k * VM_CELL_BYTES) : 0;
     }
     u32 layout = layout_of(b);
     if (!(keep && blob && layout == ram_layout)) {

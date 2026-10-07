@@ -11,8 +11,9 @@ opcode's operand layout, which is checked against vm.h's opcode list at start.
 This is an assembler, not a language: one mnemonic per opcode, labels,
 constants and directives for the blob's tables. There are no expressions
 beyond integer constant arithmetic, no if or while, no variables and no event
-blocks. Those are the job of Studio Advance's script compiler, which emits
-this format and is not part of this repository.
+blocks. Those are the job of the compilers that emit this format: the Lua
+subset's (tools/svlua.py, docs/lua.md), and Studio Advance's event editor
+through it.
 
 Usage:
   svm.py asm LISTING [--header FILE]... [-o OUT.bin] [--c OUT.c --symbol NAME]
@@ -26,7 +27,9 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        appearance (mask and sprite default to 0)
   .string NAME "text"                  a string, numbered from 0: printable
                                        ASCII, with \\" and \\\\ for those two
-  .globals NAME NAME ...               globals, numbered from 0 (may repeat)
+  .globals NAME[=expr] ...             globals, numbered from 0 (may repeat);
+                                       NAME=expr starts one at expr instead of
+                                       0 (spaces only inside parentheses)
   .array NAME length [at=expr]         a RAM array, numbered from 0 with the
                                        .rom arrays; its cells follow the previous
                                        .array's in the pool unless at= says where
@@ -59,7 +62,8 @@ integers (decimal or 0x hex, a trailing u ignored), names (the listing's, then
 FX(n) = n * 256 and C_GAME(n) = 1 << (16 + n). Names must be defined before
 they are used. The result must fit in
 32 bits (signed or unsigned). Layout: the header, the object, string and
-array tables, the code in listing order, then the ROM arrays' data, then the
+array tables, the globals' initial values (only if one isn't 0: header flag
+bit 0), the code in listing order, then the ROM arrays' data, then the
 string bytes.
 
 --header FILE scrapes integer constants from a C header, nothing more:
@@ -532,6 +536,7 @@ class Vm:
             self.header_size = names["VM_HEADER_SIZE"]
             self.object_size = names["VM_OBJECT_SIZE"]
             self.array_record_size = names["VM_ARRAY_RECORD_SIZE"]
+            self.flag_global_values = names["VM_FLAG_GLOBAL_VALUES"]
             self.max_globals = names["VM_GLOBALS"]
             self.array_cells = names["VM_ARRAY_CELLS"]
             self.field0 = names["VM_P_FIELD0"]
@@ -590,6 +595,29 @@ _LABEL_LINE = re.compile(rf"^({_IDENT}):\s*(.*)$")
 _STATEMENT = re.compile(rf"^(\.?{_IDENT})\s*(.*)$")
 _NAME_OR_INDEX = re.compile(rf"^({_IDENT}|\d+)$")
 _STRING_DIRECTIVE = re.compile(rf'^({_IDENT}|\d+)\s+"((?:[^"\\]|\\.)*)"\s*$')
+
+
+def _split_top_level(text):
+    """Whitespace-separated items, keeping spaces inside parentheses: the
+    items of .globals, where an initial value with spaces is parenthesized."""
+    items, depth, current = [], 0, ""
+    for c in text:
+        if c.isspace() and depth == 0:
+            if current:
+                items.append(current)
+            current = ""
+            continue
+        depth += {"(": 1, ")": -1}.get(c, 0)
+        current += c
+    if current:
+        items.append(current)
+    return items
+
+
+def svalue(value):
+    """A 32-bit bit pattern as a signed number."""
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value & 0x80000000 else value
 
 
 def _strip_comment(line):
@@ -666,11 +694,13 @@ class _Handler:
 class Assembled:
     """What assemble() returns."""
 
-    def __init__(self, blob, objects, strings, globals_, arrays, code_size, warnings):
+    def __init__(self, blob, objects, strings, globals_, arrays, code_size, warnings,
+                 global_values=None):
         self.blob = blob
         self.objects = objects  # names (None for a numbered one), in order
         self.strings = strings
         self.globals = globals_
+        self.global_values = global_values or [0] * len(globals_)  # their initial values
         self.arrays = arrays
         self.code_size = code_size  # bytes between the tables and the end
         self.warnings = warnings  # [(file, line, message)]
@@ -700,6 +730,7 @@ class Assembler:
         self.strings = []  # [name or None, bytes]
         self.string_index = {}
         self.globals = []
+        self.global_values = []  # each global's initial value
         self.global_index = {}
         self.arrays = []  # _Array
         self.array_index = {}
@@ -846,18 +877,25 @@ class Assembler:
 
     def directive_globals(self, rest):
         if not rest:
-            self.error(".globals takes one or more NAMEs")
-        for text in rest.split():
+            self.error(".globals takes one or more NAMEs (NAME=expr: an initial value)")
+        for text in _split_top_level(rest):
             index = len(self.globals)
             if index >= self.vm.max_globals:
                 self.error(f"more than {self.vm.max_globals} globals (VM_GLOBALS)")
+            text, eq, expr = text.partition("=")
             name = self.name_or_index(text, "global", index)
+            value = 0
+            if eq:
+                if not expr:
+                    self.error(f"global {text}= has no initial value")
+                value = self.value(expr)  # 32 bits, signed or unsigned
             if name is not None:
                 if name in self.global_index:
                     self.error(f"global {name} is already defined")
                 self.define("G_" + name, index)
                 self.global_index[name] = index
             self.globals.append(name)
+            self.global_values.append(value)
 
     def new_array(self, text):
         """The array number for a new .array or .rom, and its name (None for a
@@ -1116,8 +1154,13 @@ class Assembler:
         for index in range(len(self.strings)):
             if index not in self.placed:
                 self.place_string(index)
+        # The globals' initial values follow the array table, only if one isn't
+        # 0: a blob without them is laid out as before they existed.
+        values = [v & 0xFFFFFFFF for v in self.global_values]
+        flags = self.vm.flag_global_values if any(values) else 0
         tables_end = (self.vm.header_size + self.vm.object_size * len(self.objects)
-                      + 4 * len(self.strings) + self.vm.array_record_size * len(self.arrays))
+                      + 4 * len(self.strings) + self.vm.array_record_size * len(self.arrays)
+                      + (self.vm.cell_bytes * len(values) if flags else 0))
         # Jumps take a rel16 from just after the operand; CALL a blob offset.
         for at, kind, label, line in self.fixups:
             if label not in self.labels:
@@ -1137,7 +1180,7 @@ class Assembler:
 
         blob = bytearray(MAGIC)
         blob += bytes((self.vm.format_version, self.vm.cell_bytes))
-        blob += (0).to_bytes(2, "little")  # flags
+        blob += flags.to_bytes(2, "little")
         blob += len(self.objects).to_bytes(2, "little")
         blob += len(self.strings).to_bytes(2, "little")
         blob += len(self.globals).to_bytes(2, "little")
@@ -1155,11 +1198,14 @@ class Assembler:
             blob += array.length.to_bytes(2, "little")
             blob += bytes((array.kind, 0))
             blob += where.to_bytes(4, "little")
+        if flags:
+            for value in values:
+                blob += value.to_bytes(self.vm.cell_bytes, "little")
         assert len(blob) == tables_end
         blob += self.code
         return Assembled(bytes(blob), [o[0] for o in self.objects], [s[0] for s in self.strings],
                          list(self.globals), [a.name for a in self.arrays], len(self.code),
-                         self.warnings)
+                         self.warnings, [svalue(v) for v in values])
 
 
 class _LineError(Exception):
@@ -1226,6 +1272,7 @@ class Blob:
         self.strings = []  # (offset, bytes without the NUL)
         self.arrays = []  # (kind, length, first cell or blob offset)
         self.globals = 0
+        self.global_values = None  # initial values (header flag bit 0), else None
         self.tables_end = 0
 
 
@@ -1250,18 +1297,26 @@ def validate(data, vm):
     def le32(at):
         return int.from_bytes(data[at:at + 4], "little")
 
-    if le16(6):
-        raise SvmError("the header's flags are not 0")
+    flags = le16(6)
+    if flags & ~vm.flag_global_values:
+        raise SvmError(f"the header's flags are 0x{flags:X}; only bit 0 (the globals' initial "
+                       "values) is defined, the others must be 0")
     blob = Blob(data, vm)
     objects, strings, blob.globals, arrays = le16(8), le16(10), le16(12), le16(14)
     if blob.globals > vm.max_globals:
         raise SvmError(f"{blob.globals} globals; the most is {vm.max_globals} (VM_GLOBALS)")
     arrays_at = vm.header_size + objects * vm.object_size + strings * 4
-    tables_end = arrays_at + arrays * vm.array_record_size
+    values_at = arrays_at + arrays * vm.array_record_size
+    with_values = bool(flags & vm.flag_global_values)
+    tables_end = values_at + (vm.cell_bytes * blob.globals if with_values else 0)
     if tables_end > len(data):
-        raise SvmError(f"the tables ({objects} objects, {strings} strings, {arrays} arrays) need "
-                       f"{tables_end} bytes, but the blob has {len(data)}")
+        values = ", the globals' initial values" if with_values else ""
+        raise SvmError(f"the tables ({objects} objects, {strings} strings, {arrays} arrays"
+                       f"{values}) need {tables_end} bytes, but the blob has {len(data)}")
     blob.tables_end = tables_end
+    if with_values:
+        blob.global_values = [svalue(le32(values_at + vm.cell_bytes * k))
+                              for k in range(blob.globals)]
     for index in range(objects):
         record = vm.header_size + index * vm.object_size
         if le16(record + 6):
@@ -1335,6 +1390,10 @@ def _rom_values(data, kind, length, where, vm):
 def disassemble(data, vm, source="blob"):
     """A listing that the assembler turns back into exactly these bytes."""
     blob = validate(data, vm)
+    if blob.global_values is not None and not any(blob.global_values):
+        raise SvmError("the header's flag bit 0 is set, but every initial value is 0: the "
+                       "assembler writes the initial values only when one isn't 0, so it can't "
+                       "lay this blob out")
     size = len(data)
     # Regions: the bytes of strings ("strings") and ROM arrays ("data"),
     # by where they start (empty arrays first, then the one region with
@@ -1441,8 +1500,10 @@ def disassemble(data, vm, source="blob"):
         out.append(f".object {index} mask=0x{mask:08X} sprite={sprite}")
     for index, (_, text) in enumerate(blob.strings):
         out.append(f'.string {index} "{escape_string(text)}"')
+    values = blob.global_values or [0] * blob.globals
     for start in range(0, blob.globals, 16):
-        out.append(".globals " + " ".join(str(g) for g in range(start, min(start + 16, blob.globals))))
+        out.append(".globals " + " ".join(f"{g}={values[g]}" if values[g] else str(g)
+                                          for g in range(start, min(start + 16, blob.globals))))
     next_cell = 0
     for index, (kind, length, where) in enumerate(blob.arrays):
         if kind == vm.array_ram:

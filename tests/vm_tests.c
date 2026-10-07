@@ -112,6 +112,17 @@ static void blob_begin(u16 objects, u16 strings, u16 globals) {
     blob_begin_arrays(objects, strings, globals, 0);
 }
 
+// vm.md "Array table": like blob_begin_arrays, with header flag bit 0 and the
+// globals' initial values (globals x s32, little-endian) after the array
+// table.
+static void blob_begin_values(u16 objects, u16 strings, u16 arrays, const s32* values,
+                              u16 globals) {
+    blob_begin_arrays(objects, strings, globals, arrays);
+    put16(6, VM_FLAG_GLOBAL_VALUES);
+    for (u32 k = 0; k < globals; k++)
+        emit32((u32)values[k]);
+}
+
 static u32 object_record(u32 obj) {
     return VM_HEADER_SIZE + obj * VM_OBJECT_SIZE;
 }
@@ -4261,6 +4272,99 @@ static void reload_keeps_globals_if_their_count_matches(void) {
     CHECK_WARNED(before, 1);
 }
 
+// Object 0's Create adds 1 to glob[0]; the blob starts its globals at
+// `values` (header flag bit 0), or at 0 when values is NULL.
+static void build_initial_values(const s32* values, u16 globals) {
+    if (values)
+        blob_begin_values(1, 0, 0, values, globals);
+    else
+        blob_begin(1, 0, globals);
+    handler(0, VM_EV_CREATE);
+    count(0);
+    op(VM_OP_HALT);
+}
+
+// vm.md "Array table": with header flag bit 0, vm_load starts the globals at
+// the blob's initial values (those past its global count at 0), so a script's
+// first run sees them; vm_reload keeps the old values when the global count
+// matches, and otherwise starts them again at the new blob's initial values,
+// with a warning. Without the flag, globals start at 0.
+static void globals_start_at_their_initial_values(void) {
+    static const s32 values[] = {5, -1, INT32_MIN, 0, INT32_MAX};
+    static const s32 others[] = {1, 2, 3};
+    reset();
+    vm_set_global(7, 9);
+    build_initial_values(values, 5);
+    CHECK(load());
+    CHECK(vm_global(0) == 5 && vm_global(1) == -1 && vm_global(2) == INT32_MIN);
+    CHECK(vm_global(3) == 0 && vm_global(4) == INT32_MAX && vm_global(7) == 0);
+    start(0);
+    vm_step();
+    CHECK(vm_global(0) == 6);
+    u32 before = debug_warning_count();
+    build_initial_values(values, 5);
+    CHECK(reload()); // the same count: the values are kept
+    CHECK(vm_global(0) == 6 && vm_global(4) == INT32_MAX);
+    CHECK(load()); // vm_load starts them again
+    CHECK(vm_global(0) == 5);
+    CHECK_WARNED(before, 0);
+    vm_set_global(0, 50);
+    vm_set_global(4, 50);
+    build_initial_values(others, 3);
+    CHECK(reload()); // another count: the new blob's values, and a warning
+    CHECK_WARNED(before, 1);
+    CHECK(vm_global(0) == 1 && vm_global(1) == 2 && vm_global(2) == 3);
+    CHECK(vm_global(3) == 0 && vm_global(4) == 0);
+    build_initial_values(NULL, 3);
+    CHECK(load()); // no initial values: 0
+    CHECK(vm_global(0) == 0 && vm_global(1) == 0 && vm_global(2) == 0);
+    start(0);
+    vm_step();
+    CHECK(vm_global(0) == 1);
+}
+
+// vm.md "Load-time validation": the initial values are part of the tables:
+// they must fit in the blob, and handlers, strings and ROM data must lie past
+// them. With no globals the table is empty. One warning per rejected blob.
+static void loader_checks_initial_values(void) {
+    static const s32 values[] = {1, 2};
+    static const s32 data[] = {7};
+    enum { HANDLER = 0x18, STRING = 0x30, ROM_AT = 0x38, CODE = 0x44 };
+    reset();
+    u32 before = debug_warning_count();
+    // The tables: 0x10 header, 0x20 object, 4 string, 8 array, 8 initial values.
+    blob_begin_values(1, 1, 1, values, 2);
+    CHECK(bld.size == CODE);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_HALT);
+    rom_array(0, ARRAY_S8, data, 1);
+    string(0, "S");
+    CHECK(load());
+    CHECK(vm_global(0) == 1 && vm_global(1) == 2);
+    put32(HANDLER, CODE - 1); // the handler in the values
+    CHECK(!load());
+    put32(HANDLER, CODE);
+    put32(STRING, CODE - 4); // the string in the values
+    CHECK(!load());
+    put32(STRING, CODE + 2);
+    put32(ROM_AT, CODE - 1); // the ROM data in the values
+    CHECK(!load());
+    put32(ROM_AT, CODE + 1);
+    CHECK(load());
+    u32 size = bld.size;
+    bld.size = CODE - 1; // the values cut off by the blob's end
+    CHECK(!load());
+    bld.size = size;
+    CHECK(load());
+    CHECK_WARNED(before, 4);
+    blob_begin_values(1, 0, 0, values, 0); // the flag with no globals
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK_WARNED(before, 4);
+    vm_unload();
+}
+
 // vm.h: vm_reload keeps entities attached to objects the new blob still has
 // (running its code); others are no longer attached (but stay alive). The
 // emptied queue loses a kept entity's pending Create, so its Step handler
@@ -4562,8 +4666,10 @@ static const u8* golden_with(const Patch* patch) {
 // field at 0x16.
 static const Patch bad_patches[] = {
     {0, 'X', 1, "bad magic"},
-    {6, 1, 2, "header flags not 0"},
+    {6, 2, 2, "header flag bit 1"},
+    {6, 3, 2, "header flag bits 0 and 1"},
     {6, 0x8000, 2, "header flags not 0 (top bit)"},
+    {6, 1, 2, "initial values (flag bit 0) over the string and the code"},
     {0x16, 1, 2, "object reserved field not 0"},
     {14, 1, 2, "an array table over the code and the string"},
     {14, 0xFFFF, 2, "array table past the end"},
@@ -4946,6 +5052,7 @@ TEST_SUITE(
     {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
     {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
+    {"globals_start_at_their_initial_values", globals_start_at_their_initial_values},
     {"reload_keeps_attachments_to_objects_that_remain",
      reload_keeps_attachments_to_objects_that_remain},
     {"reload_keeps_the_kept_instances_fields", reload_keeps_the_kept_instances_fields},
@@ -4957,6 +5064,7 @@ TEST_SUITE(
     {"loader_rejects_bad_blobs", loader_rejects_bad_blobs},
     {"loader_rejects_a_string_without_its_nul", loader_rejects_a_string_without_its_nul},
     {"loader_checks_array_records", loader_checks_array_records},
+    {"loader_checks_initial_values", loader_checks_initial_values},
     {"runs_are_deterministic", runs_are_deterministic},
     {"debug_ops_log_and_continue", debug_ops_log_and_continue},
     {"unload_stops_everything", unload_stops_everything});

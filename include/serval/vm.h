@@ -48,6 +48,11 @@
 #define VM_OBJECT_SIZE 32      // bytes per object record
 #define VM_ARRAY_RECORD_SIZE 8 // bytes per array record
 
+// Header flags. Bit 0: the globals' initial values (global count x s32) follow
+// the array table, and vm_load starts the globals at them instead of 0. Every
+// other bit must be 0.
+#define VM_FLAG_GLOBAL_VALUES 1
+
 // Array kinds (an array record's kind): cells in the RAM pool, or constant
 // ROM data in the blob, little-endian and packed.
 enum {
@@ -200,7 +205,8 @@ typedef struct {
 // --- Loading -----------------------------------------------------------------
 
 // Validates the blob and makes it the running scripts: halts every context,
-// detaches every entity, empties the event queue and zeroes the globals and
+// detaches every entity, empties the event queue, sets the globals to the
+// blob's initial values (VM_FLAG_GLOBAL_VALUES; 0 without them) and zeroes
 // the RAM arrays.
 // Returns false (and warns) if the blob is not valid; nothing runs then. The
 // blob is read in place and must stay valid while it is loaded. Call it (or
@@ -208,7 +214,8 @@ typedef struct {
 bool vm_load(const u8* blob, u32 size);
 
 // Like vm_load, for the debug link's hot reload: keeps the globals' values if
-// the new blob declares the same global count, the RAM arrays' cells if its
+// the new blob declares the same global count (otherwise they start as
+// vm_load starts them, with a warning), the RAM arrays' cells if its
 // RAM arrays are laid out the same, and entities (with their instance fields)
 // attached to objects the new blob still has. Contexts are halted and the
 // queue emptied.
