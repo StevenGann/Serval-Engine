@@ -8,7 +8,8 @@
 #
 # Installs:
 #   - system packages (apt, with sudo, only those missing): CMake, Ninja,
-#     Python 3, a host C compiler, git, curl, xz and clang-format 18
+#     Python 3 (3.11 or later), a host C compiler, git, curl, xz and
+#     clang-format 18
 #   - the ARM GNU Toolchain (arm-none-eabi-gcc) into DIR, checksum-verified
 #   - mgba-rom-test, built from mGBA's source into DIR/mgba-rom-test
 #     (tools/build-mgba-rom-test.sh); runs the test ROM
@@ -43,6 +44,7 @@ MGBA_VERSION=0.10.5
 EMSDK_VERSION=6.0.11
 CLANG_FORMAT_MAJOR=18
 CMAKE_MIN=3.25
+PYTHON_MIN=3.11 # tools/svlua.py's (cmake/Serval.cmake checks it to compile Lua scripts)
 LUA_VERSION=5.4.8 # tools/build-lua32.sh's; ci.yml's host job caches the same
 
 prefix="$HOME/opt"
@@ -104,9 +106,12 @@ fi
 cmake_version="$(cmake --version | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')"
 [[ "$(printf '%s\n%s\n' "$CMAKE_MIN" "$cmake_version" | sort -V | head -1)" == "$CMAKE_MIN" ]] ||
     die "CMake $cmake_version is older than $CMAKE_MIN; install a newer one (e.g. pipx install cmake, or Kitware's apt repository)"
+python_version="$(python3 --version | cut -d' ' -f2)"
+[[ "$(printf '%s\n%s\n' "$PYTHON_MIN" "$python_version" | sort -V | head -1)" == "$PYTHON_MIN" ]] ||
+    die "Python $python_version is older than $PYTHON_MIN, which compiling Lua scripts needs (tools/svlua.py); install a newer python3 (e.g. Ubuntu 24.04's, or the deadsnakes PPA's python3.11) and put it first on PATH"
 ok cmake "$cmake_version"
 ok ninja "$(ninja --version)"
-ok python3 "$(python3 --version | cut -d' ' -f2)"
+ok python3 "$python_version"
 ok clang-format "$(clang-format-$CLANG_FORMAT_MAJOR --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
 # The repository's commands call plain `clang-format`; if that isn't version
