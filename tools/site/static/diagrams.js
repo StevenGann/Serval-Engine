@@ -42,7 +42,7 @@ async function draw() {
     securityLevel: "strict",
     theme: "base",
     themeVariables: themeVariables(isDark),
-    flowchart: { useMaxWidth: false },
+    flowchart: { useMaxWidth: true }, // fit the column, as GitHub draws them
   });
   for (const { el, source } of blocks) {
     el.removeAttribute("data-processed");
