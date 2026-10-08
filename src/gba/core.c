@@ -94,13 +94,15 @@ void serval_init(void) {
 
 void frame_begin(void) {
     frame_start_cycles = cycles_now();
-    key_poll();
-    serval_entropy_frame(frames, key_curr_state());
-    serval_repeat_frame(key_curr_state());
     serval_oam_used = 0;
     serval_matrices_used = 0;
     serval_sprites_dropped = 0;
     serval_sprites_untransformed = 0;
+    key_poll();
+    serval_entropy_frame(frames, key_curr_state());
+    // Last: it may call the button_secret_set() hook, which core.h promises
+    // the frame's input and an empty sprite draw list.
+    serval_repeat_frame(key_curr_state());
 }
 
 void frame_end(void) {

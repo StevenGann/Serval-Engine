@@ -1,5 +1,5 @@
-// button_repeat() timing (src/core/input.c), fed button states directly as
-// frame_begin() would.
+// button_repeat() timing and the secret sequence (button_secret_set) in
+// src/core/input.c, fed button states directly as frame_begin() would.
 
 #include "../src/core/input_internal.h"
 #include "serval/core.h"
@@ -130,6 +130,245 @@ static void reset_keeps_the_timing(void) {
     serval_repeat_reset();
 }
 
+// --- The secret sequence (button_secret_set) ---------------------------------
+
+static const u16 secret_code[] = {BUTTON_UP,    BUTTON_UP,   BUTTON_DOWN,  BUTTON_DOWN, BUTTON_LEFT,
+                                  BUTTON_RIGHT, BUTTON_LEFT, BUTTON_RIGHT, BUTTON_B,    BUTTON_A};
+#define SECRET_LENGTH 10u
+
+static u32 secret_calls, other_calls;
+static bool secret_saw_a; // button_repeat(BUTTON_A) when the hook last ran
+
+static void on_secret(void) {
+    secret_calls++;
+    secret_saw_a = button_repeat(BUTTON_A);
+}
+
+static void on_other(void) {
+    other_calls++;
+}
+
+static void secret_start(void) {
+    serval_repeat_reset();
+    secret_calls = other_calls = 0;
+    secret_saw_a = false;
+    button_secret_set(on_secret);
+}
+
+// One press, as a player makes it: a frame down, a frame up. `held` stays
+// held throughout.
+static void press_holding(u32 buttons, u32 held) {
+    serval_repeat_frame(buttons | held);
+    serval_repeat_frame(held);
+}
+
+static void press(u32 buttons) {
+    press_holding(buttons, 0);
+}
+
+// Presses the sequence's buttons from `from` up to (not including) `to`.
+static void press_code(u32 from, u32 to) {
+    for (u32 i = from; i < to; i++)
+        press(secret_code[i]);
+}
+
+// The sequence calls the hook once, on the frame the final A goes down, with
+// that frame's input already counted; holding A on, or idle frames, add
+// nothing.
+static void secret_fires_once_on_the_code(void) {
+    secret_start();
+    press_code(0, SECRET_LENGTH - 1);
+    CHECK(secret_calls == 0);
+    serval_repeat_frame(BUTTON_A);
+    CHECK(secret_calls == 1);
+    CHECK(secret_saw_a); // the hook runs after this frame's buttons are read
+    for (u32 f = 0; f < 30; f++)
+        serval_repeat_frame(BUTTON_A); // held: no new press
+    for (u32 f = 0; f < 30; f++)
+        serval_repeat_frame(0);
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
+// Nothing before the final A: not after any shorter part of the sequence,
+// however long it waits, and not for a wrong last button.
+static void secret_needs_the_final_a(void) {
+    for (u32 n = 0; n < SECRET_LENGTH; n++) {
+        secret_start();
+        press_code(0, n);
+        for (u32 f = 0; f < 200; f++)
+            serval_repeat_frame(0);
+        CHECK(secret_calls == 0);
+    }
+    secret_start();
+    press_code(0, SECRET_LENGTH - 1);
+    press(BUTTON_B); // B, B rather than B, A
+    CHECK(secret_calls == 0);
+    serval_repeat_reset();
+}
+
+// A button counts on the frame it goes down, not for every frame it is held:
+// one long Up is one Up. Buttons held while others go down don't matter
+// (here R throughout, and B as A goes down).
+static void secret_counts_presses_not_holding(void) {
+    secret_start();
+    for (u32 f = 0; f < 20; f++)
+        serval_repeat_frame(BUTTON_UP); // one Up, held
+    serval_repeat_frame(0);
+    press_code(2, SECRET_LENGTH);
+    CHECK(secret_calls == 0);
+
+    secret_start();
+    serval_repeat_frame(BUTTON_R); // R down before the sequence...
+    for (u32 i = 0; i < SECRET_LENGTH - 2; i++)
+        press_holding(secret_code[i], BUTTON_R); // ...and held throughout
+    serval_repeat_frame(BUTTON_R | BUTTON_B);    // B goes down...
+    CHECK(secret_calls == 0);
+    serval_repeat_frame(BUTTON_R | BUTTON_B | BUTTON_A); // ...and is still held as A does
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
+// Any other button breaks the sequence, START, SELECT, L and R included, and
+// it starts over: the rest of it alone does nothing, the whole of it works.
+// Tried with every button at every place but the first; an Up is the next
+// test's.
+static void secret_wrong_press_starts_over(void) {
+    for (u32 at = 1; at < SECRET_LENGTH; at++) {
+        for (u32 bit = 0; bit < 10; bit++) {
+            u32 wrong = 1u << bit;
+            if (wrong == BUTTON_UP || wrong == secret_code[at])
+                continue;
+            secret_start();
+            press_code(0, at);
+            press(wrong);
+            press_code(at, SECRET_LENGTH);
+            CHECK(secret_calls == 0);
+            press_code(0, SECRET_LENGTH);
+            CHECK(secret_calls == 1);
+        }
+    }
+    serval_repeat_reset();
+}
+
+// A break keeps what still matches the sequence's start: a third Up after
+// Up, Up still leaves Up, Up, however many Ups come, and an Up in the wrong
+// place is the start of a new try.
+static void secret_extra_up_still_counts(void) {
+    for (u32 ups = 3; ups <= 6; ups++) {
+        secret_start();
+        for (u32 i = 0; i < ups; i++)
+            press(BUTTON_UP);
+        press_code(2, SECRET_LENGTH);
+        CHECK(secret_calls == 1);
+    }
+    secret_start();
+    press_code(0, 5);             // up to Left
+    press_code(0, SECRET_LENGTH); // an Up where Right should be starts it again
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
+// Two buttons going down on the same frame are a wrong press, even with the
+// one expected among them, and nothing of the sequence remains.
+static void secret_simultaneous_presses_break_it(void) {
+    secret_start();
+    press_code(0, SECRET_LENGTH - 2);
+    press(BUTTON_B | BUTTON_A); // B and A on one frame
+    CHECK(secret_calls == 0);
+    press(BUTTON_A);
+    CHECK(secret_calls == 0);
+
+    secret_start();
+    press(BUTTON_UP | BUTTON_LEFT); // a sloppy diagonal at the start
+    press_code(1, SECRET_LENGTH);   // so this lacks an Up
+    CHECK(secret_calls == 0);
+
+    secret_start();
+    press_code(0, 4);
+    press(BUTTON_LEFT | BUTTON_START); // the expected Left, and START
+    press_code(5, SECRET_LENGTH);
+    CHECK(secret_calls == 0);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
+// Each time the sequence is entered, the hook runs again, also straight
+// after the last time.
+static void secret_fires_each_time(void) {
+    secret_start();
+    press_code(0, SECRET_LENGTH);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 2);
+    press(BUTTON_START);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 3);
+    serval_repeat_reset();
+}
+
+// NULL turns detection off, and forgets a part already entered; set again,
+// the hook needs the whole sequence. serval_init() (serval_repeat_reset)
+// turns it off too.
+static void secret_null_turns_it_off(void) {
+    secret_start();
+    button_secret_set(NULL);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 0);
+
+    secret_start();
+    press_code(0, 5);
+    button_secret_set(NULL);
+    button_secret_set(on_secret);
+    press_code(5, SECRET_LENGTH);
+    CHECK(secret_calls == 0);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 1);
+
+    secret_start();
+    press_code(0, 5);
+    serval_repeat_reset(); // as serval_init() does
+    press_code(5, SECRET_LENGTH);
+    press_code(0, SECRET_LENGTH);
+    CHECK(secret_calls == 0);
+    serval_repeat_reset();
+}
+
+// One hook at a time: a new one replaces the old one and starts the
+// sequence over; setting the one already set changes nothing.
+static void secret_replacing_the_hook(void) {
+    secret_start();
+    button_secret_set(on_other);
+    press_code(0, SECRET_LENGTH);
+    CHECK(other_calls == 1 && secret_calls == 0);
+
+    secret_start();
+    press_code(0, 5);
+    button_secret_set(on_other); // another hook: starts over
+    press_code(5, SECRET_LENGTH);
+    CHECK(other_calls == 0 && secret_calls == 0);
+
+    secret_start();
+    press_code(0, 5);
+    button_secret_set(on_secret); // the same one: carries on
+    press_code(5, SECRET_LENGTH);
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
+// button_repeat_reset(), as a screen opens mid-sequence (a pause menu), with
+// a button held, doesn't affect it.
+static void secret_ignores_button_repeat_reset(void) {
+    secret_start();
+    press_code(0, 5);
+    serval_repeat_frame(BUTTON_RIGHT); // Right down: a screen opens
+    button_repeat_reset();
+    serval_repeat_frame(0);
+    press_code(6, SECRET_LENGTH);
+    CHECK(secret_calls == 1);
+    serval_repeat_reset();
+}
+
 TEST_SUITE(input_tests, "input",
            {"fires_on_press_then_after_delay_and_interval",
             fires_on_press_then_after_delay_and_interval},
@@ -141,4 +380,14 @@ TEST_SUITE(input_tests, "input",
            {"reset_silences_held_buttons_until_released",
             reset_silences_held_buttons_until_released},
            {"reset_leaves_buttons_pressed_later_alone", reset_leaves_buttons_pressed_later_alone},
-           {"reset_keeps_the_timing", reset_keeps_the_timing});
+           {"reset_keeps_the_timing", reset_keeps_the_timing},
+           {"secret_fires_once_on_the_code", secret_fires_once_on_the_code},
+           {"secret_needs_the_final_a", secret_needs_the_final_a},
+           {"secret_counts_presses_not_holding", secret_counts_presses_not_holding},
+           {"secret_wrong_press_starts_over", secret_wrong_press_starts_over},
+           {"secret_extra_up_still_counts", secret_extra_up_still_counts},
+           {"secret_simultaneous_presses_break_it", secret_simultaneous_presses_break_it},
+           {"secret_fires_each_time", secret_fires_each_time},
+           {"secret_null_turns_it_off", secret_null_turns_it_off},
+           {"secret_replacing_the_hook", secret_replacing_the_hook},
+           {"secret_ignores_button_repeat_reset", secret_ignores_button_repeat_reset});

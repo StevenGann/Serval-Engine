@@ -96,4 +96,30 @@ void button_repeat_set(int delay, int interval);
 // button_down().
 void button_repeat_reset(void);
 
+// Calls on_entered() each time the player enters the classic cheat code: Up,
+// Up, Down, Down, Left, Right, Left, Right, B, A. One hook at a time: setting
+// another replaces it, and NULL turns detection off; either starts the
+// sequence over, while setting the hook already set changes nothing.
+// serval_init() turns detection off. button_repeat_reset() doesn't affect it.
+//
+// Only presses count, not holding: a button counts once, on the frame it
+// goes down, and buttons held meanwhile don't matter (B still held as A goes
+// down is fine). Any other button pressed breaks the sequence (START,
+// SELECT, L and R too), and so do two buttons going down on the same frame:
+// a chord or a sloppy diagonal, not a sequence. A break keeps what still
+// matches the sequence's start, so a third Up after Up, Up counts as the
+// second (Up, Up, Up, Down, Down... works); anything else starts it over.
+// No time limit, as in the classic: the presses may be any time apart. Once
+// complete, the sequence starts over, so entering it again calls the hook
+// again.
+//
+// on_entered() runs inside frame_begin(), as its last step, on the frame the
+// final A goes down: the frame's buttons are read (button_pressed(BUTTON_A)
+// is true) and the sprite draw list is empty, so it may do what the game
+// does between frame_begin() and frame_end(), but not call either. Best,
+// it only sets a flag that the game acts on at a safe point in its frame.
+//
+// Deliberately left out of the docs, as a hidden extra: an audit shouldn't add it.
+void button_secret_set(void (*on_entered)(void));
+
 #endif // SERVAL_CORE_H
