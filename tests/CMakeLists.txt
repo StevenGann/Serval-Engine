@@ -131,6 +131,59 @@ if(SERVAL_TARGET_GBA)
     # images: white screen in mGBA 0.8), no libc.a in the map, no BLX.
     serval_add_rom_checks(serval_tests)
 
+    # serval_add_rom()'s TITLE and GAME_CODE with every printable ASCII
+    # character, spaces at either end, and text that means something to
+    # CMake or a shell ("$<1:X>", "${A}", "@A@", ";", "[;]", "\;", a leading
+    # "-"): each must reach the ROM header unchanged, through
+    # cmake_parse_arguments() and the build command that runs gbafix.py. The
+    # <rom>_fields tests compare the header with the character codes of the
+    # text given here, not with what serval_add_rom() made of it. Then a ROM
+    # without TITLE and GAME_CODE: the target name in upper case, cut to 12
+    # characters, and 0000; and a title that CMake takes for false.
+    set(printable "")
+    set(punctuation "")
+    foreach(code RANGE 32 126)
+        string(ASCII ${code} c)
+        string(APPEND printable "${c}")
+        if(NOT c MATCHES "[A-Za-z0-9]")
+            string(APPEND punctuation "${c}")
+        endif()
+    endforeach()
+    foreach(i RANGE 7)
+        math(EXPR at "${i} * 12")
+        string(SUBSTRING "${printable}" ${at} 12 title_${i})
+        math(EXPR at "${i} * 4")
+        string(SUBSTRING "${punctuation}" ${at} 4 code_${i})
+    endforeach()
+    string(APPEND title_7 " ") # the last 11, and a space
+    set(title_8 "$<1:X>\${A}@;")
+    set(code_8 "~AB ")
+    set(title_9 "-[;]\\;@A@")
+    set(code_9 "$<A>")
+    set(title_10 "0")
+    set(code_10 "OFF ")
+    set(header_roms "")
+    foreach(i RANGE 10)
+        set(rom serval_header_${i})
+        serval_add_rom(${rom} SOURCES rom/header_main.c
+            TITLE "${title_${i}}" GAME_CODE "${code_${i}}")
+        target_link_libraries(${rom} PRIVATE serval_warnings)
+        string(HEX "${title_${i}}" title_hex)
+        string(HEX "${code_${i}}" code_hex)
+        add_test(NAME ${rom}_fields
+            COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-rom.py"
+                    --rom "$<TARGET_FILE_DIR:${rom}>/${rom}.gba"
+                    --title-hex ${title_hex} --game-code-hex ${code_hex})
+        list(APPEND header_roms ${rom})
+    endforeach()
+    serval_add_rom(serval_header_default SOURCES rom/header_main.c)
+    target_link_libraries(serval_header_default PRIVATE serval_warnings)
+    add_test(NAME serval_header_default_fields
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-rom.py"
+                --rom "$<TARGET_FILE_DIR:serval_header_default>/serval_header_default.gba"
+                --title SERVAL_HEADE --game-code 0000)
+    serval_add_rom_checks(${header_roms} serval_header_default)
+
     # Every public header compiles on its own for the GBA, without libtonc on
     # the include path.
     serval_add_header_check(serval_gba_header_check SERVAL_GBA)
@@ -142,6 +195,17 @@ else()
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
     add_test(NAME host_tests COMMAND serval_host_tests)
 
+    # serval_add_rom()'s checks of TITLE, GAME_CODE and SAVE, at configure time
+    # (scratch projects configured with bad and good values).
+    add_test(NAME rom_fields_configure
+        COMMAND "${CMAKE_COMMAND}" "-DSERVAL_DIR=${PROJECT_SOURCE_DIR}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/rom_fields"
+                "-DGENERATOR=${CMAKE_GENERATOR}" "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/rom_fields_test.cmake")
+    # The ROM header fixer (tools/gbafix.py): the header it writes, and every
+    # value it refuses.
+    add_test(NAME gbafix_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/gbafix_test.py")
     # The script assembler and disassembler (tools/svm.py) has its own tests:
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool

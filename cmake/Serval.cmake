@@ -40,6 +40,38 @@ if(SERVAL_TARGET_GBA)
     endif()
 endif()
 
+# _serval_bad_character(<out_var> <text>)
+#
+# Sets <out_var> to the first character of <text> that is not printable ASCII
+# (0x20 space to 0x7E tilde), in quotes, or to "a control character"; to an
+# empty string if every character is printable ASCII.
+function(_serval_bad_character out_var text)
+    set(description "")
+    if(NOT text MATCHES "^[ -~]*$")
+        string(REGEX MATCH "^[ -~]*" good "${text}")
+        string(LENGTH "${good}" at)
+        string(SUBSTRING "${text}" ${at} 1 byte)
+        string(HEX "${byte}" hex)
+        if(hex STRLESS "20" OR hex STREQUAL "7f")
+            set(description "a control character")
+        else()
+            # Not ASCII: the whole UTF-8 sequence, lead byte and continuation
+            # bytes, so the message shows the character.
+            set(length 1)
+            if(hex STRGREATER_EQUAL "f0")
+                set(length 4)
+            elseif(hex STRGREATER_EQUAL "e0")
+                set(length 3)
+            elseif(hex STRGREATER_EQUAL "c0")
+                set(length 2)
+            endif()
+            string(SUBSTRING "${text}" ${at} ${length} character)
+            set(description "\"${character}\"")
+        endif()
+    endif()
+    set(${out_var} "${description}" PARENT_SCOPE)
+endfunction()
+
 # serval_add_rom(<target> SOURCES <files...> [TITLE <title>] [GAME_CODE <code>]
 #                [SAVE SRAM|FLASH64K|FLASH128K|EEPROM8K|EEPROM512])
 #
@@ -47,31 +79,89 @@ endif()
 # converts it to <target>.gba and fixes the ROM header. The header never
 # contains Nintendo's logo (see docs/licensing.md).
 #
+# TITLE is the header's title: 1 to 12 printable ASCII characters (space to
+# tilde). Left out, it is the target name in upper case, cut to 12
+# characters. GAME_CODE is the header's game code: exactly 4 printable ASCII
+# characters, 0000 if left out. Any printable ASCII character works, spaces
+# at either end included, and reaches the header unchanged.
+# Anything else stops the configuration with an error: an empty TITLE, a
+# longer one, a GAME_CODE of any other length (it is never padded), a control
+# or non-ASCII character in either.
+#
 # SAVE is the cartridge save memory the game's save data (save.h) uses: SRAM
 # (32 KiB, the default), FLASH64K, FLASH128K, EEPROM8K or EEPROM512. It sets
 # the number of slots and their capacity (docs/runtime-systems.md#save-data).
 # Only that type's code and ROM ID string are linked, and none of it if the
-# game never calls save_*.
+# game never calls save_*. Any other value, an empty one included, is an
+# error.
 #
 # In web builds (the web preset), builds <target>.html instead: the game as one
-# self-contained page (cmake/ServalWeb.cmake). TITLE and GAME_CODE name its
-# saves in the browser's localStorage there; SAVE gives it the same slots as
-# on the GBA.
+# self-contained page (cmake/ServalWeb.cmake). TITLE is the page's title, and
+# TITLE and GAME_CODE name its saves in the browser's localStorage; SAVE gives
+# it the same slots as on the GBA.
 function(serval_add_rom target)
     cmake_parse_arguments(PARSE_ARGV 1 ARG "" "TITLE;GAME_CODE;SAVE" "SOURCES")
-    if(NOT ARG_TITLE)
+    # Which of TITLE, GAME_CODE and SAVE were given, with a value or not:
+    # cmake_parse_arguments() leaves ARG_TITLE undefined both when TITLE is
+    # left out and when its value is empty (unless policy CMP0174 is NEW, in
+    # CMake 3.31 and later), and an empty value must be refused, not replaced
+    # by the default. (Not if(NOT ARG_TITLE) either: that is true for titles
+    # such as OFF, NO or 0.)
+    set(given "")
+    if(ARGC GREATER 1)
+        math(EXPR last "${ARGC} - 1")
+        foreach(i RANGE 1 ${last})
+            if("${ARGV${i}}" MATCHES "^(TITLE|GAME_CODE|SAVE)$")
+                list(APPEND given "${ARGV${i}}")
+            endif()
+        endforeach()
+    endif()
+    if(NOT "TITLE" IN_LIST given)
         string(TOUPPER "${target}" ARG_TITLE)
+        string(SUBSTRING "${ARG_TITLE}" 0 12 ARG_TITLE)
+    elseif(NOT DEFINED ARG_TITLE)
+        set(ARG_TITLE "")
     endif()
-    if(NOT ARG_GAME_CODE)
+    if(NOT "GAME_CODE" IN_LIST given)
         set(ARG_GAME_CODE "0000")
+    elseif(NOT DEFINED ARG_GAME_CODE)
+        set(ARG_GAME_CODE "")
     endif()
-    if(NOT DEFINED ARG_SAVE)
+    if(NOT "SAVE" IN_LIST given)
         set(ARG_SAVE "SRAM")
+    elseif(NOT DEFINED ARG_SAVE)
+        set(ARG_SAVE "")
+    endif()
+
+    # The rules Studio Advance applies to the same fields.
+    if(ARG_TITLE STREQUAL "")
+        message(FATAL_ERROR "serval_add_rom(${target}): TITLE is empty; give 1 to 12 printable "
+                            "ASCII characters, or leave TITLE out to use the target name.")
+    endif()
+    _serval_bad_character(bad "${ARG_TITLE}")
+    if(NOT bad STREQUAL "")
+        message(FATAL_ERROR "serval_add_rom(${target}): TITLE can't contain ${bad}: use ASCII "
+                            "letters, digits, spaces and punctuation.")
+    endif()
+    string(LENGTH "${ARG_TITLE}" length)
+    if(length GREATER 12)
+        message(FATAL_ERROR "serval_add_rom(${target}): TITLE can have at most 12 characters; "
+                            "\"${ARG_TITLE}\" has ${length}.")
+    endif()
+    _serval_bad_character(bad "${ARG_GAME_CODE}")
+    if(NOT bad STREQUAL "")
+        message(FATAL_ERROR "serval_add_rom(${target}): GAME_CODE can't contain ${bad}: use "
+                            "ASCII letters, digits, spaces and punctuation.")
+    endif()
+    string(LENGTH "${ARG_GAME_CODE}" length)
+    if(NOT length EQUAL 4)
+        message(FATAL_ERROR "serval_add_rom(${target}): GAME_CODE must have exactly 4 "
+                            "characters; \"${ARG_GAME_CODE}\" has ${length}.")
     endif()
     set(save_types SRAM FLASH64K FLASH128K EEPROM8K EEPROM512)
     if(NOT ARG_SAVE IN_LIST save_types)
         list(JOIN save_types ", " save_types)
-        message(FATAL_ERROR "serval_add_rom(${target}): SAVE ${ARG_SAVE} is not a save type; "
+        message(FATAL_ERROR "serval_add_rom(${target}): SAVE \"${ARG_SAVE}\" is not a save type; "
                             "use one of ${save_types}.")
     endif()
     string(TOLOWER "${ARG_SAVE}" save_name)
@@ -130,11 +220,18 @@ function(serval_add_rom target)
         "-Wl,-Map=$<TARGET_FILE_DIR:${target}>/${target}.map")
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${linker_script}")
 
+    # The title and game code go to gbafix.py as hexadecimal character codes,
+    # which nothing between here and gbafix.py changes. As text, they would be
+    # evaluated as generator expressions (a TITLE of "$<1:X>" would become
+    # "X") and would rely on every generator quoting every character right for
+    # its shell (cmd.exe, for one, expands %NAME% even inside quotes).
+    string(HEX "${ARG_TITLE}" title_hex)
+    string(HEX "${ARG_GAME_CODE}" game_code_hex)
     set(rom "$<TARGET_FILE_DIR:${target}>/${target}.gba")
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND "${SERVAL_OBJCOPY}" -O binary "$<TARGET_FILE:${target}>" "${rom}"
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${gbafix}" "${rom}"
-                --title "${ARG_TITLE}" --game-code "${ARG_GAME_CODE}"
+                --title-hex ${title_hex} --game-code-hex ${game_code_hex}
         COMMENT "Creating ${target}.gba"
         VERBATIM)
 endfunction()

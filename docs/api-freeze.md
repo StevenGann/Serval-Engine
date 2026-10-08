@@ -33,6 +33,7 @@ These could not be added later without breaking games, or were small enough to f
 | `map_tags_in()`: hazards are game tag bits, not a collision type | [tilemaps.md](tilemaps.md#tags) |
 | `vm_collide()` / `vm_collide_clear()`: scripted games collide with no C glue | [vm.md](vm.md#collisions) |
 | `body_bounce` 255 means a perfect bounce in both `sys_physics()` and `sys_map_movement()`: a body comes back up as high as it fell from (it kept 255/256 of its speed before) | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
+| `serval_add_rom()` checks `TITLE` (1 to 12 printable ASCII characters), `GAME_CODE` (exactly 4) and `SAVE` at configure time, Studio Advance's rules, and any printable ASCII character reaches the ROM header unchanged; refusing more later would break builds | [development.md](development.md#building-a-game), [releases.md](releases.md#versioning) |
 | VM and Lua names equal the C names: `VM_SYS_PSG_MUSIC_*`, `VM_SYS_SCREEN_SET_BRIGHTNESS`, `VmBindings.psg_songs`, Lua's `psg_music_play`, `screen_set_brightness`, `text_print_number` and the rest; numbers and golden bytes unchanged | [vm.md](vm.md#engine-calls), [lua.md](lua.md) |
 
 ## Planned in 1.x (declared now)

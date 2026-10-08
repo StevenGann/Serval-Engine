@@ -13,8 +13,12 @@
   if it doesn't, the ROM contains none.
 
 Usage: check-rom.py --rom R.gba [--map R.map] [--elf R.elf --objdump OBJDUMP]
-                    [--title T] [--game-code C] [--save-type TYPE]
-Exits non-zero, listing every failed check, if any fails.
+                    [--title T | --title-hex HEX] [--game-code C | --game-code-hex HEX]
+                    [--save-type TYPE]
+--title-hex and --game-code-hex give the expected title and game code as
+hexadecimal character codes, as gbafix.py takes them (serval_add_rom_checks()
+passes them so, for any character). Exits non-zero, listing every failed
+check, if any fails.
 """
 
 import argparse
@@ -49,9 +53,11 @@ def check_rom(path, title, game_code):
                                         ("game code", game_code, GAME_CODE_OFFSET, GAME_CODE_LEN)):
         if value is None:
             continue
-        actual = rom[offset:offset + length].rstrip(b"\0").decode("ascii", "replace")
-        if actual != value:
-            errors.append(f"{path}: header {name} is {actual!r}, expected {value!r}")
+        # The field byte for byte: the text, then zeros.
+        actual = rom[offset:offset + length]
+        expected = value.encode("latin-1").ljust(length, b"\0")
+        if actual != expected:
+            errors.append(f"{path}: header {name} is {actual!r}, expected {expected!r}")
     return errors
 
 
@@ -131,18 +137,34 @@ def check_no_blx(elf, objdump):
     return []
 
 
+def from_hex(text):
+    """Text from hexadecimal character codes (--title-hex, --game-code-hex)."""
+    try:
+        return bytes.fromhex(text).decode("latin-1")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not hexadecimal character codes") from None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--rom", required=True)
     parser.add_argument("--map")
     parser.add_argument("--elf")
     parser.add_argument("--objdump")
-    parser.add_argument("--title")
-    parser.add_argument("--game-code")
+    title = parser.add_mutually_exclusive_group()
+    title.add_argument("--title")
+    title.add_argument("--title-hex", type=from_hex)
+    game_code = parser.add_mutually_exclusive_group()
+    game_code.add_argument("--game-code")
+    game_code.add_argument("--game-code-hex", type=from_hex)
     parser.add_argument("--save-type", choices=sorted(SAVE_TYPE_IDS))
     args = parser.parse_args()
     if bool(args.elf) != bool(args.objdump):
         parser.error("--elf and --objdump go together")
+    if args.title_hex is not None:
+        args.title = args.title_hex
+    if args.game_code_hex is not None:
+        args.game_code = args.game_code_hex
 
     try:
         errors = check_rom(args.rom, args.title, args.game_code)
