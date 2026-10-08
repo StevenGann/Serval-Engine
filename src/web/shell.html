@@ -16,22 +16,31 @@
 
   Saves (src/web/save.c): the game's save memory (the size of its save type:
   32 KiB for SRAM, 64 or 128 KiB for Flash, 8 KiB or 512 bytes for EEPROM;
-  byte for byte an mGBA .sav file) is kept in localStorage under "serval-save:<title>:<game code>", loaded when the game
-  first uses it and stored after every save_write() and save_erase(). Without
-  localStorage (some privacy modes) the game still runs; its saves last until
-  the page closes. Test mode leaves localStorage alone, so runs are
-  deterministic: "&save=<base64>" (or "&saveurl=<url>", fetched before the
-  game starts) starts from that save memory instead of a blank one, and if the game used its saves, "save <base64>" is appended
-  before "done" (tools/web-shots.py save=FILE does both). "&persist=1" uses
-  localStorage as a normal page does.
+  byte for byte an mGBA .sav file) is kept in localStorage under
+  "serval-save:<title>:<game code>", the title as the browser shows it
+  (leading and trailing spaces dropped, runs of spaces made one), loaded when
+  the game first uses it and stored after every save_write() and
+  save_erase(). Without localStorage (some privacy modes) the game still runs;
+  its saves last until the page closes. Test mode leaves localStorage alone,
+  so runs are deterministic: "&save=<base64>" (or "&saveurl=<url>", fetched
+  before the game starts) starts from that save memory instead of a blank one,
+  and if the game used its saves, "save <base64>" is appended before "done"
+  (tools/web-shots.py save=FILE does both). "&persist=1" uses localStorage as
+  a normal page does. Test mode also appends, before "done", the page's title
+  and its saves' localStorage key, as JSON strings: "title <JSON>" and
+  "key <JSON>".
+
+  The title and game code (serval_add_rom()'s TITLE and GAME_CODE) are filled
+  in by cmake/ServalWeb.cmake, escaped: the title in <title>, and both as JSON
+  in <script id="serval-rom">, which the script below reads.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="generator" content="Serval Engine">
-<meta name="serval-game-code" content="@SERVAL_WEB_GAME_CODE@">
 <title>@SERVAL_WEB_TITLE@</title>
+<script type="application/json" id="serval-rom">@SERVAL_WEB_ROM@</script>
 <style>
   :root { color-scheme: dark; --fg: #d8d8e0; --dim: #8a8a98; --key: rgba(255, 255, 255, 0.14); --key-on: rgba(255, 255, 255, 0.34); }
   html, body { margin: 0; height: 100%; background: #000; color: var(--fg); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
@@ -77,6 +86,9 @@
   const KEYINPUT = 0x04000130;
   const FRAME_MS = 1000 / 59.7275; // the GBA's refresh rate
   const W = 240, H = 160;
+
+  // The game's ROM title and game code (see the comment at the top).
+  const rom = JSON.parse(document.getElementById("serval-rom").textContent);
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -253,7 +265,9 @@
 
   // Save memory (see the comment at the top), as base64 in localStorage.
   const saves = {
-    key: "serval-save:" + document.title + ":" + document.querySelector('meta[name="serval-game-code"]').content,
+    // The title as the browser shows it (document.title's rule for spaces):
+    // the key earlier pages made from document.title, so their saves are found.
+    key: "serval-save:" + rom.title.replace(/ +/g, " ").trim() + ":" + rom.gameCode,
     persist: !test || params.get("persist") === "1",
     bytes: null, // the latest save memory, once the game has used it
     warned: false,
@@ -294,6 +308,8 @@
         if (test.shots.has(frame)) shots.textContent += "frame " + frame + " " + canvas.toDataURL("image/png") + "\n";
         if (frame >= test.frames) {
           if (saves.bytes) shots.textContent += "save " + toBase64(saves.bytes) + "\n";
+          shots.textContent += "title " + JSON.stringify(document.title) + "\n";
+          shots.textContent += "key " + JSON.stringify(saves.key) + "\n";
           shots.textContent += "done\n";
           return new Promise(() => {});
         }

@@ -83,7 +83,7 @@ endfunction()
 # tilde). Left out, it is the target name in upper case, cut to 12
 # characters. GAME_CODE is the header's game code: exactly 4 printable ASCII
 # characters, 0000 if left out. Any printable ASCII character works, spaces
-# at either end included, and reaches the header unchanged.
+# at either end included, and reaches the header and the web page unchanged.
 # Anything else stops the configuration with an error: an empty TITLE, a
 # longer one, a GAME_CODE of any other length (it is never padded), a control
 # or non-ASCII character in either.

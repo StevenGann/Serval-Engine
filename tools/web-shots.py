@@ -8,17 +8,22 @@ so the shots can be compared with an emulator's.
 
 Usage: tools/web-shots.py [--require-picture] PAGE.html FRAMES OUT_PREFIX
                           [shot=N]... [key=FRAME:KEYS:LENGTH]... [save=FILE]
+                          [expect-title=TEXT] [expect-save-key=TEXT]
 Writes OUT_PREFIX-<frame>.png for each shot. save=FILE stands in for the
 cartridge's save memory (as big as the game's save type, like an mGBA .sav):
 the game starts from FILE if it exists, and FILE gets the save memory at the
-end if the game used it, so consecutive runs see each other's saves. --require-picture fails if a shot
-is a single flat color (a smoke test that the game draws). Needs Chrome or
-Chromium (found on PATH, or set SERVAL_CHROME).
+end if the game used it, so consecutive runs see each other's saves.
+--require-picture fails if a shot is a single flat color (a smoke test that
+the game draws). expect-title and expect-save-key fail unless the page's
+title (as the browser shows it) and the localStorage key of its saves are
+TEXT. Needs Chrome or Chromium (found on PATH, or set SERVAL_CHROME).
 """
 
 import base64
 import functools
+import html
 import http.server
+import json
 import os
 import re
 import shutil
@@ -99,7 +104,7 @@ def main():
     if len(args) < 3:
         sys.exit(__doc__)
     page, frames, prefix = args[0], int(args[1]), args[2]
-    shots, keys, save = [], [], None
+    shots, keys, save, expect = [], [], None, {}
     for arg in args[3:]:
         name, _, value = arg.partition("=")
         if name == "shot":
@@ -108,6 +113,8 @@ def main():
             keys.append(value)
         elif name == "save":
             save = value
+        elif name in ("expect-title", "expect-save-key"):
+            expect[name] = value
         else:
             sys.exit(f"web-shots: unknown argument {arg}")
 
@@ -138,7 +145,10 @@ def main():
         capture_output=True, text=True, timeout=600)
     server.shutdown()
 
-    found = re.findall(r"frame (\d+) data:image/png;base64,([A-Za-z0-9+/=]+)", result.stdout)
+    # What the page's test mode wrote, one line each (src/web/shell.html).
+    block = re.search(r'<pre id="shots">(.*?)</pre>', result.stdout, re.DOTALL)
+    output = html.unescape(block.group(1)) if block else ""
+    found = re.findall(r"^frame (\d+) data:image/png;base64,([A-Za-z0-9+/=]+)$", output, re.MULTILINE)
     flat = []
     for frame, data in found:
         png = base64.b64decode(data)
@@ -147,17 +157,24 @@ def main():
         rows = png_rows(png)
         if len(set(rows)) == 1 and len(set(rows[0][i:i + 4] for i in range(0, len(rows[0]), 4))) == 1:
             flat.append(frame)
-    saved = re.search(r"^save ([A-Za-z0-9+/=]+)$", result.stdout, re.MULTILINE)
+    saved = re.search(r"^save ([A-Za-z0-9+/=]+)$", output, re.MULTILINE)
     if save and saved:
         with open(save, "wb") as f:
             f.write(base64.b64decode(saved.group(1)))
-    if "done" not in result.stdout:
+    if not re.search(r"^done$", output, re.MULTILINE):
         sys.stderr.write(result.stderr[-2000:])
         sys.exit(f"web-shots: the page did not finish {frames} frames")
     if len(found) != len(shots):
         sys.exit(f"web-shots: got {len(found)} of {len(shots)} shots")
     if require_picture and flat:
         sys.exit(f"web-shots: {page}: frame(s) {', '.join(flat)} are a single flat color")
+    for name, line in (("expect-title", "title"), ("expect-save-key", "key")):
+        if name in expect:
+            match = re.search(rf"^{line} (.*)$", output, re.MULTILINE)
+            actual = json.loads(match.group(1)) if match else None
+            if actual != expect[name]:
+                sys.exit(f"web-shots: {page}: the page's {line} is {json.dumps(actual)}, "
+                         f"expected {json.dumps(expect[name])}")
 
 
 if __name__ == "__main__":
