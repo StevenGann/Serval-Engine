@@ -189,6 +189,7 @@
 //     serval's size carry over; time starts again at 300.
 //   - START pauses ("PAUSED", a tick; the music stops) and resumes (a tick;
 //     the music carries on from where it stopped).
+//   - The classic cheat code during a stage, or paused, skips to the next stage (a jingle).
 //   Stage 1-1, the overworld:
 //   - Grassland under a blue sky with hills and clouds, tall grass and
 //     flowers in front of the serval, and a bouncy tune in F major (melody,

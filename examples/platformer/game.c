@@ -337,6 +337,12 @@ static void next_stage(void) {
     }
 }
 
+// After a stage: fades to the next stage's card, or after the last, to its
+// ending (the title, for a last stage without one).
+static void leave_stage(void) {
+    fade_to(stage_index + 1 < STAGES || stage->ending_start ? next_stage : show_title);
+}
+
 static void game_over(void) {
     state = GAME_OVER;
     state_timer = GAME_OVER_FRAMES;
@@ -486,6 +492,31 @@ static void update_goal_tally(void) {
     }
 }
 
+// --- The secret code ---------------------------------------------------------
+
+// A hidden extra: the classic cheat code (Up, Up, Down, Down, Left, Right,
+// Left, Right, B, A), entered while a stage is played or paused, skips to
+// the next stage. The engine calls on_secret_code() from frame_begin(); it
+// only raises a flag, and game_frame() acts on it.
+static bool secret_entered;
+
+static void on_secret_code(void) {
+    secret_entered = true;
+}
+
+// Ends the stage at once, as if cleared but without the goal: no pole bonus,
+// no time tally. The music stops and the 1-up jingle plays over the fade.
+// Then, as after "STAGE CLEAR!", next_stage(): the next stage's card unloads
+// this one (its entities, maps and music; its sprite group is released as
+// the next one's loads) and saves the stage reached and the best score;
+// after the last stage, the ending. Lives, score, gems and the serval's size
+// carry over.
+static void skip_stage(void) {
+    psg_music_stop();
+    psg_play(SND_ONE_UP);
+    leave_stage();
+}
+
 void game_init(void) {
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN); // black while loading; the title fades in
     lives = START_LIVES;
@@ -503,6 +534,7 @@ void game_init(void) {
                            PHYSICS_EDGE_BOTTOM);
     text_set_shadow(true); // white text stays readable over the clouds
     progress_load();
+    button_secret_set(on_secret_code);
     show_title();
 }
 
@@ -552,7 +584,7 @@ static void update_state(void) {
         break;
     case STAGE_CLEAR:
         if (--state_timer == 0 || start)
-            fade_to(stage_index + 1 < STAGES || stage->ending_start ? next_stage : show_title);
+            leave_stage();
         break;
     case GAME_OVER:
         if (--state_timer == 0 || start)
@@ -566,6 +598,12 @@ static void update_state(void) {
 }
 
 void game_frame(void) {
+    // The secret code counts only while a stage is played or paused: not on
+    // the title, a card, game over or the ending, not while dying, and not
+    // once the stage is ending anyway (the goal) or the screen is fading.
+    if (secret_entered && (state == PLAYING || state == PAUSED) && !fading_out)
+        skip_stage(); // fading out from this frame on, so the stage stops here
+    secret_entered = false;
     if (!update_fade()) // fading out: the game waits
         update_state();
     if (state == TITLE || (state >= PLAYING && state <= STAGE_CLEAR && state != PAUSED)) {
