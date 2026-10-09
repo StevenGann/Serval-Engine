@@ -49,6 +49,17 @@ serval_add_script(fireflies fireflies/fireflies.lua
                           serval/path.h serval/screen.h)
 target_link_libraries(fireflies PRIVATE serval_warnings)
 
+# One scene per screen effect, each in its own file (effects.h).
+serval_add_rom(effects SOURCES
+               effects/main.c
+               effects/art.c
+               effects/blend_fx.c
+               effects/palette_fx.c
+               effects/sprite_tiles_fx.c
+               effects/raster_fx.c
+               TITLE "EFFECTS" GAME_CODE "SVFX")
+target_link_libraries(effects PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -58,4 +69,5 @@ target_link_libraries(bunnymark_bench PRIVATE serval_warnings)
 if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(hello bunnymark pong asteroids platformer breakout shmup blackjack
                           fireflies bunnymark_bench)
+    serval_add_rom_checks(effects)
 endif()

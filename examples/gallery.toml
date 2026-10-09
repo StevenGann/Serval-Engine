@@ -39,6 +39,7 @@ music = "Songs on the tone generators, with sound effects over them"
 text = "HUD text"
 save = "Save data that survives power-off"
 vm = "Game logic written for the bytecode VM"
+effects = "Screen and color effects: blending, palette writes, raster effects"
 benchmark = "Measures the engine's performance"
 
 [examples.hello]
@@ -103,3 +104,10 @@ summary = "A serval catching fireflies at dusk, 60 seconds a round, whose logic 
 tags = ["vm", "paths", "animation", "music"]
 level = 4
 thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:30"] }
+
+[examples.effects]
+title = "EFFECTS"
+summary = "The engine's screen effects, a scene each: alpha blending, palette writes, runtime sprite tiles and raster effects"
+tags = ["effects"]
+level = 2
+thumbnail = { frame = 300, keys = ["200:S:2"] }
