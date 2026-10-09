@@ -94,7 +94,6 @@ enum {
     W_SET_RANGE,
     W_SET_DATA,
     W_SET_FULL,
-    W_SET_COLORS,
 };
 static u32 warned;
 #define WARN_ONCE(kind, ...)                                                                       \
@@ -152,6 +151,12 @@ bool tileset_load(const Tileset* tileset) {
     // Color 0 is transparent, and bank 0's is the backdrop: leave them be.
     for (u32 bank = 0; bank < tileset->palette_count; bank++)
         memcpy16(&pal_bg_bank[bank][1], &tileset->palettes[bank * 16 + 1], 15);
+    // palettes: the tileset's colors win over tileset_set_colors() writes made
+    // before it in the frame (palette.c); color 0 keeps them
+    if (serval_palette_hooks) {
+        for (u32 bank = 0; bank < tileset->palette_count; bank++)
+            serval_palette_hooks->overwritten(false, bank * 16 + 1, 15);
+    }
     return true;
 }
 
@@ -183,17 +188,6 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count) {
         tile_update_count++;
     tile_updates[k] = (TileUpdate){tiles, first, count};
     attach_hooks();
-}
-
-// Planned (map.h): background palette writes through a shadow palette. A stub
-// until then: it changes nothing, so the palettes stay as tileset_load() and
-// screen_set_backdrop() left them, and says so once.
-void tileset_set_colors(u32 index, const Color* colors, u32 count) {
-    (void)index;
-    (void)colors;
-    (void)count;
-    WARN_ONCE(W_SET_COLORS, "tileset_set_colors: palette writes are planned, not implemented in "
-                            "this engine version; the colors don't change");
 }
 
 // v modulo m (m > 0), from 0 to m - 1 also for negative v.

@@ -174,10 +174,10 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count);
 // also sets: writing it changes the backdrop, and tileset_load() leaves it
 // alone. Color 0 of the other palettes is transparent: writes to it are
 // kept, not shown. Ignored (warning in debug builds) if the colors reach past
-// color 239 (palette 15 is the text layer's) or `colors` is NULL. Sprite
-// palettes have sprite_set_colors() (sprites.h).
-// Planned: until implemented, it changes nothing and warns once.
-SERVAL_PLANNED("palette writes, docs/tilemaps.md#palette-writes")
+// color 239 (palette 15 is the text layer's) or `colors` is NULL; a count of
+// 0 does nothing. screen_set_backdrop() and tileset_load() write at once, so
+// in the same frame they win over earlier writes to the colors they set.
+// Sprite palettes have sprite_set_colors() (sprites.h).
 void tileset_set_colors(u32 index, const Color* colors, u32 count);
 
 // Shows a map layer on its background (1-3), replacing any layer there. Its

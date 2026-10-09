@@ -168,7 +168,7 @@ Not reserved: `sys_` (C's systems are functions, never per-entity data), the eng
 
 ### Planned functions
 
-A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set`, `psg_waves_set`, `sprite_set_colors`, `tileset_set_colors`, `raster_scroll` and the rest. `function music_play() ... end` is a compile error:
+A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set`, `psg_waves_set`, `raster_scroll` and the rest. `function music_play() ... end` is a compile error:
 
 ```
 game.lua:3:10: error: function music_play: music_play is reserved: it names a planned engine function, which a later engine version may make a builtin

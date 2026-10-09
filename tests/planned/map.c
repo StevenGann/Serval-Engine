@@ -12,8 +12,6 @@ void planned_map(void);
 void planned_map(void) {
     static const Tileset lz77 = {.flags = TILESET_LZ77}; // planned
     (void)lz77;
-    static const Color colors[1] = {0};
-    tileset_set_colors(1, colors, 1);             // planned
     static const u8 ladder = MAP_LADDER;          // planned
     static const u8 slopes[] = {MAP_SLOPE_R,      // planned
                                 MAP_SLOPE_L,      // planned

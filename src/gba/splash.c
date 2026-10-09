@@ -35,6 +35,10 @@ void serval_splash(void) {
     // blend control (the game's brightness or blending), the text shadow and
     // background 0 (control register and display bit); put them back at the
     // end. Charblock 1 is not put back: games load their tilesets after.
+    // palettes: palette writes still waiting land first, so the splash
+    // borrows and puts back the colors the game gave
+    if (serval_palette_hooks)
+        serval_palette_hooks->flush();
     bool text_was_active = serval_text_active();
     u16 old_bg0cnt = REG_BG0CNT;
     u16 old_bg0_shown = REG_DISPCNT & DCNT_BG0;

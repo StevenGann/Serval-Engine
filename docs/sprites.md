@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups, LZ77-compressed sprites and palette writes through a shadow palette. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
+**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`); palette writes through a shadow palette ([Palettes](#palettes)). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups and LZ77-compressed sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes, which the engine doesn't use) with 16 OBJ palette banks of 16 colors.
 
@@ -72,14 +72,17 @@ Until it is implemented, `sprite_group_load()` refuses a group holding a sprite 
 
 **Implemented: choosing a palette per draw.** A sprite draws with its asset's `palette_slot`, or with `SPRITE_PALETTE(n)` in its draw flags (`spr_flags` for entities) with palette `n` (0-14) of its group: a white hit flash, a damaged or enraged color, the eight colors of one brick, without a copy of the sprite per color. The art and its color variants share tiles; only the group's palette list grows. Details under [API](#api).
 
-**Planned: palette writes,** `sprite_set_colors(sprite_id, index, colors, count)`: changes `count` colors of the palettes of the group `sprite_id` was loaded with, from color `index` = palette × 16 + color on (palettes numbered as `SPRITE_PALETTE(n)` numbers them, so one call can run across several). The colors are copied at once into a shadow of the palette banks, which `frame_end()` copies to palette RAM in VBlank. For hit flashes and palette cycles, and fades: colors mixed from the ROM palette toward white, black or a tint with `color_mix()` (`screen.h`), written each frame. The rules, fixed now so that sharing (below) can't change them:
+**Implemented: palette writes,** `sprite_set_colors(sprite_id, index, colors, count)`: changes `count` colors of the palettes of the group `sprite_id` was loaded with, from color `index` = palette × 16 + color on (palettes numbered as `SPRITE_PALETTE(n)` numbers them, so one call can run across several). The colors are copied at once into a shadow of the palette banks, which `frame_end()` copies to palette RAM in VBlank ([frame-loop.md](frame-loop.md#vblank-flush), step 5). For hit flashes and palette cycles, and fades: colors mixed from the ROM palette toward white, black or a tint with `color_mix()` (`screen.h`), written each frame. The rules, fixed so that sharing (below) can't change them:
 
 - **Copy-on-write:** a write changes that group's sprites only. Where a later version shares a bank between groups with identical palettes, writing to it first gives the group its own copy of the bank; if no free bank is left for the copy, the write goes to the shared bank, every group sharing it changes, and debug builds warn.
 - Color 0 of each palette is transparent: a write to it is kept, not shown.
 - Written colors stay until written again or the group is unloaded. To put the ROM colors back, write them again from the group's `.palettes`.
-- Ignored (*warns*): a sprite that isn't loaded, a metasprite (its pieces' groups hold the colors), a NULL `colors`, colors past the group's palettes (`index + count > palette_count × 16`).
+- Ignored (*warns*): a sprite that isn't loaded, a metasprite (its pieces' groups hold the colors), a NULL `colors`, colors past the group's palettes (`index + count > palette_count × 16`). A count of 0 does nothing.
+- A load wins over writes made before it in the same frame: `sprite_group_load()` writes its palettes at once, and a write still waiting for VBlank in one of its banks gives way.
 
-Until it is implemented, `sprite_set_colors()` does nothing (the colors stay as loaded) and warns once in debug builds.
+**How it works** (`src/gba/palette.c`, shared with `tileset_set_colors()`). The shadow holds only the banks written since the last `frame_end()`. The first write to a bank in a frame copies the bank from palette RAM into the shadow (reading palette RAM is fine at any time; only writes wait for VBlank), so its other colors are the ones on screen, unless the write covers the whole bank; later writes that frame go to the same copy, and `frame_end()` copies each written bank, 32 bytes, to palette RAM. Measured on the GBA (release build, logged by the test ROM): a call writing a 16-color bank costs about 500 cycles of the frame's CPU time, and the copy about 140 cycles of VBlank per bank, so even every bank there is (the 16 sprite banks and the 15 a tileset can have) takes about 4,400 of VBlank's 83,776. Mixing the colors is the bigger cost: about 140 cycles per color with `color_mix()`. Nothing is linked into a game that never writes colors. Sprite groups share no banks yet, so copy-on-write has nothing to copy.
+
+In 1.0.0-rc.1, where it was planned API, `sprite_set_colors()` did nothing and warned once in debug builds.
 
 **After 1.0: sharing.** The tooling can give each group logical banks, and a runtime palette manager can map them to physical banks with reference counting, so that identical palettes share one bank. It needs no new API, and the copy-on-write rule above already fixes what a game sees.
 
@@ -231,7 +234,7 @@ SpriteStats sprite_stats(void);                     // last frame: drawn, matric
 void sprite_stats_scanlines(bool on);               // also the per-scanline budget
 void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRITE_MAX_TILE_UPDATES
 
-// Planned (SERVAL_PLANNED): warn at compile time, do nothing yet
+// Palette writes: copied now, on screen at the next frame_end()
 void sprite_set_colors(u16 sprite_id, u32 index, const Color *colors, u32 count);
 ```
 
@@ -271,8 +274,8 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank).
+Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank); palette writes through a shadow palette (`sprite_set_colors()`).
 
-**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused), palette writes through a shadow palette (`sprite_set_colors()`; does nothing).
+**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused).
 
 **After 1.0, no API:** palette sharing with reference counting, VRAM defragmentation, loading in forced blank, and the draw flags reserved in bits 13-14 (mosaic, the object window).

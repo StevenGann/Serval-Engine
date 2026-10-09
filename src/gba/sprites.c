@@ -15,9 +15,9 @@
 // VRAM and palettes in OBJ palette banks, in load order;
 // sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
 // the start. Planned (declared in sprites.h, stubs or refusals here):
-// streamed groups, LZ77 sprites and palette writes (sprite_set_colors).
-// Palette sharing comes after 1.0. Runtime tiles (sprite_set_tiles) are in
-// sprite_tiles.c.
+// streamed groups and LZ77 sprites. Palette sharing comes after 1.0.
+// Runtime tiles (sprite_set_tiles) are in sprite_tiles.c.
+// palettes: palette writes, sprite_set_colors(), are in palette.c.
 
 // Rare paths (building a matrix, drawing a metasprite's pieces) are out of
 // line, in ROM on the GBA, so IWRAM code calls them with a long call.
@@ -422,11 +422,29 @@ bool sprite_group_load(const SpriteGroup* group) {
     }
 
     memcpy16(&pal_obj_bank[next_palette_bank], group->palettes, group->palette_count * 16u);
+    // palettes: the group's colors win over sprite_set_colors() writes made to
+    // these banks before it in the frame (palette.c)
+    if (serval_palette_hooks)
+        serval_palette_hooks->overwritten(true, next_palette_bank * 16u,
+                                          group->palette_count * 16u);
 
     next_tile = (u16)tile;
     next_palette_bank = (u8)(next_palette_bank + group->palette_count);
     segments[top_segment].loaded = true;
     return true;
+}
+
+// palettes: sprite_set_colors() (palette.c) finds a sprite's group's banks here.
+int serval_sprite_palettes(u32 id, u32* first_bank) {
+    if (id >= serval_sprite_count)
+        return 0;
+    const SpriteDraw* d = &sprite_draws[id];
+    if (d->meta_frames)
+        return -1;
+    if (d->frame_count == 0)
+        return 0;
+    *first_bank = d->first_palette;
+    return d->palette_count;
 }
 
 #ifdef SERVAL_DEBUG
@@ -1006,26 +1024,4 @@ ServalSpriteFrames serval_sprite_frames(u32 id) {
                                 .tiles_per_frame = d->tiles_per_frame,
                                 .frame_count = d->frame_count,
                                 .kind = SERVAL_SPRITE_ORDINARY};
-}
-
-// --- Planned (sprites.h): stubs that change nothing and say so once ---
-
-#ifdef SERVAL_DEBUG
-static bool warned_set_colors;
-#endif
-
-// Palette writes (docs/sprites.md#palettes). Implementing it writes a shadow
-// of the sprite palette banks that frame_end() copies in VBlank.
-void sprite_set_colors(u16 sprite_id, u32 index, const Color* colors, u32 count) {
-    (void)sprite_id;
-    (void)index;
-    (void)colors;
-    (void)count;
-#ifdef SERVAL_DEBUG
-    if (!warned_set_colors) {
-        warned_set_colors = true;
-        SERVAL_WARN("sprite_set_colors: palette writes is planned, not implemented in this engine "
-                    "version; colors unchanged");
-    }
-#endif
 }

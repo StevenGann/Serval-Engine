@@ -390,8 +390,8 @@ enum {
     SPRITE_MAX_TILE_UPDATES = 8,
 };
 
-// Planned: changes `count` colors of the palettes of the group `sprite_id`
-// was loaded with, from color `index` on: index = palette * 16 + color, with
+// Changes `count` colors of the palettes of the group `sprite_id` was loaded
+// with, from color `index` on: index = palette * 16 + color, with
 // palettes numbered as SPRITE_PALETTE(n) numbers them (0 to the group's
 // palette_count - 1), so one call can run across several of its palettes.
 // For a hit flash, a palette cycle, colors faded with color_mix() (screen.h).
@@ -408,9 +408,8 @@ enum {
 // group's .palettes. Ignored (warning in debug builds) for a sprite that isn't
 // loaded, a metasprite (its pieces' groups hold the colors), a NULL `colors`,
 // or colors past the group's palettes (index + count > palette_count * 16).
-// Until implemented: does nothing (the colors stay as loaded), with a warning
-// in debug builds (once).
-SERVAL_PLANNED("palette writes, docs/sprites.md#palettes")
+// A count of 0 does nothing. A load in the same frame wins over earlier
+// writes to its banks: sprite_group_load() writes its colors at once.
 void sprite_set_colors(u16 sprite_id, u32 index, const Color* colors, u32 count);
 
 #endif // SERVAL_SPRITES_H

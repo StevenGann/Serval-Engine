@@ -33,6 +33,8 @@ SpriteStats serval_sprite_stats;
 
 void (*serval_map_prepare_hook)(void);
 void (*serval_map_commit_hook)(void);
+// palettes: palette writes (palette.c), NULL until the first one.
+const ServalPaletteHooks* serval_palette_hooks;
 
 static u32 frame_start_cycles;
 static u32 last_frame_cycles;
@@ -122,6 +124,10 @@ void frame_end(void) {
     VBlankIntrWait();
     oam_copy(oam_mem, serval_shadow_oam, 128);
     serval_sprite_tiles_commit(); // sprite tiles: step 3, sprite_set_tiles() copies
+    // palettes: step 5, the palette banks written this frame (palette.c);
+    // before the map hook, which does steps 4 and 6 (docs/frame-loop.md)
+    if (serval_palette_hooks)
+        serval_palette_hooks->flush();
     if (serval_map_commit_hook)
         serval_map_commit_hook();
     serval_blend_apply(); // blending: step 7, the blend registers
@@ -160,6 +166,9 @@ bool button_pressed(u16 buttons) {
 
 void screen_set_backdrop(Color color) {
     pal_bg_mem[0] = color;
+    // palettes: wins over a tileset_set_colors() write to color 0 made before
+    if (serval_palette_hooks)
+        serval_palette_hooks->overwritten(false, 0, 1);
 }
 
 bool gba_oam_submit(u16 attr0, u16 attr1, u16 attr2) {

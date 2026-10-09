@@ -113,7 +113,7 @@ Variable-width font renderer drawing glyphs into BG tiles; text boxes with typew
 
 ## Special effects
 
-**Status:** brightness fades, color mixing and alpha blending (`screen_set_blend()`, with the `LAYER_*` constants, and `SPRITE_BLEND` in `sprites.h`) implemented (`include/serval/screen.h`). Raster effects (`raster_scroll()`, `raster_backdrop()`, `raster_clear()`) are declared as *planned* API: designed below, stubbed, and warned about wherever a game uses them ([releases.md](releases.md#planned-api)). Palette writes are planned in the sprite and tilemap docs ([below](#palette-effects)). Windows and mosaic come after 1.0, with no API yet.
+**Status:** brightness fades, color mixing and alpha blending (`screen_set_blend()`, with the `LAYER_*` constants, and `SPRITE_BLEND` in `sprites.h`) implemented (`include/serval/screen.h`). Raster effects (`raster_scroll()`, `raster_backdrop()`, `raster_clear()`) are declared as *planned* API: designed below, stubbed, and warned about wherever a game uses them ([releases.md](releases.md#planned-api)). Palette writes, implemented, are in the sprite and tilemap docs ([below](#palette-effects)). Windows and mosaic come after 1.0, with no API yet.
 
 Screen-wide effects for transitions and atmosphere, exposed as API calls (and, for brightness and blending, to scripts: [vm.md](vm.md)). The GBA's color special effect (`BLDCNT`, `BLDALPHA`, `BLDY`) does one thing at a time, so brightness fades and alpha blending share it ([below](#alpha-blending)); the engine owns those registers.
 
@@ -131,7 +131,7 @@ Screen-wide effects for transitions and atmosphere, exposed as API calls (and, f
 
 ### Palette effects
 
-**Planned:** writing colors at run time, through a shadow palette that `frame_end()` copies to palette RAM in VBlank: `sprite_set_colors()` for a sprite group's palettes ([sprites.md](sprites.md#palettes)) and `tileset_set_colors()` for the background palettes ([tilemaps.md](tilemaps.md#tilesets)), both declared as planned API. Palette cycling (water, lava, a flashing sign) and palette fades are game code on top of them, with `color_mix()` for the colors; helpers for both may follow after 1.0. Until then games recolor with per-draw palettes (`SPRITE_PALETTE(n)`: Breakout's flashing bricks), sprite variants with their own palette (Pong's paddle flash) and `screen_set_backdrop()`.
+**Implemented:** writing colors at run time, through a shadow palette that `frame_end()` copies to palette RAM in VBlank: `sprite_set_colors()` for a sprite group's palettes ([sprites.md](sprites.md#palettes)) and `tileset_set_colors()` for the background palettes ([tilemaps.md](tilemaps.md#palette-writes)). Palette cycling (water, lava, a flashing sign) and palette fades are game code on top of them, with `color_mix()` for the colors; helpers for both may follow after 1.0. A palette fade keeps alpha blending working, which a brightness fade pauses. Per-draw palettes (`SPRITE_PALETTE(n)`: Breakout's flashing bricks) and sprite variants with their own palette (Pong's paddle flash) still suit switching between a few fixed palettes.
 
 ### Alpha blending
 

@@ -22,7 +22,7 @@ typedef u16 Color;
 // is 0 in the result. Amounts past 256 are clamped to 256 (warning in debug
 // builds). For palette effects, e.g. a palette faded toward black, white or a
 // dusk tint by mixing each of its ROM colors (sprite_set_colors() and
-// tileset_set_colors() will write the result), or a flash of the backdrop
+// tileset_set_colors() write the result), or a flash of the backdrop
 // (screen_set_backdrop). At a multiple of 16 it matches the hardware: it is
 // what alpha blending (screen_set_blend) shows for a over b with weights
 // 16 - amount / 16 and amount / 16, and with b white, what

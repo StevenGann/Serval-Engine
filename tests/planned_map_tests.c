@@ -155,10 +155,9 @@ static void slopes_load_and_collide_as_solid(void) {
 }
 
 #ifdef SERVAL_GBA
-// Charblock 1, where tileset_load() puts tiles, and background palette RAM,
-// read directly: this suite is shared with the host, so it has no libtonc.
+// Charblock 1, where tileset_load() puts tiles, read directly: this suite is
+// shared with the host, so it has no libtonc.
 #define TILE_VRAM ((const volatile u32*)0x06004000)
-#define BG_PALETTE ((const volatile u16*)0x05000000)
 
 static const u32 plain_tiles[2 * 8] = {[8] = 0x11111111, [15] = 0x22222222};
 static const u32 packed_tiles[2 * 8] = {0x00004010, 0x33333333, [15] = 0x44444444};
@@ -185,31 +184,6 @@ static void tileset_load_refuses_lz77(void) {
     CHECK(!tileset_load(&both));
     CHECK(TILE_VRAM[1] == 0);
 }
-
-// tileset_set_colors() changes nothing, now or at frame_end().
-static void tileset_set_colors_changes_nothing(void) {
-    const Tileset plain = {
-        .tiles = plain_tiles, .tile_count = 2, .palettes = plain_palette, .palette_count = 1};
-    CHECK(tileset_load(&plain));
-    frame_begin();
-    frame_end();
-    u16 old[18];
-    for (u32 k = 0; k < 18; k++)
-        old[k] = BG_PALETTE[k];
-    static const Color colors[3] = {0x1111, 0x2222, 0x3333};
-    u32 before = debug_warning_count();
-    tileset_set_colors(0, colors, 3); // the backdrop and two colors
-    CHECK(debug_warning_count() == before + WARNINGS_ON);
-    tileset_set_colors(15, colors, 3); // across palettes 0 and 1
-    CHECK(debug_warning_count() == before + WARNINGS_ON);
-    frame_begin();
-    frame_end();
-    bool same = true;
-    for (u32 k = 0; k < 18; k++)
-        same &= BG_PALETTE[k] == old[k];
-    CHECK(same);
-    CHECK(BG_PALETTE[1] == 0x0123 && BG_PALETTE[15] == 0x7654); // the tileset's
-}
 #endif
 
 TEST_SUITE(planned_map_tests, "planned_map",
@@ -217,6 +191,5 @@ TEST_SUITE(planned_map_tests, "planned_map",
            {"slopes load and collide as solid", slopes_load_and_collide_as_solid},
 #ifdef SERVAL_GBA
            {"tileset_load refuses LZ77", tileset_load_refuses_lz77},
-           {"tileset_set_colors changes nothing", tileset_set_colors_changes_nothing},
 #endif
 );

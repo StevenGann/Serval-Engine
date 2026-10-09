@@ -12,8 +12,6 @@ void planned_sprites(void);
 void planned_sprites(void) {
     static const u8 streamed = SPRITE_GROUP_STREAMED; // planned
     static const u8 packed = SPRITE_ASSET_LZ77;       // planned
-    static const Color white = COLOR_RGB(255, 255, 255);
-    sprite_set_colors(0, 1, &white, 1); // planned
     (void)streamed;
     (void)packed;
 }

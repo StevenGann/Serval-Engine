@@ -49,7 +49,7 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 33 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+Each of these 31 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ Each of these 33 names (37 at the freeze, less the implemented rows marked below
 | Streamed sprite groups | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
 | Runtime sprite tiles: **implemented**, no longer marked planned (no SYS call: scripts can't hold tile data) | `sprite_set_tiles`, `SPRITE_MAX_TILE_UPDATES` | [sprites.md](sprites.md#runtime-tiles) |
-| Palette writes | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |
+| Palette writes: **implemented**, no longer marked planned | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |
 | Ladders | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#collision-types) |
 | Floor slopes | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#collision-types) |
 | Alpha blending: **implemented**, no longer marked planned (scripts: SYS call 14, `SCREEN_SET_BLEND`) | `screen_set_blend`, `SPRITE_BLEND` | [runtime-systems.md](runtime-systems.md#alpha-blending), [sprites.md](sprites.md#alpha-blending) |

@@ -114,6 +114,24 @@ void serval_map_commit(void);
 // low halfword and y in the high one (for tests: they are write-only).
 u32 serval_map_scroll(u32 bg);
 
+// palettes: palette writes (palette.c), set by the first sprite_set_colors()
+// or tileset_set_colors() call, so games without palette writes don't link
+// them; NULL until then. flush(), in VBlank (frame_end), copies the banks
+// written since the last frame to palette RAM. overwritten(obj, index,
+// count): something has just written `count` colors of palette RAM directly,
+// from color `index` of the sprite palettes (obj) or the background's on
+// (sprite_group_load, tileset_load, screen_set_backdrop), so those colors win
+// over palette writes made before it in the frame.
+typedef struct {
+    void (*flush)(void);
+    void (*overwritten)(bool obj, u32 index, u32 count);
+} ServalPaletteHooks;
+extern const ServalPaletteHooks* serval_palette_hooks;
+// palettes: the palette banks of the group sprite `id` was loaded with, for
+// sprite_set_colors() (sprites.c): returns the group's palette count and sets
+// *first_bank, or returns 0 if the sprite isn't loaded, -1 for a metasprite.
+int serval_sprite_palettes(u32 id, u32* first_bank);
+
 #ifdef SERVAL_WEB
 // Web builds: real time in GBA CPU cycles, standing in for the timers that
 // count cycles on the GBA (src/web/platform.c).

@@ -90,6 +90,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/debug.c
         src/gba/map.c
         src/gba/music.c
+        src/gba/palette.c
         src/gba/psg.c
         src/gba/sampled_audio.c
         src/gba/screen.c
@@ -122,6 +123,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/core.c
         src/gba/map.c
         src/gba/music.c
+        src/gba/palette.c
         src/gba/psg.c
         src/gba/sampled_audio.c
         src/gba/screen.c

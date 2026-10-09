@@ -4,8 +4,8 @@ Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffe
 
 **Status:** implemented, with planned API declared (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)).
 
-- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles()`), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
-- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): LZ77-compressed tilesets (`TILESET_LZ77`), background palette writes (`tileset_set_colors()`), ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`). Raster effects are planned API in `screen.h` ([below](#raster-effects)).
+- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles()`), background palette writes (`tileset_set_colors()`), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
+- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): LZ77-compressed tilesets (`TILESET_LZ77`), ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`). Raster effects are planned API in `screen.h` ([below](#raster-effects)).
 - **Not in the API yet**, and addable later without breaking existing games or data: 8bpp tilesets (a reserved `Tileset.flags` bit), tileset groups, more changed cells than `MAP_MAX_CHANGES`, ceiling slopes and other collision types (the reserved types 10-15).
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
@@ -35,7 +35,7 @@ World coordinates are pixels from the top-left of the playfield (BG2) map; colli
 | Charblocks 1-2 | Tileset tiles 0-1023 (`MAP_MAX_TILES`), shared by every map layer (BGxCNT character base 1) |
 | Charblock 3 | No tiles: screenblocks 28, 29, 30 (BG1, BG2, BG3 maps, 32×32 entries each) and 31 (text layer map) |
 | Charblocks 4-5 | Sprite tiles ([sprites.md](sprites.md)) |
-| BG palette banks 0-14 | Tileset palettes (`MAP_MAX_PALETTES`); color 0 of bank 0 is the backdrop, and `tileset_load()` skips color 0 of every bank |
+| BG palette banks 0-14 | Tileset palettes (`MAP_MAX_PALETTES`), written at run time with `tileset_set_colors()`; color 0 of bank 0 is the backdrop, and `tileset_load()` skips color 0 of every bank |
 | BG palette bank 15 | Text layer |
 | Charblock 0 tiles 384-511, screenblocks 24-27 | Unused today; reserved for the text layer and the engine ([core-api.md](core-api.md#hardware-the-engine-uses)) |
 
@@ -163,15 +163,16 @@ A camera moving less than 8 pixels per frame writes at most one row and one colu
 
 ### Palette writes
 
-**Planned:** `tileset_set_colors(index, colors, count)` changes `count` background colors from color `index` on, where `index` = palette × 16 + color and palettes are numbered as in `MAP_SE()` (0-14): water whose colors cycle, a room faded toward dusk with `color_mix()` (`screen.h`), a flash. The semantics, fixed now:
+**Implemented:** `tileset_set_colors(index, colors, count)` changes `count` background colors from color `index` on, where `index` = palette × 16 + color and palettes are numbered as in `MAP_SE()` (0-14): water whose colors cycle, a room faded toward dusk with `color_mix()` (`screen.h`), a flash. The semantics:
 
-- The colors are copied at the call (`colors` may be a temporary) and reach the screen in VBlank at the next `frame_end()`.
+- The colors are copied at the call (`colors` may be a temporary) and reach the screen in VBlank at the next `frame_end()` ([frame-loop.md](frame-loop.md#vblank-flush), step 5).
 - They go to the engine's own copy of the palettes (the shadow palette), never to the tileset's data: a palette that is const data in ROM, or that another tileset uses too, keeps its colors there. This is the same copy-on-write rule as `sprite_set_colors()` for sprite palettes ([sprites.md](sprites.md#palettes)).
 - `tileset_load()` puts the tileset's colors back (colors 1-15 of its `palette_count` palettes), also over writes made before it in the same frame.
 - Color 0 of palette 0 is the backdrop, which `screen_set_backdrop()` also sets: writing it changes the backdrop, and `tileset_load()` leaves it alone. Color 0 of the other palettes is transparent: writes to it are kept, not shown.
-- Ignored, with a warning in debug builds, if the colors reach past color 239 (palette 15 is the text layer's) or `colors` is NULL.
+- `screen_set_backdrop()` writes at once, so in the same frame it wins over a write to color 0 made before it, as `tileset_load()` does over the colors it loads; a write made after either lands at the next `frame_end()`.
+- Ignored, with a warning in debug builds, if the colors reach past color 239 (palette 15 is the text layer's) or `colors` is NULL. A count of 0 does nothing. No tileset needs to be loaded: palettes it doesn't have, and the backdrop, can be written too.
 
-Until implemented, it changes nothing and warns once (debug builds).
+The shadow palette is the sprites' one: the banks written since the last frame, each first copied from palette RAM ([sprites.md](sprites.md#palettes), with the costs). In 1.0.0-rc.1, where it was planned API, it changed nothing and warned once (debug builds).
 
 **Later (no API yet): tileset groups**, several tilesets loaded side by side at tile and palette offsets assigned at build time, for rooms that share part of their graphics. That would add `Tileset` fields whose 0 keeps today's layout (loading at tile 0 replaces everything, as now), so it can come in a minor version.
 

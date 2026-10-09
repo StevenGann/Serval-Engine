@@ -33,7 +33,6 @@ static void planned_values_are_fixed(void) {
 // Hardware memory, read directly: the shared suites don't see libtonc.
 #define OAM ((const volatile u16*)0x07000000) // 4 halfwords per sprite
 #define OBJ_VRAM ((const volatile u32*)0x06010000)
-#define OBJ_PALETTE ((const volatile u16*)0x05000200)
 #define OAM_ATTR0(k) OAM[(k) * 4]
 #define OAM_HIDDEN(k) ((OAM_ATTR0(k) & 0x0300) == 0x0200) // not affine, disabled
 #define OAM_MODE(k) (OAM_ATTR0(k) & 0x0C00)               // 0 normal, 0x400 semi-transparent
@@ -58,11 +57,6 @@ static const u16 group_ids[] = {SPR_DOT, SPR_SHADOW};
 static const SpriteGroup group = {
     .sprite_ids = group_ids, .palettes = palettes, .sprite_count = 2, .palette_count = 2};
 
-static void load(void) {
-    sprite_table_set(table, SPRITE_COUNT);
-    CHECK(sprite_group_load(&group));
-}
-
 // Checks that `count` warnings were reported since `before` (none in release
 // builds, which report nothing).
 static void check_warnings(u32 before, u32 count) {
@@ -72,20 +66,6 @@ static void check_warnings(u32 before, u32 count) {
     (void)count;
     CHECK(debug_warning_count() == before);
 #endif
-}
-
-static void sprite_set_colors_changes_nothing(void) {
-    load();
-    static const Color red = 0x001F;
-    for (u32 call = 0; call < 2; call++) {
-        u32 before = debug_warning_count();
-        frame_begin();
-        sprite_set_colors(SPR_DOT, 1, &red, 1);
-        sprite_set_colors(SPR_DOT, 17, &red, 1); // the second call of the frame: no warning
-        frame_end();
-        CHECK(OBJ_PALETTE[1] == 0x1234 && OBJ_PALETTE[17] == 0x0567);
-        check_warnings(before, call == 0);
-    }
 }
 
 // A loader refuses data that needs a planned feature, on every attempt, and
@@ -117,7 +97,7 @@ static void loads_needing_planned_features_are_refused(void) {
 
 #ifdef SERVAL_GBA
 #define GBA_CASES                                                                                  \
-    , {"sprite_set_colors_changes_nothing", sprite_set_colors_changes_nothing}, {                  \
+    , {                                                                                            \
         "loads_needing_planned_features_are_refused", loads_needing_planned_features_are_refused   \
     }
 #else

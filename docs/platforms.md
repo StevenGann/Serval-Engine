@@ -64,8 +64,10 @@ The planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) comp
 | Alpha blending (implemented) | `screen_set_blend()`, `SPRITE_BLEND` | Drawn as on the GBA: `ppu.c` has the hardware's blending and semi-transparent sprites, and needed nothing new ([runtime-systems.md](runtime-systems.md#alpha-blending)) |
 | Raster effects | `raster_scroll()`, `raster_backdrop()`, `raster_clear()` | The renderer keeps per-line state and applies the table's value for each line as it draws it, since it draws a frame at once and can't see writes between lines ([runtime-systems.md](runtime-systems.md#raster-effects)) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | A C decoder for the BIOS's LZ77 format joins the BIOS stand-ins in `src/web/platform.c` ([sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets)) |
-| Streamed sprite groups, palette writes | `SPRITE_GROUP_STREAMED`, `sprite_set_colors()`, `tileset_set_colors()` | Nothing web-specific: they are VRAM and palette RAM copies in `frame_end()`, which the web build runs unchanged ([frame-loop.md](frame-loop.md#vblank-flush)), as runtime sprite tiles (`sprite_set_tiles()`, implemented) already are |
+| Streamed sprite groups | `SPRITE_GROUP_STREAMED` | Nothing web-specific: VRAM copies in `frame_end()`, which the web build runs unchanged ([frame-loop.md](frame-loop.md#vblank-flush)), as runtime sprite tiles (`sprite_set_tiles()`) and palette writes (`sprite_set_colors()`, `tileset_set_colors()`), both implemented, already are |
 | Ladders and floor slopes | `MAP_LADDER`, `MAP_CONTACT_LADDER`, `MAP_SLOPE_*` | Nothing web-specific: map collision is portable code (`src/core/`, `src/ecs/`) |
+
+Implemented since: palette writes (`sprite_set_colors()`, `tileset_set_colors()`), nothing web-specific: palette RAM copies in `frame_end()`, which the web build runs unchanged, and its renderer reads palette RAM as the GBA's does.
 
 Portable code, the same on every target and host-tested: `vm_collide()` (the VM's collision pass), `map_tags_in()`, `color_mix()`, and the ladders and slopes above when they come.
 

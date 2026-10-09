@@ -65,6 +65,7 @@ if(SERVAL_TARGET_GBA)
                 rom/vm_platform_tests.c
                 rom/sprite_tiles_tests.c
                 rom/blend_tests.c
+                rom/palette_tests.c
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")
