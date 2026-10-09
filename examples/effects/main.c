@@ -11,7 +11,9 @@
 //   - Art drawn at boot from ASCII pictures and shapes (art.c), map layers
 //     on all three backgrounds, animated background tiles
 //     (tileset_set_tiles)
-//   - Palettes (palette_fx.c): palette writes (a placeholder for now)
+//   - Palettes (palette_fx.c): palette writes, sprite_set_colors() and
+//     tileset_set_colors(): a palette cycle, fades mixed with color_mix(),
+//     the backdrop written as color 0 of palette 0, a hit flash
 //   - Sprite tiles (sprite_tiles_fx.c): runtime sprite tiles,
 //     sprite_set_tiles(): card faces composed in RAM when they are dealt and
 //     a frame counter rebuilt every frame, each one hardware sprite whose
@@ -52,7 +54,16 @@
 //       effect, and the brightness takes it); releasing B brings the
 //       blending back. The fades between scenes pause it the same way: the
 //       water turns opaque as the screen fades.
-//   - Palettes: for now the words "PALETTE WRITES (TO COME)".
+//   - Palettes: a sky of four blue bands over wavy blue water, with a dark
+//     shore between them and a red gem on each side of it. "SKY: A FADE TO
+//     DUSK" on row 1, "< FADE" and "A: FLASH >" pointing at the gems,
+//     "WATER: A PALETTE CYCLE" on the water. The water's waves roll up
+//     toward the shore, a step every 6 frames, while its tiles stay the
+//     same. The sky fades to dusk (purple at the top, orange at the
+//     horizon) and the shore to a darker purple, then back, every 8.5
+//     seconds or so. The left gem brightens toward white and back about
+//     every 2 seconds; A (mGBA: the X key) makes the right gem flash white
+//     for 6 frames, the left one unchanged.
 //   - Sprite tiles: four playing cards on black under "FACES COMPOSED AT
 //     RUN TIME" (the ace of spades, the king of hearts in a gold frame, the
 //     seven of diamonds, the ten of clubs), each one sprite. Every 40 frames

@@ -163,7 +163,7 @@ A camera moving less than 8 pixels per frame writes at most one row and one colu
 
 ### Palette writes
 
-**Implemented:** `tileset_set_colors(index, colors, count)` changes `count` background colors from color `index` on, where `index` = palette × 16 + color and palettes are numbered as in `MAP_SE()` (0-14): water whose colors cycle, a room faded toward dusk with `color_mix()` (`screen.h`), a flash. The semantics:
+**Implemented:** `tileset_set_colors(index, colors, count)` changes `count` background colors from color `index` on, where `index` = palette × 16 + color and palettes are numbered as in `MAP_SE()` (0-14): water whose colors cycle, a room faded toward dusk with `color_mix()` (`screen.h`), a flash ([`effects`](../examples/effects/palette_fx.c) shows a cycle and a fade). The semantics:
 
 - The colors are copied at the call (`colors` may be a temporary) and reach the screen in VBlank at the next `frame_end()` ([frame-loop.md](frame-loop.md#vblank-flush), step 5).
 - They go to the engine's own copy of the palettes (the shadow palette), never to the tileset's data: a palette that is const data in ROM, or that another tileset uses too, keeps its colors there. This is the same copy-on-write rule as `sprite_set_colors()` for sprite palettes ([sprites.md](sprites.md#palettes)).
