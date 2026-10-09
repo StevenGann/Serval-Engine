@@ -358,7 +358,7 @@ static void only_shown_draws_take_a_slot(void) {
     ecs_reset();
 }
 
-// Every way of drawing reaches the slots: flips and SPRITE_PALETTE,
+// Every way of drawing reaches the slots: flips, SPRITE_PALETTE, SPRITE_BLEND,
 // rotation and scaling, the render systems' plain and out-of-line paths,
 // and sys_animate stepping an entity's frames.
 static void every_way_of_drawing_uses_the_slots(void) {
@@ -372,6 +372,13 @@ static void every_way_of_drawing_uses_the_slots(void) {
     CHECK(OAM_TILE(1) == SLOT(1) && (oam_mem[1].attr0 & ATTR0_AFF_DBL) == ATTR0_AFF_DBL);
     CHECK(OAM_TILE(2) == SLOT(1) && (oam_mem[2].attr2 & ATTR2_PRIO_MASK) == ATTR2_PRIO(0));
     CHECK(slot_holds(SLOT(0), 0) && slot_holds(SLOT(1), 1) && sprite_stats().matrices == 2);
+    // SPRITE_BLEND: semi-transparent, plain and rotated (attr0 bits 10-11: 1).
+    frame_begin();
+    sprite_draw(SPR_HERO, 0, 40, 40, SPRITE_BLEND);
+    sprite_draw_rotated(SPR_HERO, 1, 80, 40, ANGLE_DEG(90), SPRITE_BLEND);
+    frame_end();
+    CHECK((oam_mem[0].attr0 & 0x0C00) == 0x0400 && (oam_mem[1].attr0 & 0x0C00) == 0x0400);
+    CHECK(OAM_TILE(0) == SLOT(0) && OAM_TILE(1) == SLOT(1));
 
     // Entities, animated by sys_animate (one display frame per frame).
     ecs_reset();
@@ -550,6 +557,34 @@ static void streamed_groups_refuse_what_they_cannot_hold(void) {
     CHECK(hero_drawn() && OAM_TILE(0) == 1020);
 }
 
+// Palette writes (sprite_set_colors()) reach a streamed sprite's group's
+// banks, as a resident sprite's: it has no frames of its own, but it is
+// loaded. And a streamed group loaded after a write to its banks, in the same
+// frame, wins over it, as a resident group does.
+static void palette_writes_reach_streamed_sprites(void) {
+    static const Color red = 0x001F, blue = 0x7C00;
+    load(3); // the hero's palettes are banks 1 and 2
+    u32 before = debug_warning_count();
+    frame_begin();
+    sprite_set_colors(SPR_HERO, 1, &red, 1);   // its palette 0, color 1
+    sprite_set_colors(SPR_HERO, 17, &blue, 1); // its palette 1, color 1
+    CHECK(pal_obj_bank[1][1] == 0x2222);       // in VBlank, not at once
+    frame_end();
+    CHECK(debug_warning_count() == before);
+    CHECK(pal_obj_bank[1][1] == red && pal_obj_bank[2][1] == blue);
+    CHECK(pal_obj_bank[0][1] == 0x1111); // the dot's bank: not the hero's
+
+    load_dot();
+    u32 mark = sprite_groups_mark();
+    load_hero(3);
+    frame_begin();
+    sprite_set_colors(SPR_HERO, 1, &red, 1);
+    sprite_groups_release(mark);
+    load_hero(3); // the same banks, its own colors
+    frame_end();
+    CHECK(pal_obj_bank[1][1] == 0x2222);
+}
+
 // A frame the sprite doesn't have is not drawn and takes no slot (warning
 // once in debug builds).
 static void bad_frames_are_not_drawn(void) {
@@ -671,5 +706,6 @@ TEST_SUITE(gba_stream_tests, "sprite streaming",
            {"marks_release_streamed_groups", marks_release_streamed_groups},
            {"streamed_groups_refuse_what_they_cannot_hold",
             streamed_groups_refuse_what_they_cannot_hold},
+           {"palette_writes_reach_streamed_sprites", palette_writes_reach_streamed_sprites},
            {"bad_frames_are_not_drawn", bad_frames_are_not_drawn},
            {"streaming_costs_are_logged", streaming_costs_are_logged});

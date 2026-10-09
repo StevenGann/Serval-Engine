@@ -429,6 +429,11 @@ static bool load_streamed(const SpriteGroup* group, u32 tiles) {
             .segment = (u8)top_segment};
     }
     memcpy16(&pal_obj_bank[next_palette_bank], group->palettes, group->palette_count * 16u);
+    // palettes: as sprite_group_load() does, the group's colors win over
+    // sprite_set_colors() writes made to these banks before it in the frame
+    if (serval_palette_hooks)
+        serval_palette_hooks->overwritten(true, next_palette_bank * 16u,
+                                          group->palette_count * 16u);
     next_palette_bank = (u8)(next_palette_bank + group->palette_count);
     segments[top_segment].loaded = true;
     return true;
@@ -503,7 +508,8 @@ int serval_sprite_palettes(u32 id, u32* first_bank) {
     const SpriteDraw* d = &sprite_draws[id];
     if (d->meta_frames)
         return -1;
-    if (d->frame_count == 0)
+    // streaming: a streamed sprite has no frames of its own, but its group's banks
+    if (d->frame_count == 0 && !STREAMED(d))
         return 0;
     *first_bank = d->first_palette;
     return d->palette_count;
