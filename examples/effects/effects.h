@@ -34,6 +34,7 @@ typedef struct {
 extern const Scene blend_scene;        // blend_fx.c: alpha blending
 extern const Scene palette_scene;      // palette_fx.c: palette writes
 extern const Scene sprite_tiles_scene; // sprite_tiles_fx.c: runtime sprite tiles
+extern const Scene stream_scene;       // stream_fx.c: streamed sprite groups
 extern const Scene raster_scene;       // raster_fx.c: raster effects
 
 // Text rows the scenes may use: row 0 is main.c's title bar.

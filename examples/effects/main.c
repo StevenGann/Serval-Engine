@@ -18,6 +18,11 @@
 //     sprite_set_tiles(): card faces composed in RAM when they are dealt and
 //     a frame counter rebuilt every frame, each one hardware sprite whose
 //     tiles are copied to VRAM in VBlank; a card flip with sprite_draw_ex()
+//   - Streaming (stream_fx.c): a streamed sprite group,
+//     SPRITE_GROUP_STREAMED: a 64x64 sprite of 32 frames, twice what sprite
+//     VRAM holds, drawn from 8 slots, each frame copied to its slot in VBlank
+//     when it is drawn and not there already; draws of one frame sharing its
+//     slot, and frames past the slots dropped (sprite_stats().dropped)
 //   - Raster (raster_fx.c): raster effects (a placeholder for now)
 //
 // What to expect when booting the ROM:
@@ -25,7 +30,7 @@
 //     in on black, a coin-like jingle plays, and they fade out (about 3
 //     seconds; any button skips it once the logo is in).
 //   - Then the first scene, Blending. The title bar on the top row names the
-//     scene ("< BLENDING >", with its number of 4), between "L" and "R".
+//     scene ("< BLENDING >", with its number of 5), between "L" and "R".
 //   - L and R switch to the previous and the next scene (after the last,
 //     the first again): the screen fades to black over 8 frames, the next
 //     scene loads, and the screen fades back in.
@@ -72,6 +77,14 @@
 //     four at once. Below them, gold digits on a navy bar count the frames,
 //     changing every frame, and "HARDWARE SPRITES: 5" (four cards and the
 //     counter).
+//   - Streaming: six round plasma orbs (deep violet through orange to white,
+//     with a dark rim) in two rows over a dark sky with drifting blue stars,
+//     "32 FRAMES, ONLY 8 IN VRAM" above them, each orb churning at its own
+//     speed. A: all six churn in step, as one. B: ten orbs in two rows of
+//     five, each on its own frame, and the last two (bottom right) are
+//     missing: ten frames, eight slots. The bottom line counts the orbs and
+//     the draws dropped ("10 ORBS, DROPPED: 2"); A while ten puts them in
+//     step, all ten shown.
 //   - Raster: for now the words "RASTER EFFECTS (TO COME)".
 //   - No sound after the splash.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -82,10 +95,7 @@
 #include "effects.h"
 
 static const Scene* const scenes[] = {
-    &blend_scene,
-    &palette_scene,
-    &sprite_tiles_scene,
-    &raster_scene,
+    &blend_scene, &palette_scene, &sprite_tiles_scene, &stream_scene, &raster_scene,
 };
 #define SCENE_COUNT ((int)(sizeof(scenes) / sizeof(scenes[0])))
 

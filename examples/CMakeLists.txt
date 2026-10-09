@@ -56,6 +56,7 @@ serval_add_rom(effects SOURCES
                effects/blend_fx.c
                effects/palette_fx.c
                effects/sprite_tiles_fx.c
+               effects/stream_fx.c
                effects/raster_fx.c
                TITLE "EFFECTS" GAME_CODE "SVFX")
 target_link_libraries(effects PRIVATE serval_warnings)
