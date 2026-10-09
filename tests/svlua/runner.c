@@ -4,7 +4,7 @@
 //
 //   svlua_runner BLOB.bin [--frames N] [--seed S] [--set GLOBAL:VALUE]...
 //                [--start OBJ[:EVENT]]... [--attach OBJ[:X:Y]]...
-//                [--buttons FRAME:MASK[:LENGTH]]... [--movement]
+//                [--buttons FRAME:MASK[:LENGTH]]... [--movement] [--physics G]
 //                [--collide OBJ:OTHER]... [--print all|last|F,F,...]
 //
 // The blob is loaded (vm_load, after ecs_reset), the globals --set (after
@@ -14,7 +14,10 @@
 // object's component mask, its sprite if the mask has C_SPR, and the
 // position X, Y in whole pixels, then vm_attach), in the order given. Each of
 // the N frames (default 1) runs, as a game's loop would without rendering:
-//   vm_step(); sys_movement() with --movement; the collision pairs of each
+//   vm_step(); sys_movement() with --movement; sys_physics() with --physics,
+//   which reports contacts (physics_set_contacts) and pulls bodies down by G
+//   (256ths of a pixel per frame per frame) inside the default bounds (the
+//   screen); the collision pairs of each
 //   --collide (every attached instance of OBJ against every one of OTHER, in
 //   slot order, OBJ's outermost: body_overlap, then
 //   vm_event(obj, other, VM_EV_COLLISION)); vm_events().
@@ -32,10 +35,11 @@
 //   global G VALUE               after each printed frame: every global the
 //                                blob declares
 //   array N V0 V1 ...            every RAM array's cells (ROM arrays: none)
-//   entity HANDLE OBJECT P0 ... P14 F0 ... F15
+//   entity HANDLE OBJECT P0 ... P19 F0 ... F15
 //                                every attached entity, in slot order: its
-//                                engine properties (VM_P_X to VM_P_ANIM_STEP)
-//                                as GETP reads them, then its instance fields
+//                                engine properties (VM_P_X to
+//                                VM_P_BODY_CONTACT) as GETP reads them, then
+//                                its instance fields
 //   warnings N                   at the end: the engine's warnings (debug.h)
 // Exit status 0, or 2 for bad arguments or a blob that vm_load rejects.
 
@@ -89,7 +93,8 @@ static void usage(const char* problem) {
     fprintf(stderr, "svlua_runner: %s\n", problem);
     fprintf(stderr, "usage: svlua_runner BLOB.bin [--frames N] [--seed S] [--set GLOBAL:VALUE]... "
                     "[--start OBJ[:EVENT]]... [--attach OBJ[:X:Y]]... "
-                    "[--buttons FRAME:MASK[:LENGTH]]... [--movement] [--collide OBJ:OTHER]... "
+                    "[--buttons FRAME:MASK[:LENGTH]]... [--movement] [--physics G] "
+                    "[--collide OBJ:OTHER]... "
                     "[--print all|last|F,F,...]\n");
     exit(2);
 }
@@ -188,11 +193,13 @@ static void print_state(void) {
         int object = serval_vm_attached_object(e);
         if (object < 0)
             continue;
-        printf("entity %u %d %d %d %d %d %u %u %u %u %d %d %u %u %u %u %u", (u32)e, object,
-               pos_x[slot], pos_y[slot], vel_x[slot], vel_y[slot], (u32)spr_id[slot],
+        printf("entity %u %d %d %d %d %d %u %u %u %u %d %d %u %u %u %u %u %u %u %u %d %u", (u32)e,
+               object, pos_x[slot], pos_y[slot], vel_x[slot], vel_y[slot], (u32)spr_id[slot],
                (u32)spr_frame[slot], (u32)spr_flags[slot], (u32)spr_angle[slot],
                (s32)spr_depth[slot], (s32)spr_scale[slot], (u32)body_w[slot], (u32)body_h[slot],
-               ent_mask[slot] >> 16 & 0x7FFFu, (u32)spr_anim_time[slot], (u32)spr_anim_step[slot]);
+               ent_mask[slot] >> 16 & 0x7FFFu, (u32)spr_anim_time[slot], (u32)spr_anim_step[slot],
+               (u32)body_bounce[slot], (u32)body_friction[slot], (u32)body_max_fall[slot],
+               (s32)body_gravity[slot], (u32)body_contact[slot]);
         for (u32 n = 0; n < VM_FIELDS; n++)
             printf(" %d", serval_vm_field(e, n));
         printf("\n");
@@ -231,7 +238,8 @@ int main(int argc, char** argv) {
     static Set sets[MAX_ITEMS];
     u32 start_count = 0, attach_count = 0, button_count = 0, collide_count = 0, set_count = 0;
     u32 frames = 1;
-    bool movement = false;
+    bool movement = false, physics = false;
+    s32 gravity = 0;
     const char* path = NULL;
     for (int k = 1; k < argc; k++) {
         const char* arg = argv[k];
@@ -250,7 +258,10 @@ int main(int argc, char** argv) {
         if (!has_value)
             usage("an option without its value");
         char* value = argv[++k];
-        if (!strcmp(arg, "--frames")) {
+        if (!strcmp(arg, "--physics")) {
+            physics = true;
+            gravity = (s32)number(value, "--physics takes a gravity in 256ths");
+        } else if (!strcmp(arg, "--frames")) {
             frames = (u32)number(value, "--frames takes a number");
         } else if (!strcmp(arg, "--seed")) {
             random_seed((u32)number(value, "--seed takes a number"));
@@ -316,6 +327,10 @@ int main(int argc, char** argv) {
     read_blob(path);
 
     ecs_reset();
+    if (physics) {
+        physics_set_contacts(true);
+        physics_set_gravity(0, gravity);
+    }
     if (!vm_load(blob, blob_size)) {
         fprintf(stderr, "svlua_runner: %s: vm_load rejects it\n", path);
         return 2;
@@ -350,6 +365,8 @@ int main(int argc, char** argv) {
         vm_step();
         if (movement)
             sys_movement();
+        if (physics)
+            sys_physics();
         for (u32 k = 0; k < collide_count; k++)
             collide(&collides[k]);
         vm_events();

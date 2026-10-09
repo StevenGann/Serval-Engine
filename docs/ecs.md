@@ -2,7 +2,7 @@
 
 Game world state lives in a simple bitmask ECS with fixed pools of 128 entities (`MAX_ENT`), matching the OAM sprite limit. No archetype storage and no malloc.
 
-**Status:** implemented (`include/serval/ecs.h`, `include/serval/physics.h`, map bodies in `include/serval/map.h`); function reference in [api-reference.md](api-reference.md#ecsh). Component bits 7-15 and `body_contact` bits 4 and 7 are reserved for later engine versions ([Component bits](#component-bits), [Bodies](#bodies)). Scripts use the ECS through the bytecode VM ([vm.md](vm.md)): entity properties, spawning, and collision events (`vm_event()`, `vm_collide()`). Not in this version, and addable later without breaking games: `ent_add()`/`ent_remove()` helpers (writing `ent_mask` stays legal regardless), more than 15 game components (a second tag word, with its own queries), `entity_destroy()` detaching an entity's VM binding (today the VM notices the stale binding and warns: [vm.md](vm.md)), and for bodies swept body-against-body tests, body-to-body response and a broad phase ([runtime-systems.md](runtime-systems.md#physics)).
+**Status:** implemented (`include/serval/ecs.h`, `include/serval/physics.h`, map bodies in `include/serval/map.h`); function reference in [api-reference.md](api-reference.md#ecsh). Component bits 7-15 and `body_contact` bits 4 and 7 are reserved for later engine versions ([Component bits](#component-bits), [Bodies](#bodies)). Scripts use the ECS through the bytecode VM ([vm.md](vm.md)): entity properties (the body's pools among them, `body_contact` read-only), spawning, and collision events (`vm_event()`, `vm_collide()`). Not in this version, and addable later without breaking games: `ent_add()`/`ent_remove()` helpers (writing `ent_mask` stays legal regardless), more than 15 game components (a second tag word, with its own queries), `entity_destroy()` detaching an entity's VM binding (today the VM notices the stale binding and warns: [vm.md](vm.md)), and for bodies swept body-against-body tests, body-to-body response and a broad phase ([runtime-systems.md](runtime-systems.md#physics)).
 
 - **Entity:** an ID only.
 - **Component:** plain data in struct-of-arrays pools indexed by entity.
@@ -88,7 +88,7 @@ An entity with `C_POS | C_VEL | C_BODY` is a body, moved by `sys_physics()` ([ru
 | `body_friction` | `u8` | Speed lost per frame while touching a floor, in 256ths, rounded up (0: none). Whatever it is, `sys_physics()` stops a speed along the floor under 1/16 pixel per frame (`FX_ONE / 16`), so a body without friction keeps sliding only at that speed or faster; map bodies without friction keep any speed ([runtime-systems.md](runtime-systems.md#physics)) |
 | `body_max_fall` | `u16` | Fall speed limit in 24.8 pixels per frame (0: none) |
 | `body_gravity` | `s8` | Gravity scale in 16ths, stored minus 16: write `BODY_GRAVITY(16)` (normal, the zero default), `BODY_GRAVITY(0)` (none) or `BODY_GRAVITY(-16)` (reversed); scales -112 to 143 |
-| `body_contact` | `u8` | What the body touched in the last `sys_physics()` (with `physics_set_contacts(true)`; 0 otherwise) or `sys_map_movement()` (always). Read it, don't write it: bits below |
+| `body_contact` | `u8` | What the body touched in the last `sys_physics()` (with `physics_set_contacts(true)`; 0 otherwise) or `sys_map_movement()` (always). Read it, don't write it: bits below. Scripts can only read it |
 
 `body_contact`'s bits (test the ones you need, as later versions may set more):
 

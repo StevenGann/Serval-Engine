@@ -426,6 +426,15 @@ REJECTED = {
         r"a 17th instance field, f16: the VM has 16 \(VM_FIELDS\)"),
     "thread_self": ("Room = object {}\nfunction Room:room_start() self.frame = 1 end", 2, 28,
                     r"Room has no components, so its room_start runs as a thread"),
+    "read_only_body_contact": (OBJ + "function A:step() self.body_contact = 0 end", 3, 19,
+                               r"body_contact is read-only: the engine sets it"),
+    "body_gravity_range": (OBJ + "function A:step() self.body_gravity = BODY_GRAVITY(144) end",
+                           3, 52, r"BODY_GRAVITY\(n\) takes a constant n from -112 to 143"),
+    "body_gravity_variable": (OBJ + "n = 8\nfunction A:step() self.body_gravity = "
+                              "BODY_GRAVITY(n) end", 4, 52, r"BODY_GRAVITY\(n\) takes a constant"),
+    "header_called": (OBJ + "function A:step() local g = MAX_FALL(2) end", 3, 29,
+                      r"MAX_FALL would be a constant from the C headers, and constants aren't "
+                      r"functions"),
 }
 
 
@@ -669,6 +678,32 @@ function A:step() wander() end""",
                 self.assert_error(f"A = object {{}}\nfunction A:{event}({param}) wait_anim() end",
                                   rf"wait_anim\(\) in A:{event}, a reaction")
 
+    def test_body_properties(self):
+        """The body's tuning as C has it: body_max_fall a speed (fixed, as vy),
+        body_bounce, body_friction and body_gravity integers (body_gravity
+        written with BODY_GRAVITY(n), as in C), body_contact an integer to
+        read."""
+        p = self.check(OBJ + """function A:step()
+  self.body_max_fall = 4      -- an integer: 4 pixels per frame
+  self.body_max_fall = 2.5
+  self.body_bounce = 224; self.body_friction = 16
+  self.body_gravity = BODY_GRAVITY(8)
+  local fall = self.body_max_fall
+  local bounce = self.body_bounce
+  local g = self.body_gravity
+  local on_floor = self.body_contact & MAP_CONTACT_FLOOR ~= 0
+end""")
+        self.assertEqual(local_types(p, "A:step"), {"fall": "fixed", "bounce": "integer",
+                                                    "g": "integer", "on_floor": "boolean"})
+        self.assertNotIn("body_max_fall", p.fields)  # properties, not instance fields
+        self.assert_error(OBJ + "function A:step() self.body_bounce = 0.5 end",
+                          r"body_bounce is an integer \(an engine property\), and this is fixed")
+        self.assert_error(OBJ + "function A:step() local n = 0; n = self.body_max_fall end",
+                          r"n is an integer .*, and this is fixed")
+        self.assert_error(OBJ + "function A:step() local g = GRAVITY(2) end",
+                          r"constants aren't functions\n  hint: C_GAME\(n\) and BODY_GRAVITY\(n\) "
+                          r"are the macros a script can call")
+
     def test_header_constants_pass_through(self):
         p = self.check(OBJ + "function A:step() if button_down(BUTTON_A | BUTTON_B) then "
                        "psg_play(SND_JUMP) end end")
@@ -709,6 +744,8 @@ def header_names(defines=None, files=()):
     return headers
 
 
+ECS_H = os.path.join(ROOT, "include", "serval", "ecs.h")
+PHYSICS_H = os.path.join(ROOT, "include", "serval", "physics.h")
 FIREFLIES_HEADERS = [os.path.join(ROOT, "examples", "fireflies", "game.h")] + [
     os.path.join(ROOT, "include", "serval", name)
     for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h")]
@@ -727,7 +764,9 @@ needs_runner = unittest.skipUnless(RUNNER, "no svlua_runner: build the host pres
 
 # The engine properties in VM_P_* order, as the runner prints them.
 PROPS = ("X", "Y", "VX", "VY", "SPR", "FRAME", "FLAGS", "ANGLE", "DEPTH", "SCALE", "BODY_W",
-         "BODY_H", "TAGS", "ANIM_TIME", "ANIM_STEP")
+         "BODY_H", "TAGS", "ANIM_TIME", "ANIM_STEP", "BODY_BOUNCE", "BODY_FRICTION",
+         "BODY_MAX_FALL", "BODY_GRAVITY", "BODY_CONTACT")
+FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
 SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1)  # vm.md's SYS page
 
 
@@ -771,8 +810,8 @@ class VmRun:
                     state[1][arrays[values[0]]] = values[1:]
                 elif head == "entity":
                     entity = {"object": objects[values[1]]}
-                    entity.update(zip(PROPS, values[2:17]))
-                    entity.update((f.name, values[17 + f.slot]) for f in fields)
+                    entity.update(zip(PROPS, values[2:FIELDS_AT]))
+                    entity.update((f.name, values[FIELDS_AT + f.slot]) for f in fields)
                     state[2][values[0]] = entity
         last = self.states[max(self.states)] if self.states else ({}, {}, {})
         self.globals, self.arrays, self.entities = last
@@ -783,14 +822,15 @@ class VmRun:
 
 
 def run_vm(source, frames=1, start=(), attach=(), buttons=(), set_=None, collide=(),
-           movement=False, seed=None, printed="last", headers=None, files=(),
+           movement=False, physics=None, seed=None, printed="last", headers=None, files=(),
            warnings=False):
     """Compiles a script, assembles it and runs it on the VM with
     svlua_runner: `start` objects' room_start threads (OBJ or (OBJ, EVENT),
     by listing name), `attach`ed instances ((OBJ, x, y) in pixels, or OBJ),
     `buttons` held ((frame, mask, length)), globals `set_` ({listing name:
-    cell}), `collide` pairs ((OBJ, OTHER)). Unless `warnings`, the run must
-    not warn. Returns a VmRun."""
+    cell}), `collide` pairs ((OBJ, OTHER)); sys_movement with `movement`,
+    and sys_physics with contacts and a gravity of `physics` 256ths when it
+    isn't None. Unless `warnings`, the run must not warn. Returns a VmRun."""
     compiled = svlua.compile_program(source, "t.lua")
     assembled = assemble(compiled.listing, header_names(headers, files))
     objects = {name: k for k, name in enumerate(assembled.objects)}
@@ -815,6 +855,8 @@ def run_vm(source, frames=1, start=(), attach=(), buttons=(), set_=None, collide
             args += ["--collide", f"{objects[obj]}:{objects[other]}"]
         if movement:
             args.append("--movement")
+        if physics is not None:
+            args += ["--physics", str(physics)]
         done = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if done.returncode != 0:
         raise AssertionError(f"svlua_runner failed ({done.returncode}): {done.stderr}")
@@ -984,6 +1026,18 @@ class Listing(unittest.TestCase):
         self.assertEqual(code[start + 9:start + 12], ["SELF", "PUSH 256", "SETP SCALE"])
         with self.assertRaisesRegex(svlua.CompileError, "n is an integer .*, and this is fixed"):
             self.compile(OBJ + "n = 0\nfunction A:step() n = self.scale end")
+
+    def test_body_properties_in_the_listing(self):
+        """BODY_GRAVITY(n) goes to the assembler as written; body_max_fall
+        is fixed point (2.5 is 640)."""
+        code = self.code(OBJ + "function A:step() self.body_gravity = BODY_GRAVITY(0); "
+                         "self.body_max_fall = 2.5; self.body_bounce = 255; "
+                         "local c = self.body_contact end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 2:start + 11], [
+            "SELF", "PUSH BODY_GRAVITY(0)", "SETP BODY_GRAVITY", "SELF", "PUSH 640",
+            "SETP BODY_MAX_FALL", "SELF", "PUSH 255", "SETP BODY_BOUNCE"])
+        self.assertEqual(code[start + 11:start + 14], ["SELF", "GETP BODY_CONTACT", "STL 0"])
 
     def test_initial_values_in_the_blob(self):
         """.globals NAME=value: the blob carries the initial values (header
@@ -1331,6 +1385,31 @@ function Enemy:step() hp = hp + self.hp end"""
         self.assertEqual(sorted((h & 0xFF, e["X"], e["hp"]) for h, e in enemies.items()),
                          [(0, 256, 1), (3, 256, 3)])  # the one at 2 pixels was killed
         self.assertEqual([e["object"] for e in vm.entities.values()], ["ENEMY", "BOSS", "ENEMY"])
+
+    @needs_runner
+    def test_body_properties_reach_physics(self):
+        """Body properties a script sets are what sys_physics uses, and
+        body_contact is what it reported: a body resting on the floor of the
+        bounds touches it; one with BODY_GRAVITY(0) floats; one with a
+        body_max_fall of 1 falls no faster."""
+        run = run_vm("""Rester = object { components = C_POS | C_VEL | C_BODY }
+Floater = object { components = C_POS | C_VEL | C_BODY }
+Faller = object { components = C_POS | C_VEL | C_BODY }
+function Rester:create() self.body_w = 8; self.body_h = 8 end
+function Rester:step()
+  self.on_floor = self.body_contact & BODY_SIDE_BOTTOM ~= 0
+  self.contact = self.body_contact
+end
+function Floater:create() self.body_w = 8; self.body_h = 8; self.body_gravity = BODY_GRAVITY(0) end
+function Faller:create() self.body_w = 8; self.body_h = 8; self.body_max_fall = 1 end
+""", frames=12, attach=[("RESTER", 20, 152), ("FLOATER", 60, 20), ("FALLER", 100, 0)],
+                     movement=True, physics=64, files=[ECS_H, PHYSICS_H])
+        rester, floater, faller = (next(e for e in run.entities.values() if e["object"] == name)
+                                   for name in ("RESTER", "FLOATER", "FALLER"))
+        self.assertEqual((rester["on_floor"], rester["contact"]), (1, 1))  # BODY_SIDE_BOTTOM
+        self.assertEqual((rester["BODY_CONTACT"], rester["Y"]), (1, 152 * 256))
+        self.assertEqual((floater["Y"], floater["VY"], floater["BODY_GRAVITY"]), (20 * 256, 0, -16))
+        self.assertEqual((faller["VY"], faller["BODY_MAX_FALL"]), (256, 256))
 
     def test_globals_start_at_their_initial_values(self):
         vm = run_vm("Init = object {}\nlives = 3\nspeed = 1.5\nalive = true\nhero = none\n"

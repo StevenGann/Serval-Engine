@@ -31,7 +31,7 @@ list of key=value settings (repeatable ones may appear several times):
   tolerance=X         for fixed values (default 1/256)
   warnings=allowed    the VM run may warn
 Names in ALL_CAPS come from the engine's headers (ecs.h, core.h,
-sprites.h, path.h, map.h, vm.h).
+sprites.h, path.h, map.h, physics.h, vm.h).
 
 Usage: svlua_difftest.py [--lua LUA] [--runner RUNNER] [-v] [PROGRAM.lua...]
 LUA defaults to $SERVAL_LUA32: a lua binary built with LUA_32BITS
@@ -56,14 +56,16 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 PROGRAMS = os.path.join(ROOT, "tests", "svlua", "diff")
 STUB = os.path.join(ROOT, "tests", "svlua", "stub.lua")
 HEADERS = [os.path.join(ROOT, "include", "serval", name)
-           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h")]
+           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h")]
 SKIP = 77
 
 # The engine properties in VM_P_* order (the runner's and the stub's), and
 # their types.
 PROPS = ("x", "y", "vx", "vy", "sprite", "frame", "flags", "angle", "depth", "scale", "body_w",
-         "body_h", "tags", "anim_time", "anim_step")
-FIXED_PROPS = ("x", "y", "vx", "vy", "scale")
+         "body_h", "tags", "anim_time", "anim_step", "body_bounce", "body_friction",
+         "body_max_fall", "body_gravity", "body_contact")
+FIXED_PROPS = ("x", "y", "vx", "vy", "scale", "body_max_fall")
+FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
 SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC_PAUSE": 0,
              "PSG_MUSIC_RESUME": 0, "CAMERA_SET": 2, "TEXT_PRINT": 2, "RANDOM_RANGE": 2,
              "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "SCREEN_SET_BRIGHTNESS": 1, "PATH_START": 3,
@@ -309,10 +311,10 @@ def read_vm(program, output):
             words = [int(w) for w in rest.split()]
             handle, obj = words[0], program.objects[words[1]]
             r.state[frame, "entity", f"{handle} object"] = ("object", obj)
-            for prop, cell in zip(PROPS, words[2:17]):
+            for prop, cell in zip(PROPS, words[2:FIELDS_AT]):
                 ty = "fixed" if prop in FIXED_PROPS else "integer"
                 r.state[frame, "entity", f"{handle}.{prop}"] = (ty, from_cell(cell, ty))
-            for (field, ty), cell in zip(program.fields, words[17:]):
+            for (field, ty), cell in zip(program.fields, words[FIELDS_AT:]):
                 r.state[frame, "entity", f"{handle}.{field}"] = (ty, from_cell(cell, ty))
         elif head == "warnings":
             warnings = int(rest)
@@ -346,10 +348,10 @@ def read_lua(program, output):
             words = rest.split()
             handle, obj = int(words[0]), program.objects[int(words[1])]
             r.state[frame, "entity", f"{handle} object"] = ("object", obj)
-            for prop, value in zip(PROPS, words[2:17]):
+            for prop, value in zip(PROPS, words[2:FIELDS_AT]):
                 ty = "fixed" if prop in FIXED_PROPS else "integer"
                 r.state[frame, "entity", f"{handle}.{prop}"] = (ty, from_lua(value, ty))
-            for (field, ty), value in zip(program.fields, words[17:]):
+            for (field, ty), value in zip(program.fields, words[FIELDS_AT:]):
                 r.state[frame, "entity", f"{handle}.{field}"] = (ty, from_lua(value, ty))
         else:
             raise DiffError(f"the stub printed {line!r}")

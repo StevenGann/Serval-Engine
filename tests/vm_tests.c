@@ -3024,12 +3024,14 @@ static void self_and_other(void) {
 
 // vm.md "Entities": GETP and SETP reach the ECS arrays of the same names.
 // Writes truncate to the array's type; reads extend it back to a cell (sign-
-// extending s16, zero-extending u8 and u16). VM_P_TAGS is C_GAME(0) to
+// extending s8 and s16, zero-extending u8 and u16). VM_P_TAGS is C_GAME(0) to
 // C_GAME(14) of ent_mask as bits 0 to 14; SETP changes only those bits.
+// VM_P_BODY_CONTACT is read-only: not written here (read_only_properties).
 static const struct {
     s32 written;
     s32 read; // what GETP then gives
     const char* what;
+    bool read_only;
 } prop_rows[VM_P_COUNT] = {
     [VM_P_X] = {-FX(12) - 5, -FX(12) - 5, "VM_P_X"},
     [VM_P_Y] = {INT32_MAX, INT32_MAX, "VM_P_Y"},
@@ -3046,18 +3048,26 @@ static const struct {
     [VM_P_TAGS] = {-1, 0x7FFF, "VM_P_TAGS keeps bits 0 to 14"},
     [VM_P_ANIM_TIME] = {0x1FF, 0xFF, "VM_P_ANIM_TIME truncates to u8, reads unsigned"},
     [VM_P_ANIM_STEP] = {-2, 0xFE, "VM_P_ANIM_STEP truncates to u8, reads unsigned"},
+    [VM_P_BODY_BOUNCE] = {0x1FF, 0xFF, "VM_P_BODY_BOUNCE truncates to u8, reads unsigned"},
+    [VM_P_BODY_FRICTION] = {-1, 0xFF, "VM_P_BODY_FRICTION truncates to u8, reads unsigned"},
+    [VM_P_BODY_MAX_FALL] = {-FX(1), 0xFF00, "VM_P_BODY_MAX_FALL truncates to u16, reads unsigned"},
+    [VM_P_BODY_GRAVITY] = {0x180, -128, "VM_P_BODY_GRAVITY truncates to s8, reads sign-extended"},
+    [VM_P_BODY_CONTACT] = {0, 0, "VM_P_BODY_CONTACT reads body_contact", true},
 };
 
 // Where properties_read_and_write_the_ecs stores what it reads: GETP of
-// property p goes to glob[READ_BY_SCRIPT + p], then glob[READ_FROM_C + p].
-enum { READ_BY_SCRIPT = 1, READ_FROM_C = READ_BY_SCRIPT + VM_P_COUNT };
-_Static_assert(READ_FROM_C + VM_P_COUNT <= W, "the property rows fit the globals");
+// property p goes to glob[READ_BY_SCRIPT + p], then glob[READ_FROM_C + p]
+// (LDG and STG take any global below VM_GLOBALS, past the declared count).
+enum { READ_BY_SCRIPT = GLOBALS, READ_FROM_C = READ_BY_SCRIPT + VM_P_COUNT };
+_Static_assert(READ_FROM_C + VM_P_COUNT <= VM_GLOBALS, "the property rows fit the globals");
 
 static void properties_read_and_write_the_ecs(void) {
     reset();
     blob_begin(2, 0, GLOBALS);
     handler(0, VM_EV_CREATE);
     for (u32 p = 0; p < VM_P_COUNT; p++) {
+        if (prop_rows[p].read_only)
+            continue;
         ldg(0);                       // e
         push32(prop_rows[p].written); // e v
         setp(p);                      //
@@ -3089,6 +3099,8 @@ static void properties_read_and_write_the_ecs(void) {
     CHECK(spr_angle[i] == 0x8000 && spr_depth[i] == -32768 && spr_scale[i] == -1);
     CHECK(body_w[i] == 0xFE && body_h[i] == 0xFF);
     CHECK(spr_anim_time[i] == 0xFF && spr_anim_step[i] == 0xFE);
+    CHECK(body_bounce[i] == 0xFF && body_friction[i] == 0xFF && body_max_fall[i] == 0xFF00);
+    CHECK(body_gravity[i] == -128 && body_contact[i] == 0);
     // Every game component set; the engine's and C_ALIVE as they were.
     CHECK(ent_mask[i] == (components | C_ALIVE | 0x7FFFu << 16));
     CHECK(ent_has(i, C_GAME(0) | C_GAME(14)));
@@ -3111,9 +3123,31 @@ static void properties_read_and_write_the_ecs(void) {
     ent_mask[i] = components | C_ALIVE | C_GAME(1) | C_GAME(13);
     spr_anim_time[i] = 250;
     spr_anim_step[i] = 3;
-    static const s32 from_c[VM_P_COUNT] = {-FX(7),           3,      1,  -1,     0xFFFF, 200,
-                                           0x8001,           0xFFFF, -2, -32768, 200,    7,
-                                           1 << 1 | 1 << 13, 250,    3};
+    body_bounce[i] = 255;
+    body_friction[i] = 7;
+    body_max_fall[i] = 0xFFFF;
+    body_gravity[i] = BODY_GRAVITY(-112); // -128
+    body_contact[i] = BODY_SIDE_BOTTOM | BODY_CONTACT_EXIT;
+    static const s32 from_c[VM_P_COUNT] = {-FX(7),
+                                           3,
+                                           1,
+                                           -1,
+                                           0xFFFF,
+                                           200,
+                                           0x8001,
+                                           0xFFFF,
+                                           -2,
+                                           -32768,
+                                           200,
+                                           7,
+                                           1 << 1 | 1 << 13,
+                                           250,
+                                           3,
+                                           255,
+                                           7,
+                                           0xFFFF,
+                                           -128,
+                                           BODY_SIDE_BOTTOM | BODY_CONTACT_EXIT};
     start(1);
     vm_step();
     u32 wrong = 0;
@@ -3274,6 +3308,91 @@ static void body_size_properties(void) {
     vm_events();
     CHECK(body_w[entity_index(c)] == 9 && vm_global(2) == 9);
     CHECK_WARNED(before, 1);
+}
+
+// vm.md "Entities": VM_P_BODY_CONTACT is read-only. SETP of it warns (once:
+// one kind of problem) and writes nothing, whatever the entity (ENTITY_NONE
+// gets the read-only warning, not the dead entity's; a live body), and pops
+// both its operands; the script carries on. GETP reads it as usual.
+static void read_only_properties(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(42);               // 42: below the rest, to show the stack stays balanced
+    push8(0);                // 42 ENTITY_NONE
+    push8(1);                // 42 0 1
+    setp(VM_P_BODY_CONTACT); // 42: warns (read-only), dropped
+    op(VM_OP_SELF);          // 42 self
+    push8(BODY_SIDE_TOP);    // 42 self 2
+    setp(VM_P_BODY_CONTACT); // 42: dropped (no repeat)
+    push8(0);                // 42 ENTITY_NONE
+    getp(VM_P_BODY_CONTACT); // 42 0: warns (a dead entity), another kind
+    op(VM_OP_DROP);          // 42
+    op(VM_OP_SELF);          // 42 self
+    getp(VM_P_BODY_CONTACT); // 42 contact
+    stg(0);                  // 42: glob[0] = what C set
+    stg(1);                  // glob[1] = 42
+    op(VM_OP_HALT);          //
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_BODY);
+    u32 i = entity_index(e);
+    body_contact[i] = BODY_SIDE_LEFT;
+    u32 before = debug_warning_count();
+    vm_attach(e, 0);
+    vm_events();
+    CHECK(body_contact[i] == BODY_SIDE_LEFT);
+    CHECK(vm_global(0) == BODY_SIDE_LEFT && vm_global(1) == 42);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+}
+
+// vm.md "Entities": VM_P_BODY_CONTACT is body_contact, what the body touched
+// in the last sys_physics() (with contacts on) or sys_map_movement(). A Step
+// reaction (vm_step, before the systems) reads what the previous frame's
+// physics reported: nothing on the first frame, then the floor of the bounds
+// the body rests on. The tuning properties a script set are what the systems
+// use: body_gravity BODY_GRAVITY(0) keeps a second body from falling.
+static void body_properties_meet_physics(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_STEP);   // the contacts, a digit per frame
+    count(0);                 //
+    op(VM_OP_SELF);           // self
+    getp(VM_P_BODY_CONTACT);  // contact (BODY_SIDE_BOTTOM is 1)
+    append_top(1);            // glob[1] = glob[1] * 10 + contact
+    op(VM_OP_HALT);           //
+    handler(1, VM_EV_CREATE); // no gravity for this one
+    op(VM_OP_SELF);           // self
+    push(BODY_GRAVITY(0));    // self -16
+    setp(VM_P_BODY_GRAVITY);  //
+    op(VM_OP_HALT);           //
+    CHECK(load());
+    physics_set_gravity(0, FX_ONE / 4);
+    physics_set_contacts(true);
+    Entity e = entity_create(C_POS | C_VEL | C_BODY);
+    Entity floating = entity_create(C_POS | C_VEL | C_BODY);
+    u32 i = entity_index(e), j = entity_index(floating);
+    body_w[i] = body_h[i] = body_w[j] = body_h[j] = 8;
+    pos_x[i] = FX(20);
+    pos_y[i] = FX(SCREEN_H - 8); // resting on the default bounds' floor
+    pos_x[j] = FX(60);
+    pos_y[j] = FX(20);
+    vm_attach(e, 0);
+    vm_attach(floating, 1);
+    u32 before = debug_warning_count();
+    for (u32 f = 0; f < 3; f++) {
+        vm_step();
+        sys_movement();
+        sys_physics();
+        vm_events();
+    }
+    _Static_assert(BODY_SIDE_BOTTOM == 1, "a digit per frame");
+    CHECK(vm_global(0) == 3);
+    CHECK(vm_global(1) == 11); // 0, then the floor twice
+    CHECK(body_gravity[j] == BODY_GRAVITY(0) && vel_y[j] == 0 && pos_y[j] == FX(20));
+    CHECK_WARNED(before, 0);
+    physics_set_contacts(false);
+    physics_set_gravity(0, 0);
 }
 
 // vm.md "Entities": VM_P_TAGS reads C_GAME(0) to C_GAME(14) as bits 0 to 14,
@@ -5462,7 +5581,8 @@ TEST_SUITE(
     {"properties_of_dead_entities", properties_of_dead_entities},
     {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
     {"property_without_its_component_warns", property_without_its_component_warns},
-    {"body_size_properties", body_size_properties},
+    {"body_size_properties", body_size_properties}, {"read_only_properties", read_only_properties},
+    {"body_properties_meet_physics", body_properties_meet_physics},
     {"tags_are_the_game_components", tags_are_the_game_components},
     {"instance_fields", instance_fields},
     {"nexti_loops_over_an_objects_instances", nexti_loops_over_an_objects_instances},

@@ -60,7 +60,8 @@ writes them. Expressions: integers (decimal or 0x hex, a trailing u
 ignored), names (the listing's, then --header constants, then vm.h's VM_*
 names), the operators
 + - * / << >> | & ~ and parentheses with C precedence, and the engine's macros
-FX(n) = n * 256 and C_GAME(n) = 1 << (16 + n). Names must be defined before
+FX(n) = n * 256, C_GAME(n) = 1 << (16 + n) and BODY_GRAVITY(n) = n - 16 (n
+from -112 to 143, as physics.h's s8 holds it). Names must be defined before
 they are used. The result must fit in
 32 bits (signed or unsigned). Layout: the header, the object, string and
 array tables, the globals' initial values (only if one isn't 0: header flag
@@ -252,6 +253,10 @@ def _function(name, arg):
         if not 0 <= arg <= 14:
             raise ExprError(f"C_GAME({arg}): n must be 0 to 14")
         return 1 << (16 + arg)
+    if name == "BODY_GRAVITY":  # physics.h: the scale in 16ths, stored minus 16 in an s8
+        if not -112 <= arg <= 143:
+            raise ExprError(f"BODY_GRAVITY({arg}): n must be -112 to 143 (16ths of gravity)")
+        return arg - 16
     raise ExprError(f"unknown function {name}()")
 
 

@@ -248,7 +248,7 @@ It costs one cell lookup per metatile overlapped, each looking through the runti
 | 6 | `MAP_CONTACT_LADDER` | Planned: `sys_map_movement()`, while the body overlaps a ladder; never set until ladders are implemented |
 | 7 | | Reserved for the engine |
 
-Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` and `_RIGHT`. Scripts can't read map contacts yet: no VM property or event exposes `body_contact` ([vm.md](vm.md)).
+Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` and `_RIGHT`. Scripts read them as the read-only property `body_contact` (`VM_P_BODY_CONTACT`; [lua.md](lua.md#what-compiles-to-what)): `self.body_contact & MAP_CONTACT_FLOOR ~= 0` while a map body stands on the floor.
 
 ### Runtime changes
 

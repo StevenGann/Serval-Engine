@@ -157,8 +157,9 @@ enum {
 };
 
 // Entity properties for GETP and SETP: the ECS arrays of the same names,
-// then the instance fields (VM_P_FIELD0 on). Append-only; 15 to 63 are
-// reserved for the engine.
+// then the instance fields (VM_P_FIELD0 on). Append-only; 20 to 63 are
+// reserved for the engine. VM_P_BODY_CONTACT is read-only: SETP of it warns
+// and writes nothing.
 enum {
     VM_P_X,         // pos_x (FIXED)
     VM_P_Y,         // pos_y (FIXED)
@@ -175,7 +176,13 @@ enum {
     VM_P_TAGS,      // the game components C_GAME(0) to C_GAME(14), as bits 0 to 14
     VM_P_ANIM_TIME, // spr_anim_time (C_ANIM)
     VM_P_ANIM_STEP, // spr_anim_step (C_ANIM)
-    VM_P_COUNT      // the engine properties: 0 to VM_P_COUNT - 1
+    // The body's tuning and contacts (C_BODY; physics.h), as C has them:
+    VM_P_BODY_BOUNCE,   // body_bounce: 0-254 the 256ths a floor bounce keeps, 255 perfect
+    VM_P_BODY_FRICTION, // body_friction: 256ths of the speed lost per frame on a floor
+    VM_P_BODY_MAX_FALL, // body_max_fall: FIXED pixels per frame in a u16; 0 no limit
+    VM_P_BODY_GRAVITY,  // body_gravity: the scale minus 16, as BODY_GRAVITY(sixteenths)
+    VM_P_BODY_CONTACT,  // body_contact, read-only: BODY_SIDE_*, MAP_CONTACT_* bits
+    VM_P_COUNT          // the engine properties: 0 to VM_P_COUNT - 1
 };
 // Instance fields: VM_FIELDS cells of each attached entity, zeroed when it is
 // attached. VM_P_FIELD(n) is field n, 0 to VM_FIELDS - 1.

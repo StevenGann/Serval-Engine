@@ -1027,13 +1027,34 @@ def c_div(a, b):
 # --- Program model -----------------------------------------------------------
 
 # The engine's properties by their Lua field names: (the VM_P_* name, type).
-# scale is fixed point: spr_scale's 8.8 has the same 256-is-one scaling.
+# Each has its C pool's meaning. scale is fixed point: spr_scale's 8.8 has the
+# same 256-is-one scaling. body_max_fall is a speed, 24.8 like vy (in a u16).
+# body_bounce and body_friction are integers, C's 256ths in a u8 (body_bounce
+# 255 is a perfect bounce, not 255/256), and body_gravity is C's s8, written
+# with BODY_GRAVITY(n) as in C.
 PROPERTIES = {
     "x": ("X", FIXED), "y": ("Y", FIXED), "vx": ("VX", FIXED), "vy": ("VY", FIXED),
     "sprite": ("SPR", INT), "frame": ("FRAME", INT), "flags": ("FLAGS", INT),
     "angle": ("ANGLE", INT), "depth": ("DEPTH", INT), "scale": ("SCALE", FIXED),
     "body_w": ("BODY_W", INT), "body_h": ("BODY_H", INT), "tags": ("TAGS", INT),
     "anim_time": ("ANIM_TIME", INT), "anim_step": ("ANIM_STEP", INT),
+    "body_bounce": ("BODY_BOUNCE", INT), "body_friction": ("BODY_FRICTION", INT),
+    "body_max_fall": ("BODY_MAX_FALL", FIXED), "body_gravity": ("BODY_GRAVITY", INT),
+    "body_contact": ("BODY_CONTACT", INT),
+}
+# The properties a script reads but can't assign (SETP refuses them): why, and
+# a hint.
+READ_ONLY = {
+    "body_contact": ("the engine sets it to what the body touched in the last sys_physics() "
+                     "(with physics_set_contacts(true)) or sys_map_movement()",
+                     "test its bits: self.body_contact & MAP_CONTACT_FLOOR ~= 0"),
+}
+# The engine's macros a script can call (constant arguments only), which the
+# assembler knows too: (the range of n, what it is).
+MACROS = {
+    "C_GAME": ((0, 14), "a game component"),
+    "BODY_GRAVITY": ((-112, 143), "a body's gravity scale in 16ths (16 normal, 0 none, "
+                                  "-16 reversed)"),
 }
 VM_FIELDS = 16  # instance fields, VM_P_FIELD0 to VM_P_FIELD0 + 15
 VM_ARRAY_CELLS = 1024
@@ -1602,7 +1623,7 @@ class Resolver:
             self.error(node, f"{name} is declared below (line {self.later_locals[name]}) as a "
                        "top-level local, so here it would be an undefined global",
                        "move the declaration up")
-        if name == "C_GAME":  # the engine's macro, which the assembler knows
+        if name in MACROS:  # the engine's macros, which the assembler knows
             if name not in self.builtins:
                 self.builtins[name] = HeaderSym(name, node)
             return self.builtins[name]
@@ -1784,6 +1805,9 @@ class BodyResolver:
             if isinstance(obj, Name) and obj.name == "math" \
                     and self.lookup(obj).kind == "builtin":
                 self.error(target, f"math.{target.name} can't be assigned")
+            if isinstance(target, Field) and target.name in READ_ONLY:
+                why, hint = READ_ONLY[target.name]
+                self.error(target, f"{target.name} is read-only: {why}", hint)
             self.expr(target)
 
     def generic_for(self, stat):
@@ -2924,12 +2948,12 @@ class Checker:
                 ty = self.user_call(e, sym)
             elif kind == "builtin":
                 ty = self.engine_call(e, sym.name)
-            elif kind == "header" and sym.name == "C_GAME":
-                ty = self.c_game(e)
+            elif kind == "header" and sym.name in MACROS:
+                ty = self.macro(e, sym.name)
             elif kind == "header":
                 self.fail(func, f"{func.name} would be a constant from the C headers, and "
-                          "constants aren't functions", "C_GAME(n) is the one macro a script "
-                          "can call")
+                          "constants aren't functions", "C_GAME(n) and BODY_GRAVITY(n) are "
+                          "the macros a script can call")
             elif kind == "object":
                 self.fail(func, f"{func.name} is an object; objects aren't called",
                           f"spawn({func.name}, x, y) makes an instance")
@@ -3050,13 +3074,17 @@ class Checker:
             self.argument(e.args[index], FIXED, "spawn", index)
         return ENTITY
 
-    def c_game(self, e):
-        self.arity(e, "C_GAME", (1,))
+    def macro(self, e, name):
+        """C_GAME(n) or BODY_GRAVITY(n): a constant, as C's macro makes it."""
+        self.arity(e, name, (1,))
         ty = self.value(e.args[0])
         c = e.args[0].const
-        if ty != INT or c is None or c.value is None or not 0 <= c.value <= 14:
-            self.fail(e.args[0], "C_GAME(n) takes a constant n from 0 to 14")
-        e.const = Const(INT, 1 << (16 + c.value), f"C_GAME({c.value})")
+        (lo, hi), what = MACROS[name]
+        if ty != INT or c is None or c.value is None or not lo <= c.value <= hi:
+            self.fail(e.args[0], f"{name}(n) takes a constant n from {lo} to {hi}: {what}")
+        n = c.value
+        value = 1 << (16 + n) if name == "C_GAME" else n - 16
+        e.const = Const(INT, value, f"{name}({n})")
         return INT
 
     def math_call(self, e, name):
@@ -4092,7 +4120,7 @@ class FuncGen:
             if discard and sym.result != VOID:
                 self.op("DROP", e, "the result isn't used")
             return
-        if sym.kind == "header":  # C_GAME(n): a constant
+        if sym.kind == "header":  # C_GAME(n) or BODY_GRAVITY(n): a constant
             if not discard:
                 self.push(e.const, e)
             return

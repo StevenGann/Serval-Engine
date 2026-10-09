@@ -36,6 +36,12 @@ These could not be added later without breaking games, or were small enough to f
 | `serval_add_rom()` checks `TITLE` (1 to 12 printable ASCII characters), `GAME_CODE` (exactly 4) and `SAVE` at configure time, Studio Advance's rules, and any printable ASCII character reaches the ROM header and the web page unchanged; refusing more later would break builds | [development.md](development.md#building-a-game), [releases.md](releases.md#versioning) |
 | VM and Lua names equal the C names: `VM_SYS_PSG_MUSIC_*`, `VM_SYS_SCREEN_SET_BRIGHTNESS`, `VmBindings.psg_songs`, Lua's `psg_music_play`, `screen_set_brightness`, `text_print_number` and the rest; numbers and golden bytes unchanged | [vm.md](vm.md#engine-calls), [lua.md](lua.md) |
 
+**Added before rc.1**, from integrating Studio Advance's object system. Each is an addition under the rules above: properties appended to the page, a reserved bit given a meaning, a new function; nothing that existed changed meaning.
+
+| Item | Where |
+| --- | --- |
+| Scripts tune bodies and read their contacts: the properties `VM_P_BODY_BOUNCE` (15), `VM_P_BODY_FRICTION` (16), `VM_P_BODY_MAX_FALL` (17), `VM_P_BODY_GRAVITY` (18) and the read-only `VM_P_BODY_CONTACT` (19), Lua's `body_bounce`, `body_friction`, `body_max_fall` (fixed), `body_gravity` and `body_contact`, each with its C pool's numbers; `BODY_GRAVITY(n)` in listings and scripts; read-only properties (`SETP` warns and writes nothing; assigning one is a compile error) | [vm.md](vm.md#entities), [lua.md](lua.md#what-compiles-to-what) |
+
 ## Planned in 1.x (declared now)
 
 Each of these 37 names is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns.

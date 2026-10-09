@@ -137,6 +137,7 @@ enum {
     WARN_PROPERTY,
     WARN_PROP_ENTITY,
     WARN_PROP_COMPONENT,
+    WARN_PROP_READ_ONLY,
     WARN_FIELD_UNATTACHED,
     WARN_SPAWN_OBJECT,
     WARN_SPAWN_FULL,
@@ -366,14 +367,23 @@ static void bind(Entity e, u32 object) {
 // --- Entities ----------------------------------------------------------------
 
 // The component each engine property belongs to (0: none, VM_P_TAGS).
-static const u32 prop_component[VM_P_COUNT] = {C_POS,  C_POS,  C_VEL, C_VEL,  C_SPR,
-                                               C_SPR,  C_SPR,  C_SPR, C_SPR,  C_SPR,
-                                               C_BODY, C_BODY, 0,     C_ANIM, C_ANIM};
+static const u32 prop_component[VM_P_COUNT] = {
+    C_POS,  C_POS,  C_VEL, C_VEL,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR,
+    C_BODY, C_BODY, 0,     C_ANIM, C_ANIM, C_BODY, C_BODY, C_BODY, C_BODY, C_BODY};
 // A property appended to vm.h without a row here would silently get component 0
 // (no warning when it's missing) and fall into set_prop's default case.
-_Static_assert(VM_P_COUNT == 15, "add the new property to prop_component, get_prop and set_prop");
+_Static_assert(VM_P_COUNT == 20, "add the new property to prop_component, get_prop and set_prop "
+                                 "(and READ_ONLY_PROPS if scripts can't write it)");
 _Static_assert(VM_P_FIELD0 >= VM_P_COUNT && VM_P_FIELD0 + VM_FIELDS <= 256,
                "the instance fields follow the engine properties, within a u8 operand");
+
+// The properties SETP refuses (warning): the engine sets them.
+#define READ_ONLY_PROPS (1u << VM_P_BODY_CONTACT)
+_Static_assert(VM_P_COUNT <= 32, "READ_ONLY_PROPS has a bit per engine property");
+
+static bool read_only(u32 prop) {
+    return prop < VM_P_COUNT && (READ_ONLY_PROPS >> prop & 1u);
+}
 
 // VM_P_TAGS: C_GAME(0) to C_GAME(14) of ent_mask, as bits 0 to 14.
 #define TAG_SHIFT 16
@@ -388,8 +398,8 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
     bool field = prop >= VM_P_FIELD0 && prop < VM_P_FIELD0 + VM_FIELDS;
     if (prop >= VM_P_COUNT && !field) {
         WARN_ONCE(WARN_PROPERTY,
-                  "vm: GETP/SETP at 0x%x: no property %u (VM_P_X to VM_P_ANIM_STEP are 0 to %d, "
-                  "the instance fields %d to %d); reads 0, writes nothing",
+                  "vm: GETP/SETP at 0x%x: no property %u (the engine's are 0 to %d, the "
+                  "instance fields %d to %d); reads 0, writes nothing",
                   at, prop, VM_P_COUNT - 1, VM_P_FIELD0, VM_P_FIELD0 + VM_FIELDS - 1);
         return -1;
     }
@@ -417,7 +427,7 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
     if (!ent_has(i, prop_component[prop]))
         WARN_ONCE(WARN_PROP_COMPONENT,
                   "vm: GETP/SETP at 0x%x: entity %u lacks the component of property %u "
-                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_W/H, C_ANIM for "
+                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_*, C_ANIM for "
                   "ANIM_TIME/STEP, else C_SPR); its array is used anyway",
                   at, i, prop);
     return (int)i;
@@ -455,6 +465,16 @@ static s32 get_prop(u32 i, u32 prop) {
         return spr_anim_time[i];
     case VM_P_ANIM_STEP:
         return spr_anim_step[i];
+    case VM_P_BODY_BOUNCE:
+        return body_bounce[i];
+    case VM_P_BODY_FRICTION:
+        return body_friction[i];
+    case VM_P_BODY_MAX_FALL:
+        return body_max_fall[i];
+    case VM_P_BODY_GRAVITY:
+        return body_gravity[i];
+    case VM_P_BODY_CONTACT:
+        return body_contact[i];
     default: // an instance field (prop_slot checked)
         return fields[i][prop - VM_P_FIELD0];
     }
@@ -508,6 +528,20 @@ static void set_prop(u32 i, u32 prop, s32 value) {
         break;
     case VM_P_ANIM_STEP:
         spr_anim_step[i] = (u8)value;
+        break;
+    case VM_P_BODY_BOUNCE:
+        body_bounce[i] = (u8)value;
+        break;
+    case VM_P_BODY_FRICTION:
+        body_friction[i] = (u8)value;
+        break;
+    case VM_P_BODY_MAX_FALL:
+        body_max_fall[i] = (u16)value;
+        break;
+    case VM_P_BODY_GRAVITY:
+        body_gravity[i] = (s8)value;
+        break;
+    case VM_P_BODY_CONTACT: // read-only: SETP refuses it before it gets here
         break;
     default: // an instance field (prop_slot checked)
         fields[i][prop - VM_P_FIELD0] = value;
@@ -1082,6 +1116,14 @@ static u32 execute(Context* c, bool reaction) {
             u32 prop = code[pc];
             pc += 1;
             s32 value = st[--sp];
+            if (read_only(prop)) { // whatever the entity: the engine owns it
+                sp--;
+                WARN_ONCE(WARN_PROP_READ_ONLY,
+                          "vm: SETP at 0x%x: property %u is read-only (VM_P_BODY_CONTACT: the "
+                          "engine sets it); nothing is written",
+                          at, prop);
+                break;
+            }
             int i = prop_slot(prop, st[--sp], at);
             if (i >= 0)
                 set_prop((u32)i, prop, value);

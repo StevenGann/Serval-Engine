@@ -6,7 +6,8 @@
 -- runner drives it:
 --
 --   - objects, and instances as tables: the engine's properties (x, y, vx,
---     vy, sprite, ..., truncated to their arrays' types as SETP does) and
+--     vy, sprite, ..., body_gravity, truncated to their arrays' types as SETP
+--     does; body_contact, which only physics sets, reads 0) and
 --     instance fields (unset ones read 0, 0.0, false or none by the field's
 --     type), entity handles as the ECS hands them out (a FIFO of free slots,
 --     a generation per slot);
@@ -79,7 +80,8 @@ end
 
 -- The engine's properties, in VM_P_* order, and how SETP stores each.
 local PROPS = { "x", "y", "vx", "vy", "sprite", "frame", "flags", "angle", "depth", "scale",
-                "body_w", "body_h", "tags", "anim_time", "anim_step" }
+                "body_w", "body_h", "tags", "anim_time", "anim_step", "body_bounce",
+                "body_friction", "body_max_fall", "body_gravity", "body_contact" }
 local function wrap(v, bits, signed)
   v = v & ((1 << bits) - 1)
   if signed and v >= (1 << (bits - 1)) then v = v - (1 << bits) end
@@ -94,8 +96,13 @@ local STORE = {
   body_w = function(v) return wrap(v, 8) end, body_h = function(v) return wrap(v, 8) end,
   tags = function(v) return v & 0x7FFF end,
   anim_time = function(v) return wrap(v, 8) end, anim_step = function(v) return wrap(v, 8) end,
+  body_bounce = function(v) return wrap(v, 8) end, body_friction = function(v) return wrap(v, 8) end,
+  -- body_max_fall: 24.8 in a u16.
+  body_max_fall = function(v) return wrap(math.floor(v * 256 + 0.5), 16) / 256 end,
+  body_gravity = function(v) return wrap(v, 8, true) end,
 }
-local FIXED_PROPS = { x = true, y = true, vx = true, vy = true, scale = true }
+local FIXED_PROPS = { x = true, y = true, vx = true, vy = true, scale = true,
+                      body_max_fall = true }
 local IS_PROP = {}
 for _, p in ipairs(PROPS) do IS_PROP[p] = true end
 local FIELD_TYPE = {}
@@ -284,6 +291,7 @@ env.math = math
 env.none = none
 
 function env.C_GAME(n) return 1 << (16 + n) end
+function env.BODY_GRAVITY(n) return n - 16 end
 
 function env.object(t)
   local o = {}

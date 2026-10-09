@@ -121,17 +121,20 @@ class PushWidth(unittest.TestCase):
                     asm(f".object X\n.handler X CREATE\n{text}\nHALT\n")
 
     def test_expressions(self):
-        """C precedence, division toward zero, the engine's two macros."""
+        """C precedence, division toward zero, the engine's three macros."""
         cases = {
             "1 + 2 * 3": 7, "(1 + 2) * 3": 9, "1 << 4 + 1": 32, "0x10 | 1 << 1": 18,
             "6 & 3 | 8": 10, "~0": -1, "-7 / 2": -3, "7 / -2": -3, "FX(3) / 2": 384,
             "C_GAME(1)": 1 << 17, "1 << 31": 1 << 31, "-(1 + 1)": -2, "0x1Fu": 31,
+            "BODY_GRAVITY(16)": 0, "BODY_GRAVITY(0)": -16, "BODY_GRAVITY(-16)": -32,
+            "BODY_GRAVITY(-112)": -128, "BODY_GRAVITY(143)": 127,
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
                 self.assertEqual(svm.evaluate(text, lambda n: 0), expected)
         for text in ("1 / 0", "1 << 32 << 1", "4294967296", "-2147483649", "1 << -1",
-                     "C_GAME(15)", "NOPE(1)", "1 +", "(1", "1 % 2", "a b"):
+                     "C_GAME(15)", "NOPE(1)", "1 +", "(1", "1 % 2", "a b",
+                     "BODY_GRAVITY(-113)", "BODY_GRAVITY(144)"):
             with self.subTest(text=text):
                 with self.assertRaises(svm.ExprError):
                     svm.evaluate(text, lambda n: 1)
