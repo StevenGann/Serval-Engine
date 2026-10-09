@@ -104,14 +104,14 @@ The compiler infers a static type for every expression and variable; mixing type
 | a function call | arguments pushed, `CALL`; `ENTER p, n` in the callee; `RET` / `RETV` |
 | `if`, `while`, `repeat`, numeric `for`, `break`, `goto` | `JMP`, `JZ`, `JNZ` |
 | `self.x`, `other.frame`, ... | `GETP` / `SETP` with the property |
-| `self.hp` (any other field name) | an instance field, `VM_P_FIELD0 + n` |
+| `self.hp` (any other field name, except the [reserved ones](#reserved-names)) | an instance field, `VM_P_FIELD0 + n` |
 | `a[i]`, `#a` | `LDA` / `STA` with `i - 1`; `LEN` |
 | `for e in instances(Firefly) do ... end` | a `NEXTI` loop |
 | `spawn(Obj, x, y)`, `kill(e)` | `SPAWN`, `KILL` |
 | `wait(n)`, `wait_anim()`, `wait_move()` | `WAIT`, `WAIT_ANIM`, `WAIT_MOVE` |
 | the engine functions below | `SYS` |
 
-**Fields.** The engine's properties are fields by these names: `x y vx vy sprite frame flags angle depth scale body_w body_h tags anim_time anim_step body_bounce body_friction body_max_fall body_gravity body_contact object`. Each means what its C pool means (`object`, what `vm_object_of()` returns) and is stored in the pool's type, wrapping as C's would (`self.frame = 300` is 44; [vm.md](vm.md#entities)). Any other field name is an instance field; each distinct name gets one of the `VM_FIELDS` slots for the whole program (so `other.hp` means the same slot whatever `other` is), and more than `VM_FIELDS` distinct names is an error.
+**Fields.** The engine's properties are fields by these names: `x y vx vy sprite frame flags angle depth scale body_w body_h tags anim_time anim_step body_bounce body_friction body_max_fall body_gravity body_contact object`. Each means what its C pool means (`object`, what `vm_object_of()` returns) and is stored in the pool's type, wrapping as C's would (`self.frame = 300` is 44; [vm.md](vm.md#entities)). Any other field name is an instance field, unless it starts with a prefix reserved for later properties ([below](#reserved-names)); each distinct name gets one of the `VM_FIELDS` slots for the whole program (so `other.hp` means the same slot whatever `other` is), and more than `VM_FIELDS` distinct names is an error.
 
 `body_contact` and `object` are **read-only**: the engine sets them, and assigning one is a compile error. `object` is the object the instance was spawned or attached as, for telling what a collision met without spending a game component on each kind: `function Hero:collision(other) if other.object == Coin then ... end end`.
 
@@ -133,6 +133,34 @@ The contact bits are the C headers' constants: `MAP_CONTACT_FLOOR`, `_CEILING`, 
 **Waits** are allowed only in behaviours and in functions called only from behaviours; the compiler checks the call graph, so a wait can never reach a reaction. The rule is static, so it is stricter than the VM: `wait(0)` in a reaction, which would continue at once, is rejected too.
 
 **Numeric `for`** loops run exactly Lua 5.4's iteration count (the limit and step evaluated once, no overflow at the integer limits). A constant step of 0 is a compile error; one that is 0 at run time, an error in Lua, logs `'for' step is zero` (`TRACE`) and ends the handler. **Header constants** are folded only where the assembler's integers compute what Lua does; anything else runs in code, and where a constant is required (an object's components, an array's length, a global's initial value) it is an error.
+
+## Reserved names
+
+An instance field's name can't start with **`anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_`**: those names belong to the engine's properties, today's and the ones later versions add. `self.body_speed = 2` is a compile error:
+
+```
+game.lua:12:3: error: self.body_speed: body_ is reserved for engine properties, and body_speed isn't one: an instance field can't take the name of a property a later engine version may add
+  hint: rename the field, e.g. my_body_speed or bodyspeed (instance fields can't start with anim_, body_, ent_, map_, path_, pos_, spr_, vel_ or vm_)
+```
+
+Only the start of the name counts, as written (properties are lower case): `my_body_x`, `nobody_w`, `bodyx`, `sprite_x`, `entry` and `Body_x` are ordinary fields. Today's properties keep their names, prefixed (`body_w`, `anim_time`) or not (`x`, `angle`, `object`). The hint names the property when the field looks like a misspelt one (`body_bouce`: did you mean `body_bounce`?) or is its C pool's name (`spr_angle` is `angle` in a script, `pos_x` is `x`).
+
+**Why.** A field that isn't a property is the script's own instance field, so a property added later would take a name some script may already use for a field, and silently change what that script means: a breaking change, on a property page that is otherwise append-only ([vm.md](vm.md#entities)). So **every property a later engine version adds has a name that starts with one of these prefixes, and no other name will ever become a property**. No script can be using such a name, and names without a reserved prefix (`speed`, `layer`, `palette`, `visible`) stay the scripts' for good. Reserving a list of likely short names instead would have been guesswork, and would have taken names scripts want. Decided before 1.0.0, when no released script could have used one ([api-freeze.md](api-freeze.md#decisions), D8).
+
+The prefixes are those of the engine's per-entity data, in C and in Lua:
+
+| Prefix | Why |
+| --- | --- |
+| `body_` | The body's pools ([physics.h](../include/serval/physics.h), `body_w` to `body_contact`) and their properties. Later body features (swept tests, body-to-body response, moving platforms, a platformer controller) may add more |
+| `spr_` | The sprite's pools in C (`spr_id`, `spr_angle`, `spr_scale`, ...). Today's sprite properties dropped the prefix (`sprite`, `angle`, `scale`); later ones keep their C names, so a new sprite property can't take a short name a script already uses |
+| `anim_` | The animation's properties (`anim_time`, `anim_step`; `spr_anim_*` in C), and later animation state |
+| `path_` | The path follower's pools ([path.h](../include/serval/path.h): `path_heading`, `path_speed`, `path_step`, `path_time`), which scripts can't read yet: likely properties, with the path extras [api-freeze.md](api-freeze.md#later-additively-no-api-now) lists |
+| `pos_`, `vel_` | The position and velocity pools in C (`pos_x`, `vel_y`; `x` and `vy` in scripts), and later state of the same kind (a previous position for swept tests, say) |
+| `map_` | Map bodies (`C_MAPBODY`, `sys_map_movement()`) and the map features planned for them (ladders, slopes): per-entity map state would take the map module's prefix |
+| `ent_` | The entity itself (`ent_mask`, `ent_has()` in C): properties of the entity rather than of one component (a second word of game components, beside `tags`), and any later property that fits no other prefix |
+| `vm_` | The VM's state for an instance (`object` is what `vm_object_of()` returns), and later VM state a script may read |
+
+Not reserved: `sys_` (C's systems are functions, never per-entity data), the engine's other function prefixes (`sprite_`, `camera_`, `text_`, `psg_`: global state, not an entity's) and `engine_` or `serval_` (`ent_` already holds what fits nowhere else).
 
 ## Engine functions
 

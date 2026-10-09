@@ -36,13 +36,14 @@ These could not be added later without breaking games, or were small enough to f
 | `serval_add_rom()` checks `TITLE` (1 to 12 printable ASCII characters), `GAME_CODE` (exactly 4) and `SAVE` at configure time, Studio Advance's rules, and any printable ASCII character reaches the ROM header and the web page unchanged; refusing more later would break builds | [development.md](development.md#building-a-game), [releases.md](releases.md#versioning) |
 | VM and Lua names equal the C names: `VM_SYS_PSG_MUSIC_*`, `VM_SYS_SCREEN_SET_BRIGHTNESS`, `VmBindings.psg_songs`, Lua's `psg_music_play`, `screen_set_brightness`, `text_print_number` and the rest; numbers and golden bytes unchanged | [vm.md](vm.md#engine-calls), [lua.md](lua.md) |
 
-**Added before rc.1**, from integrating Studio Advance's object system. Each is an addition under the rules above: properties appended to the page, a reserved bit given a meaning, a new function, an engine limit raised; nothing that existed changed meaning.
+**Added before rc.1**, from integrating Studio Advance's object system. Each is an addition under the rules above: properties appended to the page, a reserved bit given a meaning, a new function, an engine limit raised; nothing that existed changed meaning. The one refusal, instance field names reserved for later properties, comes before any release could have a script that used one, and is what lets later properties be additions too.
 
 | Item | Where |
 | --- | --- |
 | Scripts tune bodies and read their contacts: the properties `VM_P_BODY_BOUNCE` (15), `VM_P_BODY_FRICTION` (16), `VM_P_BODY_MAX_FALL` (17), `VM_P_BODY_GRAVITY` (18) and the read-only `VM_P_BODY_CONTACT` (19), Lua's `body_bounce`, `body_friction`, `body_max_fall` (fixed), `body_gravity` and `body_contact`, each with its C pool's numbers; `BODY_GRAVITY(n)` in listings and scripts; read-only properties (`SETP` warns and writes nothing; assigning one is a compile error) | [vm.md](vm.md#entities), [lua.md](lua.md#what-compiles-to-what) |
 | `C_KINEMATIC`, engine component bit 7, which `entity_create` refused until then: a body (`C_POS \| C_VEL \| C_BODY`) that moves only by its velocity; `sys_physics` skips it, its body collides. A script's object can have it in its components, so a script spawns one. Bits 8-15 stay reserved | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
 | `vm_object_of(e)`, the object an entity is attached to or −1, and the read-only property `VM_P_OBJECT` (20; Lua's `e.object`, compared with an object's name: `other.object == Coin`, the subset's one use of an object as a value) | [vm.md](vm.md#entities), [lua.md](lua.md#types) |
+| Instance fields can't start with `anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_` (`svlua.py` refuses them, with a hint naming a property the field looks like, or a new name), and every property added later takes one of those prefixes, so a new property never takes over a script's own field (D8) | [lua.md](lua.md#reserved-names), [vm.md](vm.md#entities) |
 | `VM_EVENT_QUEUE` raised from 32 to 256, a Create and a Room Start for every entity, so a room loader queues a whole room before the first drain; an engine limit, not format v1's, so raising it only drops fewer events. EWRAM +1.6 KB | [vm.md](vm.md#contexts) |
 
 ## Planned in 1.x (declared now)
@@ -92,9 +93,9 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 | Variable-width and large fonts, dialogue boxes, menus, localization | New headers; charblock 0 and BG0 are already the text layer's |
 | Input recording, remapping, touch; `button_released()` | New functions or header |
 | `ent_add()` / `ent_remove()` helpers | Inline wrappers; writing `ent_mask` directly stays legal forever |
-| More than 15 game component bits | A second tag word with its own queries and VM property |
+| More than 15 game component bits | A second tag word with its own queries and VM property (its Lua name under `ent_`, [reserved](lua.md#reserved-names)) |
 | `entity_destroy()` detaching VM bindings | Turns today's "stale binding" warning into the right behaviour |
-| VM SYS calls and properties for new features; more VM events | The SYS and property pages are append-only; VM header flag bit 1 is reserved for an extended handler table |
+| VM SYS calls and properties for new features; more VM events | The SYS and property pages are append-only, and a new property's Lua name starts with a prefix instance fields can't use ([lua.md](lua.md#reserved-names)); VM header flag bit 1 is reserved for an extended handler table |
 | The debug link | No game-facing API; its protocol is versioned by its own handshake |
 | GB/GBC and DS targets, link cable | New targets and headers, same API |
 
@@ -107,6 +108,7 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 - **D5. `body_bounce` 255 means a perfect bounce.** It closes the "at most 255/256" gap with no new type and no extra IWRAM; widening the pool to `u16` would cost 128 bytes of IWRAM and touch the hot loops for one value.
 - **D6. VM and Lua names equal the C names.** `music_*` is tracker music in C; had the VM kept `VM_SYS_MUSIC_PLAY` and Lua `music_play` for the PSG player, the names would disagree forever.
 - **D7. Sampled audio on the web starts as a silent stub.** The GBA implementation ships without waiting for a web player; the web keeps the same API, plays nothing and warns once until it has one.
+- **D8. Field names are reserved for later properties** (the owner's decision, 2026-10-08). In Lua, a field that isn't a property is the script's instance field, so a property added in 1.x would take a name some script may use for its own field and change what that script means. Instance fields can't start with `anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_`, the prefixes of the engine's per-entity data (`ent_` also for whatever fits no other), and every later property's name starts with one, so adding a property is an addition. The promise covers every later property, so no short name needs reserving: guessing a list (`layer`, `palette`, `visible`) would have missed some and taken names scripts want. Today's unprefixed properties (`x`, `angle`, `object`, ...) keep their names.
 - Also decided: streaming is per group only; hazards are tags; writing `ent_mask` stays legal forever; palette writes are copy-on-write against future sharing; blending pauses while the screen brightness is not 0 (the hardware has one color effect); volume ranges differ between the PSG (0-15, the hardware's steps) and the mixer (0-255).
 
 ## Caveats that remain

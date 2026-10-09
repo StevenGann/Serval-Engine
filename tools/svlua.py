@@ -34,6 +34,7 @@ exit status 1 and nothing written. Python 3.11+, standard library only.
 """
 
 import argparse
+import difflib
 import math
 import os
 import re
@@ -1054,6 +1055,19 @@ READ_ONLY = {
     "object": ("an instance's object is the one it was spawned or attached as",
                "compare it: other.object == Coin"),
 }
+# Instance fields can't start with these: they are kept for the properties
+# later engine versions add. Every property added after 1.0.0-rc.1 has a name
+# that starts with one, and no other name will become a property, so a
+# script's own fields never change meaning when the engine grows (docs/lua.md,
+# "Reserved names"). Today's properties keep their names, prefixed or not.
+RESERVED_PREFIXES = ("anim_", "body_", "ent_", "map_", "path_", "pos_", "spr_", "vel_", "vm_")
+# The C pools whose properties have other names in Lua, for the hint when a
+# script uses the C name.
+C_POOL_PROPERTIES = {
+    "pos_x": "x", "pos_y": "y", "vel_x": "vx", "vel_y": "vy", "spr_id": "sprite",
+    "spr_frame": "frame", "spr_flags": "flags", "spr_angle": "angle", "spr_depth": "depth",
+    "spr_scale": "scale", "spr_anim_time": "anim_time", "spr_anim_step": "anim_step",
+}
 # The engine's macros a script can call (constant arguments only), which the
 # assembler knows too: (the range of n, what it is).
 MACROS = {
@@ -1961,6 +1975,7 @@ class BodyResolver:
         if e.name not in PROPERTIES:
             fields = self.r.p.fields
             if e.name not in fields:
+                self.reserved_field(e)
                 if len(fields) == VM_FIELDS:
                     self.error(e, f"a {VM_FIELDS + 1}th instance field, {e.name}: the VM has "
                                f"{VM_FIELDS} (VM_FIELDS), shared by name by every object: "
@@ -1968,6 +1983,28 @@ class BodyResolver:
                                "in a global or an array")
                 fields[e.name] = FieldSym(e.name, len(fields), e)
             e.field = fields[e.name]
+
+    def reserved_field(self, e):
+        """A new instance field's name can't start with a prefix kept for later
+        engine properties."""
+        name = e.name
+        prefix = next((p for p in RESERVED_PREFIXES if name.startswith(p)), None)
+        if prefix is None:
+            return
+        owner = _describe(e.obj) or "e"
+        hint = (f"rename the field, e.g. my_{name} or {prefix[:-1]}{name[len(prefix):]} "
+                f"(instance fields can't start with {', '.join(RESERVED_PREFIXES[:-1])} or "
+                f"{RESERVED_PREFIXES[-1]})")
+        if name in C_POOL_PROPERTIES:
+            hint = f"{name} is C's name for it: in a script it is {owner}.{C_POOL_PROPERTIES[name]}"
+        else:  # a typo of a property? Compared after the prefix, which they share
+            rests = {p[len(prefix):]: p for p in PROPERTIES if p.startswith(prefix)}
+            close = difflib.get_close_matches(name[len(prefix):], rests, n=1)
+            if close:
+                hint = f"did you mean {rests[close[0]]}? If not, {hint}"
+        self.error(e, f"{_describe(e) or name}: {prefix} is reserved for engine properties, and "
+                   f"{name} isn't one: an instance field can't take the name of a property a "
+                   "later engine version may add", hint)
 
     def call(self, e):
         func = e.func

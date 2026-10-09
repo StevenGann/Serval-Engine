@@ -5,11 +5,12 @@ build (svlua_tool).
 Groups: the lexer and the parser (Lua 5.4's tokens, grammar, precedence and
 associativity); what the subset rejects (one test per construct, checking the
 message and its line and column); names and types (promotion, conflicts,
-conditions, inference from call sites, fields, the wait rule); code generation
-(golden listings in tests/svlua/, assembled by svm.py; constant folding,
-frames, loops); what compiled programs compute, run on the engine's VM by
-svlua_runner (tests/svlua/runner.c, built by the host preset); and the
-fireflies game in Lua. Run directly: python3 tools/svlua_test.py (with the
+conditions, inference from call sites, fields, the wait rule); the field
+names reserved for later properties; code generation (golden listings in
+tests/svlua/, assembled by svm.py; constant folding, frames, loops); what
+compiled programs compute, run on the engine's VM by svlua_runner
+(tests/svlua/runner.c, built by the host preset); and the fireflies game in
+Lua. Run directly: python3 tools/svlua_test.py (with the
 host preset built, or SERVAL_SVLUA_RUNNER naming the runner; without one the
 tests that run programs are skipped). SVLUA_UPDATE_GOLDEN=1 rewrites the
 golden listings from the compiler.
@@ -445,6 +446,15 @@ REJECTED = {
     "header_called": (OBJ + "function A:step() local g = MAX_FALL(2) end", 3, 29,
                       r"MAX_FALL would be a constant from the C headers, and constants aren't "
                       r"functions"),
+    # Instance fields named like the properties later engine versions add
+    "reserved_field": (OBJ + "function A:step() self.body_speed = 1 end", 3, 19,
+                       r"self\.body_speed: body_ is reserved for engine properties, and "
+                       r"body_speed isn't one: an instance field can't take the name of a "
+                       r"property a later engine version may add"),
+    "reserved_field_read": (OBJ + "function A:collision(other) local s = other.path_speed end",
+                            3, 39, r"other\.path_speed: path_ is reserved for engine properties"),
+    "reserved_field_parameter": (OBJ + "function tint(e) e.spr_palette = 2 end", 3, 18,
+                                 r"e\.spr_palette: spr_ is reserved for engine properties"),
 }
 
 
@@ -748,6 +758,82 @@ end""")
         self.assertEqual([(s.name, s.ty) for s in body.locals], [
             ("x", "integer"), ("x", "fixed"), ("i", "integer"), ("x", "boolean"),
             ("y", "integer")])
+
+
+class ReservedNames(unittest.TestCase):
+    """Instance fields can't start with the prefixes kept for later engine
+    properties (lua.md, "Reserved names"); today's properties keep their
+    names."""
+
+    # The 1.0 properties without a reserved prefix. Every later one takes one.
+    UNPREFIXED = {"x", "y", "vx", "vy", "sprite", "frame", "flags", "angle", "depth", "scale",
+                  "tags", "object"}
+
+    def refused(self, text):
+        with self.assertRaises(svlua.CompileError) as caught:
+            svlua.check(text, "t.lua")
+        return caught.exception
+
+    def test_every_prefix_is_refused_on_any_entity(self):
+        self.assertEqual(svlua.RESERVED_PREFIXES, ("anim_", "body_", "ent_", "map_", "path_",
+                                                   "pos_", "spr_", "vel_", "vm_"))
+        for prefix in svlua.RESERVED_PREFIXES:
+            name = prefix + "mine"
+            for code in (f"self.{name} = 1", f"local n = self.{name}",
+                         f"for e in instances(B) do e.{name} = 1 end",
+                         f"spawn(B, 0, 0).{name} = 1"):
+                with self.subTest(code=code):
+                    error = self.refused(OBJ + f"function A:step() {code} end")
+                    self.assertRegex(error.message, rf"\.{name}: {prefix} is reserved for engine "
+                                     rf"properties, and {name} isn't one")
+                    self.assertEqual(error.line, 3)
+
+    def test_the_prefix_alone_is_refused(self):
+        error = self.refused(OBJ + "function A:step() self.vm_ = 1 end")
+        self.assertRegex(error.message, r"self\.vm_: vm_ is reserved")
+
+    def test_properties_keep_their_names(self):
+        p = svlua.check(OBJ + """function A:collision(other)
+  self.body_w = 8; self.body_h = 8; self.anim_time = 0; self.anim_step = 0
+  self.body_bounce = 224; self.body_friction = 16; self.body_max_fall = 2.5
+  self.body_gravity = BODY_GRAVITY(8)
+  local floor = other.body_contact & MAP_CONTACT_FLOOR ~= 0
+end""", "t.lua")
+        self.assertEqual(p.fields, {})
+
+    def test_a_prefix_later_in_the_name_is_a_field(self):
+        names = ("my_body_x", "nobody_w", "bodyx", "body", "entry", "sprite_x", "position",
+                 "velocity", "mapped", "vmax", "paths", "animal", "Body_x", "BODY_X", "x_pos_")
+        p = svlua.check(OBJ + "function A:step()\n" + "".join(
+            f"  self.{name} = 1\n" for name in names) + "end", "t.lua")
+        self.assertEqual(list(p.fields), list(names))
+
+    def test_hints(self):
+        error = self.refused(OBJ + "function A:step() self.body_speed = 1 end")
+        self.assertEqual(error.hint, "rename the field, e.g. my_body_speed or bodyspeed (instance "
+                         "fields can't start with anim_, body_, ent_, map_, path_, pos_, spr_, "
+                         "vel_ or vm_)")
+        # A typo of a property is told so; a C pool's name, its Lua name.
+        error = self.refused(OBJ + "function A:step() self.body_bouce = 200 end")
+        self.assertRegex(error.hint, r"^did you mean body_bounce\? If not, rename the field, "
+                         r"e\.g\. my_body_bouce or bodybouce")
+        error = self.refused(OBJ + "function A:collision(other) other.spr_angle = 0 end")
+        self.assertEqual(error.hint, "spr_angle is C's name for it: in a script it is other.angle")
+        for c_name, lua in svlua.C_POOL_PROPERTIES.items():
+            with self.subTest(c_name=c_name):
+                self.assertIn(lua, svlua.PROPERTIES)
+                with open(ECS_H, encoding="utf-8") as f:
+                    self.assertRegex(f.read(), rf"\b{c_name}\[MAX_ENT\]")
+
+    def test_later_properties_take_a_reserved_prefix(self):
+        """The promise to scripts: a property added after 1.0.0-rc.1 has a
+        reserved prefix, so no script can be using its name as a field."""
+        for name in svlua.PROPERTIES:
+            with self.subTest(name=name):
+                self.assertTrue(name in self.UNPREFIXED or
+                                name.startswith(svlua.RESERVED_PREFIXES),
+                                f"{name}: a new property's name starts with one of "
+                                "RESERVED_PREFIXES (docs/lua.md, \"Reserved names\")")
 
 
 
