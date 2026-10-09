@@ -1,7 +1,7 @@
 // Screen-wide effects: brightness (fade to black or white) through the
-// hardware's color special effect, and the stubs of the planned ones (raster
-// effects; docs/runtime-systems.md#special-effects). Alpha blending, which
-// shares the color effect with the brightness, is blend.c.
+// hardware's color special effect (docs/runtime-systems.md#special-effects).
+// Alpha blending, which shares the color effect with the brightness, is
+// blend.c; raster effects are raster.c.
 
 #include "serval/screen.h"
 
@@ -49,49 +49,4 @@ void screen_set_brightness(int level) {
     }
     brightness = (s8)level;
     serval_screen_apply_brightness();
-}
-
-// --- Planned API --------------------------------------------------------------
-//
-// Declared in screen.h with SERVAL_PLANNED, not implemented in this engine
-// version (docs/development.md#planned-api). Each stub changes nothing, so the
-// game sees today's behaviour (layers scrolled as a whole, one backdrop
-// color), and says so once per function in debug builds: a game calling them
-// every frame gets one line, not one per frame. They touch no register, so
-// the hardware they will need (DMA 0 and the HBlank interrupt) stays
-// untouched until then.
-
-#ifdef SERVAL_DEBUG
-static bool warned_raster_scroll, warned_raster_backdrop, warned_raster_clear;
-
-static void warn_planned(bool* warned, const char* message) {
-    if (!*warned) {
-        *warned = true;
-        SERVAL_WARN("%s", message);
-    }
-}
-#define WARN_PLANNED(flag, message) warn_planned(&(flag), (message))
-#else
-#define WARN_PLANNED(flag, message) ((void)0)
-#endif
-
-void raster_scroll(u32 bg, bool vertical, const s16* offsets) {
-    (void)bg;
-    (void)vertical;
-    (void)offsets;
-    WARN_PLANNED(warned_raster_scroll, "raster_scroll: raster effects are planned, not "
-                                       "implemented in this engine version; the layer scrolls "
-                                       "as a whole");
-}
-
-void raster_backdrop(const Color* colors) {
-    (void)colors;
-    WARN_PLANNED(warned_raster_backdrop, "raster_backdrop: raster effects are planned, not "
-                                         "implemented in this engine version; the backdrop "
-                                         "stays one color");
-}
-
-void raster_clear(void) {
-    WARN_PLANNED(warned_raster_clear, "raster_clear: raster effects are planned, not implemented "
-                                      "in this engine version; there is no effect to end");
 }

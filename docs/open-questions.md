@@ -46,7 +46,7 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] First release: 1.0.0-rc.1, the API freeze, rather than a 0.x version, which would promise nothing; 1.0.0 follows once Studio Advance has integrated against it. Decided 2026-10-07 ([api-freeze.md](api-freeze.md#decisions), D1).
 - [ ] Release 1.0.0, after Studio Advance's integration against 1.0.0-rc.1 ([handoff.md](handoff.md#from-rc1-to-100)).
 - [x] Choose the toolchain: the ARM GNU Toolchain (`arm-none-eabi-gcc`) 15.3, which CI uses and `serval.json`'s `toolchain.gcc` names as the minimum; devkitARM should also work but isn't tested ([development.md](development.md#requirements)).
-- [x] Raster effects make 1.0, as planned API: `raster_scroll`, `raster_backdrop` and `raster_clear`, one table-driven effect at a time by HBlank DMA, with DMA 0 and the HBlank interrupt reserved; implemented in a 1.x version ([runtime-systems.md](runtime-systems.md#raster-effects), [api-freeze.md](api-freeze.md#decisions), D2).
+- [x] Raster effects make 1.0, as planned API: `raster_scroll`, `raster_backdrop` and `raster_clear`, one table-driven effect at a time by HBlank DMA, with DMA 0 and the HBlank interrupt reserved; now implemented, with the engine's VBlank handler restarting DMA 0 every VBlank and the web renderer doing HBlank DMA's copies between lines ([runtime-systems.md](runtime-systems.md#raster-effects), [api-freeze.md](api-freeze.md#decisions), D2).
 - [ ] Decide where the mGBA fork lives (its own repository is likely).
 - [x] Choose the build system for the engine library: CMake ([development.md](development.md)).
 - [x] Set up the release workflow: build `serval-engine-X.Y.Z.zip` and check that `serval.json` matches the tag ([releases.md](releases.md)).

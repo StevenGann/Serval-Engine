@@ -2,11 +2,17 @@
 // would show for the state in VRAM, palette RAM, OAM and the I/O registers.
 //
 // It renders the whole frame from the state at the time of the call (the web
-// glue calls it at VBlank), one scanline at a time, following GBATEK. Effects
-// that depend on writes made while the hardware draws (raster effects from
-// HBlank interrupts or HBlank DMA) are therefore not reproduced; the affine
-// background reference points advance by PB/PD per line from BGxX/BGxY as at
-// the start of a frame.
+// glue calls it at VBlank), one scanline at a time, following GBATEK. Writes
+// made while the hardware draws are therefore not seen, except HBlank DMA's
+// (raster effects): between lines, the DMA channels set to start at HBlank
+// copy as on the GBA, into the renderer's copy of the I/O registers and
+// palette RAM, so each line is drawn from the state the hardware would have
+// then. Each frame they start from their source and destination registers, as
+// if restarted in VBlank (the engine restarts DMA 0 every VBlank); writes to
+// other memory than I/O and palette RAM are dropped. HBlank interrupts are not
+// emulated. The affine background reference points advance by PB/PD per line
+// from BGxX/BGxY as at the start of a frame (a write between lines doesn't
+// reload them).
 //
 // Supported: forced blank; modes 0-5 (regular backgrounds, affine backgrounds
 // with wraparound, bitmap modes with page select); objects (regular and
@@ -19,6 +25,9 @@
 // backgrounds in window segments narrower than a tile, effects in the object
 // window, and brightness applied to a second target under a semi-transparent
 // object. Background tiles that would lie in object VRAM are transparent.
+// HBlank DMA (above; raster:) follows GBATEK: lines 0-159 each end with one
+// round of copies, channel 0 first (in mGBA, tests/rom/raster_tests.c reads
+// the per-line backdrop colors this gives).
 //
 // Not supported: mosaic (ignored: drawn as if off), the green swap register,
 // and the hardware's behavior for prohibited settings (modes 6-7 show only the
@@ -43,6 +52,8 @@
 #define REG_BLDCNT (0x50 / 2)
 #define REG_BLDALPHA (0x52 / 2)
 #define REG_BLDY (0x54 / 2)
+#define REG_DMA0SAD (0xB0 / 2) // DMA 1-3's registers follow, 12 bytes apart
+#define DMA_REGS (12 / 2)
 
 // DISPCNT bits.
 #define DCNT_MODE_MASK 0x0007
@@ -103,6 +114,19 @@
 #define BLD_MODE_ALPHA 1
 #define BLD_MODE_WHITE 2
 #define BLD_MODE_BLACK 3
+
+// DMAxCNT_H bits (raster:).
+#define DMA_DST_SHIFT 5 // 0 increment, 1 decrement, 2 fixed, 3 increment and reload
+#define DMA_SRC_SHIFT 7 // 0 increment, 1 decrement, 2 fixed
+#define DMA_DST_RELOAD 3
+#define DMA_REPEAT 0x0200
+#define DMA_32 0x0400
+#define DMA_TIMING_SHIFT 12
+#define DMA_AT_HBLANK 2
+#define DMA_ENABLE 0x8000
+
+#define IO_ADDRESS 0x04000000u
+#define PALETTE_ADDRESS 0x05000000u
 
 #define LAYER_OBJ 4
 #define LAYER_BACKDROP 5
@@ -545,10 +569,89 @@ static void composite(const WebVideoMemory* mem, const Line* line, const bool bg
     }
 }
 
-void web_render(const WebVideoMemory* mem, u8* rgba) {
+// --- HBlank DMA (raster:) --------------------------------------------------
+
+// A DMA channel set to start at HBlank, during a frame: the hardware's
+// internal addresses, which move on with each unit copied.
+typedef struct {
+    u32 src, dst, dst_start;
+    u32 count; // units per HBlank
+    u16 control;
+    bool on;
+} HblankDma;
+
+// The channels set to start at HBlank, as a frame begins. Returns whether any
+// is.
+static bool hblank_dma_begin(const WebVideoMemory* mem, HblankDma dma[4]) {
+    bool any = false;
+    for (u32 ch = 0; ch < 4; ch++) {
+        const u16* r = &mem->io[REG_DMA0SAD + ch * DMA_REGS];
+        HblankDma* d = &dma[ch];
+        d->control = r[5];
+        d->on = mem->dma_source && (d->control & DMA_ENABLE) &&
+                (((u32)d->control >> DMA_TIMING_SHIFT) & 3u) == DMA_AT_HBLANK;
+        if (!d->on)
+            continue;
+        // Address bits each channel has (GBATEK), aligned to the unit.
+        u32 align = d->control & DMA_32 ? ~3u : ~1u;
+        u32 src_bits = ch == 0 ? 0x07FFFFFFu : 0x0FFFFFFFu;
+        u32 dst_bits = ch == 3 ? 0x0FFFFFFFu : 0x07FFFFFFu;
+        d->src = ((u32)r[0] | ((u32)r[1] << 16)) & src_bits & align;
+        d->dst = ((u32)r[2] | ((u32)r[3] << 16)) & dst_bits & align;
+        d->dst_start = d->dst;
+        u32 count = ch == 3 ? r[4] : r[4] & 0x3FFFu;
+        d->count = count ? count : (ch == 3 ? 0x10000u : 0x4000u);
+        any = true;
+    }
+    return any;
+}
+
+// How far an address moves per unit, for address control `mode`.
+static u32 dma_step(u32 mode, u32 size) {
+    return mode == 1 ? 0u - size : mode == 2 ? 0u : size;
+}
+
+// A halfword DMA writes: to the I/O registers or palette RAM (mirrored every
+// KiB); elsewhere it is dropped.
+static void dma_write(u16* io, u16* palette, u32 addr, u16 value) {
+    if (addr >= IO_ADDRESS && addr < IO_ADDRESS + 0x400u)
+        io[(addr - IO_ADDRESS) / 2] = value;
+    else if ((addr & 0xFF000000u) == PALETTE_ADDRESS)
+        palette[(addr & 0x3FFu) / 2] = value;
+}
+
+// One horizontal blank's transfers, channel 0 first (the highest priority).
+static void hblank_dma_run(const WebVideoMemory* mem, HblankDma dma[4], u16* io, u16* palette) {
+    for (u32 ch = 0; ch < 4; ch++) {
+        HblankDma* d = &dma[ch];
+        if (!d->on)
+            continue;
+        u32 size = d->control & DMA_32 ? 4u : 2u;
+        u32 dst_mode = ((u32)d->control >> DMA_DST_SHIFT) & 3u;
+        u32 src_step = dma_step(((u32)d->control >> DMA_SRC_SHIFT) & 3u, size);
+        u32 dst_step = dma_step(dst_mode, size);
+        for (u32 n = 0; n < d->count; n++) {
+            const u8* from = mem->dma_source(d->src, size);
+            if (from) {
+                for (u32 k = 0; k < size; k += 2)
+                    dma_write(io, palette, d->dst + k, (u16)(from[k] | (from[k + 1] << 8)));
+            }
+            d->src += src_step;
+            d->dst += dst_step;
+        }
+        if (dst_mode == DMA_DST_RELOAD)
+            d->dst = d->dst_start;
+        if (!(d->control & DMA_REPEAT))
+            d->on = false;
+    }
+}
+
+// --- Frames ----------------------------------------------------------------
+
+static void render_line(const WebVideoMemory* mem, u32 y, u8* rgba) {
     u16 dispcnt = mem->io[REG_DISPCNT];
     if (dispcnt & DCNT_BLANK) {
-        for (u32 i = 0; i < WEB_SCREEN_W * WEB_SCREEN_H * 4; i++)
+        for (u32 i = 0; i < WEB_SCREEN_W * 4; i++)
             rgba[i] = 255;
         return;
     }
@@ -563,26 +666,46 @@ void web_render(const WebVideoMemory* mem, u8* rgba) {
     }
 
     static Line line;
+    for (u32 bg = 0; bg < 4; bg++) {
+        if (!bg_on[bg])
+            continue;
+        if (mode >= 3)
+            draw_bitmap_bg(mem, mode, y, line.bg[bg]);
+        else if (mode == 0 || (mode == 1 && bg < 2))
+            draw_regular_bg(mem, bg, y, line.bg[bg]);
+        else
+            draw_affine_bg(mem, bg, y, line.bg[bg]);
+    }
+    for (u32 x = 0; x < WEB_SCREEN_W; x++) {
+        line.obj[x] = 0;
+        line.obj_prio[x] = 4;
+        line.obj_semi[x] = 0;
+        line.obj_window[x] = 0;
+    }
+    if (dispcnt & DCNT_OBJ)
+        draw_objs(mem, &line, y);
+    compute_windows(mem, &line, y);
+    composite(mem, &line, bg_on, rgba);
+}
+
+void web_render(const WebVideoMemory* mem, u8* rgba) {
+    // raster: with HBlank DMA, lines are drawn from a copy of the registers
+    // and palette that it changes between them.
+    static HblankDma dma[4];
+    static u16 io[512], palette[512];
+    WebVideoMemory frame = *mem;
+    bool hblank_dma = hblank_dma_begin(mem, dma);
+    if (hblank_dma) {
+        for (u32 i = 0; i < 512; i++) {
+            io[i] = mem->io[i];
+            palette[i] = mem->palette[i];
+        }
+        frame.io = io;
+        frame.palette = palette;
+    }
     for (u32 y = 0; y < WEB_SCREEN_H; y++) {
-        for (u32 bg = 0; bg < 4; bg++) {
-            if (!bg_on[bg])
-                continue;
-            if (mode >= 3)
-                draw_bitmap_bg(mem, mode, y, line.bg[bg]);
-            else if (mode == 0 || (mode == 1 && bg < 2))
-                draw_regular_bg(mem, bg, y, line.bg[bg]);
-            else
-                draw_affine_bg(mem, bg, y, line.bg[bg]);
-        }
-        for (u32 x = 0; x < WEB_SCREEN_W; x++) {
-            line.obj[x] = 0;
-            line.obj_prio[x] = 4;
-            line.obj_semi[x] = 0;
-            line.obj_window[x] = 0;
-        }
-        if (dispcnt & DCNT_OBJ)
-            draw_objs(mem, &line, y);
-        compute_windows(mem, &line, y);
-        composite(mem, &line, bg_on, &rgba[y * WEB_SCREEN_W * 4]);
+        render_line(&frame, y, &rgba[y * WEB_SCREEN_W * 4]);
+        if (hblank_dma)
+            hblank_dma_run(mem, dma, io, palette);
     }
 }

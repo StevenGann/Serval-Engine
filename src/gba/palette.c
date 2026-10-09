@@ -145,5 +145,7 @@ void tileset_set_colors(u32 index, const Color* colors, u32 count) {
                   "tileset_set_colors: the colors pointer is NULL or not valid; nothing changes");
         return;
     }
+    if (index == 0) // raster: the backdrop, which raster_backdrop()'s end puts back
+        serval_backdrop = colors[0];
     write(index, colors, count);
 }

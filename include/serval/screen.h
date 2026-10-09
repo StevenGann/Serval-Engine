@@ -2,7 +2,7 @@
 #define SERVAL_SCREEN_H
 
 // Screen size, colors and screen-wide effects: the backdrop, brightness
-// fades, color mixing, alpha blending and (planned) raster effects. See
+// fades, color mixing, alpha blending and raster effects. See
 // docs/runtime-systems.md#special-effects.
 
 #include "serval/platform.h"
@@ -46,7 +46,7 @@ static inline int screen_height(void) {
 
 // Sets the color shown wherever nothing else is drawn (the backdrop: GBA
 // background palette color 0). Takes effect at once. raster_backdrop()
-// (planned) replaces it line by line while set.
+// replaces it line by line while set; this color comes back when it ends.
 void screen_set_backdrop(Color color);
 
 // Brightness of the whole screen (backgrounds, sprites and backdrop): from
@@ -113,7 +113,7 @@ void screen_set_brightness(int level);
 // when the brightness returns to 0. The web build draws it as the GBA does.
 void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight);
 
-// --- Raster effects (planned) -------------------------------------------------
+// --- Raster effects -----------------------------------------------------------
 //
 // A value per scanline. The hardware draws the screen one line at a time, and
 // a raster effect changes one setting between lines, so each of the SCREEN_H
@@ -132,48 +132,52 @@ void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight);
 // can read only internal memory, not ROM, so it never reads the game's table:
 // each frame_end() copies the table into a buffer in RAM, for both effects
 // (raster_scroll adds the layer's scroll as it copies), and a table in ROM
-// works like one in RAM. DMA 0 and the HBlank interrupt are reserved for
-// raster effects: games must not use them, also before this is implemented
-// (docs/core-api.md). The web build will apply the table line by line as it
-// draws (it draws each frame at once, from the state at VBlank, so it needs
-// the per-line values rather than the hardware's mid-frame writes).
-// Until implemented, these functions do nothing and warn once each in debug
-// builds: layers scroll as a whole and the backdrop is one color.
+// works like one in RAM. The buffer has SCREEN_H + 1 entries, since HBlank
+// DMA also runs after the last line; frame_end() writes line 0's value
+// itself in VBlank. While an effect is on, the engine's VBlank handler also
+// restarts the DMA at every VBlank, so a frame the game finishes late shows
+// the effect again. DMA 0 and the HBlank interrupt are reserved for raster
+// effects: games must not use them (docs/core-api.md). The web build applies
+// the table line by line as it draws (it draws each frame at once, from the
+// state at VBlank, and does the HBlank DMA's copies between the lines).
+// Costs, per frame: about 4,500 CPU cycles (1.6%) before VBlank for
+// raster_scroll, 1,400 (0.5%) for raster_backdrop, and 300 in VBlank.
 
-// Planned: scrolls each line of background bg's map layer (1-3) by its own
-// offset, added to the layer's scroll position (sx, sy): the camera times the
-// layer's scroll_factor plus its map_set_scroll() offset, or the offset alone
-// on a MAP_LAYER_FIXED layer (map.h). Screen line y shows the layer from
-// layer pixel (sx + offsets[y], sy + y) on, or with `vertical`, from
+// Scrolls each line of background bg's map layer (1-3) by its own offset,
+// added to the layer's scroll position (sx, sy): the camera times the layer's
+// scroll_factor plus its map_set_scroll() offset, or the offset alone on a
+// MAP_LAYER_FIXED layer (map.h). Screen line y shows the layer from layer
+// pixel (sx + offsets[y], sy + y) on, or with `vertical`, from
 // (sx, sy + y + offsets[y]). E.g. a ripple: a few pixels of a sine wave,
 // moved along every frame. On the playfield (background 2) only the picture
 // moves: collision, entities and the camera stay where they are.
 //
 // VRAM holds a little more of a layer than the screen shows (the hardware's
-// 256x256-pixel background, streamed around (sx, sy)), so one frame's
-// offsets must lie within 9 pixels of each other horizontally (e.g. -4 to 4)
-// and within 89 vertically. The exception is an axis on which the layer
-// wraps (MAP_LAYER_WRAP) and its map is 16, 8, 4, 2 or 1 metatiles long:
-// VRAM then holds all of it, so any offsets work (sky bands of a repeating
-// strip). Offsets spread further show wrong tiles at the edges of the lines
+// 256x256-pixel background, streamed around what the lines show), so one
+// frame's offsets must lie within 9 pixels of each other horizontally (e.g.
+// -4 to 4) and within 89 vertically. (Vertically, what counts is the layer
+// rows the lines show, sy + y + offsets[y]: within 249 pixels of each other,
+// which offsets within 89 always are, and a mirror image, a reflection in
+// water, is too.) The exception is an axis on which the layer wraps
+// (MAP_LAYER_WRAP) and its map is 16, 8, 4, 2 or 1 metatiles long: VRAM then
+// holds all of it, so any offsets work (sky bands of a repeating strip).
+// Offsets spread further can show wrong tiles at the edges of the lines
 // furthest out (warning in debug builds). The effect belongs to the
-// background: it stays when the layer there is unloaded or replaced.
-// Ignored (warning in debug builds) for a background outside 1-3 or a NULL
-// table. The table can be const data in ROM: frame_end() copies it to RAM.
-SERVAL_PLANNED("raster effects, docs/runtime-systems.md#raster-effects")
+// background: it stays when the layer there is unloaded or replaced. Ignored
+// (warning in debug builds) for a background outside 1-3 or a NULL table. The
+// table can be const data in ROM: frame_end() copies it to RAM.
 void raster_scroll(u32 bg, bool vertical, const s16* offsets);
 
-// Planned: gives each screen line y its own backdrop color, colors[y],
-// instead of screen_set_backdrop()'s one color (e.g. a sky gradient behind
-// the layers). When the effect ends, the backdrop is screen_set_backdrop()'s
-// color again: the one last set, also if set while the effect was on.
-// Ignored (warning in debug builds) for a NULL table. The table can be const
-// data in ROM: frame_end() copies it to RAM.
-SERVAL_PLANNED("raster effects, docs/runtime-systems.md#raster-effects")
+// Gives each screen line y its own backdrop color, colors[y], instead of
+// screen_set_backdrop()'s one color (e.g. a sky gradient behind the layers).
+// When the effect ends, the backdrop is the one color again: the one last
+// set, with screen_set_backdrop() or as color 0 with tileset_set_colors()
+// (map.h), also if set while the effect was on. Ignored (warning in debug
+// builds) for a NULL table. The table can be const data in ROM: frame_end()
+// copies it to RAM.
 void raster_backdrop(const Color* colors);
 
-// Planned: ends the raster effect set, if any, at the next frame_end().
-SERVAL_PLANNED("raster effects, docs/runtime-systems.md#raster-effects")
+// Ends the raster effect set, if any, at the next frame_end().
 void raster_clear(void);
 
 #endif // SERVAL_SCREEN_H

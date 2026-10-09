@@ -35,6 +35,10 @@ void (*serval_map_prepare_hook)(void);
 void (*serval_map_commit_hook)(void);
 // palettes: palette writes (palette.c), NULL until the first one.
 const ServalPaletteHooks* serval_palette_hooks;
+void (*serval_raster_prepare_hook)(void); // raster:
+void (*serval_raster_commit_hook)(void);  // raster:
+Color serval_backdrop;                    // raster:
+bool serval_backdrop_raster;              // raster:
 
 static u32 frame_start_cycles;
 static u32 last_frame_cycles;
@@ -117,6 +121,8 @@ void frame_end(void) {
         serval_count_scanlines(&serval_sprite_stats);
     for (u32 i = serval_oam_used; i < 128; i++)
         serval_shadow_oam[i].attr0 = ATTR0_HIDE;
+    if (serval_raster_prepare_hook) // raster: before the map, which streams what its lines show
+        serval_raster_prepare_hook();
     if (serval_map_prepare_hook)
         serval_map_prepare_hook();
 
@@ -131,7 +137,9 @@ void frame_end(void) {
         serval_palette_hooks->flush();
     if (serval_map_commit_hook)
         serval_map_commit_hook();
-    serval_blend_apply(); // blending: step 7, the blend registers
+    serval_blend_apply();          // blending: step 7, the blend registers
+    if (serval_raster_commit_hook) // raster: line 0's value, and DMA 0 restarted
+        serval_raster_commit_hook();
     serval_psg_update();
     frames++;
 }
@@ -166,7 +174,9 @@ bool button_pressed(u16 buttons) {
 }
 
 void screen_set_backdrop(Color color) {
-    pal_bg_mem[0] = color;
+    serval_backdrop = color;     // raster: put back when raster_backdrop() ends
+    if (!serval_backdrop_raster) // raster: while it is on, its lines own the color
+        pal_bg_mem[0] = color;
     // palettes: wins over a tileset_set_colors() write to color 0 made before
     if (serval_palette_hooks)
         serval_palette_hooks->overwritten(false, 0, 1);

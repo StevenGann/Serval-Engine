@@ -492,8 +492,8 @@ REJECTED = {
                          r"^function music_play: music_play is reserved: it names a planned "
                          r"engine function, which a later engine version may make a builtin$"),
     "planned_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
-    "planned_object": ("raster_clear = object {}", 1, 1,
-                       r"^object raster_clear: raster_clear is reserved"),
+    "planned_object": ("audio_bank_set = object {}", 1, 1,
+                       r"^object audio_bank_set: audio_bank_set is reserved"),
     "planned_array": ("psg_waves_set = array(4)", 1, 1,
                       r"^array psg_waves_set: psg_waves_set is reserved"),
     "planned_rom_array": ("music_resume = { 1, 2 }", 1, 1,
@@ -509,8 +509,8 @@ REJECTED = {
                        r"music, docs/audio\.md#tracker-music\): scripts can't use it yet$"),
     "planned_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
                      r"^sfx_playing is planned, not implemented in this engine version"),
-    "planned_assigned": (OBJ + "function A:step() raster_clear = 1 end", 3, 19,
-                         r"^raster_clear is planned, not implemented in this engine version"),
+    "planned_assigned": (OBJ + "function A:step() psg_waves_set = 1 end", 3, 19,
+                         r"^psg_waves_set is planned, not implemented in this engine version"),
     "planned_initial_value": ("x = music_paused", 1, 5,
                               r"^music_paused is planned, not implemented in this engine version"),
     # Top-level names of the engine's other C functions (implemented, no

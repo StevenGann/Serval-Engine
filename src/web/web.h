@@ -19,10 +19,17 @@ typedef struct {
     const u16* palette; // palette RAM, 0x05000000: 256 BG colors, then 256 sprite colors
     const u8* vram;     // VRAM, 0x06000000 (96 KiB)
     const u16* oam;     // OAM, 0x07000000 (1 KiB)
+    // raster: what HBlank DMA reads: the `bytes` bytes at GBA address
+    // `address`, or NULL where nothing is readable. NULL: no HBlank DMA.
+    const u8* (*dma_source)(u32 address, u32 bytes);
 } WebVideoMemory;
 
 // Renders the frame the hardware would show for this state, as 240x160
-// row-major RGBA8888 (bytes R, G, B, A; A is always 255).
+// row-major RGBA8888 (bytes R, G, B, A; A is always 255). DMA channels set to
+// start at HBlank (raster effects) copy between the lines, as on the GBA, from
+// their source address on (as if restarted in VBlank, which the engine does),
+// into a copy of the I/O registers and palette RAM: the state passed in is
+// left as it was.
 void web_render(const WebVideoMemory* mem, u8* rgba);
 
 // Starts the sound hardware at its power-on state, generating samples at

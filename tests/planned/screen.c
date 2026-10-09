@@ -5,15 +5,11 @@
 // headers is used in one of these files. When a name is implemented and its
 // SERVAL_PLANNED goes, its line goes too. This file is in no build target: it
 // warns on purpose. See docs/development.md#planned-api.
+//
+// screen.h has no planned names in this version (alpha blending and raster
+// effects are implemented); a planned name added later gets its line here.
 
 #include "serval/screen.h"
 
-static const s16 offsets[SCREEN_H];
-static const Color colors[SCREEN_H];
-
 void planned_screen(void);
-void planned_screen(void) {
-    raster_scroll(2, false, offsets); // planned
-    raster_backdrop(colors);          // planned
-    raster_clear();                   // planned
-}
+void planned_screen(void) {}

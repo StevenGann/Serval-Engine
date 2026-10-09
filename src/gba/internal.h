@@ -154,6 +154,32 @@ extern const ServalPaletteHooks* serval_palette_hooks;
 // sprite_set_colors() (sprites.c): returns the group's palette count and sets
 // *first_bank, or returns 0 if the sprite isn't loaded, -1 for a metasprite.
 int serval_sprite_palettes(u32 id, u32* first_bank);
+// raster: raster effects (raster.c), hooked into frame_end() by the first
+// raster_scroll() or raster_backdrop(): prepare() before VBlank, and before
+// the map's (it sets serval_map_span), commit() in VBlank, after the map's.
+extern void (*serval_raster_prepare_hook)(void);
+extern void (*serval_raster_commit_hook)(void);
+// raster: how far past the screen's the layer pixels raster_scroll()'s lines
+// show reach on background bg (index 1-3): from x sx + x_lo to sx + 239 + x_hi
+// and from y sy + y_lo to sy + 159 + y_hi, (sx, sy) being the layer's scroll.
+// The map streaming keeps them in VRAM (map.c), reading a background's span
+// only if its bit (1 << bg) is in serval_map_spans, which is 0 without the
+// effect: map games without it pay one test per background.
+typedef struct {
+    int x_lo, x_hi, y_lo, y_hi;
+} ServalMapSpan;
+extern ServalMapSpan serval_map_span[4];
+extern u32 serval_map_spans;
+// raster: the backdrop color last set, by screen_set_backdrop() (core.c) or
+// as color 0 by tileset_set_colors() (palette.c), which raster_backdrop()'s
+// end puts back; and whether raster_backdrop() is on (then
+// screen_set_backdrop() only remembers its color, and a palette write's
+// color 0 is overwritten in VBlank by line 0's).
+extern Color serval_backdrop;
+extern bool serval_backdrop_raster;
+// raster: for tests: the SCREEN_H + 1 values DMA 0 copies in this frame
+// (entry y for line y; frame_end() writes entry 0 itself), or NULL.
+const u16* serval_raster_lines(void);
 
 #ifdef SERVAL_WEB
 // Web builds: real time in GBA CPU cycles, standing in for the timers that

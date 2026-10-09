@@ -49,7 +49,7 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 30 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+Each of these 27 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Each of these 30 names (37 at the freeze, less the implemented rows marked below
 | Ladders | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#collision-types) |
 | Floor slopes | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#collision-types) |
 | Alpha blending: **implemented**, no longer marked planned (scripts: SYS call 14, `SCREEN_SET_BLEND`) | `screen_set_blend`, `SPRITE_BLEND` | [runtime-systems.md](runtime-systems.md#alpha-blending), [sprites.md](sprites.md#alpha-blending) |
-| Raster effects | `raster_scroll`, `raster_backdrop`, `raster_clear` | [runtime-systems.md](runtime-systems.md#raster-effects) |
+| Raster effects: **implemented**, no longer marked planned (no SYS call: they take tables, which scripts can't pass) | `raster_scroll`, `raster_backdrop`, `raster_clear` | [runtime-systems.md](runtime-systems.md#raster-effects) |
 
 **Suggested order**, by value to Studio Advance: palette writes; runtime sprite tiles; blending; ladders and slopes; LZ77; Maxmod on the GBA (with the mixer configuration below); streamed groups; raster effects; the wave channel; the web's sampled-audio player. To implement one, follow [development.md](development.md#planned-api): drop the marker, implement, move its line out of `tests/planned/`, and turn its stub test into a feature test.
 

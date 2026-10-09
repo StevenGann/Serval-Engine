@@ -21,6 +21,7 @@ extern const TestSuite gba_vm_tests;
 extern const TestSuite gba_sprite_tiles_tests; // sprite tiles: runtime sprite tiles
 extern const TestSuite gba_palette_tests;      // palettes: palette writes
 extern const TestSuite gba_stream_tests;
+extern const TestSuite gba_raster_tests; // raster: raster effects
 
 void test_output(const char* line) {
     debug_log(line);
@@ -55,6 +56,7 @@ int main(void) {
         &gba_ecs_cost_tests,
         &vm_tests,
         &gba_vm_tests,
+        &gba_raster_tests,       // raster:
         &gba_sprite_tiles_tests, // sprite tiles: runtime sprite tiles
         &gba_palette_tests,      // palettes: palette writes
         &splash_logic_tests,

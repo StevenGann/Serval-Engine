@@ -57,6 +57,7 @@ _Static_assert(sizeof(MapLayer) == 20 && offsetof(MapLayer, flags) == 15 &&
 typedef struct {
     const MapLayer* layer; // what the window shows, or NULL
     int tx, ty;            // the window's top-left tile
+    int cols, rows;        // raster: its size: WINDOW_W x WINDOW_H, or up to 32 x 32
     u32 dirty;             // screenblock rows (bit n = row n) to copy to VRAM
     u32 dirty_cols;        // screenblock columns to copy to VRAM
     u16 hofs, vofs;
@@ -65,6 +66,8 @@ typedef struct {
 // Copies of the screenblocks of backgrounds 1-3 (index bg - 1).
 static EWRAM_BSS u16 mirror[3][32 * 32];
 static Background backgrounds[4];
+SERVAL_EWRAM_BSS ServalMapSpan serval_map_span[4]; // raster: set by raster.c
+u32 serval_map_spans;                              // raster: which are set
 static u32 control_pending; // backgrounds whose BGxCNT and DISPCNT bit need setting
 static u32 shown;           // backgrounds enabled in DISPCNT (bit n = background n)
 
@@ -347,6 +350,82 @@ static void fill(const MapLayer* layer, u16* sb, int tx, int ty, int cols, int r
     }
 }
 
+// raster: one axis of a window widened to the layer pixels first to last
+// that a raster effect's lines show: at least `least` tiles, at most the
+// ring's 32. A wider range keeps its middle: the lines furthest out show
+// wrong tiles at their edges, except on a layer that wraps along the axis
+// with a period dividing 32 tiles, which any 32 tiles hold whole.
+static void widen(int first, int last, int least, int* t, int* count) {
+    int t0 = first >> 3, n = (last >> 3) - t0 + 1;
+    if (n > 32) {
+        t0 += (n - 32) / 2;
+        n = 32;
+    }
+    *t = t0;
+    *count = n < least ? least : n;
+}
+
+// raster: background bg's window, (*tx, *ty) and *cols x *rows tiles,
+// widened to what a raster effect's lines show (serval_map_span). Out of
+// line: map games without the effect don't pay for it.
+static __attribute__((noinline)) void widen_window(u32 bg, int sx, int sy, int* tx, int* ty,
+                                                   int* cols, int* rows) {
+    const ServalMapSpan* span = &serval_map_span[bg];
+    if (span->x_lo | span->x_hi)
+        widen(sx + span->x_lo, sx + SCREEN_W - 1 + span->x_hi, WINDOW_W, tx, cols);
+    if (span->y_lo | span->y_hi)
+        widen(sy + span->y_lo, sy + SCREEN_H - 1 + span->y_hi, WINDOW_H, ty, rows);
+}
+
+// raster: prepare_background() for a window that a raster effect widens,
+// or that it widened last frame: the same, with windows of any size up to
+// 32 x 32 tiles. Out of line, so the screen's windows cost what they did.
+static __attribute__((noinline)) void prepare_window(u32 bg, bool reload) {
+    Background* b = &backgrounds[bg];
+    const MapLayer* layer = serval_map_layers[bg];
+    u16* sb = mirror[bg - 1];
+    int sx = serval_map_layer_x(layer), sy = serval_map_layer_y(layer);
+    int tx = sx >> 3, ty = sy >> 3; // arithmetic shifts: rounded down
+    int cols = WINDOW_W, rows = WINDOW_H;
+    if (serval_map_spans & (1u << bg))
+        widen_window(bg, sx, sy, &tx, &ty, &cols, &rows);
+    // The window can change size, so its old and new edges are compared: the
+    // old one ends at (x1, y1), the new one at (nx1, ny1), exclusive.
+    int x1 = b->tx + b->cols, y1 = b->ty + b->rows, nx1 = tx + cols, ny1 = ty + rows;
+    if (reload || b->layer != layer || tx >= x1 || nx1 <= b->tx || ty >= y1 || ny1 <= b->ty) {
+        if (reload || b->layer != layer)
+            control_pending |= 1u << bg;
+        b->layer = layer;
+        // Entries outside the window are never seen, so they aren't cleared.
+        fill(layer, sb, tx, ty, cols, rows);
+        b->dirty = ALL_ROWS;
+    } else {
+        // Columns entering the window, then rows (over the new columns).
+        if (nx1 > x1) {
+            fill(layer, sb, x1, ty, nx1 - x1, rows);
+            b->dirty_cols |= ring_mask(x1, nx1 - x1);
+        }
+        if (tx < b->tx) {
+            fill(layer, sb, tx, ty, b->tx - tx, rows);
+            b->dirty_cols |= ring_mask(tx, b->tx - tx);
+        }
+        if (ny1 > y1) {
+            fill(layer, sb, tx, y1, cols, ny1 - y1);
+            b->dirty |= ring_mask(y1, ny1 - y1);
+        }
+        if (ty < b->ty) {
+            fill(layer, sb, tx, ty, cols, b->ty - ty);
+            b->dirty |= ring_mask(ty, b->ty - ty);
+        }
+    }
+    b->tx = tx;
+    b->ty = ty;
+    b->cols = cols;
+    b->rows = rows;
+    b->hofs = (u16)(sx & 0x1FF);
+    b->vofs = (u16)(sy & 0x1FF);
+}
+
 static void prepare_background(u32 bg, bool reload) {
     Background* b = &backgrounds[bg];
     const MapLayer* layer = serval_map_layers[bg];
@@ -355,6 +434,12 @@ static void prepare_background(u32 bg, bool reload) {
             b->layer = NULL;
             control_pending |= 1u << bg;
         }
+        return;
+    }
+    // raster: a window a raster effect widens, or widened, takes the general
+    // path; the screen's (WINDOW_W x WINDOW_H) the one below.
+    if ((serval_map_spans & (1u << bg)) || b->cols != WINDOW_W || b->rows != WINDOW_H) {
+        prepare_window(bg, reload);
         return;
     }
     u16* sb = mirror[bg - 1];
@@ -400,15 +485,15 @@ static void redraw_changes(void) {
     if (layer && b->dirty != ALL_ROWS) {
         u16* sb = mirror[1];
         if (serval_map_redraw_all) {
-            fill(layer, sb, b->tx, b->ty, WINDOW_W, WINDOW_H);
+            fill(layer, sb, b->tx, b->ty, b->cols, b->rows);
             b->dirty = ALL_ROWS;
         } else {
             for (u32 k = 0; k < serval_map_redraw_count; k++) {
                 const MapChange* c = &serval_map_redraw[k];
                 u32 cell = serval_map_cell_in(layer, c->mx, c->my);
                 if (cell < layer->metatile_count)
-                    b->dirty |= put_metatile(layer, sb, c->mx, c->my, cell, b->tx, b->ty, WINDOW_W,
-                                             WINDOW_H);
+                    b->dirty |=
+                        put_metatile(layer, sb, c->mx, c->my, cell, b->tx, b->ty, b->cols, b->rows);
             }
         }
     }

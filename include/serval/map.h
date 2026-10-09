@@ -171,8 +171,9 @@ void tileset_set_tiles(u16 first, const u32* tiles, u16 count);
 // colors there. tileset_load() puts the tileset's colors back (colors 1-15 of
 // its palette_count palettes), also over writes made before it in the same
 // frame. Color 0 of palette 0 is the backdrop, which screen_set_backdrop()
-// also sets: writing it changes the backdrop, and tileset_load() leaves it
-// alone. Color 0 of the other palettes is transparent: writes to it are
+// also sets: writing it changes the backdrop (while raster_backdrop() is on,
+// it is remembered, and shown when the effect ends: screen.h), and
+// tileset_load() leaves it alone. Color 0 of the other palettes is transparent: writes to it are
 // kept, not shown. Ignored (warning in debug builds) if the colors reach past
 // color 239 (palette 15 is the text layer's) or `colors` is NULL; a count of
 // 0 does nothing. screen_set_backdrop() and tileset_load() write at once, so

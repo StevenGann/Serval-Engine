@@ -25,7 +25,7 @@ Implemented in 1.0:
 - Physics: bouncing bodies (gravity in any direction and per body, bounce up to a perfect one that never loses height, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; kinematic bodies that move only by their velocity; rectangle overlap and hit-side tests.
 - Paths: movement patterns as data tables (lines, swoops, circles, weaves), mirrored or rotated per entity.
 - Sound on the PSG tone generators: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
-- Screen fades (hardware brightness), alpha blending (see-through layers and semi-transparent sprites: `screen_set_blend()`, `SPRITE_BLEND`), color mixing (`color_mix()`, matching the hardware's blending), palette writes for palette cycles and fades (`sprite_set_colors()`, `tileset_set_colors()`, copied in VBlank) and the backdrop color.
+- Screen fades (hardware brightness), alpha blending (see-through layers and semi-transparent sprites: `screen_set_blend()`, `SPRITE_BLEND`), color mixing (`color_mix()`, matching the hardware's blending), palette writes for palette cycles and fades (`sprite_set_colors()`, `tileset_set_colors()`, copied in VBlank) and the backdrop color; raster effects: a scroll offset or backdrop color per scanline (a ripple, a sky gradient), by HBlank DMA, drawn the same on the web.
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
@@ -37,7 +37,6 @@ Planned, declared in 1.0 and implemented in 1.x versions (designed in [`docs/`](
 - Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank; the PSG wave channel.
 - Sprites: LZ77-compressed sprites.
 - Tilemaps: LZ77-compressed tilesets, ladders and floor slopes.
-- Screen: raster effects (a scroll offset or backdrop color per scanline).
 
 Later, with no API yet (each can be added without breaking games): palette sharing, tileset groups and 8bpp tilesets, windows and mosaic, dialogue text and larger fonts, tweens, a collision broad phase, the editor debug link, GB/GBC and DS targets.
 

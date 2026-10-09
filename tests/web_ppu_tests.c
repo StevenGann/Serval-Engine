@@ -27,7 +27,26 @@ enum {
     BLDCNT = 0x50 / 2,
     BLDALPHA = 0x52 / 2,
     BLDY = 0x54 / 2,
+    DMA0SAD = 0xB0 / 2, // raster: DMA 1-3's registers follow, 6 halfwords apart
+    DMA0DAD = 0xB4 / 2,
+    DMA0CNT_L = 0xB8 / 2,
+    DMA0CNT_H = 0xBA / 2,
 };
+
+// raster: memory HBlank DMA can read, at GBA address 0x02000000 (EWRAM).
+#define TABLE_ADDRESS 0x02000000u
+static u8 table[1024];
+
+static void table16(u32 i, u16 v) {
+    table[i * 2] = (u8)v;
+    table[i * 2 + 1] = (u8)(v >> 8);
+}
+
+static const u8* dma_source(u32 address, u32 bytes) {
+    if (address < TABLE_ADDRESS || address + bytes > TABLE_ADDRESS + sizeof table)
+        return NULL;
+    return &table[address - TABLE_ADDRESS];
+}
 
 // Power-on-like state: everything zero, all objects hidden.
 static void reset(u16 dispcnt) {
@@ -44,7 +63,7 @@ static void reset(u16 dispcnt) {
 }
 
 static void render(void) {
-    WebVideoMemory mem = {io, palette, vram, oam};
+    WebVideoMemory mem = {io, palette, vram, oam, dma_source};
     web_render(&mem, screen);
 }
 
@@ -508,6 +527,155 @@ static void bitmap_and_affine_modes(void) {
     CHECK(pixel(128 + 8 + 4, 2) == rgb(green));
 }
 
+// --- HBlank DMA (raster:) --------------------------------------------------
+
+// DMAxCNT_H: enabled, at HBlank, repeating, halfwords, destination fixed.
+#define HDMA (0x8000 | 2 << 12 | 0x0200 | 2 << 5)
+
+// Channel ch set to copy `count` units from TABLE_ADDRESS + 2 * first to dst
+// at every HBlank.
+static void set_hdma(u32 ch, u32 first, u32 dst, u16 count, u16 control) {
+    u16* r = &io[DMA0SAD + ch * 6];
+    u32 src = TABLE_ADDRESS + first * 2;
+    r[0] = (u16)src;
+    r[1] = (u16)(src >> 16);
+    r[2] = (u16)dst;
+    r[3] = (u16)(dst >> 16);
+    r[4] = count;
+    r[5] = control;
+}
+
+// BG0 with a vertical line at layer x 0 (and every 256 pixels): tile 1's
+// left column in color 1, in map column 0 of every row.
+static void line_background(void) {
+    reset(0x0100);
+    io[BG0CNT] = 8 << 8;
+    palette[0] = backdrop;
+    palette[1] = red;
+    for (u32 y = 0; y < 8; y++)
+        tile4_set(32, 0, y, 1);
+    for (u32 ty = 0; ty < 32; ty++)
+        vram16(0x4000 + ty * 64, 1);
+}
+
+// Line y scrolled to show layer x 0 at screen x y: a diagonal.
+static void hblank_dma_scrolls_each_line(void) {
+    line_background();
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++)
+        table16(y, (u16)((512 - y) & 0x1FF));
+    io[BG0HOFS] = 0; // line 0's value, as the engine writes it in VBlank
+    set_hdma(0, 1, 0x04000010, 1, HDMA);
+    render();
+    bool ok = true;
+    for (u32 y = 0; y < WEB_SCREEN_H; y++)
+        ok &= pixel(y, y) == rgb(red) && pixel(y + 1, y) == rgb(backdrop);
+    CHECK(ok);
+    // Without a way to read memory there is no HBlank DMA: every line as line 0.
+    WebVideoMemory mem = {io, palette, vram, oam, NULL};
+    web_render(&mem, screen);
+    CHECK(pixel(0, 100) == rgb(red) && pixel(100, 100) == rgb(backdrop));
+    // Nor when the channel is off, or starts at VBlank.
+    set_hdma(0, 1, 0x04000010, 1, HDMA & ~0x8000);
+    render();
+    CHECK(pixel(0, 100) == rgb(red));
+    set_hdma(0, 1, 0x04000010, 1, (HDMA & ~(3 << 12)) | 1 << 12);
+    render();
+    CHECK(pixel(0, 100) == rgb(red));
+    // The state passed in is left as it was.
+    set_hdma(0, 1, 0x04000010, 1, HDMA);
+    render();
+    CHECK(io[BG0HOFS] == 0 && io[DMA0SAD] == 2 && io[DMA0CNT_H] == HDMA);
+}
+
+static void hblank_dma_sets_the_backdrop_per_line(void) {
+    reset(0x0100); // nothing drawn: the backdrop everywhere
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++)
+        table16(y, RGB15(y % 32, (y / 32) * 6, 31 - y % 32));
+    palette[0] = RGB15(0, 0, 31); // line 0's
+    set_hdma(0, 1, 0x05000000, 1, HDMA);
+    render();
+    bool ok = true;
+    for (u32 y = 0; y < WEB_SCREEN_H; y++)
+        ok &= pixel(0, y) == rgb(RGB15(y % 32, (y / 32) * 6, 31 - y % 32)) &&
+              pixel(239, y) == pixel(0, y);
+    CHECK(ok);
+    CHECK(palette[0] == RGB15(0, 0, 31));
+    // Palette RAM is mirrored every KiB.
+    set_hdma(0, 1, 0x05000400, 1, HDMA);
+    render();
+    CHECK(pixel(0, 9) == rgb(RGB15(9, 0, 22)));
+}
+
+// The other transfer settings, as GBATEK has them.
+static void hblank_dma_transfer_modes(void) {
+    // Not repeating: one transfer, after line 0, then the channel stops.
+    line_background();
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++)
+        table16(y, (u16)(256 - 10 - y));
+    set_hdma(0, 1, 0x04000010, 1, HDMA & ~0x0200);
+    render();
+    CHECK(pixel(0, 0) == rgb(red) && pixel(11, 1) == rgb(red) && pixel(11, 100) == rgb(red));
+
+    // Words, destination counting up and reloaded each line: BG0HOFS and
+    // BG0VOFS together. Only map row 0 has the line now, and every line
+    // shows that row.
+    for (u32 ty = 1; ty < 32; ty++)
+        vram16(0x4000 + ty * 64, 0);
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++) {
+        table16(2 * y, (u16)(256 - y)); // HOFS: the line at x = y
+        table16(2 * y + 1, (u16)(-y));  // VOFS: layer row y - y = 0
+    }
+    set_hdma(0, 2, 0x04000010, 1, (u16)(HDMA | 3 << 5 | 0x0400));
+    render();
+    CHECK(pixel(50, 50) == rgb(red) && pixel(0, 50) == rgb(backdrop));
+    CHECK(pixel(159, 159) == rgb(red));
+
+    // Two units a line, the source fixed and the destination counting up
+    // without reload: palette colors 0-1 after line 0, 2-3 after line 1,
+    // 4-5 after line 2.
+    reset(0x0100);
+    io[BG0CNT] = 8 << 8;
+    tile4_fill(0, 5); // tile 0, everywhere: color 5
+    palette[5] = blue;
+    table16(0, green);
+    set_hdma(0, 0, 0x05000000, 2, (u16)((HDMA & ~(3 << 5)) | 2 << 7));
+    render();
+    CHECK(pixel(0, 2) == rgb(blue) && pixel(0, 3) == rgb(green) && pixel(0, 159) == rgb(green));
+
+    // Channels 1-3 too, after channel 0 in each HBlank: channel 3 writes the
+    // backdrop over channel 0's.
+    reset(0x0100);
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++) {
+        table16(y, green);
+        table16(256 + y, blue);
+    }
+    palette[0] = red;
+    set_hdma(0, 0, 0x05000000, 1, HDMA);
+    set_hdma(3, 256, 0x05000000, 1, HDMA);
+    render();
+    CHECK(pixel(0, 0) == rgb(red) && pixel(0, 1) == rgb(blue) && pixel(0, 159) == rgb(blue));
+}
+
+// Any register changes between lines: DISPCNT turning BG0 off and forcing a
+// blank, WIN0V, BLDY.
+static void hblank_dma_changes_any_register(void) {
+    line_background();
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++)
+        table16(y, (u16)(y < 40 ? 0x0100 : y < 80 ? 0x0000 : y < 120 ? 0x0180 : 0x0100));
+    set_hdma(0, 1, 0x04000000, 1, HDMA);
+    render();
+    CHECK(pixel(0, 39) == rgb(red) && pixel(0, 40) == rgb(backdrop));
+    CHECK(pixel(0, 80) == 0xFFFFFF && pixel(0, 119) == 0xFFFFFF); // forced blank
+    CHECK(pixel(0, 120) == rgb(red));
+    for (u32 y = 0; y <= WEB_SCREEN_H; y++)
+        table16(y, (u16)(y / 10));
+    io[BLDCNT] = 0x01 | 0xC0; // BG0, darken by BLDY, per line
+    io[BLDY] = 0;
+    set_hdma(0, 1, 0x04000054, 1, HDMA);
+    render();
+    CHECK(pixel(0, 0) == rgb(red) && pixel(0, 159) == rgb(RGB15(2, 0, 0))); // 31 - 31 * 15 / 16
+}
+
 TEST_SUITE(web_ppu_tests, "web_ppu", {"backdrop_only", backdrop_only},
            {"forced_blank", forced_blank}, {"regular_background", regular_background},
            {"sprite_4bpp_with_flips", sprite_4bpp_with_flips},
@@ -520,4 +688,8 @@ TEST_SUITE(web_ppu_tests, "web_ppu", {"backdrop_only", backdrop_only},
            {"brightness_fade", brightness_fade}, {"alpha_blend", alpha_blend},
            {"semi_transparent_sprites_as_the_engine_draws_them",
             semi_transparent_sprites_as_the_engine_draws_them},
-           {"window_0", window_0}, {"bitmap_and_affine_modes", bitmap_and_affine_modes});
+           {"window_0", window_0}, {"bitmap_and_affine_modes", bitmap_and_affine_modes},
+           {"hblank_dma_scrolls_each_line", hblank_dma_scrolls_each_line},
+           {"hblank_dma_sets_the_backdrop_per_line", hblank_dma_sets_the_backdrop_per_line},
+           {"hblank_dma_transfer_modes", hblank_dma_transfer_modes},
+           {"hblank_dma_changes_any_register", hblank_dma_changes_any_register});

@@ -52,6 +52,16 @@ EM_JS(u32, web_sample_rate, (void), { return Module.servalSampleRate(); });
 EM_ASYNC_JS(void, web_present, (const u8* rgba, const float* audio, u32 samples),
             { await Module.servalPresent(rgba, audio, samples); });
 
+// raster: what HBlank DMA reads (ppu.c): GBA addresses are WebAssembly
+// addresses here, so the engine's raster buffers are where their addresses
+// say. Address 0 and past the end of memory read nothing.
+static const u8* dma_source(u32 address, u32 bytes) {
+    uint64_t end = (uint64_t)__builtin_wasm_memory_size(0) * 65536u;
+    if (address == 0 || (uint64_t)address + bytes > end)
+        return NULL;
+    return (const u8*)(uintptr_t)address;
+}
+
 // tonc_bios.h. The GBA's VBlank is where the hardware has just finished
 // showing a frame, so this is where the web backend draws it.
 void VBlankIntrWait(void);
@@ -66,6 +76,7 @@ void VBlankIntrWait(void) {
         .palette = (const u16*)PALETTE_ADDRESS,
         .vram = (const u8*)VRAM_ADDRESS,
         .oam = (const u16*)OAM_ADDRESS,
+        .dma_source = dma_source, // raster:
     };
     web_render(&memory, frame_rgba);
 
