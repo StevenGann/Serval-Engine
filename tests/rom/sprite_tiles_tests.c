@@ -10,6 +10,7 @@
 
 #include <tonc.h>
 
+#include "../../src/core/warn.h"
 #include "../../src/gba/internal.h"
 
 #ifdef SERVAL_DEBUG
@@ -35,6 +36,7 @@ enum {
     SPR_META,     // a metasprite of SPR_DOT
     SPR_UNLOADED, // in the table, in no group loaded
     SPR_ROOM,     // 8x8, in the room group, loaded after a mark: tile 51
+    SPR_STREAMED, // 16x16, 2 frames, in a streamed group: its slot is tiles 1020-1023
     SPRITE_COUNT
 };
 
@@ -52,9 +54,13 @@ static const SpriteAsset big = {.size = SPRITE_32x64, .tiles = blank};
 static const SpriteAsset meta = {
     .flags = SPRITE_ASSET_METASPRITE, .pieces = meta_pieces, .piece_count = 1};
 static const SpriteAsset room = {.size = SPRITE_8x8, .tiles = room_tiles};
+static const u32 streamed_tiles[2 * 4 * 8] = {[4 * 8] = 0x77777777}; // frame 1: 7s
+static const SpriteAsset streamed = {
+    .size = SPRITE_16x16, .frame_count = 2, .tiles = streamed_tiles};
 static const SpriteAsset* const table[SPRITE_COUNT] = {
-    [SPR_CARD] = &card, [SPR_PADDED] = &padded, [SPR_DOT] = &dot,      [SPR_STRIP] = &strip,
-    [SPR_BIG] = &big,   [SPR_META] = &meta,     [SPR_UNLOADED] = &dot, [SPR_ROOM] = &room};
+    [SPR_CARD] = &card,    [SPR_PADDED] = &padded, [SPR_DOT] = &dot,
+    [SPR_STRIP] = &strip,  [SPR_BIG] = &big,       [SPR_META] = &meta,
+    [SPR_UNLOADED] = &dot, [SPR_ROOM] = &room,     [SPR_STREAMED] = &streamed};
 
 static const u16 palettes[16] = {[1] = 0x7FFF};
 static const u16 main_ids[] = {SPR_CARD, SPR_PADDED, SPR_DOT, SPR_STRIP, SPR_BIG, SPR_META};
@@ -63,6 +69,13 @@ static const SpriteGroup main_group = {
 static const u16 room_ids[] = {SPR_ROOM};
 static const SpriteGroup room_group = {
     .sprite_ids = room_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
+static const u16 streamed_ids[] = {SPR_STREAMED};
+static const SpriteGroup streamed_group = {.sprite_ids = streamed_ids,
+                                           .palettes = palettes,
+                                           .sprite_count = 1,
+                                           .palette_count = 1,
+                                           .flags = SPRITE_GROUP_STREAMED,
+                                           .slots = 1};
 
 // Composed at run time, as a game would: in RAM.
 static EWRAM_BSS u32 face_a[32 * 8];
@@ -182,6 +195,60 @@ static void misuse_is_ignored_and_warned_once(void) {
     }
 }
 
+#ifdef SERVAL_DEBUG
+// Whether the last warning contains `part` (the ROM has no strstr).
+static bool last_warning_says(const char* part) {
+    for (const char* text = serval_warn_text(); *text; text++) {
+        u32 k = 0;
+        while (part[k] && text[k] == part[k])
+            k++;
+        if (!part[k])
+            return true;
+    }
+    return false;
+}
+#endif
+
+// A sprite of a streamed group has no VRAM of its own: its frames go to its
+// group's slots as they are drawn (sprites.h, SPRITE_GROUP_STREAMED). Setting
+// its tiles is ignored, warning once that it is streamed (not that it isn't
+// loaded: that is another warning), takes no place in the queue and leaves
+// its slot alone.
+static void streamed_sprites_are_ignored(void) {
+    load();
+    CHECK(sprite_group_load(&streamed_group));
+    frame_begin();
+    sprite_draw(SPR_STREAMED, 1, 50, 50, 0);
+    frame_end();
+    CHECK(obj(1020)[0] == 0x77777777u && (oam_mem[0].attr2 & ATTR2_ID_MASK) == 1020);
+    for (u32 round = 0; round < 2; round++) {
+        u32 before = debug_warning_count();
+        sprite_set_tiles(SPR_STREAMED, 1, face_a);
+#ifdef SERVAL_DEBUG
+        if (round == 0)
+            CHECK(last_warning_says("streamed group"));
+#endif
+        sprite_set_tiles(SPR_STREAMED, 0, face_b);
+        CHECK(debug_warning_count() == before + WARNINGS(round == 0));
+    }
+    u32 before = debug_warning_count();
+    sprite_set_tiles(SPR_UNLOADED, 0, face_a); // its own warning
+    CHECK(debug_warning_count() == before + WARNINGS(1));
+    // Nothing was queued: eight more fit.
+    sprite_set_tiles(SPR_CARD, 0, face_a);
+    sprite_set_tiles(SPR_CARD, 1, face_a);
+    for (u8 f = 0; f < 3; f++)
+        sprite_set_tiles(SPR_PADDED, f, face_a);
+    for (u8 f = 0; f < 3; f++)
+        sprite_set_tiles(SPR_STRIP, f, face_a);
+    CHECK(debug_warning_count() == before + WARNINGS(1));
+    frame_begin();
+    sprite_draw(SPR_STREAMED, 1, 50, 50, 0);
+    frame_end();
+    CHECK(obj(1020)[0] == 0x77777777u && obj(1021)[0] == 0); // its slot, unchanged
+    CHECK(obj(0)[0] == 0x11111111u && obj(17)[0] == 0x11111111u);
+}
+
 // Releasing to a mark drops the copies queued for the sprites it unloads,
 // even when they load again in the same frame, and keeps the others;
 // resetting drops them all.
@@ -254,5 +321,6 @@ TEST_SUITE(gba_sprite_tiles_tests, "gba_sprite_tiles",
            {"copies_tiles_per_frame_tiles", copies_tiles_per_frame_tiles},
            {"queue_holds_eight_frames", queue_holds_eight_frames},
            {"misuse_is_ignored_and_warned_once", misuse_is_ignored_and_warned_once},
+           {"streamed_sprites_are_ignored", streamed_sprites_are_ignored},
            {"release_and_reset_drop_queued_copies", release_and_reset_drop_queued_copies},
            {"copy_costs_about_75_cycles_a_tile", copy_costs_about_75_cycles_a_tile});

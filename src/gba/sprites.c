@@ -1122,8 +1122,11 @@ ServalSpriteFrames serval_sprite_frames(u32 id) {
     const SpriteDraw* d = &sprite_draws[id];
     if (d->meta_frames)
         return (ServalSpriteFrames){.kind = SERVAL_SPRITE_META};
-    // Streamed groups: a sprite of one has no frames of its own either, and
-    // must report SERVAL_SPRITE_STREAMED here, before the test below.
+    // streaming: a sprite of a streamed group has no frames of its own either
+    // (its frames go to its group's slots as they are drawn), so it is told
+    // apart here, before the test below would call it not loaded.
+    if (STREAMED(d))
+        return (ServalSpriteFrames){.kind = SERVAL_SPRITE_STREAMED};
     if (!d->frame_count)
         return (ServalSpriteFrames){.kind = SERVAL_SPRITE_ABSENT};
     return (ServalSpriteFrames){.first_tile = (u16)(d->attr2 & ATTR2_ID_MASK),
