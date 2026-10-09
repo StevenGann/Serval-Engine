@@ -23,7 +23,9 @@
 //     VRAM holds, drawn from 8 slots, each frame copied to its slot in VBlank
 //     when it is drawn and not there already; draws of one frame sharing its
 //     slot, and frames past the slots dropped (sprite_stats().dropped)
-//   - Raster (raster_fx.c): raster effects (a placeholder for now)
+//   - Raster (raster_fx.c): raster effects, a value per scanline:
+//     raster_scroll() rippling a lake's reflections line by line, and
+//     raster_backdrop() for a sky gradient, animated by changing the tables
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo fade
@@ -85,7 +87,16 @@
 //     missing: ten frames, eight slots. The bottom line counts the orbs and
 //     the draws dropped ("10 ORBS, DROPPED: 2"); A while ten puts them in
 //     step, all ten shown.
-//   - Raster: for now the words "RASTER EFFECTS (TO COME)".
+//   - Raster: a city at night on a lake, lit windows in dark towers above
+//     the horizon and their bluer reflections below it, upside down.
+//     - First RIPPLE, "RIPPLE: raster_scroll()" on row 1: the reflections'
+//       edges wave sideways, a pixel near the horizon to four at the bottom,
+//       and the waves keep moving; the towers above stay still. The sky is
+//       a plain dark blue.
+//     - A: SUNSET, "SUNSET: raster_backdrop()": the reflections stop
+//       waving, and the sky between the towers turns into a gradient, deep
+//       blue at the top to orange at the horizon, which darkens to purple
+//       night and back over 8 seconds. A again: RIPPLE, the plain sky back.
 //   - No sound after the splash.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A key, R = S key.)
