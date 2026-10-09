@@ -1339,12 +1339,15 @@ C_POOL_PROPERTIES = {
     "spr_frame": "frame", "spr_flags": "flags", "spr_angle": "angle", "spr_depth": "depth",
     "spr_scale": "scale", "spr_anim_time": "anim_time", "spr_anim_step": "anim_step",
 }
-# The engine's macros a script can call (constant arguments only), which the
-# assembler knows too: (the range of n, what it is).
+# The engine's macros a script can call (constant arguments only): (each
+# argument's range, what it makes). The assembler knows C_GAME and
+# BODY_GRAVITY too; COLOR_RGB(r, g, b) (screen.h), whose three arguments its
+# macros don't take, is folded into its value here.
 MACROS = {
-    "C_GAME": ((0, 14), "a game component"),
-    "BODY_GRAVITY": ((-112, 143), "a body's gravity scale in 16ths (16 normal, 0 none, "
-                                  "-16 reversed)"),
+    "C_GAME": (((0, 14),), "a game component"),
+    "BODY_GRAVITY": (((-112, 143),), "a body's gravity scale in 16ths (16 normal, 0 none, "
+                                     "-16 reversed)"),
+    "COLOR_RGB": (((0, 255),) * 3, "a color's red, green and blue, 8 bits each (screen.h)"),
 }
 VM_FIELDS = 16  # instance fields, VM_P_FIELD0 to VM_P_FIELD0 + 15
 VM_ARRAY_CELLS = 1024
@@ -1373,6 +1376,9 @@ ENGINE = {
     "screen_set_blend": ((INT, INT, INT, INT), None, "SYS SCREEN_SET_BLEND"),
     "path_start": ((ENTITY, INT, INT), None, "SYS PATH_START"),
     "path_stop": ((ENTITY,), None, "SYS PATH_STOP"),
+    # The colors: an array's first `count` elements (docs/lua.md).
+    "sprite_set_colors": ((INT, INT, ARRAY, INT), None, "SYS SPRITE_SET_COLORS"),
+    "tileset_set_colors": ((INT, ARRAY, INT), None, "SYS TILESET_SET_COLORS"),
     "kill": ((ENTITY,), None, "KILL"),
     "wait": ((INT,), None, "WAIT"),
     "wait_anim": ((), None, "WAIT_ANIM"),
@@ -1941,7 +1947,7 @@ class Resolver:
             self.error(node, f"{name} is declared below (line {self.later_locals[name]}) as a "
                        "top-level local, so here it would be an undefined global",
                        "move the declaration up")
-        if name in MACROS:  # the engine's macros, which the assembler knows
+        if name in MACROS:  # the engine's macros a script can call
             if name not in self.builtins:
                 self.builtins[name] = HeaderSym(name, node)
             return self.builtins[name]
@@ -2859,7 +2865,8 @@ class Checker:
                       f"visits them; e.object == {name} tells whether e is one")
         if ty == ARRAY:
             self.fail(e, f"{name} is an array, not a value: arrays can't be assigned or "
-                      "passed (LDA and STA name their array)",
+                      "passed (LDA and STA name their array; the palette calls alone take one, "
+                      "by name)",
                       f"use its elements ({name}[i]) or its length (#{name})")
         if ty == FUNCTION:
             self.fail(e, f"{name} is a function, and functions aren't values in the subset",
@@ -3329,8 +3336,8 @@ class Checker:
                 ty = self.macro(e, sym.name)
             elif kind == "header":
                 self.fail(func, f"{func.name} would be a constant from the C headers, and "
-                          "constants aren't functions", "C_GAME(n) and BODY_GRAVITY(n) are "
-                          "the macros a script can call")
+                          "constants aren't functions", "C_GAME(n), BODY_GRAVITY(n) and "
+                          "COLOR_RGB(r, g, b) are the macros a script can call")
             elif kind == "object":
                 self.fail(func, f"{func.name} is an object; objects aren't called",
                           f"spawn({func.name}, x, y) makes an instance")
@@ -3350,6 +3357,9 @@ class Checker:
             self.fail(e, f"{name} takes {want} argument{plural}, not {len(e.args)}")
 
     def argument(self, arg, want, fname, index):
+        if want == ARRAY:
+            self.array_argument(arg, fname, index)
+            return
         ty = self.value(arg)
         if ty is None:
             self.want(arg, want)
@@ -3361,6 +3371,26 @@ class Checker:
             hint = "math.floor(x) makes a fixed value an integer"
         self.fail(arg, f"{fname}'s {_ORDINALS[index]} argument is {article(want)}, and this is "
                   f"{article(ty)}", hint)
+
+    def array_argument(self, arg, fname, index):
+        """An engine call's array argument (the palette calls' colors): a
+        top-level array by its name, whose elements are integers."""
+        o = _strip(arg)
+        if not (isinstance(o, Name) and o.sym is not None and o.sym.kind == "array"):
+            ty = self.expr(arg)
+            self.fail(arg, f"{fname}'s {_ORDINALS[index]} argument is an array, by its name, "
+                      f"and this is {article(ty) if ty else 'not one'}",
+                      "declare one at the top level: colors = array(16) or "
+                      "colors = { COLOR_RGB(255, 0, 0), ... }")
+        o.ty = ARRAY
+        arr = o.sym
+        if arr.elem is None:
+            arr.elem = INT
+            arr.elem_origin = arg
+            self.changed = True
+        elif arr.elem != INT:
+            self.fail(arg, f"{fname} reads colors, which are integers, and {arr.name} holds "
+                      f"{article(arr.elem)} values", "a color is an integer: COLOR_RGB(r, g, b)")
 
     def user_call(self, e, fn):
         params = fn.body.params
@@ -3452,14 +3482,24 @@ class Checker:
         return ENTITY
 
     def macro(self, e, name):
-        """C_GAME(n) or BODY_GRAVITY(n): a constant, as C's macro makes it."""
-        self.arity(e, name, (1,))
-        ty = self.value(e.args[0])
-        c = e.args[0].const
-        (lo, hi), what = MACROS[name]
-        if ty != INT or c is None or c.value is None or not lo <= c.value <= hi:
-            self.fail(e.args[0], f"{name}(n) takes a constant n from {lo} to {hi}: {what}")
-        n = c.value
+        """C_GAME(n), BODY_GRAVITY(n) or COLOR_RGB(r, g, b): a constant, as C's
+        macro makes it."""
+        ranges, what = MACROS[name]
+        self.arity(e, name, (len(ranges),))
+        values = []
+        for arg, (lo, hi) in zip(e.args, ranges):
+            ty = self.value(arg)
+            c = arg.const
+            if ty != INT or c is None or c.value is None or not lo <= c.value <= hi:
+                if len(ranges) == 1:
+                    self.fail(arg, f"{name}(n) takes a constant n from {lo} to {hi}: {what}")
+                self.fail(arg, f"{name}(r, g, b) takes constants from {lo} to {hi}: {what}")
+            values.append(c.value)
+        if name == "COLOR_RGB":
+            r, g, b = (v >> 3 for v in values)
+            e.const = Const(INT, r | g << 5 | b << 10)
+            return INT
+        n = values[0]
         value = 1 << (16 + n) if name == "C_GAME" else n - 16
         e.const = Const(INT, value, f"{name}({n})")
         return INT
@@ -4530,7 +4570,11 @@ class FuncGen:
             return
         params, result, operation = ENGINE[name]
         for arg, want in zip(e.args, params):
-            self.expr(arg, want)
+            if want == ARRAY:
+                arr = _strip(arg).sym
+                self.op(f"PUSH ARR_{arr.listing}", arg, f"array {arr.name}")
+            else:
+                self.expr(arg, want)
         self.op(operation, e)
         if discard and result is not None:
             self.op("DROP", e, "the result isn't used")

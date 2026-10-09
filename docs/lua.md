@@ -65,7 +65,7 @@ A script file is a sequence of top-level statements, compiled once into one blob
 
 **Names C sees** are upper-cased: an object `Firefly` is `OBJ_FIREFLY`, a global `score` is `G_SCORE` in the generated header, as C names its constants (two objects, globals or arrays whose names differ only in case are an error). `local NAME <const> = "text"` names a string for `text_print` (C sees a string by its text: `"TIME UP!"` is `STR_TIME_UP`), and a constant table of fixed values is a ROM array of their 256ths.
 
-Names in ALL_CAPS that the script doesn't define are **constants from the game's C headers**, passed to the assembler ([`svm.py`](../tools/svm.py) `--header`), which knows the engine's and the game's `#define`s and enumerators. They are integers. Two of the engine's macros can be called, with a constant argument: `C_GAME(n)` (a game component) and `BODY_GRAVITY(n)` (a body's gravity scale).
+Names in ALL_CAPS that the script doesn't define are **constants from the game's C headers**, passed to the assembler ([`svm.py`](../tools/svm.py) `--header`), which knows the engine's and the game's `#define`s and enumerators. They are integers. Three of the engine's macros can be called, with constant arguments: `C_GAME(n)` (a game component), `BODY_GRAVITY(n)` (a body's gravity scale) and `COLOR_RGB(r, g, b)` (`screen.h`: a color from 8-bit red, green and blue, 0-255 each, as C makes it; for the palette calls, [below](#engine-functions)).
 
 ## Types
 
@@ -78,7 +78,7 @@ The compiler infers a static type for every expression and variable; mixing type
 | boolean | `true`, `false` | 1 or 0 |
 | entity | an instance (`self`, `other`, `spawn(...)`) | its handle; no entity is `none` (0) |
 | string | a literal, only as an argument to `text_print` | a string-table index |
-| array | a top-level array | an array number |
+| array | a top-level array, used by its name: indexed, `#`, or passed to a palette call ([below](#engine-functions)) | an array number |
 | object | an object's name (`Coin`), an entity's object (`e.object`) | its number; −1 for no object |
 
 - **Integers** wrap on overflow, as Lua's do with `LUA_32BITS`.
@@ -168,7 +168,7 @@ Not reserved: `sys_` (C's systems are functions, never per-entity data), the eng
 
 ### Planned functions
 
-A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set`, `psg_waves_set`, `raster_scroll` and the rest. `function music_play() ... end` is a compile error:
+A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set`, `psg_waves_set`, `raster_scroll` and the rest. (`sprite_set_colors` and `tileset_set_colors` were planned too, and are builtins now: [Engine functions](#engine-functions).) `function music_play() ... end` is a compile error:
 
 ```
 game.lua:3:10: error: function music_play: music_play is reserved: it names a planned engine function, which a later engine version may make a builtin
@@ -244,7 +244,27 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `screen_set_brightness(level)` | `SCREEN_SET_BRIGHTNESS` | |
 | `screen_set_blend(top, bottom, top_weight, bottom_weight)` | `SCREEN_SET_BLEND` | integers: the `LAYER_*` masks (from `screen.h`) and the weights, 0-16 ([alpha blending](runtime-systems.md#alpha-blending)) |
 | `path_start(e, path, flags)`, `path_stop(e)` | `PATH_START`, `PATH_STOP` | `path` is an index into `VmBindings.paths` |
+| `sprite_set_colors(sprite, index, colors, count)`, `tileset_set_colors(index, colors, count)` | `SPRITE_SET_COLORS`, `TILESET_SET_COLORS` | palette writes ([sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes)): `colors` is a top-level array of integers, by its name, and the call takes its first `count` elements, each a color's low 16 bits; `index` is C's (palette × 16 + color, from 0) |
 | `none` | | the entity 0 |
+
+**Palette writes** take their colors from an array: a constant table (`{ COLOR_RGB(0, 64, 160), 0x7FFF }`) or a RAM array the script fills, as a palette cycle does:
+
+```lua
+water = { COLOR_RGB(0, 64, 160), COLOR_RGB(0, 96, 200), COLOR_RGB(32, 160, 248) }
+shown = array(3)
+
+function Pool:room_start()
+  local t = 0
+  while true do
+    for i = 1, 3 do shown[i] = water[(i + t) % 3 + 1] end
+    tileset_set_colors(1 * 16 + 1, shown, 3) -- palette 1, colors 1 to 3
+    t = t + 1
+    wait(8)
+  end
+end
+```
+
+The VM reads the elements at the call (the array may change right after) and the colors reach the screen at the next `frame_end()`, as from C. A count of 0 does nothing; an array the blob doesn't have, or a count that is negative, past the array's length or past 256, warns and makes no call ([vm.md](vm.md#engine-calls)). There is no `color_mix` builtin: a fade mixes a color's channels with integer arithmetic (`c & 31`, `(c >> 5) & 31` and `(c >> 10) & 31` are its red, green and blue, 0-31).
 
 Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`).
 
@@ -262,7 +282,7 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 
 ## Testing
 
-- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit. It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Fifteen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point and input. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
+- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit. It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Sixteen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point, input and palette writes. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
 - **Unit tests** for each stage, including one test per rejected construct, checking the message; golden listings; and compiled programs run on the VM (`svlua_test.py`).
 - **`fireflies` in Lua** was compared with the hand-written listing frame by frame on the web build, with scripted input through a whole round, catches, the end and a restart: about a thousand frames, every one pixel-identical, and no warning on the web or the GBA ([examples-roadmap.md](examples-roadmap.md#porting-fireflies-to-lua)).
 

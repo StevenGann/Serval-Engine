@@ -30,8 +30,10 @@
 // Output, one record per line, numbers in decimal:
 //   frame F                      at the start of frame F
 //   call FN A0 A1 A2 A3 ["TEXT"]  each engine call the platform makes (VM_SYS_*
-//                                number and arguments; TEXT_PRINT's string),
-//                                as it happens; button queries are not listed
+//                                number and arguments; TEXT_PRINT's string;
+//                                after a palette call's, the colors it read,
+//                                C0 C1 ...), as it happens; button queries
+//                                are not listed
 //   global G VALUE               after each printed frame: every global the
 //                                blob declares
 //   array N V0 V1 ...            every RAM array's cells (ROM arrays: none)
@@ -48,6 +50,7 @@
 #include "serval/ecs.h"
 #include "serval/physics.h"
 #include "serval/random.h"
+#include "serval/screen.h"
 #include "serval/vm.h"
 
 #include "../../src/core/vm_internal.h"
@@ -167,6 +170,11 @@ static void on_call(void) {
     printf("call %u %d %d %d %d", r->fn, r->args[0], r->args[1], r->args[2], r->args[3]);
     if (r->fn == VM_SYS_TEXT_PRINT && r->ptr)
         printf(" \"%s\"", (const char*)r->ptr);
+    if ((r->fn == VM_SYS_SPRITE_SET_COLORS || r->fn == VM_SYS_TILESET_SET_COLORS) && r->ptr) {
+        s32 count = r->args[r->fn == VM_SYS_SPRITE_SET_COLORS ? 3 : 2];
+        for (s32 k = 0; k < count; k++)
+            printf(" %u", (unsigned)((const Color*)r->ptr)[k]);
+    }
     printf("\n");
 }
 

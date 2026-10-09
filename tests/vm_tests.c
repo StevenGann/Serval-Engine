@@ -4021,7 +4021,9 @@ static void sys_page_numbers_are_fixed(void) {
     for (u32 k = 0; k < sizeof page / sizeof page[0]; k++)
         moved += page[k] != k;
     CHECK(moved == 0);
-    CHECK(VM_SYS_COUNT == 15);
+    CHECK(VM_SYS_SCREEN_SET_BLEND == 14);
+    CHECK(VM_SYS_SPRITE_SET_COLORS == 15 && VM_SYS_TILESET_SET_COLORS == 16); // palettes
+    CHECK(VM_SYS_COUNT == 17);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -4399,6 +4401,133 @@ static void sys_path_stop(void) {
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
     vm_bind(NULL);
+}
+
+#ifndef SERVAL_GBA
+// The colors the platform's latest call received: `count` of them, equal to
+// `want`.
+static bool call_colors(const u16* want, u32 count) {
+    const Color* colors = serval_host_vm_calls.ptr;
+    if (!colors)
+        return false;
+    for (u32 k = 0; k < count; k++)
+        if (colors[k] != want[k])
+            return false;
+    return true;
+}
+#endif
+
+// vm.md "Engine calls": SYS sprite_set_colors(sprite, index, array, count) and
+// tileset_set_colors(index, array, count) read `count` elements of the array,
+// ROM or RAM, from its first, each as a Color (the cell's low 16 bits), and
+// pass them to the platform call (vm_internal.h) with the arguments in push
+// order. They pop their arguments and push nothing. tests/rom/palette_tests.c
+// checks what the GBA does with them.
+static void sys_set_colors_read_their_array(void) {
+#ifndef SERVAL_GBA
+    static const s32 rom_colors[] = {0x001F, 0x03E0, 0x7C00, 0x7FFF};
+    reset();
+    blob_begin_arrays(1, 0, GLOBALS, 2);
+    ram_array(1, 3, 0);
+    handler(0, VM_EV_CREATE);
+    push8(0);                       // i
+    push32(0x18001);                // i value: its low 16 bits are the color
+    sta(1);                         // ram[0]
+    push8(1);                       // i
+    push8(-1);                      // i -1: 0xFFFF
+    sta(1);                         // ram[1]
+    push8(55);                      // 55
+    push16(300);                    // 55 sprite
+    push8(17);                      // 55 sprite index
+    push8(0);                       // 55 sprite index array (ROM)
+    push8(3);                       // 55 sprite index array count
+    sys(VM_SYS_SPRITE_SET_COLORS);  // 55: frame 1
+    stg(0);                         // glob[0] = 55
+    wait_frames(1);                 //
+    push8(5);                       // index
+    push8(1);                       // index array (RAM)
+    push8(2);                       // index array count
+    sys(VM_SYS_TILESET_SET_COLORS); // frame 2
+    wait_frames(1);                 //
+    push8(9);                       // index
+    push8(0);                       // index array
+    push8(0);                       // index array 0: no colors
+    sys(VM_SYS_TILESET_SET_COLORS); // frame 3
+    store(1, 1);                    // carried on
+    op(VM_OP_HALT);                 //
+    rom_array(0, ARRAY_U16, rom_colors, 4);
+    CHECK(load());
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 55);
+    const ServalHostVmCalls* r = &serval_host_vm_calls;
+    CHECK(r->calls == 1 && r->fn == VM_SYS_SPRITE_SET_COLORS);
+    CHECK(r->args[0] == 300 && r->args[1] == 17 && r->args[2] == 0 && r->args[3] == 3);
+    CHECK(call_colors((const u16[]){0x001F, 0x03E0, 0x7C00}, 3));
+    frame();
+    CHECK(r->calls == 2 && r->fn == VM_SYS_TILESET_SET_COLORS);
+    CHECK(r->args[0] == 5 && r->args[1] == 1 && r->args[2] == 2 && r->args[3] == 0);
+    CHECK(call_colors((const u16[]){0x8001, 0xFFFF}, 2));
+    frame();
+    CHECK(r->calls == 3 && r->fn == VM_SYS_TILESET_SET_COLORS && r->ptr != NULL);
+    CHECK(r->args[0] == 9 && r->args[1] == 0 && r->args[2] == 0);
+    CHECK(vm_global(1) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+#endif
+}
+
+// vm.md "Engine calls": a palette call naming an array the blob doesn't
+// have, or a count that is negative, past the array's length or past 256
+// (more than any call can write), warns (once per kind) and makes no call;
+// its arguments are popped and the script carries on.
+static void sys_set_colors_refuse_a_bad_array_or_count(void) {
+    static const s32 rom_colors[] = {0x001F, 0x03E0};
+    reset();
+    blob_begin_arrays(1, 0, GLOBALS, 2);
+    ram_array(1, 300, 0);
+    handler(0, VM_EV_CREATE);
+    push8(55);                      // 55
+    push8(0);                       // 55 sprite
+    push8(0);                       // 55 sprite index
+    push8(2);                       // 55 sprite index array: there is no array 2
+    push8(1);                       // 55 sprite index array count
+    sys(VM_SYS_SPRITE_SET_COLORS);  // 55
+    push8(0);                       // 55 index
+    push8(-1);                      // 55 index array: none either
+    push8(1);                       // 55 index array count
+    sys(VM_SYS_TILESET_SET_COLORS); // 55
+    push8(0);                       // 55 index
+    push8(0);                       // 55 index array
+    push8(3);                       // 55 index array count: the array has 2
+    sys(VM_SYS_TILESET_SET_COLORS); // 55
+    push8(0);                       // 55 sprite
+    push8(0);                       // 55 sprite index
+    push8(0);                       // 55 sprite index array
+    push8(-1);                      // 55 sprite index array count: negative
+    sys(VM_SYS_SPRITE_SET_COLORS);  // 55
+    push8(0);                       // 55 index
+    push8(1);                       // 55 index array: 300 cells
+    push16(257);                    // 55 index array count: past 256
+    sys(VM_SYS_TILESET_SET_COLORS); // 55
+    stg(0);                         // glob[0] = 55
+    op(VM_OP_HALT);                 //
+    rom_array(0, ARRAY_U16, rom_colors, 2);
+    CHECK(load());
+#ifndef SERVAL_GBA
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+#endif
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 55);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 2);
+#ifndef SERVAL_GBA
+    CHECK(serval_host_vm_calls.calls == 0);
+#endif
 }
 
 // --- Arrays ------------------------------------------------------------------
@@ -5832,8 +5961,10 @@ TEST_SUITE(
     {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
     {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
     {"sys_text_print_number", sys_text_print_number}, {"sys_path_stop", sys_path_stop},
-    {"sys_screen_set_blend", sys_screen_set_blend}, {"ram_arrays", ram_arrays},
-    {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"sys_screen_set_blend", sys_screen_set_blend},
+    {"sys_set_colors_read_their_array", sys_set_colors_read_their_array},
+    {"sys_set_colors_refuse_a_bad_array_or_count", sys_set_colors_refuse_a_bad_array_or_count},
+    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
     {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
     {"globals_start_at_their_initial_values", globals_start_at_their_initial_values},

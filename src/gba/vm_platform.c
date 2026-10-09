@@ -1,11 +1,13 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
-// sound, music, text (strings and numbers), buttons, brightness and blending.
-// The web build compiles it too.
+// sound, music, text (strings and numbers), buttons, brightness, blending
+// and palette writes. The web build compiles it too.
 
 #include "../core/vm_internal.h"
 #include "serval/audio.h"
 #include "serval/core.h"
+#include "serval/map.h"
 #include "serval/screen.h"
+#include "serval/sprites.h"
 #include "serval/text.h"
 
 // text_print_number: the value in decimal at (col, row); with a width of 1 or
@@ -67,6 +69,16 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         // As C converts them: a negative layer mask has bits outside
         // LAYER_ALL, a negative weight is past 16 (each warns).
         screen_set_blend((u32)args[0], (u32)args[1], (u32)args[2], (u32)args[3]);
+        return 0;
+    // palettes: the colors vm.c read from the array. An ID no u16 holds
+    // becomes 0xFFFF, which no sprite table reaches (sprite_set_colors
+    // warns); a negative index becomes a huge one, past every palette.
+    case VM_SYS_SPRITE_SET_COLORS:
+        sprite_set_colors(args[0] >= 0 && args[0] <= 0xFFFF ? (u16)args[0] : 0xFFFF, (u32)args[1],
+                          ptr, (u32)args[3]);
+        return 0;
+    case VM_SYS_TILESET_SET_COLORS:
+        tileset_set_colors((u32)args[0], ptr, (u32)args[2]);
         return 0;
     default:
         return 0;

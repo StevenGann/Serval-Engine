@@ -2,7 +2,8 @@
 #define SERVAL_CORE_VM_INTERNAL_H
 
 // Engine-internal: the VM's engine calls that only the GBA build has (sound,
-// music, text, buttons, brightness; the web build compiles the GBA files).
+// music, text, buttons, brightness, palette writes; the web build compiles
+// the GBA files).
 // vm.c makes the portable SYS calls itself (VM_SYS_CAMERA_SET,
 // VM_SYS_RANDOM_RANGE, VM_SYS_PATH_START, VM_SYS_PATH_STOP) and hands every
 // other one to serval_vm_platform_call, implemented in src/gba/vm_platform.c
@@ -14,9 +15,11 @@
 // fn: a VM_SYS_* number other than the four above. args: the call's
 // arguments in the order they were pushed (args[0] first), as many as the
 // SYS table in docs/vm.md gives it. ptr: what vm.c resolved from an index
-// argument (VM_SYS_TEXT_PRINT: the string; VM_SYS_PSG_MUSIC_PLAY: the PsgSong),
+// argument (VM_SYS_TEXT_PRINT: the string; VM_SYS_PSG_MUSIC_PLAY: the PsgSong;
+// VM_SYS_SPRITE_SET_COLORS and VM_SYS_TILESET_SET_COLORS: the colors read
+// from the array, as many as the count says, valid until the next SYS call),
 // otherwise NULL; vm.c has already warned about and skipped calls whose
-// index was bad. Returns the call's result (button calls: 0 or 1), 0 for
+// index (or array and count) was bad. Returns the call's result (button calls: 0 or 1), 0 for
 // calls without one.
 s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr);
 
@@ -35,7 +38,7 @@ typedef struct {
     u32 calls;            // platform calls since the test last zeroed this
     u32 fn;               // the latest call's VM_SYS_* number
     s32 args[4];          // its arguments (unused ones 0)
-    const void* ptr;      // its resolved string or song
+    const void* ptr;      // its resolved string, song or colors
     s32 button_value;     // what VM_SYS_BUTTON_DOWN and VM_SYS_BUTTON_PRESSED return
     void (*during)(void); // if set, called by each call: stands in for game code
                           // that runs during vm_step or vm_events

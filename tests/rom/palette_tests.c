@@ -10,6 +10,7 @@
 #include "serval/screen.h"
 #include "serval/sprites.h"
 #include "serval/text.h"
+#include "serval/vm.h"
 
 #include <tonc.h>
 
@@ -279,6 +280,49 @@ static void tileset_set_colors_misuse(void) {
     CHECK(same);
 }
 
+// A script's Create: sprite_set_colors(SPR_TWO, 1, colors, 2) and
+// tileset_set_colors(17, colors, 3), colors a ROM array (docs/vm.md "Engine
+// calls"; tests/vm_tests.c checks the interpreter's side).
+static const u8 painter[] = {
+    'S', 'V', 'M', 'B', VM_FORMAT_VERSION, VM_CELL_BYTES, 0, 0, // magic, version, cells, flags
+    1, 0, 0, 0, 0, 0, 1, 0, // 1 object, no strings or globals, 1 array
+    // 0x10: object 0: mask 0, sprite 0, Create @ 0x38, no other handler
+    0, 0, 0, 0, 0, 0, 0, 0, 0x38, 0, 0, 0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    //
+    3, 0, VM_ARRAY_U16, 0, 0x4B, 0, 0, 0,              // 0x30: array 0: 3 u16 @ 0x4B
+    VM_OP_PUSH8, SPR_TWO,                              // 0x38: sprite
+    VM_OP_PUSH8, 1,                                    //       sprite index
+    VM_OP_PUSH8, 0,                                    //       sprite index array
+    VM_OP_PUSH8, 2,                                    //       sprite index array count
+    VM_OP_SYS, VM_SYS_SPRITE_SET_COLORS,               //
+    VM_OP_PUSH8, 17,                                   //       index
+    VM_OP_PUSH8, 0,                                    //       index array
+    VM_OP_PUSH8, 3,                                    //       index array count
+    VM_OP_SYS, VM_SYS_TILESET_SET_COLORS,              //
+    VM_OP_HALT,                                        //
+    0x00, 0x7C, 0xE0, 0x03, 0x1F, 0x00,                // 0x4B: 0x7C00, 0x03E0, 0x001F
+};
+
+// A script's palette calls reach the palettes at frame_end(), as C's do.
+static void script_calls_write_colors(void) {
+    load_groups();
+    u16 old_bg[3] = {pal_bg_mem[17], pal_bg_mem[18], pal_bg_mem[19]};
+    CHECK(vm_load(painter, sizeof painter));
+    u32 before = debug_warning_count();
+    frame_begin();
+    CHECK(vm_start(0, VM_EV_CREATE) >= 0);
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(pal_obj_mem[1] == 0x0101 && pal_bg_mem[17] == old_bg[0]);
+    frame_end();
+    CHECK(debug_warning_count() == before);
+    CHECK(pal_obj_mem[1] == 0x7C00 && pal_obj_mem[2] == 0x03E0 && pal_obj_mem[3] == 0);
+    CHECK(pal_bg_mem[17] == 0x7C00 && pal_bg_mem[18] == 0x03E0 && pal_bg_mem[19] == 0x001F);
+    vm_unload();
+    for (u32 k = 0; k < 3; k++)
+        pal_bg_mem[17 + k] = old_bg[k];
+}
+
 static u32 cycles(void) {
     u32 hi, lo;
     do {
@@ -344,4 +388,5 @@ TEST_SUITE(gba_palette_tests, "gba_palettes",
             tileset_colors_reach_palette_ram_at_frame_end},
            {"tileset_load_puts_colors_back", tileset_load_puts_colors_back},
            {"the_later_backdrop_wins", the_later_backdrop_wins},
-           {"tileset_set_colors_misuse", tileset_set_colors_misuse}, {"costs", costs});
+           {"tileset_set_colors_misuse", tileset_set_colors_misuse},
+           {"script_calls_write_colors", script_calls_write_colors}, {"costs", costs});

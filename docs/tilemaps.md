@@ -172,7 +172,7 @@ A camera moving less than 8 pixels per frame writes at most one row and one colu
 - `screen_set_backdrop()` writes at once, so in the same frame it wins over a write to color 0 made before it, as `tileset_load()` does over the colors it loads; a write made after either lands at the next `frame_end()`.
 - Ignored, with a warning in debug builds, if the colors reach past color 239 (palette 15 is the text layer's) or `colors` is NULL. A count of 0 does nothing. No tileset needs to be loaded: palettes it doesn't have, and the backdrop, can be written too.
 
-The shadow palette is the sprites' one: the banks written since the last frame, each first copied from palette RAM ([sprites.md](sprites.md#palettes), with the costs). In 1.0.0-rc.1, where it was planned API, it changed nothing and warned once (debug builds).
+The shadow palette is the sprites' one: the banks written since the last frame, each first copied from palette RAM ([sprites.md](sprites.md#palettes), with the costs). Scripts call it too ([lua.md](lua.md#engine-functions)). In 1.0.0-rc.1, where it was planned API, it changed nothing and warned once (debug builds).
 
 **Later (no API yet): tileset groups**, several tilesets loaded side by side at tile and palette offsets assigned at build time, for rooms that share part of their graphics. That would add `Tileset` fields whose 0 keeps today's layout (loading at tile 0 replaces everything, as now), so it can come in a minor version.
 

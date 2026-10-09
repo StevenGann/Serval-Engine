@@ -195,7 +195,10 @@ enum {
 // Arguments are pushed left to right (the last on top). Append-only: the
 // numbers are part of the blob format. Tracker music and sampled sound
 // (audio.h's music_* and sfx_*) have no calls yet; they arrive with their
-// implementations, appended, as screen_set_blend's did.
+// implementations, appended, as screen_set_blend's did. A call that takes
+// colors takes an array (its number: the listing's ARR_NAME) and reads
+// `count` of its elements from the first, each a Color (the cell's low 16
+// bits).
 enum {
     VM_SYS_PSG_PLAY,              // sound id -> psg_play(id)
     VM_SYS_PSG_MUSIC_PLAY,        // song index (VmBindings.psg_songs) -> psg_music_play
@@ -214,6 +217,8 @@ enum {
                                   // (no C function: C prints numbers with text_format)
     VM_SYS_PATH_STOP,             // entity -> path_stop(entity)
     VM_SYS_SCREEN_SET_BLEND,      // top, bottom, top_weight, bottom_weight -> screen_set_blend
+    VM_SYS_SPRITE_SET_COLORS,     // sprite id, index, array, count -> sprite_set_colors
+    VM_SYS_TILESET_SET_COLORS,    // index, array, count -> tileset_set_colors
     VM_SYS_COUNT
 };
 

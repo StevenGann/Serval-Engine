@@ -261,10 +261,14 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 12 | `TEXT_PRINT_NUMBER` | (see below) | col, row, value, width | |
 | 13 | `PATH_STOP` | `path_stop` | entity | |
 | 14 | `SCREEN_SET_BLEND` | `screen_set_blend` | top, bottom, top_weight, bottom_weight | |
+| 15 | `SPRITE_SET_COLORS` | `sprite_set_colors` | sprite id, index, array, count | |
+| 16 | `TILESET_SET_COLORS` | `tileset_set_colors` | index, array, count | |
 
 `text_print_number` prints the value in decimal. With a width of 1 or more it is right-aligned in that many columns, spaces in front, so a number that got shorter (10, then 9) leaves nothing behind; a number wider than the width prints in full. A width of 0 or less prints just the digits. Calls take at most 4 arguments.
 
-The page has no calls yet for API the engine declares but doesn't implement (tracker music, `music_*`, and sampled sound, `sfx_*`, in [audio.md](audio.md); palette writes): each arrives appended, with its feature's implementation, as `SCREEN_SET_BLEND` did with alpha blending's, and as do calls for API added later. Runtime sprite tiles (`sprite_set_tiles()`, implemented) have none: a script can't hold tile data. Meanwhile the Lua subset keeps scripts from declaring their names ([lua.md](lua.md#planned-functions)), and every other C function's ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
+The palette calls take their colors from an array (its number: `ARR_NAME` in a listing): the first `count` elements, read at the call, each element's low 16 bits a `Color`; the C function gets them as its `colors`, so the array may change right after. An array the blob doesn't have, or a count that is negative, past the array's length or past 256 (more than any call can write), warns (once per kind) and makes no call; the arguments are popped as usual. The C function checks the rest (a sprite that isn't loaded, colors past its group's palettes or past background color 239) and warns as it does for C.
+
+The page has no calls yet for API the engine declares but doesn't implement (tracker music, `music_*`, and sampled sound, `sfx_*`, in [audio.md](audio.md)): each arrives appended, with its feature's implementation, as `SCREEN_SET_BLEND` did with alpha blending's and `SPRITE_SET_COLORS` and `TILESET_SET_COLORS` with palette writes', and as do calls for API added later. Runtime sprite tiles (`sprite_set_tiles()`, implemented) have none: a script can't hold tile data. Meanwhile the Lua subset keeps scripts from declaring their names ([lua.md](lua.md#planned-functions)), and every other C function's ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
 
 Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.psg_songs = ..., .psg_song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0). `vm_load` and `vm_unload` keep the bindings.
 

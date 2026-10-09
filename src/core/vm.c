@@ -2,8 +2,8 @@
 // blob loader, the interpreter, the scheduler (contexts, waits, behaviours and
 // reactions, the event queue) and the bridge to entities and engine calls.
 // Portable: the engine calls only the GBA build has (sound, music, text,
-// buttons, brightness, blending) go through serval_vm_platform_call
-// (vm_internal.h).
+// buttons, brightness, blending, palette writes) go through
+// serval_vm_platform_call (vm_internal.h).
 //
 // vm_step() runs, in this order: the resume pass, Animation End (queued for
 // animations finished since the last check), a drain of the event queue, the
@@ -75,6 +75,10 @@ typedef struct {
 SERVAL_EWRAM_BSS static Context contexts[VM_CONTEXTS];
 SERVAL_EWRAM_BSS static s32 globals[VM_GLOBALS];
 SERVAL_EWRAM_BSS static s32 array_cells[VM_ARRAY_CELLS]; // the RAM arrays' pool
+// The colors a SYS sprite_set_colors or tileset_set_colors reads from its
+// array: at most a whole palette RAM's (16 banks of 16).
+#define SYS_MAX_COLORS 256
+SERVAL_EWRAM_BSS static Color sys_colors[SYS_MAX_COLORS];
 SERVAL_EWRAM_BSS static QueuedEvent queue[VM_EVENT_QUEUE];
 // How many Create events in the queue are for an entity in each slot (any
 // generation): create_queued() looks through the queue only for a slot that
@@ -153,6 +157,8 @@ enum {
     WARN_SYS,
     WARN_SONG,
     WARN_PATH,
+    WARN_COLORS_ARRAY,
+    WARN_COLORS_COUNT,
     WARN_STRING,
     WARN_NO_CONTEXT,
     WARN_QUEUE_FULL,
@@ -676,10 +682,36 @@ static s32 array_get(const u8* record, u32 i) {
 // result. A call appended to vm.h without an entry here would silently take no
 // arguments.
 #define SYS_MAX_ARGS 4
-static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4};
-_Static_assert(VM_SYS_COUNT == 15, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3};
+_Static_assert(VM_SYS_COUNT == 17, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 #define SYS_RETURNS                                                                                \
     (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
+
+// The colors SYS sprite_set_colors and tileset_set_colors pass: `count`
+// elements of array n from the first, into sys_colors. NULL (warning) if
+// there is no array n, or count is negative, past the array's length or past
+// SYS_MAX_COLORS; the call is skipped then.
+static const Color* colors_from_array(u32 fn, s32 n, s32 count) {
+    const char* name = fn == VM_SYS_SPRITE_SET_COLORS ? "sprite_set_colors" : "tileset_set_colors";
+    (void)name; // only in warnings
+    if (n < 0 || (u32)n >= array_count) {
+        WARN_ONCE(WARN_COLORS_ARRAY, "vm: SYS %s: no array %d (the blob has %u); nothing changes",
+                  name, (int)n, array_count);
+        return NULL;
+    }
+    const u8* record = blob + array_table + (u32)n * VM_ARRAY_RECORD_SIZE;
+    u32 length = le16(record);
+    if (count < 0 || (u32)count > length || count > SYS_MAX_COLORS) {
+        WARN_ONCE(WARN_COLORS_COUNT,
+                  "vm: SYS %s: %d colors, but array %d has %u elements (and a call writes at "
+                  "most %d); nothing changes",
+                  name, (int)count, (int)n, length, SYS_MAX_COLORS);
+        return NULL;
+    }
+    for (u32 i = 0; i < (u32)count; i++)
+        sys_colors[i] = (Color)array_get(record, i);
+    return sys_colors;
+}
 
 static s32 sys_call(u32 fn, const s32* args) {
     switch (fn) {
@@ -725,6 +757,12 @@ static s32 sys_call(u32 fn, const s32* args) {
     case VM_SYS_TEXT_PRINT: {
         const char* s = string_at(args[2]);
         return s ? serval_vm_platform_call(fn, args, s) : 0;
+    }
+    case VM_SYS_SPRITE_SET_COLORS:
+    case VM_SYS_TILESET_SET_COLORS: {
+        u32 at = fn == VM_SYS_SPRITE_SET_COLORS ? 2 : 1; // the array, then the count
+        const Color* colors = colors_from_array(fn, args[at], args[at + 1]);
+        return colors ? serval_vm_platform_call(fn, args, colors) : 0;
     }
     default:
         return serval_vm_platform_call(fn, args, NULL);

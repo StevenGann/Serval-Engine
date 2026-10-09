@@ -71,6 +71,9 @@ SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC
              "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "SCREEN_SET_BRIGHTNESS": 1, "PATH_START": 3,
              "TEXT_PRINT_NUMBER": 4, "PATH_STOP": 1,
              "SCREEN_SET_BLEND": 4}  # TEXT_PRINT: col, row, then its text
+# The palette calls: the arguments compared (not the array's number: Lua
+# passes the table), by position, then the colors the VM read from it.
+COLOR_ARGS = {"SPRITE_SET_COLORS": (0, 1, 3), "TILESET_SET_COLORS": (0, 2)}
 
 
 class DiffError(Exception):
@@ -295,6 +298,11 @@ def read_vm(program, output):
         elif head == "call":
             words = rest.split(" ", 5)
             name = VM.sys_names[int(words[0])]
+            if name in COLOR_ARGS:
+                numbers = [int(w) for w in rest.split()[1:]]
+                args = tuple(numbers[k] for k in COLOR_ARGS[name]) + tuple(numbers[4:])
+                r.calls[frame].append((name,) + args)
+                continue
             args = tuple(int(w) for w in words[1:1 + SYS_ARITY[name]])
             if name == "TEXT_PRINT":
                 args += (words[5][1:-1],)

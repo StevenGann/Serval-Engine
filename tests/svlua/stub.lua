@@ -294,6 +294,7 @@ env.none = none
 
 function env.C_GAME(n) return 1 << (16 + n) end
 function env.BODY_GRAVITY(n) return n - 16 end
+function env.COLOR_RGB(r, g, b) return (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) end
 
 function env.object(t)
   local o = {}
@@ -349,6 +350,19 @@ function env.psg_music_resume() call("PSG_MUSIC_RESUME") end
 function env.screen_set_brightness(level) call("SCREEN_SET_BRIGHTNESS", level) end
 function env.screen_set_blend(top, bottom, top_weight, bottom_weight)
   call("SCREEN_SET_BLEND", top, bottom, top_weight, bottom_weight)
+end
+-- The palette calls: their arguments but the array, then the colors read
+-- from it, each its low 16 bits (a Color).
+local function colors_of(array, count)
+  local colors = {}
+  for k = 1, count do colors[k] = array[k] & 0xFFFF end
+  return table.unpack(colors)
+end
+function env.sprite_set_colors(id, index, array, count)
+  call("SPRITE_SET_COLORS", id, index, count, colors_of(array, count))
+end
+function env.tileset_set_colors(index, array, count)
+  call("TILESET_SET_COLORS", index, count, colors_of(array, count))
 end
 function env.camera_set(x, y) end
 function env.path_start(e, path, flags) end

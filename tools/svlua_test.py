@@ -464,6 +464,27 @@ REJECTED = {
                             3, 39, r"other\.path_speed: path_ is reserved for engine properties"),
     "reserved_field_parameter": (OBJ + "function tint(e) e.spr_palette = 2 end", 3, 18,
                                  r"e\.spr_palette: spr_ is reserved for engine properties"),
+    # The palette calls' colors: an array of integers, by its name; and
+    # COLOR_RGB(r, g, b), constants of 8 bits
+    "colors_not_an_array": (OBJ + "function A:step() local c = 3; tileset_set_colors(1, c, 1) "
+                            "end", 3, 54, r"^tileset_set_colors's second argument is an array, "
+                            r"by its name, and this is an integer$"),
+    "colors_of_fixed_values": ("f = { 1.5, 2.5 }\n" + OBJ + "function A:step() "
+                               "sprite_set_colors(0, 1, f, 2) end", 4, 43,
+                               r"^sprite_set_colors reads colors, which are integers, and f "
+                               r"holds fixed values$"),
+    "colors_array_later_fixed": ("a = array(2)\n" + OBJ + "function A:step() "
+                                 "tileset_set_colors(1, a, 1); a[1] = 1.5 end", 4, 55,
+                                 r"^a's elements is an integer"),
+    "colors_function_declared": ("function tileset_set_colors() end", 1, 10,
+                                 r"^tileset_set_colors is an engine function; a script can't "
+                                 r"redefine it$"),
+    "color_rgb_range": ("c = { COLOR_RGB(256, 0, 0) }", 1, 17,
+                        r"^COLOR_RGB\(r, g, b\) takes constants from 0 to 255: a color's red, "
+                        r"green and blue, 8 bits each \(screen\.h\)$"),
+    "color_rgb_variable": (OBJ + "function A:step() local r = 8; local c = COLOR_RGB(r, 0, 0) "
+                           "end", 3, 52, r"^COLOR_RGB\(r, g, b\) takes constants"),
+    "color_rgb_arity": ("c = { COLOR_RGB(1, 2) }", 1, 7, r"^COLOR_RGB takes 3 arguments, not 2$"),
     # Top-level names of the engine's planned functions, and their uses (each
     # planned in this version: implementing one moves its case to the C
     # functions' below, or the builtins')
@@ -773,8 +794,8 @@ end""")
         self.assert_error(OBJ + "function A:step() local n = 0; n = self.body_max_fall end",
                           r"n is an integer .*, and this is fixed")
         self.assert_error(OBJ + "function A:step() local g = GRAVITY(2) end",
-                          r"constants aren't functions\n  hint: C_GAME\(n\) and BODY_GRAVITY\(n\) "
-                          r"are the macros a script can call")
+                          r"constants aren't functions\n  hint: C_GAME\(n\), BODY_GRAVITY\(n\) and "
+                          r"COLOR_RGB\(r, g, b\) are the macros a script can call")
 
     def test_objects_compare(self):
         """An entity's object compares with an object's name, or with
@@ -1477,7 +1498,8 @@ PROPS = ("X", "Y", "VX", "VY", "SPR", "FRAME", "FLAGS", "ANGLE", "DEPTH", "SCALE
          "BODY_H", "TAGS", "ANIM_TIME", "ANIM_STEP", "BODY_BOUNCE", "BODY_FRICTION",
          "BODY_MAX_FALL", "BODY_GRAVITY", "BODY_CONTACT")
 FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
-SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4)  # vm.md's SYS page
+SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3)  # vm.md's SYS page
+COLOR_CALLS = ("SPRITE_SET_COLORS", "TILESET_SET_COLORS")  # their colors follow the arguments
 
 
 class VmRun:
@@ -1486,7 +1508,8 @@ class VmRun:
     entities by handle ({"object": its listing name, "X": ..., and each
     instance field by its Lua name}), all as at the last printed frame;
     `states` has every printed frame's. calls: each engine call the
-    platform made, (frame, SYS name, its arguments..., TEXT_PRINT's text).
+    platform made, (frame, SYS name, its arguments..., TEXT_PRINT's text or a
+    palette call's colors as a tuple).
     log: what the engine logged (warnings, TRACE)."""
 
     def __init__(self, compiled, assembled, output, log):
@@ -1506,7 +1529,9 @@ class VmRun:
                 words = rest.split(" ", 5)
                 fn, args = int(words[0]), [int(w) for w in words[1:5]]
                 call = (frame, VM.sys_names[fn], *args[:SYS_ARITY[fn]])
-                if len(words) > 5:
+                if VM.sys_names[fn] in COLOR_CALLS:
+                    call += (tuple(int(w) for w in words[5].split()) if len(words) > 5 else (),)
+                elif len(words) > 5:
                     call += (words[5][1:-1],)
                 self.calls.append(call)
             elif head == "warnings":
@@ -2229,6 +2254,33 @@ function Hero:destroy() gone = gone + 1 end"""
                          [0, 100, 200, 301, 301, 301])
         self.assertEqual(vm.globals["GONE"], 1)
         self.assertEqual(vm.entities, {})
+
+    def test_palette_calls_pass_their_arrays_colors(self):
+        """sprite_set_colors and tileset_set_colors (vm.md's SYS page): the
+        arguments in order, the array by its number, and the colors of its
+        first `count` elements, ROM or RAM, each its low 16 bits; COLOR_RGB
+        makes C's color."""
+        script = OBJ + """water = { COLOR_RGB(0, 0, 255), COLOR_RGB(0, 132, 255), 0x7FFF }
+cycle = array(4)
+function A:room_start()
+  for t = 0, 2 do
+    for i = 1, 3 do cycle[i] = water[(i + t) % 3 + 1] end
+    cycle[4] = -1
+    tileset_set_colors(17, cycle, 4)
+    wait(1)
+  end
+  sprite_set_colors(3, 2, water, #water)
+  sprite_set_colors(4, 0, water, 0)
+end"""
+        vm = run_vm(script, frames=4, start=["A"])
+        blue, light, white = 0x7C00, 0x7E00, 0x7FFF
+        self.assertEqual(vm.calls_of("TILESET_SET_COLORS"),
+                         [(17, 1, 4, (light, white, blue, 0xFFFF)),
+                          (17, 1, 4, (white, blue, light, 0xFFFF)),
+                          (17, 1, 4, (blue, light, white, 0xFFFF))])
+        self.assertEqual(vm.calls_of("SPRITE_SET_COLORS"),
+                         [(3, 2, 0, 3, (blue, light, white)), (4, 0, 0, 0, ())])
+        self.assertEqual([c[0] for c in vm.calls], [1, 2, 3, 4, 4])
 
 
 class Tool(unittest.TestCase):
