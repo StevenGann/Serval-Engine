@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`); palette writes through a shadow palette ([Palettes](#palettes)). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups and LZ77-compressed sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
+**Status:** implemented: resident and streamed, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`); palette writes through a shadow palette ([Palettes](#palettes)). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: LZ77-compressed sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes, which the engine doesn't use) with 16 OBJ palette banks of 16 colors.
 
@@ -13,18 +13,26 @@ Set per group, in `SpriteGroup.flags`; a sprite has no residency of its own (bit
 | Mode | Flag | Status | How it works | Best for | Compression |
 | --- | --- | --- | --- | --- | --- |
 | Resident | `SPRITE_GROUP_RESIDENT` (0, the default) | Implemented | `sprite_group_load()` copies all frames to VRAM | Small enemies, pickups, HUD | LZ77 (*planned*, [below](#lz77-compression)) |
-| Streamed | `SPRITE_GROUP_STREAMED` | *Planned*: `sprite_group_load()` refuses it (*warns*) | Frames stay in ROM; the group's `.slots` hold the frames on screen, copied in VBlank | Large, heavily animated characters | Uncompressed only |
+| Streamed | `SPRITE_GROUP_STREAMED` | Implemented | Frames stay in ROM; the group's `.slots` hold the frames on screen, copied in VBlank | Large, heavily animated characters | Uncompressed only |
 
-**Streamed groups (planned design).** A streamed group is a frame cache, so drawing needs no instance API and stays immediate-mode:
+**Streamed groups.** A streamed group is a frame cache, so drawing needs no instance API and stays immediate-mode:
 
-- Each distinct frame drawn in a frame, a (sprite, frame number) pair, takes one of the group's `slots` (`SpriteGroup.slots`; 0 means 1). A frame already in a slot costs nothing more; a new one is copied from ROM to its slot in VBlank by `frame_end()`, in the same VBlank as the OAM, so it shows on time. Two entities on the same frame share a slot.
-- Each slot is the size of the group's largest frame. The slots are taken from the top of OBJ VRAM when the group loads (below) and freed with the group (marks, `sprite_groups_reset()`).
-- Drawing is unchanged: `sprite_draw*()`, `sys_render`, `sys_render_by_depth`, metasprite pieces and `sys_animate` work as with resident sprites. Frames past the slots in one frame are not drawn: counted in `sprite_stats().dropped`, *warns*.
-- Cost: each new frame is a copy in VBlank, about 64 cycles per tile, so a few new frames per frame fit. Big, many-framed art (a boss, a character with dozens of frames) then costs VRAM for the frames on screen, not all of them.
-- The resident fast path doesn't pay for it: a streamed sprite's draw record will have no frames of its own, as a metasprite's has, so the drawing path's existing "frame out of range" test sends it out of line.
-- Not combined with `SPRITE_ASSET_LZ77` (refused: streaming copies straight from ROM) or `sprite_set_tiles()` (ignored).
+- Each distinct frame drawn in a frame, a (sprite, frame number) pair, takes one of the group's `slots` (`SpriteGroup.slots`; 0 means 1). A frame still in a slot from an earlier frame costs no copy; a new one goes to the slot drawn from least recently (not one drawn from this frame) and is copied from ROM to it in VBlank by `frame_end()`, right after the OAM that shows it ([frame-loop.md](frame-loop.md#vblank-flush), step 2), so it shows on time. Two entities on the same frame share a slot.
+- Only a draw that is shown takes a slot: one off screen, hidden (`SPRITE_HIDDEN`) or past the 128th hardware sprite takes none, so it can't push out a frame that is on screen.
+- Each slot is the size of the group's largest frame (its size's tiles; `tiles_per_frame` padding stays in ROM). The slots are taken from the top of OBJ VRAM when the group loads, below the slots of the streamed groups loaded before it, and freed with the group (marks, `sprite_groups_reset()`, [below](#vram-allocation)); loading copies only the group's palettes, which take banks as a resident group's do.
+- Drawing is unchanged: `sprite_draw*()` with every flag, `sys_render`, `sys_render_by_depth`, metasprite pieces and `sys_animate` work as with resident sprites. A metasprite can be in a streamed group: it takes no slot, as it takes no VRAM in a resident one, and its pieces each take a slot when they show a streamed sprite's frame.
+- **Frames past the slots** in one frame are not drawn: counted in `sprite_stats().dropped`, *warns* (once until `sprite_groups_reset()`). They take no slot from the frames drawn, so the next frame finds those still cached.
+- **Limits:** at most 256 slots in all the streamed groups loaded at once (`sprite_group_load()` refuses past that, *warns*): at most 128 frames can show in a frame (one per hardware sprite), and the rest of the slots keep frames for later frames. A group with slots holds an ordinary sprite, which needs a palette, so the 16 palette banks bound how many such groups load at once.
+- Not combined with `SPRITE_ASSET_LZ77` (refused, *warns*: streaming copies straight from ROM) or `sprite_set_tiles()` (ignored, *warns*: a streamed sprite's frames have no VRAM of their own).
 
-Until it is implemented, `sprite_group_load()` refuses a group with `SPRITE_GROUP_STREAMED` (returns false, *warns*), and refuses a resident group whose `slots` is not 0.
+**What streaming costs.** Big, many-framed art (a boss, a character with dozens of frames) costs VRAM for the frames on screen, not all of them, and pays for it in time:
+
+- **VBlank:** each new frame is a copy from ROM, about 56 cycles per tile: about 3,550 cycles for a 64x64 frame (64 tiles), 900 for 32x32, 225 for 16x16; eight new 64x64 frames (512 tiles) about 27,850 (`tests/rom/sprite_stream_tests.c`, `streaming_costs_are_logged`, which logs them; net of its timer reads). A frame with nothing new costs the step about 70 cycles. **Budget:** VBlank lasts 83,776 cycles, shared in order with the OAM (about 810), the other copies and the map rows and columns (about 4,000 for a scrolling playfield, 22,600 for a full redraw of three layers, [tilemaps.md](tilemaps.md#streaming)), so about 75,000 cycles, some 1,300 tiles, are left in a scrolling frame: up to about 20 new 64x64 frames, 80 of 32x32. Copies that run past VBlank show half-copied frames at the top of the screen for that frame. Keep to a few new frames per frame: a 64x64 boss and a 32x32 player each changing frame every frame cost about 4,500 cycles, 5% of VBlank. The VBlank copies are not in `frame_cpu_cycles()`, which stops counting at the wait.
+- **Drawing:** a streamed draw runs out of line, from ROM: about 870 cycles for a frame in its slot (a resident `sprite_draw()` costs about 190), about 1,270 for a new one; finding a frame among the group's slots is a pass over them, the slot of the group's last draw tried first. Draw a streamed character as a few big pieces rather than many small ones.
+- **Memory:** 3,284 bytes of EWRAM in every game that draws sprites (the slots' frames and draw times, the queued copies, 16 group records); 24 bytes of IWRAM (120-128 in Debug builds), the hook in the transformed drawing path. Its code runs from ROM.
+- **The resident fast path doesn't pay for it:** a streamed sprite's draw record has no frames of its own, as a metasprite's has, but has tiles, so the drawing path's existing "frame out of range" test sends it out of line, and the rejection path, in ROM, draws it from its group's slots. The draw goes through the usual paths as a sprite with one frame and takes its slot only if it took a hardware sprite. Bunnymark measured the same before and after (avg 73,488 cycles, peak 77,623), and so did the render cost test (88 sprites: `sys_render` 17,018).
+
+`sprite_group_load()` refuses a resident group whose `slots` is not 0.
 
 ## VRAM allocation
 
@@ -32,7 +40,7 @@ Tiles are bump-allocated from tile 0 in load order, and each group's palettes ta
 
 ```
 OBJ VRAM tile 0 ─────────────────────────────────────────── tile 1023
-[ groups every room uses | mark | room groups →     ← streamed slots (planned) ]
+[ groups every room uses | mark | room groups →           ← streamed groups' slots ]
 ```
 
 ### Marks
@@ -142,8 +150,8 @@ typedef struct {
     const u16 *sprite_ids;    // sprite table indices of the group's sprites; NULL: 0..sprite_count-1
     const u16 *palettes;      // palette_count banks of 16 colors, color 0 transparent
     u8  sprite_count, palette_count;
-    u8  flags;                // 0 (SPRITE_GROUP_RESIDENT); SPRITE_GROUP_STREAMED (planned)
-    u8  slots;                // streamed groups (planned): frames on screen at once; else 0
+    u8  flags;                // 0 (SPRITE_GROUP_RESIDENT); SPRITE_GROUP_STREAMED
+    u8  slots;                // streamed groups: frames on screen at once; else 0
 } SpriteGroup;                // 12 bytes
 ```
 
@@ -190,8 +198,8 @@ typedef struct {
 | 4 | `palettes` | `palette_count` banks of 16 colors (`Color`, BGR555; color 0 transparent); required when `palette_count` is not 0 |
 | 8 | `u8 sprite_count` | Sprites in the group |
 | 9 | `u8 palette_count` | Palettes in the group; refused when more than the free banks (16 in all) |
-| 10 | `u8 flags` | Bit 0: `SPRITE_GROUP_STREAMED` (*planned*, refused until implemented). Bits 1-7 reserved, refused. 0 (`SPRITE_GROUP_RESIDENT`): resident |
-| 11 | `u8 slots` | Streamed groups (*planned*): frames on screen at once, each slot the size of the group's largest frame; 0 means 1. Must be 0 in a resident group (refused otherwise) |
+| 10 | `u8 flags` | Bit 0: `SPRITE_GROUP_STREAMED` ([Residency modes](#residency-modes)). Bits 1-7 reserved, refused. 0 (`SPRITE_GROUP_RESIDENT`): resident |
+| 11 | `u8 slots` | Streamed groups: frames on screen at once, each slot the size of the group's largest frame; 0 means 1. Must be 0 in a resident group (refused otherwise) |
 
 **Draw flags** (`u16`: the `flags` of `sprite_draw*()`, the entities' `spr_flags` in [ecs.md](ecs.md), and, the subset above, `SpritePiece.flags`). Every bit has an owner:
 
@@ -211,7 +219,7 @@ Format changes before 1.0: `order_length` and `frame_order` were added for anima
 
 **Sprite IDs** are indices into a project-wide sprite table (`const SpriteAsset *const table[]`) emitted by the build. IDs rather than pointers keep the sprite component compact and keep addresses out of bytecode ([vm.md](vm.md)); groups list their sprites by ID for the same reason. The table and the sprites must stay valid while registered (normally const data in ROM); a group need not stay valid after it loads.
 
-The sprite component stores `(sprite_id, frame)` plus per-entity draw flags (`spr_flags`: flip, layer, palette, hidden, screen-space). The render systems resolve it to a VRAM tile index through the group's load offset (and, for streamed groups once implemented, through the frame cache's slot for that sprite and frame).
+The sprite component stores `(sprite_id, frame)` plus per-entity draw flags (`spr_flags`: flip, layer, palette, hidden, screen-space). The render systems resolve it to a VRAM tile index through the group's load offset or, for a streamed group, through the frame cache's slot for that sprite and frame.
 
 ## API
 
@@ -238,7 +246,7 @@ void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRIT
 void sprite_set_colors(u16 sprite_id, u32 index, const Color *colors, u32 count);
 ```
 
-Planned constants: `SPRITE_GROUP_STREAMED`, `SPRITE_ASSET_LZ77` (enumerators, so they warn at every use too).
+Planned constant: `SPRITE_ASSET_LZ77` (an enumerator, so it warns at every use too).
 
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
@@ -264,7 +272,7 @@ Ordinary sprites pay nothing measurable for it in `sys_render_by_depth` and bunn
 
 `sys_animate()` ([ecs.md](ecs.md)) plays them for entities with `C_SPR | C_ANIM`: `spr_anim_time` counts the display frames the current `spr_frame` has shown, and when it reaches the frame's time, `spr_frame` advances and the count restarts. Switching animation (say from run to jump) is a different sprite ID: set `spr_id`, `spr_frame = 0` and `spr_anim_time = 0`. A frame the sprite doesn't have (a forgotten `spr_frame = 0`) restarts the animation, with a warning in debug builds. For a sprite with a sequence, `spr_anim_step` is where the animation is (the step; with `SPRITE_ASSET_ANIM_ONCE`, `spr_anim_step == order_length − 1` means it is over), and `sys_animate` sets `spr_frame` to the step's frame every call, so `spr_frame` is always the frame drawn and the render systems don't need to know about sequences. Start one with `spr_anim_step = 0` and `spr_anim_time = 0` (any step can be a starting point, e.g. to put pieces out of phase); a step past the end restarts it (*warns*), and an entry naming a frame the sprite doesn't have shows frame 0 (*warns*). Flips: the step's flips are XORed with the game's own in `spr_flags`, so a sprite the game faces left still spins; `sys_animate` records the flips it applied in `SPRITE_ANIM_FLIP_H`/`_V` (bits 5-6, which drawing ignores) and swaps them for the next step's. A game that assigns `spr_flags` whole, toggles a flip with `^=`, or doesn't touch flips gets the right result; setting or clearing a flip bit with `|=`/`&= ~` while the step has that flip applied inverts it until the next assignment. Sequences cost about twice as much per entity as plain animations (out-of-line path); sprites without one pay about 3 cycles each for the check (128 animated entities: 26,112 → 26,548 cycles per `sys_animate` call; with sequences about 49,000).
 
-Animation is independent of VRAM residency: all frames of a resident sprite are in VRAM already, so stepping frames costs nothing but the frame index. (A streamed sprite's new frame, once streaming is implemented, is copied when first drawn.)
+Animation is independent of VRAM residency: all frames of a resident sprite are in VRAM already, so stepping frames costs nothing but the frame index. A streamed sprite's frame is copied in VBlank when it is drawn and not in a slot already ([Residency modes](#residency-modes)); a group with as many slots as an animation's frames copies each frame once, then plays from VRAM.
 
 **Screen-space entities:** `SPRITE_SCREEN` (bit 15 of `spr_flags`) makes the render systems ignore the camera for that entity: its position is a screen position. In a vertical shooter the ship, enemies and bullets stay on the screen while the camera scrolls the map (and the turrets on it, which stay world-space); a HUD icon can be an entity too. Collision between entities follows it: `body_overlap()` and `body_hit_side()` (`physics.h`), and so `vm_collide()`, add the camera to a screen-space entity's position when they compare it with a world one, so the ship's shots hit the turrets. `sprite_draw` ignores the flag (it always takes screen coordinates). It costs nothing measurable: the camera is loaded only for world-space entities, so one test replaces two loads (bunnymark: +5 cycles for 128 sprites).
 
@@ -274,8 +282,8 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank); palette writes through a shadow palette (`sprite_set_colors()`).
+Resident and streamed, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order, streamed groups' slots from the top of sprite VRAM down, and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank); palette writes through a shadow palette (`sprite_set_colors()`).
 
-**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused).
+**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused).
 
 **After 1.0, no API:** palette sharing with reference counting, VRAM defragmentation, loading in forced blank, and the draw flags reserved in bits 13-14 (mosaic, the object window).

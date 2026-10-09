@@ -123,6 +123,7 @@ void frame_end(void) {
     last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
     oam_copy(oam_mem, serval_shadow_oam, 128);
+    serval_stream_commit();       // streaming: step 2, frames newly drawn from streamed groups
     serval_sprite_tiles_commit(); // sprite tiles: step 3, sprite_set_tiles() copies
     // palettes: step 5, the palette banks written this frame (palette.c);
     // before the map hook, which does steps 4 and 6 (docs/frame-loop.md)

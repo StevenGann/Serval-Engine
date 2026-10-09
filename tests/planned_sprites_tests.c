@@ -69,23 +69,17 @@ static void check_warnings(u32 before, u32 count) {
 }
 
 // A loader refuses data that needs a planned feature, on every attempt, and
-// loads nothing of it: the next group still lands at tile 0.
+// loads nothing of it: the next group still lands at tile 0. (Streamed
+// groups, no longer planned, are tested in tests/rom/sprite_stream_tests.c.)
 static void loads_needing_planned_features_are_refused(void) {
     static const u16 packed_ids[] = {SPR_PACKED};
     static const SpriteGroup with_packed = {
         .sprite_ids = packed_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 1};
-    static const SpriteGroup streamed = {.sprite_ids = group_ids,
-                                         .palettes = palettes,
-                                         .sprite_count = 2,
-                                         .palette_count = 2,
-                                         .flags = SPRITE_GROUP_STREAMED,
-                                         .slots = 4};
     sprite_table_set(table, SPRITE_COUNT);
     for (u32 call = 0; call < 2; call++) {
         u32 before = debug_warning_count();
         CHECK(!sprite_group_load(&with_packed));
-        CHECK(!sprite_group_load(&streamed));
-        check_warnings(before, 2);
+        check_warnings(before, 1);
     }
     CHECK(sprite_group_load(&group));
     frame_begin();

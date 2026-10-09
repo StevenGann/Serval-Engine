@@ -10,8 +10,6 @@
 
 void planned_sprites(void);
 void planned_sprites(void) {
-    static const u8 streamed = SPRITE_GROUP_STREAMED; // planned
-    static const u8 packed = SPRITE_ASSET_LZ77;       // planned
-    (void)streamed;
+    static const u8 packed = SPRITE_ASSET_LZ77; // planned
     (void)packed;
 }

@@ -20,6 +20,7 @@ extern const TestSuite gba_ecs_cost_tests;
 extern const TestSuite gba_vm_tests;
 extern const TestSuite gba_sprite_tiles_tests; // sprite tiles: runtime sprite tiles
 extern const TestSuite gba_palette_tests;      // palettes: palette writes
+extern const TestSuite gba_stream_tests;
 
 void test_output(const char* line) {
     debug_log(line);
@@ -38,6 +39,7 @@ int main(void) {
         &core_tests,
         &libc_tests,
         &sprite_tests,
+        &gba_stream_tests,
         &gba_text_tests,
         &audio_tests,
         &splash_tests,

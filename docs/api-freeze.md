@@ -49,7 +49,7 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 31 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+Each of these 30 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Each of these 31 names (37 at the freeze, less the implemented rows marked below
 | Tracker music | `music_play`, `music_stop`, `music_playing`, `music_pause`, `music_resume`, `music_paused`, `music_set_volume`, `music_set_speed` | [audio.md](audio.md#tracker-music) |
 | Sampled sound effects | `sfx_play`, `sfx_play_ex`, `sfx_stop`, `sfx_playing`, `sfx_stop_all`, `sfx_set_volume` (the handle type `Sfx` and `SFX_NONE` are ordinary declarations) | [audio.md](audio.md#sampled-sound-effects) |
 | PSG wave channel | `PSG_WAVE`, `psg_waves_set` | [audio.md](audio.md#wave-channel) |
-| Streamed sprite groups | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
+| Streamed sprite groups: **implemented**, no longer marked planned (no SYS call: it is a group's flag, in data) | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
 | Runtime sprite tiles: **implemented**, no longer marked planned (no SYS call: scripts can't hold tile data) | `sprite_set_tiles`, `SPRITE_MAX_TILE_UPDATES` | [sprites.md](sprites.md#runtime-tiles) |
 | Palette writes: **implemented**, no longer marked planned | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |

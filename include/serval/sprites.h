@@ -120,22 +120,25 @@ typedef struct {
 // set (warning in debug builds): bits 1-7 are reserved for later versions.
 #define SPRITE_GROUP_RESIDENT 0 // all frames copied to VRAM on load (the default)
 enum {
-    // Planned: a streamed group. Its sprites keep their frames in ROM, and
-    // each distinct frame drawn in a frame (sprite and frame number) takes
-    // one of the group's .slots in VRAM, copied there in VBlank by
-    // frame_end() unless it is there already, in the same VBlank as the OAM,
-    // so it shows on time. Big, many-framed art (a boss, a character with
-    // dozens of frames) then costs VRAM for the frames on screen, not for all
-    // of them. Drawing is unchanged: sprite_draw*(), the render systems,
-    // metasprite pieces and sys_animate work as with resident sprites.
-    // Frames past the slots in one frame are not drawn (counted in
-    // sprite_stats().dropped, warning in debug builds). Each new frame is a
-    // copy in VBlank (about 64 cycles per tile), so keep it to a few new
-    // frames per frame. Slots are taken from the top of sprite VRAM when the
-    // group loads and freed with it. Until implemented, sprite_group_load()
-    // refuses a group with this flag (returns false, warning in debug builds).
-    SPRITE_GROUP_STREAMED SERVAL_PLANNED(
-        "streamed sprite groups, docs/sprites.md#residency-modes") = 1 << 0,
+    // A streamed group. Its sprites keep their frames in ROM, and each
+    // distinct frame drawn in a frame (sprite and frame number) takes one of
+    // the group's .slots in VRAM: the slot holding it already, from an
+    // earlier frame, or else the slot drawn from least recently, which
+    // frame_end() fills from ROM in VBlank, in the same VBlank as the OAM, so
+    // it shows on time. Big, many-framed art (a boss, a character with dozens
+    // of frames) then costs VRAM for the frames on screen, not for all of
+    // them. Drawing is unchanged: sprite_draw*(), the render systems,
+    // metasprite pieces and sys_animate work as with resident sprites (a
+    // metasprite in the group takes no slot; its pieces' sprites do, if
+    // they are streamed). A draw takes a slot only if it is shown: not off
+    // screen, hidden or past the 128th hardware sprite. Frames past the slots
+    // in one frame are not drawn (counted in sprite_stats().dropped, warning
+    // in debug builds). Each new frame is a copy in VBlank (about 56 cycles
+    // per tile: a 64x64 frame about 3,550), so keep it to a few new frames
+    // per frame. Slots are taken from the top of sprite VRAM when the group
+    // loads and freed with it. Not with SPRITE_ASSET_LZ77 (refused) or
+    // sprite_set_tiles() (ignored).
+    SPRITE_GROUP_STREAMED = 1 << 0,
 };
 
 // Sprites loaded and unloaded together, with the palettes they share.
@@ -146,8 +149,8 @@ typedef struct {
     u8 sprite_count;
     u8 palette_count;
     u8 flags; // SPRITE_GROUP_* (0: resident)
-    u8 slots; // SPRITE_GROUP_STREAMED (planned): how many distinct frames of its sprites
-              // can be on screen at once, each slot the size of the group's largest frame;
+    u8 slots; // SPRITE_GROUP_STREAMED: how many distinct frames of its sprites can be
+              // on screen at once, each slot the size of the group's largest frame;
               // 0 means 1. Must be 0 in a resident group (refused otherwise, warns)
 } SpriteGroup;
 
@@ -237,7 +240,9 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count);
 
 // Copies a group's tiles and palettes to VRAM so its sprites can be drawn,
 // after the groups loaded before it: tiles in sprite VRAM (1024 tiles of 4bpp
-// 8x8) and each of its palettes in the next free sprite palette bank (16).
+// 8x8) and each of its palettes in the next free sprite palette bank (16). A
+// streamed group (SPRITE_GROUP_STREAMED) copies its palettes and takes its
+// slots from the top of sprite VRAM; its frames are copied when drawn.
 // Copies at once, so load while changing rooms (e.g. while the screen is
 // faded out): a sprite drawn this frame from tiles being replaced may tear
 // for a frame. The group itself need not stay valid afterwards; the sprite
@@ -245,14 +250,16 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count);
 // same group loaded twice) is drawn from the newest copy.
 //
 // Returns false, leaving nothing loaded from this group (warning in debug
-// builds), if sprite VRAM or palette banks would run out, its data is
-// incomplete (a sprite ID not in the sprite table, a NULL or invalid .tiles,
-// .pieces or .palettes, no .size, a tiles_per_frame smaller than the size
-// needs, a palette_slot past palette_count, a metasprite piece naming a
-// missing sprite or frame), it has a value this version doesn't know (a
-// .size past 12, a reserved bit in SpriteGroup.flags, SpriteAsset.flags or a
-// piece's flags; nonzero .slots in a resident group), or it needs a planned
-// feature (SPRITE_GROUP_STREAMED, SPRITE_ASSET_LZ77).
+// builds), if sprite VRAM or palette banks would run out (or the slots of the
+// streamed groups loaded at once would pass 256), its data is incomplete (a
+// sprite ID not in the sprite table, a NULL or invalid .tiles, .pieces or
+// .palettes, no .size, a tiles_per_frame smaller than the size needs, a
+// palette_slot past palette_count, a metasprite piece naming a missing sprite
+// or frame), it has a value this version doesn't know (a .size past 12, a
+// reserved bit in SpriteGroup.flags, SpriteAsset.flags or a piece's flags;
+// nonzero .slots in a resident group), it is a streamed group holding a
+// SPRITE_ASSET_LZ77 sprite, or it needs a planned feature
+// (SPRITE_ASSET_LZ77).
 bool sprite_group_load(const SpriteGroup* group);
 
 // Unloads every sprite group, freeing all sprite VRAM and palette banks, and
@@ -338,7 +345,8 @@ void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle, FIXED scal
 typedef struct {
     u16 drawn;         // hardware sprites used, of 128
     u16 matrices;      // rotation/scale matrices used, of 32
-    u16 dropped;       // draws not shown because all 128 hardware sprites were used
+    u16 dropped;       // draws not shown because all 128 hardware sprites were used, or
+                       // all the slots of their streamed group (SPRITE_GROUP_STREAMED)
     u16 untransformed; // rotated or scaled draws shown plain: all 32 matrices were used
     // With sprite_stats_scanlines(true), else 0:
     u16 cut_short;    // sprites missing from a scanline whose sprite time ran out

@@ -14,8 +14,9 @@
 // Resident sprite groups (docs/sprites.md). Tiles are bump-allocated in OBJ
 // VRAM and palettes in OBJ palette banks, in load order;
 // sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
-// the start. Planned (declared in sprites.h, stubs or refusals here):
-// streamed groups and LZ77 sprites. Palette sharing comes after 1.0.
+// the start. Streamed groups load and draw here too, from slots at the top of
+// OBJ VRAM that sprite_stream.c keeps. Planned (declared in sprites.h, stubs
+// or refusals here): LZ77 sprites. Palette sharing comes after 1.0.
 // Runtime tiles (sprite_set_tiles) are in sprite_tiles.c.
 // palettes: palette writes, sprite_set_colors(), are in palette.c.
 
@@ -59,6 +60,12 @@ typedef struct {
 } SpriteDraw;
 
 static EWRAM_BSS SpriteDraw sprite_draws[SPRITE_MAX];
+
+// streaming: a sprite of a streamed group has a draw record with no frames of
+// its own (frame_count 0, so the usual path rejects it, as a metasprite) but
+// with tiles (tiles_per_frame), and the group's index in sprite_stream.c in
+// attr2's tile bits: each draw puts its slot's tile there instead.
+#define STREAMED(d) ((d)->frame_count == 0 && (d)->tiles_per_frame != 0)
 
 #ifdef SERVAL_DEBUG
 // Each problem is reported once per sprite ID, not every frame. IDs past
@@ -182,6 +189,7 @@ void sprite_groups_reset(void) {
     top_segment = 0;
     segments[0] = (Segment){.mark = ++last_mark};
     serval_sprite_tiles_reset(); // sprite tiles: drop every queued copy
+    serval_stream_reset();       // streaming: and the slots of streamed groups
 #ifdef SERVAL_DEBUG
     memset32(warned_ids, 0, sizeof(warned_ids) / 4);
     warned_oam_full = false;
@@ -226,6 +234,7 @@ void sprite_groups_release(u32 mark) {
     }
     next_tile = segments[k].first_tile;
     next_palette_bank = segments[k].first_palette;
+    serval_stream_release(k); // streaming: the streamed groups' slots too
     segments[k].loaded = false;
     top_segment = k;
     serval_sprite_tiles_release(next_tile); // sprite tiles: drop the unloaded sprites' copies
@@ -288,17 +297,14 @@ static int group_tiles(const SpriteGroup* group) {
     // Planned features first, so their warning names them; then any bit or
     // value this version doesn't know (docs/releases.md: loaders refuse them,
     // so that giving them a meaning later breaks no game).
-    if (group->flags & SPRITE_GROUP_STREAMED) {
-        SERVAL_WARN("sprite_group_load: SPRITE_GROUP_STREAMED is planned, not implemented in this "
-                    "engine version; not loaded");
-        return -1;
-    }
-    if (group->flags) {
+    // streaming: SPRITE_GROUP_STREAMED is the group's one flag, .slots its field
+    bool streamed = group->flags & SPRITE_GROUP_STREAMED;
+    if (group->flags & ~SPRITE_GROUP_STREAMED) {
         SERVAL_WARN("sprite_group_load: the group's flags 0x%x hold reserved bits; not loaded",
                     group->flags);
         return -1;
     }
-    if (group->slots) {
+    if (group->slots && !streamed) {
         SERVAL_WARN("sprite_group_load: .slots is %u, but only a streamed group has slots; not "
                     "loaded",
                     group->slots);
@@ -315,6 +321,7 @@ static int group_tiles(const SpriteGroup* group) {
         return -1;
     }
     u32 tiles = 0;
+    u32 largest = 0; // streaming: tiles of the largest frame, a streamed group's slot size
     for (u32 i = 0; i < group->sprite_count; i++) {
         u32 id = group_sprite_id(group, i);
         if (id >= serval_sprite_count) {
@@ -325,6 +332,13 @@ static int group_tiles(const SpriteGroup* group) {
         const SpriteAsset* sprite = serval_sprite_table[id];
         if (!serval_plausible_pointer(sprite)) {
             SERVAL_WARN("sprite_group_load: sprite table entry %u is NULL or not a valid pointer",
+                        id);
+            return -1;
+        }
+        // streaming: streamed frames are copied straight from ROM, never unpacked
+        if (streamed && (sprite->flags & SPRITE_ASSET_LZ77)) {
+            SERVAL_WARN("sprite_group_load: sprite %u: SPRITE_ASSET_LZ77 in a streamed group, "
+                        "whose frames are copied straight from ROM; not loaded",
                         id);
             return -1;
         }
@@ -372,17 +386,62 @@ static int group_tiles(const SpriteGroup* group) {
             return -1;
         }
         tiles += frames_of(sprite) * tiles_per_frame_of(sprite);
+        largest = hardware_tiles > largest ? hardware_tiles : largest; // streaming
     }
+    // streaming: a streamed group takes its slots (0 means 1), not its frames
+    if (streamed)
+        return (int)((group->slots ? group->slots : 1u) * largest);
     return (int)tiles;
+}
+
+// streaming: loads a streamed group that group_tiles() has checked, with
+// `tiles` tiles of slots: its palettes as a resident group's, and draw records
+// with no frames of their own (STREAMED), whose frames are drawn from the
+// slots (draw_streamed). A group of metasprites only needs no slots.
+static bool load_streamed(const SpriteGroup* group, u32 tiles) {
+    u32 slots = group->slots ? group->slots : 1;
+    int stream = 0;
+    if (tiles) {
+        stream = serval_stream_add(slots, tiles / slots, top_segment);
+        if (stream < 0)
+            return false;
+    }
+    for (u32 i = 0; i < group->sprite_count; i++) {
+        u32 id = group_sprite_id(group, i);
+        const SpriteAsset* sprite = serval_sprite_table[id];
+        SpriteDraw* d = &sprite_draws[id];
+        if (sprite->flags & SPRITE_ASSET_METASPRITE) {
+            *d = (SpriteDraw){.meta_frames = (u8)frames_of(sprite), .segment = (u8)top_segment};
+            continue;
+        }
+        const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
+        *d = (SpriteDraw){
+            .attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | (hw->shape << 14)),
+            .attr1 = (u16)(hw->size << 14),
+            .attr2 = (u16)(ATTR2_PALBANK(next_palette_bank + sprite->palette_slot) | (u32)stream),
+            .width = hw->width,
+            .height = hw->height,
+            .origin_x = sprite->origin_x,
+            .origin_y = sprite->origin_y,
+            .tiles_per_frame = (u8)tiles_per_frame_of(sprite),
+            .first_palette = next_palette_bank,
+            .palette_count = group->palette_count,
+            .segment = (u8)top_segment};
+    }
+    memcpy16(&pal_obj_bank[next_palette_bank], group->palettes, group->palette_count * 16u);
+    next_palette_bank = (u8)(next_palette_bank + group->palette_count);
+    segments[top_segment].loaded = true;
+    return true;
 }
 
 bool sprite_group_load(const SpriteGroup* group) {
     int tiles = group_tiles(group);
     if (tiles < 0)
         return false;
-    if (next_tile + (u32)tiles > OBJ_TILE_COUNT) {
+    u32 free_end = serval_stream_floor(); // streaming: streamed groups' slots are above it
+    if (next_tile + (u32)tiles > free_end) {
         SERVAL_WARN("sprite_group_load: needs %u tiles, but only %u of %u are free", tiles,
-                    OBJ_TILE_COUNT - next_tile, OBJ_TILE_COUNT);
+                    free_end - next_tile, OBJ_TILE_COUNT);
         return false;
     }
     if (next_palette_bank + group->palette_count > OBJ_PALETTE_BANKS) {
@@ -390,6 +449,9 @@ bool sprite_group_load(const SpriteGroup* group) {
                     group->palette_count, OBJ_PALETTE_BANKS - next_palette_bank, OBJ_PALETTE_BANKS);
         return false;
     }
+    // streaming: a streamed group's sprites draw from its slots
+    if (group->flags & SPRITE_GROUP_STREAMED)
+        return load_streamed(group, (u32)tiles);
 
     u32 tile = next_tile;
     for (u32 i = 0; i < group->sprite_count; i++) {
@@ -565,6 +627,9 @@ static inline SERVAL_ARM __attribute__((always_inline)) u32 special_attr2(u32 id
 
 static ROM_CALL void draw_meta(u32 id, u32 frame, int x, int y, u32 flags, u32 angle, s32 scale_x,
                                s32 scale_y);
+// streaming: a streamed sprite's frame, from a slot of its group
+static ROM_CALL void draw_streamed(u32 id, u32 frame, int x, int y, u32 flags, u32 angle,
+                                   s32 scale_x, s32 scale_y);
 
 // The usual drawing path's rejection: a metasprite (drawn here, with no
 // transform), or a sprite that isn't loaded or a frame it doesn't have.
@@ -572,7 +637,9 @@ static ROM_CALL void draw_meta(u32 id, u32 frame, int x, int y, u32 flags, u32 a
 // registers, so the call doesn't slow the usual path down.
 static ROM_CALL void draw_rejected(u32 which, int x, int y, u32 flags) {
     u32 id = which & 0xFFFF, frame = which >> 16;
-    if (frame < sprite_draws[id].meta_frames)
+    if (STREAMED(&sprite_draws[id])) // streaming
+        draw_streamed(id, frame, x, y, flags, 0, FX_ONE, FX_ONE);
+    else if (frame < sprite_draws[id].meta_frames)
         draw_meta(id, frame, x, y, flags, 0, FX_ONE, FX_ONE);
     else
         DRAW_REJECTED(id, frame);
@@ -680,6 +747,11 @@ draw_transformed(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags
         draw_meta(id, frame, x, y, flags, angle, scale_x, scale_y);
         return;
     }
+    // streaming: a streamed sprite, from a slot of its group
+    if (frame >= d->frame_count && STREAMED(d)) {
+        draw_streamed(id, frame, x, y, flags, angle, scale_x, scale_y);
+        return;
+    }
     // No transform (a sprite with SPRITE_PALETTE), or no matrix left: plain.
     if ((angle == 0 && scale_x == FX_ONE && scale_y == FX_ONE) ||
         !draw_affine(id, d, frame, x, y, flags, angle, scale_x, scale_y))
@@ -722,6 +794,40 @@ static ROM_CALL void draw_meta(u32 id, u32 frame, int x, int y, u32 flags, u32 a
         int px = x + dx - d->width / 2 + d->origin_x, py = y + dy - d->height / 2 + d->origin_y;
         draw_transformed(piece, d, p->frame, px, py, piece_flags, angle, scale_x, scale_y);
     }
+}
+
+// streaming: frame `frame` of streamed sprite `id`. It is drawn as a sprite
+// with that one frame, through the usual paths, and only if it took a hardware
+// sprite (on screen, not hidden, OAM not full) does it take a slot: the one
+// already holding the frame, or one whose frame sprite_stream.c copies in
+// VBlank. With every slot taken by this frame's draws, it is not drawn after
+// all (counted as dropped). In ROM: draws of streamed sprites are few.
+static ROM_CALL void draw_streamed(u32 id, u32 frame, int x, int y, u32 flags, u32 angle,
+                                   s32 scale_x, s32 scale_y) {
+    const SpriteDraw* d = &sprite_draws[id];
+    const SpriteAsset* sprite = serval_sprite_table[id];
+    if (frame >= frames_of(sprite)) {
+#ifdef SERVAL_DEBUG
+        if (first_warning(id))
+            SERVAL_WARN("sprite_draw: sprite %u has no frame %u (it has %u)", id, frame,
+                        frames_of(sprite));
+#endif
+        return;
+    }
+    SpriteDraw one = *d;
+    one.frame_count = 1;
+    one.attr2 = (u16)(d->attr2 & ~ATTR2_ID_MASK);
+    u32 entry = serval_oam_used;
+    draw_transformed(id, &one, 0, x, y, flags, angle, scale_x, scale_y);
+    if (serval_oam_used == entry)
+        return; // not drawn: no slot needed
+    int tile = serval_stream_slot(d->attr2 & ATTR2_ID_MASK, id | frame << 16,
+                                  sprite->tiles + frame * d->tiles_per_frame * (sizeof(TILE) / 4),
+                                  (u32)d->width * d->height / 64);
+    if (tile < 0)
+        serval_oam_used = entry; // every slot holds a frame drawn this frame
+    else
+        serval_shadow_oam[entry].attr2 = (u16)(serval_shadow_oam[entry].attr2 + tile);
 }
 
 // draw_transformed for entity i, at (x, y) on the screen.

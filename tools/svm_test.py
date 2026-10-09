@@ -639,8 +639,8 @@ class Headers(unittest.TestCase):
         self.assertEqual((h.lookup("MAP_CONTACT_FLOOR"), h.lookup("BODY_CONTACT_EXIT")), (1, 32))
         self.assertEqual(h.lookup("C_KINEMATIC"), 1 << 7)
         self.assertEqual(h.lookup("SPRITE_BLEND"), 1 << 12)  # planned until it was implemented
-        for planned in ("MAP_CONTACT_LADDER", "MAP_LADDER", "MAP_SLOPE_L_LOW", "SPRITE_ASSET_LZ77",
-                        "SPRITE_GROUP_STREAMED"):
+        self.assertEqual(h.lookup("SPRITE_GROUP_STREAMED"), 1 << 0)  # planned until implemented
+        for planned in ("MAP_CONTACT_LADDER", "MAP_LADDER", "MAP_SLOPE_L_LOW", "SPRITE_ASSET_LZ77"):
             with self.subTest(planned=planned):
                 self.assertIsNone(h.lookup(planned))
                 self.assertIn(planned, h.planned)

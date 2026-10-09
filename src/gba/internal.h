@@ -38,6 +38,29 @@ extern SpriteStats serval_sprite_stats;
 extern bool serval_scanline_stats;
 void serval_count_scanlines(SpriteStats* stats);
 
+// streaming: streamed sprite groups (sprite_stream.c,
+// docs/sprites.md#residency-modes). Their slots are taken from the top of
+// sprite VRAM down to serval_stream_floor() (1024 with none), where the groups
+// loaded from tile 0 up must stop. serval_stream_add() takes `slots` slots of
+// `slot_tiles` tiles for a group loaded in mark segment `segment` and returns
+// its index, or -1 (warns) past 256 slots in all; the caller has checked
+// that they fit in VRAM and that a palette bank was free (so there are at
+// most 16 such groups). serval_stream_slot() returns the first
+// tile of the slot holding `key` (sprite ID | frame << 16) for this frame:
+// the slot it is in already, or the least recently drawn one not drawn from
+// this frame, with its `tiles` tiles from `from` queued for VBlank; -1 (counted
+// in serval_sprites_dropped, warns) when every slot holds a frame drawn this
+// frame. serval_stream_release() unloads the groups of segment `segment` and
+// up with their queued copies, serval_stream_reset() all of them, and
+// serval_stream_commit() is frame_end()'s VBlank step: the queued copies, then
+// the next frame.
+u32 serval_stream_floor(void);
+int serval_stream_add(u32 slots, u32 slot_tiles, u32 segment);
+int serval_stream_slot(u32 group, u32 key, const u32* from, u32 tiles);
+void serval_stream_release(u32 segment);
+void serval_stream_reset(void);
+void serval_stream_commit(void);
+
 // sprite tiles: runtime sprite tiles (sprite_tiles.c). frame_end() calls
 // serval_sprite_tiles_commit() in VBlank to copy the frames sprite_set_tiles()
 // queued (step 3 of the flush, docs/frame-loop.md). sprite_groups_reset()
