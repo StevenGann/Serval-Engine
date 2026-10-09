@@ -7,8 +7,10 @@
 //   - Blending (blend_fx.c): alpha blending, screen_set_blend() and
 //     SPRITE_BLEND (a placeholder for now)
 //   - Palettes (palette_fx.c): palette writes (a placeholder for now)
-//   - Sprite tiles (sprite_tiles_fx.c): runtime sprite tiles (a placeholder
-//     for now)
+//   - Sprite tiles (sprite_tiles_fx.c): runtime sprite tiles,
+//     sprite_set_tiles(): card faces composed in RAM when they are dealt and
+//     a frame counter rebuilt every frame, each one hardware sprite whose
+//     tiles are copied to VRAM in VBlank; a card flip with sprite_draw_ex()
 //   - Raster (raster_fx.c): raster effects (a placeholder for now)
 //
 // What to expect when booting the ROM:
@@ -22,7 +24,14 @@
 //     scene loads, and the screen fades back in.
 //   - Blending: for now the words "ALPHA BLENDING (TO COME)" in the middle.
 //   - Palettes: for now the words "PALETTE WRITES (TO COME)".
-//   - Sprite tiles: for now the words "RUNTIME SPRITE TILES (TO COME)".
+//   - Sprite tiles: four playing cards on black under "FACES COMPOSED AT
+//     RUN TIME" (the ace of spades, the king of hearts in a gold frame, the
+//     seven of diamonds, the ten of clubs), each one sprite. Every 40 frames
+//     the next card from the left flips over, narrowing to an edge and
+//     widening again as a new random card; A (mGBA: the X key) flips all
+//     four at once. Below them, gold digits on a navy bar count the frames,
+//     changing every frame, and "HARDWARE SPRITES: 5" (four cards and the
+//     counter).
 //   - Raster: for now the words "RASTER EFFECTS (TO COME)".
 //   - No sound after the splash.
 //   (In mGBA's default keyboard mapping: L = A key, R = S key.)
