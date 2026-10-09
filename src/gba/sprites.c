@@ -15,9 +15,9 @@
 // VRAM and palettes in OBJ palette banks, in load order;
 // sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
 // the start. Planned (declared in sprites.h, stubs or refusals here):
-// streamed groups, LZ77 sprites, palette writes (sprite_set_colors) and
-// SPRITE_BLEND (drawn opaque). Palette sharing comes after 1.0. Runtime tiles
-// (sprite_set_tiles) are in sprite_tiles.c.
+// streamed groups, LZ77 sprites and palette writes (sprite_set_colors).
+// Palette sharing comes after 1.0. Runtime tiles (sprite_set_tiles) are in
+// sprite_tiles.c.
 
 // Rare paths (building a matrix, drawing a metasprite's pieces) are out of
 // line, in ROM on the GBA, so IWRAM code calls them with a long call.
@@ -70,7 +70,6 @@ static bool warned_matrices;
 static bool warned_palette;
 static bool warned_scale_flag;
 static bool warned_scale;
-static bool warned_blend;
 
 static bool first_warning(u32 id) {
     if (id >= SPRITE_MAX)
@@ -111,25 +110,13 @@ static __attribute__((noinline, cold)) void warn_palette(u32 id, u32 palette) {
                 "own palette",
                 palette, id, sprite_draws[id < SPRITE_MAX ? id : 0].palette_count);
 }
-// SPRITE_BLEND is planned: until alpha blending is implemented, a blended
-// sprite is drawn opaque, and this says so once (until sprite_groups_reset()).
-static __attribute__((noinline, cold)) void warn_blend(u32 id) {
-    if (warned_blend)
-        return;
-    warned_blend = true;
-    SERVAL_WARN("SPRITE_BLEND on sprite %u: alpha blending is planned, not implemented in this "
-                "engine version; drawn opaque",
-                id);
-}
 #define DRAW_REJECTED(id, frame) warn_draw(id, frame)
 #define OAM_FULL() (serval_sprites_dropped++, warn_oam_full())
 #define BAD_PALETTE(id, palette) warn_palette(id, palette)
-#define BLEND_PLANNED(id) warn_blend(id)
 #else
 #define DRAW_REJECTED(id, frame) ((void)(id), (void)(frame))
 #define OAM_FULL() ((void)serval_sprites_dropped++)
 #define BAD_PALETTE(id, palette) ((void)(id), (void)(palette))
-#define BLEND_PLANNED(id) ((void)(id))
 #endif
 
 // SpriteAsset.size values, 1-12, in hardware terms: shape (square, wide,
@@ -202,7 +189,6 @@ void sprite_groups_reset(void) {
     warned_palette = false;
     warned_scale_flag = false;
     warned_scale = false;
-    warned_blend = false;
 #endif
 }
 
@@ -544,14 +530,16 @@ static inline SERVAL_ARM __attribute__((always_inline)) u32 palette_attr2(u32 id
 }
 
 // attr2 for a draw whose flags hold SPRITE_PALETTE or SPRITE_BLEND (the
-// callers test both with one mask). SPRITE_BLEND is planned: the sprite is
-// drawn opaque, with a warning; implementing it sets attr0's semi-transparent
-// mode for these draws.
+// callers test both with one mask, so plain draws don't pay for either).
+// SPRITE_BLEND also sets the semi-transparent mode in obj's attr0, already
+// written: the hardware blends such a sprite over screen_set_blend()'s
+// second targets (blend.c).
 static inline SERVAL_ARM __attribute__((always_inline)) u32 special_attr2(u32 id,
                                                                           const SpriteDraw* d,
-                                                                          u32 attr2, u32 flags) {
+                                                                          OBJ_ATTR* obj, u32 attr2,
+                                                                          u32 flags) {
     if (flags & SPRITE_BLEND)
-        BLEND_PLANNED(id);
+        obj->attr0 = (u16)(obj->attr0 | ATTR0_BLEND); // blending: semi-transparent
     if (flags & SPRITE_PALETTE_MASK)
         attr2 = palette_attr2(id, d, attr2, flags & SPRITE_PALETTE_MASK);
     return attr2;
@@ -604,7 +592,7 @@ draw(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, bool palet
     obj->attr1 = (u16)(d->attr1 | ((u32)x & ATTR1_X_MASK) | ((flags & 3) << 12));
     u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
     if (palettes && (flags & (SPRITE_PALETTE_MASK | SPRITE_BLEND)))
-        attr2 = special_attr2(id, d, attr2, flags);
+        attr2 = special_attr2(id, d, obj, attr2, flags);
     obj->attr2 = (u16)attr2;
 }
 
@@ -654,7 +642,7 @@ draw_affine(u32 id, const SpriteDraw* d, u32 frame, int x, int y, u32 flags, u32
     obj->attr1 = (u16)(d->attr1 | ((u32)matrix << 9) | ((u32)x & ATTR1_X_MASK));
     u32 attr2 = d->attr2 + frame * d->tiles_per_frame + ((((flags >> 2) & 3) ^ 2) << 10);
     if (flags & (SPRITE_PALETTE_MASK | SPRITE_BLEND))
-        attr2 = special_attr2(id, d, attr2, flags);
+        attr2 = special_attr2(id, d, obj, attr2, flags);
     obj->attr2 = (u16)attr2;
     return true;
 }

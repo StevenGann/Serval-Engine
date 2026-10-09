@@ -1370,6 +1370,7 @@ ENGINE = {
     "button_down": ((INT,), BOOL, "SYS BUTTON_DOWN"),
     "button_pressed": ((INT,), BOOL, "SYS BUTTON_PRESSED"),
     "screen_set_brightness": ((INT,), None, "SYS SCREEN_SET_BRIGHTNESS"),
+    "screen_set_blend": ((INT, INT, INT, INT), None, "SYS SCREEN_SET_BLEND"),
     "path_start": ((ENTITY, INT, INT), None, "SYS PATH_START"),
     "path_stop": ((ENTITY,), None, "SYS PATH_STOP"),
     "kill": ((ENTITY,), None, "KILL"),

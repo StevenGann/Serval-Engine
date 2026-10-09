@@ -1,13 +1,16 @@
 // Tests for the VM's GBA engine calls (src/gba/vm_platform.c): what a script's
-// SYS text calls leave in the text layer's map. The blob is hand-assembled
+// SYS text calls leave in the text layer's map, and the blend registers its
+// SYS screen_set_blend sets. The blobs are hand-assembled
 // (docs/vm.md "Blob format"); the shared suite (tests/vm_tests.c) covers the
 // interpreter's side of the calls, and vm_collide's rules. Also the cost of
 // vm_collide's pass on the hardware, logged.
 
 #include "../test.h"
+#include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
 #include "serval/physics.h"
+#include "serval/screen.h"
 #include "serval/text.h"
 #include "serval/vm.h"
 
@@ -132,6 +135,43 @@ static void text_print_number_width(void) {
     text_clear();
 }
 
+// One object whose Create sets alpha blending: the foreground over the
+// other layers, weights 5 and 11.
+static const u8 blender[] = {
+    'S', 'V', 'M', 'B', VM_FORMAT_VERSION, VM_CELL_BYTES, 0, 0, // magic, version, cells, flags
+    1, 0, 0, 0, 0, 0, 0, 0, // 1 object, no strings, no globals, no arrays
+    // 0x10: object 0: mask 0, sprite 0, Create @ 0x30
+    0, 0, 0, 0, 0, 0, 0, 0, 0x30, 0, 0, 0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    //
+    VM_OP_PUSH8, LAYER_FOREGROUND,                     // 0x30: top
+    VM_OP_PUSH8, LAYER_ALL & ~LAYER_FOREGROUND,        //       top bottom
+    VM_OP_PUSH8, 5,                                    //       top bottom 5
+    VM_OP_PUSH8, 11,                                   //       top bottom 5 11
+    VM_OP_SYS, VM_SYS_SCREEN_SET_BLEND,                //
+    VM_OP_HALT,                                        //
+};
+
+// vm.md "Engine calls": SYS screen_set_blend is screen.h's: the settings
+// reach the blend registers at the next frame_end().
+static void blend_call_sets_the_registers(void) {
+    CHECK(vm_load(blender, sizeof blender));
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_CREATE) >= 0);
+    vm_step();
+    CHECK(vm_idle());
+    frame_begin();
+    frame_end();
+    CHECK(REG_BLDCNT ==
+          (BLD_BG1 | BLD_STD | (u32)(LAYER_ALL & ~LAYER_FOREGROUND) << BLD_BOT_SHIFT));
+    CHECK(REG_BLDALPHA == BLDA_BUILD(5, 11));
+    CHECK(debug_warning_count() == before);
+    vm_unload();
+    screen_set_blend(0, 0, 0, 0);
+    frame_begin();
+    frame_end();
+    CHECK(REG_BLDCNT == 0);
+}
+
 // CPU cycles, from the cascaded timers serval_init() starts.
 static u32 cycles(void) {
     u32 hi, lo;
@@ -251,5 +291,6 @@ static void room_load_costs(void) {
 }
 
 TEST_SUITE(gba_vm_tests, "gba_vm", {"text_calls_print", text_calls_print},
-           {"text_print_number_width", text_print_number_width}, {"collide_costs", collide_costs},
-           {"room_load_costs", room_load_costs});
+           {"text_print_number_width", text_print_number_width},
+           {"blend_call_sets_the_registers", blend_call_sets_the_registers},
+           {"collide_costs", collide_costs}, {"room_load_costs", room_load_costs});

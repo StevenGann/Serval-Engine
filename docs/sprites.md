@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups, LZ77-compressed sprites, palette writes through a shadow palette, and alpha-blended sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
+**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups, LZ77-compressed sprites and palette writes through a shadow palette. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes, which the engine doesn't use) with 16 OBJ palette banks of 16 colors.
 
@@ -96,11 +96,9 @@ Until it is implemented, `sprite_set_colors()` does nothing (the colors stay as 
 
 ## Alpha blending
 
-*Planned:* `SPRITE_BLEND` (bit 12 of the draw flags: `sprite_draw*()` flags, `spr_flags` and `SpritePiece.flags`) draws a sprite semi-transparent, for shadows, ghosts and glass. Where the sprite is over one of the `bottom` layers of `screen_set_blend()` (`screen.h`, [runtime-systems.md](runtime-systems.md#special-effects)), it is mixed with them with that call's weights, whether or not the call's `top` layers include the sprites; elsewhere, and while blending is off (the default), it is drawn opaque. A metasprite's piece blends when the draw or the piece has the flag.
+*Implemented:* `SPRITE_BLEND` (bit 12 of the draw flags: `sprite_draw*()` flags, `spr_flags` and `SpritePiece.flags`) draws a sprite semi-transparent, for shadows, ghosts and glass: the hardware's semi-transparent sprite mode, set on its OAM entry. Where the sprite is over one of the `bottom` layers of `screen_set_blend()` (`screen.h`, [runtime-systems.md](runtime-systems.md#special-effects)), it is mixed with them with that call's weights, whether or not the call's `top` layers include the sprites; elsewhere, and while blending is off (the default) or paused (the brightness is not 0), it is drawn opaque. A metasprite's piece blends when the draw or the piece has the flag (a lamp whose halo is a blended piece behind its opaque post: [`blend_fx.c`](../examples/effects/blend_fx.c)). Sprites are one layer to the hardware, so a blended sprite never blends with a sprite behind it: where it covers one, that one doesn't show.
 
-The render systems already route it: entities with `SPRITE_BLEND` take the out-of-line drawing path, as rotated, scaled, hidden and recolored ones do, so the flag will cost those sprites about 60 cycles each and the others nothing. The test for all of them stayed two ARM instructions: the flags that take that path (`SPRITE_HIDDEN`, `SPRITE_SCALED`, `SPRITE_PALETTE`, `SPRITE_BLEND`) are bits 4 and 7-12, which no single ARM immediate covers, so the render loops clear the plain bits (`BIC #0x6F`) and OR the rest, shifted above the angle's 16 bits, with the angle (`ORRS` with a shifted operand, which also drops bits 13-15); an empty `asm` keeps GCC from folding the mask into the shift, which would cost a constant load per sprite (+400 cycles in bunnymark). Bunnymark measured the same before and after (avg 73,426 cycles, peak 78,643; `sprites.c`, `draw_entity`).
-
-Until it is implemented, a sprite with `SPRITE_BLEND` is drawn opaque and debug builds warn once (until `sprite_groups_reset()`).
+The render systems route it: entities with `SPRITE_BLEND` take the out-of-line drawing path, as rotated, scaled, hidden and recolored ones do, so the flag costs those sprites about 110 cycles each (measured by the test ROM: 106 in a release build; 120 for `SPRITE_PALETTE`) and the others nothing. The test for all of them stayed two ARM instructions: the flags that take that path (`SPRITE_HIDDEN`, `SPRITE_SCALED`, `SPRITE_PALETTE`, `SPRITE_BLEND`) are bits 4 and 7-12, which no single ARM immediate covers, so the render loops clear the plain bits (`BIC #0x6F`) and OR the rest, shifted above the angle's 16 bits, with the angle (`ORRS` with a shifted operand, which also drops bits 13-15); an empty `asm` keeps GCC from folding the mask into the shift, which would cost a constant load per sprite (+400 cycles in bunnymark). Bunnymark measured the same before and after (avg 73,426 cycles, peak 78,643; `sprites.c`, `draw_entity`), and the same again when the flag was implemented (avg 73,488, peak 77,623): the semi-transparent mode is set on the out-of-line path only.
 
 **Bits 12-14 of the draw flags are the engine's:** 12 is `SPRITE_BLEND`, 13 and 14 are reserved for later draw flags (mosaic and the object window). Drawing doesn't check them (it is the hot path), so a game must not store anything there: a stray bit is ignored today and gets a meaning later. `SpritePiece.flags` are checked at load.
 
@@ -114,7 +112,7 @@ Emitted as constant C tables by the build tooling. Write them with designated in
 typedef struct {
     s16 x, y;                 // the piece's center, relative to the metasprite's pivot
     u16 sprite;               // an ordinary sprite's ID
-    u16 flags;                // SPRITE_FLIP_H/V, SPRITE_PALETTE(n), SPRITE_BLEND (planned)
+    u16 flags;                // SPRITE_FLIP_H/V, SPRITE_PALETTE(n), SPRITE_BLEND
     u8  frame;
 } SpritePiece;                // 10 bytes
 
@@ -152,7 +150,7 @@ typedef struct {
 | --- | --- | --- |
 | 0, 2 | `s16 x, y` | The piece's center relative to the metasprite's pivot, unflipped and unrotated |
 | 4 | `u16 sprite` | Sprite ID of an ordinary sprite (not a metasprite) in the table; refused otherwise |
-| 6 | `u16 flags` | Draw flags for this piece: `SPRITE_FLIP_H` (bit 0), `SPRITE_FLIP_V` (bit 1), `SPRITE_PALETTE(n)` (bits 8-11), `SPRITE_BLEND` (bit 12, *planned*: drawn opaque, *warns*). **Every other bit is refused**: the layer (bits 2-3), `SPRITE_HIDDEN`, `SPRITE_SCALED`, `SPRITE_SCREEN` and the animation flips belong to the whole draw, and bits 13-14 are reserved |
+| 6 | `u16 flags` | Draw flags for this piece: `SPRITE_FLIP_H` (bit 0), `SPRITE_FLIP_V` (bit 1), `SPRITE_PALETTE(n)` (bits 8-11), `SPRITE_BLEND` (bit 12: the piece blends, [above](#alpha-blending)). **Every other bit is refused**: the layer (bits 2-3), `SPRITE_HIDDEN`, `SPRITE_SCALED`, `SPRITE_SCREEN` and the animation flips belong to the whole draw, and bits 13-14 are reserved |
 | 8 | `u8 frame` | A frame of that sprite; refused if it doesn't have it |
 | 9 | (padding) | Reserved: leave it zero |
 
@@ -202,7 +200,7 @@ typedef struct {
 | 5, 6 | `SPRITE_ANIM_FLIP_H`, `_V` | Set by `sys_animate`; drawing ignores them |
 | 7 | `SPRITE_SCALED` | Entities: scaled by `spr_scale`; `sprite_draw*()` ignores it |
 | 8-11 | `SPRITE_PALETTE(n)` | Palette `n` (0-14) of the group, stored as `n` + 1; 0: the sprite's own |
-| 12 | `SPRITE_BLEND` | *Planned*: semi-transparent ([above](#alpha-blending)); drawn opaque until implemented (*warns*) |
+| 12 | `SPRITE_BLEND` | Semi-transparent ([above](#alpha-blending)) |
 | 13, 14 | (reserved) | The engine's: mosaic and the object window, later. Not checked per draw: games must not use them |
 | 15 | `SPRITE_SCREEN` | Entities: screen coordinates; `sprite_draw*()` ignores it |
 
@@ -225,7 +223,7 @@ u32  sprite_groups_mark(void);                      // a point in the load order
 void sprite_groups_release(u32 mark);               // unload the groups loaded since it
 void sprite_draw(u16 sprite_id, u8 frame, int x, int y, u16 flags);
                                                     // SPRITE_FLIP_H/V, layer flags, SPRITE_HIDDEN,
-                                                    // SPRITE_PALETTE(n), SPRITE_BLEND (planned)
+                                                    // SPRITE_PALETTE(n), SPRITE_BLEND
 void sprite_draw_rotated(u16 sprite_id, u8 frame, int x, int y, u16 angle, u16 flags);
 void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle,
                     FIXED scale_x, FIXED scale_y, u16 flags);   // rotated and scaled
@@ -237,7 +235,7 @@ void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRIT
 void sprite_set_colors(u16 sprite_id, u32 index, const Color *colors, u32 count);
 ```
 
-Planned constants: `SPRITE_GROUP_STREAMED`, `SPRITE_ASSET_LZ77`, `SPRITE_BLEND` (enumerators, so they warn at every use too).
+Planned constants: `SPRITE_GROUP_STREAMED`, `SPRITE_ASSET_LZ77` (enumerators, so they warn at every use too).
 
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
@@ -247,7 +245,7 @@ Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `S
 
 **Limits made visible:** `sprite_stats()` returns the last frame's counts: hardware sprites `drawn` (of 128) and `matrices` used (of 32), draws `dropped` because OAM was full, and rotated or scaled draws shown `untransformed` because the matrices ran out. Counted in release builds too, only on the rare paths, so it costs nothing in the usual case; debug builds also warn once per problem. `sprite_stats_scanlines(true)` adds the per-scanline budget: `frame_end()` walks the frame's OAM in order, adding each sprite's cost to the lines it covers (1,210 cycles a line, 954 with DISPCNT's "H-Blank interval free"; an ordinary sprite costs its width, an affine one 10 + 2 × its box's width; sprites entirely off screen cost nothing, as in mGBA), and reports `cut_short` (sprites missing from a line that ran out) and `busiest_line` (the cycles the busiest line asked for). The web renderer draws by the same rules, so what it leaves out is what this counts. It walks every line of every sprite, a few thousand cycles for a busy screen, so it is off by default; Shmup turns it on with its debug readout, which shows the lost draws of all three kinds.
 
-**Metasprites:** a `SpriteAsset` with `SPRITE_ASSET_METASPRITE` is made of pieces, `SpritePiece {s16 x, y; u16 sprite; u16 flags; u8 frame}`: frames of ordinary sprites placed by their centers relative to the metasprite's pivot, the point drawn at (x, y) − origin. `.pieces` and `.piece_count` (pieces per frame) share their storage with `.tiles` and `.tiles_per_frame` (anonymous unions), so the struct and its layout are unchanged. A metasprite is drawn, flipped, rotated, scaled, animated (`sys_animate` steps its frames, each its own list of pieces) and depth-sorted as one sprite or entity. Rotating or scaling it turns and scales each piece's offset about the pivot and draws the piece with the same transform, so the pivot can be anywhere: Shmup's cannons turn about the dome while their barrels reach 39 pixels out, beyond what a 32x32 sprite turning about its own center could (16). Whole flips mirror the offsets and toggle each piece's flips; the draw's palette replaces the pieces' own (`SPRITE_PALETTE` in `spr_flags` recolors every piece: Breakout's glowing paddle); a piece blends when the draw or the piece has `SPRITE_BLEND` (planned). A piece's flags may hold only flips, `SPRITE_PALETTE(n)` and `SPRITE_BLEND`; anything else is refused at load ([ROM data format](#rom-data-format)). Pieces are drawn in order, the first in front, each taking a hardware sprite; pieces with the same flips share a rotation matrix. A metasprite takes no VRAM; the sprites its pieces use must be loaded to be drawn.
+**Metasprites:** a `SpriteAsset` with `SPRITE_ASSET_METASPRITE` is made of pieces, `SpritePiece {s16 x, y; u16 sprite; u16 flags; u8 frame}`: frames of ordinary sprites placed by their centers relative to the metasprite's pivot, the point drawn at (x, y) − origin. `.pieces` and `.piece_count` (pieces per frame) share their storage with `.tiles` and `.tiles_per_frame` (anonymous unions), so the struct and its layout are unchanged. A metasprite is drawn, flipped, rotated, scaled, animated (`sys_animate` steps its frames, each its own list of pieces) and depth-sorted as one sprite or entity. Rotating or scaling it turns and scales each piece's offset about the pivot and draws the piece with the same transform, so the pivot can be anywhere: Shmup's cannons turn about the dome while their barrels reach 39 pixels out, beyond what a 32x32 sprite turning about its own center could (16). Whole flips mirror the offsets and toggle each piece's flips; the draw's palette replaces the pieces' own (`SPRITE_PALETTE` in `spr_flags` recolors every piece: Breakout's glowing paddle); a piece blends when the draw or the piece has `SPRITE_BLEND`. A piece's flags may hold only flips, `SPRITE_PALETTE(n)` and `SPRITE_BLEND`; anything else is refused at load ([ROM data format](#rom-data-format)). Pieces are drawn in order, the first in front, each taking a hardware sprite; pieces with the same flips share a rotation matrix. A metasprite takes no VRAM; the sprites its pieces use must be loaded to be drawn.
 
 Ordinary sprites pay nothing measurable for it in `sys_render_by_depth` and bunnymark: a metasprite's draw data has no frames, so the drawing path's existing "frame out of range" test rejects it, and the rejection path, out of line in ROM, draws its pieces before it would report a bad frame. Plain `sys_render` pays about 5 cycles per sprite (88 sprites: 16,578 → 17,018) for having that call in its loop: it needs registers kept across a call. The piece math (offsets turned and scaled in 64 bits, with `fx_sin`/`fx_cos`) runs from ROM, once per piece.
 
@@ -273,8 +271,8 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank).
+Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank).
 
-**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused), palette writes through a shadow palette (`sprite_set_colors()`; does nothing), alpha-blended sprites (`SPRITE_BLEND`; drawn opaque).
+**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused), palette writes through a shadow palette (`sprite_set_colors()`; does nothing).
 
 **After 1.0, no API:** palette sharing with reference counting, VRAM defragmentation, loading in forced blank, and the draw flags reserved in bits 13-14 (mosaic, the object window).

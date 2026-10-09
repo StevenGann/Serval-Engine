@@ -32,7 +32,7 @@ static void set_darkness(u32 level) {
 
 void serval_splash(void) {
     // Borrow the backdrop, a grey in bank 14 and the logo's bank 13, the
-    // blend registers (the game's brightness), the text shadow and
+    // blend control (the game's brightness or blending), the text shadow and
     // background 0 (control register and display bit); put them back at the
     // end. Charblock 1 is not put back: games load their tilesets after.
     bool text_was_active = serval_text_active();
@@ -43,13 +43,13 @@ void serval_splash(void) {
     u16 old_logo_colors[15];
     for (u32 c = 0; c < 15; c++)
         old_logo_colors[c] = pal_bg_bank[SERVAL_SPLASH_ART_BANK][c + 1];
-    u16 old_bldcnt = REG_BLDCNT; // (BLDY is write-only: screen.c keeps the game's level)
     bool old_shadow = serval_text_shadow();
 
     pal_bg_mem[0] = RGB15(0, 0, 0);
     text_set_shadow(false);
     text_clear(); // also sets the text layer up if the game hadn't
     pal_bg_bank[GREY_BANK][1] = RGB15(16, 16, 16);
+    serval_blend_borrow(true); // blending: frame_end() leaves BLDCNT to the splash
     REG_BLDCNT = BLD_BG0 | BLD_BLACK;
     set_darkness(16);
     // Background 0 is black now, so drawing the logo into VRAM (a frame's
@@ -83,8 +83,9 @@ void serval_splash(void) {
     for (u32 c = 0; c < 15; c++)
         pal_bg_bank[SERVAL_SPLASH_ART_BANK][c + 1] = old_logo_colors[c];
     text_set_shadow(old_shadow);
-    REG_BLDCNT = old_bldcnt;
-    int level = serval_screen_brightness();
-    REG_BLDY = (u16)(level < 0 ? -level : level);
+    // blending: the game's effect back (BLDY is write-only, so screen.c
+    // keeps its level): its brightness, or at level 0 its blending.
+    serval_blend_borrow(false);
+    serval_screen_apply_brightness();
     pal_bg_mem[0] = old_backdrop;
 }

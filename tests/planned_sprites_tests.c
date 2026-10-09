@@ -113,74 +113,12 @@ static void loads_needing_planned_features_are_refused(void) {
     frame_end();
     CHECK((OAM[2] & 0x3FF) == 0 && OAM_BANK(0) == 0);
 }
-
-// The draws a frame makes, for blended_sprites_draw_opaque_and_warn_once.
-static void draw_plain(void) {
-    sprite_draw(SPR_DOT, 0, 20, 20, SPRITE_BLEND);
-}
-static void draw_rotated(void) {
-    sprite_draw_rotated(SPR_DOT, 0, 20, 20, ANGLE_DEG(90), SPRITE_BLEND);
-}
-static void draw_scaled(void) {
-    sprite_draw_ex(SPR_DOT, 0, 20, 20, 0, FX(2), FX(2), SPRITE_BLEND);
-}
-static void draw_whole_metasprite(void) {
-    sprite_draw(SPR_META, 0, 20, 20, SPRITE_BLEND); // both pieces
-}
-static void draw_blended_piece(void) {
-    sprite_draw(SPR_SHADOW, 0, 20, 20, 0); // only the second piece
-}
-static void render(void) {
-    sys_render();
-}
-static void render_by_depth(void) {
-    sys_render_by_depth();
-}
-
-// SPRITE_BLEND is planned: every way of drawing draws the sprite, opaque,
-// and warns once. With the render systems, the warning also shows that the
-// flag took the out-of-line path (the plain one doesn't look at it).
-static void blended_sprites_draw_opaque_and_warn_once(void) {
-    static void (*const draws[])(void) = {
-        draw_plain,         draw_rotated, draw_scaled,    draw_whole_metasprite,
-        draw_blended_piece, render,       render_by_depth};
-    static const u32 drawn[] = {1, 1, 1, 2, 2, 1, 1};
-    for (u32 k = 0; k < sizeof(draws) / sizeof(draws[0]); k++) {
-        load(); // also clears the "warned once" state
-        static const u16 meta_ids[] = {SPR_META};
-        static const SpriteGroup meta = {.sprite_ids = meta_ids, .sprite_count = 1};
-        CHECK(sprite_group_load(&meta));
-        ecs_reset();
-        u32 i = entity_index(entity_create(C_POS | C_SPR));
-        pos_x[i] = pos_y[i] = FX(30);
-        spr_id[i] = SPR_DOT;
-        // SPRITE_BLEND alone: with SPRITE_PALETTE the entity would take the
-        // out-of-line path anyway.
-        spr_flags[i] = SPRITE_BLEND;
-        for (u32 frame = 0; frame < 2; frame++) {
-            u32 before = debug_warning_count();
-            frame_begin();
-            draws[k]();
-            frame_end();
-            bool ok = OAM_HIDDEN(drawn[k]);
-            for (u32 s = 0; s < drawn[k]; s++)
-                ok &= !OAM_HIDDEN(s) && OAM_MODE(s) == 0;
-            CHECK(ok);
-            check_warnings(before, frame == 0);
-        }
-        CHECK(OAM_BANK(0) == 0); // its own palette
-        ecs_reset();
-    }
-}
 #endif
 
 #ifdef SERVAL_GBA
 #define GBA_CASES                                                                                  \
-    , {"sprite_set_colors_changes_nothing", sprite_set_colors_changes_nothing},                    \
-        {"loads_needing_planned_features_are_refused",                                             \
-         loads_needing_planned_features_are_refused},                                              \
-    {                                                                                              \
-        "blended_sprites_draw_opaque_and_warn_once", blended_sprites_draw_opaque_and_warn_once     \
+    , {"sprite_set_colors_changes_nothing", sprite_set_colors_changes_nothing}, {                  \
+        "loads_needing_planned_features_are_refused", loads_needing_planned_features_are_refused   \
     }
 #else
 #define GBA_CASES

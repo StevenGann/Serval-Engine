@@ -69,7 +69,7 @@ typedef struct {
     s16 x, y;   // the piece's center, relative to the pivot (unflipped, unrotated)
     u16 sprite; // sprite ID of an ordinary sprite (not a metasprite)
     u16 flags;  // for this piece: SPRITE_FLIP_H, SPRITE_FLIP_V, SPRITE_PALETTE(n) and
-                // SPRITE_BLEND (planned), a subset of the draw flags below. Anything
+                // SPRITE_BLEND, a subset of the draw flags below. Anything
                 // else (a layer, SPRITE_HIDDEN, ...: those are the whole draw's) makes
                 // sprite_group_load() refuse the metasprite's group (warns)
     u8 frame;   // the frame of that sprite
@@ -215,18 +215,18 @@ typedef struct {
 // path), so a stray bit is ignored today and gets a meaning in a later
 // version. (SpritePiece.flags are checked at load: see SpritePiece.)
 enum {
-    // Planned: drawn semi-transparent. Where the sprite is drawn over one of
-    // the `bottom` layers of screen_set_blend() (screen.h), it is mixed with
-    // them with that call's weights, whether or not its `top` layers include
-    // the sprites; elsewhere, and while blending is off (the default), it is
-    // drawn opaque. For shadows, ghosts, glass. In sprite_draw*() flags,
-    // spr_flags and SpritePiece.flags (a metasprite's piece blends when the
-    // draw or the piece has it). The render systems draw these sprites on
-    // their out-of-line path, as they do SPRITE_PALETTE ones (about 60 cycles
-    // more per sprite; sprites without either pay nothing). Until
-    // implemented: drawn opaque, with a warning in debug builds (once until
-    // sprite_groups_reset()).
-    SPRITE_BLEND SERVAL_PLANNED("alpha blending, docs/sprites.md#alpha-blending") = 1 << 12,
+    // Drawn semi-transparent (the hardware's semi-transparent sprite mode).
+    // Where the sprite is drawn over one of the `bottom` layers of
+    // screen_set_blend() (screen.h), it is mixed with them with that call's
+    // weights, whether or not its `top` layers include the sprites;
+    // elsewhere, and while blending is off (the default) or paused (the
+    // brightness is not 0), it is drawn opaque. For shadows, ghosts, glass.
+    // In sprite_draw*() flags, spr_flags and SpritePiece.flags (a
+    // metasprite's piece blends when the draw or the piece has it). The
+    // render systems draw these sprites on their out-of-line path, as they do
+    // SPRITE_PALETTE ones (about 110 cycles more per sprite; sprites without
+    // either pay nothing).
+    SPRITE_BLEND = 1 << 12,
 };
 
 // Registers the game's sprite table: table[id] is the sprite with that ID.

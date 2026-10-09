@@ -32,25 +32,6 @@ static void show_frame(void) {
     frame_end();
 }
 
-// screen_set_blend: the blend registers and the brightness stay as they were,
-// also after frame_end() (where the real one will apply its settings) and
-// when the brightness returns to 0 (where blending will resume).
-static void blend_changes_nothing(void) {
-    screen_set_brightness(-4);
-    u16 bldcnt = REG_BLDCNT, bldalpha = REG_BLDALPHA;
-    u32 before = debug_warning_count();
-    screen_set_blend(LAYER_FOREGROUND, LAYER_ALL & ~LAYER_FOREGROUND, 8, 8);
-    CHECK(debug_warning_count() == before + WARNINGS(1));
-    screen_set_blend(0, LAYER_ALL, 16, 16);
-    CHECK(debug_warning_count() == before + WARNINGS(1)); // once, not per call
-    show_frame();
-    CHECK(REG_BLDCNT == bldcnt && REG_BLDALPHA == bldalpha);
-    CHECK(serval_screen_brightness() == -4);
-    screen_set_brightness(0);
-    show_frame();
-    CHECK(REG_BLDCNT == BLD_OFF && REG_BLDALPHA == bldalpha);
-}
-
 // The raster stubs claim none of the hardware raster effects will use (DMA 0,
 // the HBlank interrupt) and leave the backdrop alone; each warns once.
 static void raster_effects_change_nothing(void) {
@@ -81,7 +62,7 @@ static void raster_effects_change_nothing(void) {
     screen_set_backdrop(old_backdrop);
 }
 
-TEST_SUITE(planned_screen_tests, "planned_screen", {"blend_changes_nothing", blend_changes_nothing},
+TEST_SUITE(planned_screen_tests, "planned_screen",
            {"raster_effects_change_nothing", raster_effects_change_nothing});
 #else
 // The host build links no stubs of screen.h's planned API (src/gba/ only).

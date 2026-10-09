@@ -17,9 +17,12 @@
 // every sprite group), the map layers on backgrounds 1-3 (map_unload(), which
 // also forgets their map_set_scroll() offsets), the camera (0, 0), the
 // entities (ecs_reset()), the text layer (text_clear(); main.c then prints
-// the title bar on row 0) and the backdrop (black). A scene's leave() undoes
-// whatever else it set: its effect's state (screen_set_blend(), a raster
-// effect, palette writes, ...).
+// the title bar on row 0; text has a shadow, text_set_shadow(true), from
+// boot on) and the backdrop (black). A scene's leave() undoes whatever else
+// it set: its effect's state (screen_set_blend(), a raster effect, palette
+// writes, ...). The brightness is main.c's while it fades (set every frame,
+// before update()): a scene that changes it too does so only when its own
+// state changes (blend_fx.c's B button).
 typedef struct {
     const char* name;     // shown in the title bar: upper case, at most 20 characters
     void (*enter)(void);  // loads the scene's graphics (the screen is black)

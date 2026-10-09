@@ -25,7 +25,7 @@ Implemented in 1.0:
 - Physics: bouncing bodies (gravity in any direction and per body, bounce up to a perfect one that never loses height, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; kinematic bodies that move only by their velocity; rectangle overlap and hit-side tests.
 - Paths: movement patterns as data tables (lines, swoops, circles, weaves), mirrored or rotated per entity.
 - Sound on the PSG tone generators: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
-- Screen fades (hardware brightness), color mixing (`color_mix()`, matching the hardware's blending) and the backdrop color.
+- Screen fades (hardware brightness), alpha blending (see-through layers and semi-transparent sprites: `screen_set_blend()`, `SPRITE_BLEND`), color mixing (`color_mix()`, matching the hardware's blending) and the backdrop color.
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
 - Web builds: any game also builds into one self-contained HTML page (WebAssembly inside) that runs it in a browser on virtual GBA hardware, ready for GitHub Pages or any static host. Keyboard, gamepad and touch input, sound, saves.
@@ -35,9 +35,9 @@ Implemented in 1.0:
 Planned, declared in 1.0 and implemented in 1.x versions (designed in [`docs/`](docs/README.md); the [full list of names](docs/api-freeze.md#planned-in-1x-declared-now)):
 
 - Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank; the PSG wave channel.
-- Sprites: streamed groups, LZ77-compressed sprites, palette writes, alpha-blended sprites.
+- Sprites: streamed groups, LZ77-compressed sprites, palette writes.
 - Tilemaps: LZ77-compressed tilesets, background palette writes, ladders and floor slopes.
-- Screen: alpha blending, raster effects (a scroll offset or backdrop color per scanline).
+- Screen: raster effects (a scroll offset or backdrop color per scanline).
 
 Later, with no API yet (each can be added without breaking games): palette sharing, tileset groups and 8bpp tilesets, windows and mosaic, dialogue text and larger fonts, tweens, a collision broad phase, the editor debug link, GB/GBC and DS targets.
 
@@ -61,6 +61,7 @@ Later, with no API yet (each can be added without breaking games): palette shari
 | [`shmup`](examples/shmup/main.c) | "Star Veldt", a vertical shoot-'em-up: a stage scrolled by the camera over a parallax starfield, a narrow field with a HUD panel, enemy waves on movement patterns, aimed and spread bullets on an entity budget, power-ups, bombs, a three-phase boss, music, a saved top-5 table |
 | [`blackjack`](examples/blackjack/main.c) | Blackjack in a bold, bouncy modern card-game style: cards composed of shared sprite pieces that slide, flip, tilt and wobble, a swirling background, banners, chip and number pops, a swing tune, a bankroll kept in save data |
 | [`fireflies`](examples/fireflies/main.c) | A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely a script in the Lua subset (`fireflies.lua`), compiled to bytecode for the VM at build time: objects with event handlers, waits, spawning, scoring, the timer, the HUD, sound and music; C only loads the blob, names the collision pair the VM tests (`vm_collide()`) and runs the frame loop |
+| [`effects`](examples/effects/main.c) | The engine's screen effects, a scene each, switched with L and R: alpha blending (a see-through waterfall, glowing wisps and a lamp's halo, blended shadows, blending paused by a brightness fade), runtime sprite tiles (card faces composed when they are dealt, a frame counter rebuilt every frame); scenes for palette writes and raster effects as they are implemented |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.
 
@@ -74,7 +75,8 @@ tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install
 cmake --preset gba-release
 cmake --build --preset gba-release
 # -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
-#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba
+#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
+#    effects.gba
 ```
 
 Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()` (and compiles Lua scripts with `serval_add_script()`); see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.

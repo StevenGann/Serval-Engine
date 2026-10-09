@@ -2,7 +2,8 @@
 // blob loader, the interpreter, the scheduler (contexts, waits, behaviours and
 // reactions, the event queue) and the bridge to entities and engine calls.
 // Portable: the engine calls only the GBA build has (sound, music, text,
-// buttons, brightness) go through serval_vm_platform_call (vm_internal.h).
+// buttons, brightness, blending) go through serval_vm_platform_call
+// (vm_internal.h).
 //
 // vm_step() runs, in this order: the resume pass, Animation End (queued for
 // animations finished since the last check), a drain of the event queue, the
@@ -675,8 +676,8 @@ static s32 array_get(const u8* record, u32 i) {
 // result. A call appended to vm.h without an entry here would silently take no
 // arguments.
 #define SYS_MAX_ARGS 4
-static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1};
-_Static_assert(VM_SYS_COUNT == 14, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4};
+_Static_assert(VM_SYS_COUNT == 15, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 #define SYS_RETURNS                                                                                \
     (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
 

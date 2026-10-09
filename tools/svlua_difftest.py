@@ -56,7 +56,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 PROGRAMS = os.path.join(ROOT, "tests", "svlua", "diff")
 STUB = os.path.join(ROOT, "tests", "svlua", "stub.lua")
 HEADERS = [os.path.join(ROOT, "include", "serval", name)
-           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h")]
+           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h", "screen.h")]
 SKIP = 77
 
 # The engine properties in VM_P_* order (the runner's and the stub's), and
@@ -69,7 +69,8 @@ FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, th
 SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC_PAUSE": 0,
              "PSG_MUSIC_RESUME": 0, "CAMERA_SET": 2, "TEXT_PRINT": 2, "RANDOM_RANGE": 2,
              "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "SCREEN_SET_BRIGHTNESS": 1, "PATH_START": 3,
-             "TEXT_PRINT_NUMBER": 4, "PATH_STOP": 1}  # TEXT_PRINT: col, row, then its text
+             "TEXT_PRINT_NUMBER": 4, "PATH_STOP": 1,
+             "SCREEN_SET_BLEND": 4}  # TEXT_PRINT: col, row, then its text
 
 
 class DiffError(Exception):

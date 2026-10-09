@@ -347,6 +347,9 @@ function env.psg_music_stop() call("PSG_MUSIC_STOP") end
 function env.psg_music_pause() call("PSG_MUSIC_PAUSE") end
 function env.psg_music_resume() call("PSG_MUSIC_RESUME") end
 function env.screen_set_brightness(level) call("SCREEN_SET_BRIGHTNESS", level) end
+function env.screen_set_blend(top, bottom, top_weight, bottom_weight)
+  call("SCREEN_SET_BLEND", top, bottom, top_weight, bottom_weight)
+end
 function env.camera_set(x, y) end
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end

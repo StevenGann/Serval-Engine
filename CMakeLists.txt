@@ -85,6 +85,7 @@ if(SERVAL_TARGET_GBA)
     # within one library in any order.
     add_library(serval STATIC
         ${SERVAL_PORTABLE_SOURCES}
+        src/gba/blend.c
         src/gba/core.c
         src/gba/debug.c
         src/gba/map.c
@@ -117,6 +118,7 @@ elseif(SERVAL_TARGET_WEB)
     _serval_web_font("${CMAKE_CURRENT_BINARY_DIR}/sys8_glyphs.c")
     add_library(serval STATIC
         ${SERVAL_PORTABLE_SOURCES}
+        src/gba/blend.c
         src/gba/core.c
         src/gba/map.c
         src/gba/music.c

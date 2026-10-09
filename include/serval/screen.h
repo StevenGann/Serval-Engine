@@ -2,7 +2,7 @@
 #define SERVAL_SCREEN_H
 
 // Screen size, colors and screen-wide effects: the backdrop, brightness
-// fades, color mixing, and (planned) alpha blending and raster effects. See
+// fades, color mixing, alpha blending and (planned) raster effects. See
 // docs/runtime-systems.md#special-effects.
 
 #include "serval/platform.h"
@@ -59,8 +59,8 @@ void screen_set_backdrop(Color color);
 //
 // It uses the hardware's color special effect (GBA: BLDCNT and BLDY), which
 // does one effect at a time, and alpha blending (screen_set_blend and
-// SPRITE_BLEND sprites, planned) needs it too. So while the brightness is not
-// 0, blending pauses: everything is drawn opaque, then faded. It resumes, with
+// SPRITE_BLEND sprites) needs it too. So while the brightness is not 0,
+// blending pauses: everything is drawn opaque, then faded. It resumes, with
 // the settings last given to screen_set_blend(), once the brightness is back
 // at 0. To fade a scene and keep its blending, fade its palettes with
 // color_mix() instead. The splash screen (serval_splash) borrows the effect
@@ -69,7 +69,7 @@ void screen_set_backdrop(Color color);
 #define SCREEN_BRIGHTNESS_MAX 16
 void screen_set_brightness(int level);
 
-// --- Alpha blending (planned) -------------------------------------------------
+// --- Alpha blending -----------------------------------------------------------
 
 // Screen layers for screen_set_blend(), combinable with |: the four
 // backgrounds, named after their default roles (docs/tilemaps.md#default-layer-roles;
@@ -84,8 +84,8 @@ void screen_set_brightness(int level);
 #define LAYER_BACKDROP (1 << 5)   // the backdrop color (screen_set_backdrop)
 #define LAYER_ALL 0x3F
 
-// Planned: alpha blending, which makes layers see-through. Where a pixel of
-// one of the `top` layers (LAYER_* bits) is in front of a pixel of one of the
+// Alpha blending, which makes layers see-through. Where a pixel of one of
+// the `top` layers (LAYER_* bits) is in front of a pixel of one of the
 // `bottom` layers, the screen shows, for each 5-bit channel (red, green,
 // blue), min(31, (top x top_weight + bottom x bottom_weight) / 16), rounded
 // down. Weights go from 0 to 16 (16 is the whole color); larger ones are
@@ -110,11 +110,7 @@ void screen_set_brightness(int level);
 // Blending shares the hardware's one color effect with the brightness: while
 // screen_set_brightness() is not 0, blending pauses (everything, SPRITE_BLEND
 // sprites included, is drawn opaque, then faded) and these settings come back
-// when the brightness returns to 0. Once implemented, the web build draws it
-// as the GBA does (its renderer already has the hardware's blending). Until
-// then, it does nothing (everything stays opaque) and warns once in debug
-// builds.
-SERVAL_PLANNED("alpha blending, docs/runtime-systems.md#alpha-blending")
+// when the brightness returns to 0. The web build draws it as the GBA does.
 void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight);
 
 // --- Raster effects (planned) -------------------------------------------------

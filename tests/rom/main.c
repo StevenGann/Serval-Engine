@@ -14,6 +14,7 @@ extern const TestSuite audio_tests;
 extern const TestSuite splash_tests;
 extern const TestSuite gba_map_tests;
 extern const TestSuite gba_present_tests;
+extern const TestSuite gba_blend_tests;
 extern const TestSuite gba_save_tests;
 extern const TestSuite gba_ecs_cost_tests;
 extern const TestSuite gba_vm_tests;
@@ -42,6 +43,7 @@ int main(void) {
         &gba_map_tests,
         &anim_tests,
         &gba_present_tests,
+        &gba_blend_tests,
         &psg_sequencer_tests,
         &save_tests,
         &gba_save_tests,

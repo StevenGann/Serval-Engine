@@ -53,4 +53,5 @@ function Bullet:anim_end()
   psg_music_pause()
   psg_music_resume()
   psg_music_stop()
+  screen_set_blend(LAYER_FOREGROUND, LAYER_ALL, 8, 8)
 end

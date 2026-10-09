@@ -386,6 +386,11 @@ REJECTED = {
                     r"self is the instance the handler runs for; it can't be assigned"),
     "redefine_engine": ("function text_print() end", 1, 10,
                         r"text_print is an engine function"),
+    # screen_set_blend was planned, a planned_top_local row: implemented, it
+    # is a builtin, and a top-level local of its name gets the builtins' error
+    "redefine_engine_top_local": ("local screen_set_blend = 0", 1, 7,
+                                  r"^screen_set_blend is an engine function; a script can't "
+                                  r"redefine it$"),
     "redefine_print": ("function print() end", 1, 10, r"print is Lua's print \(console output\)"),
     "redeclare": ("a = 0\nlocal a = 0", 2, 7, r"a is already declared \(line 1\)"),
     "local_used_above": (OBJ + "function A:step() local y = speed end\nlocal speed = 0", 3, 29,
@@ -474,8 +479,8 @@ REJECTED = {
                           r"^array tileset_set_colors: tileset_set_colors is reserved"),
     "planned_local_function": ("local function music_stop() end", 1, 16,
                                r"^local function music_stop: music_stop is reserved"),
-    "planned_top_local": ("local screen_set_blend = 0", 1, 7,
-                          r"^local screen_set_blend: screen_set_blend is reserved"),
+    "planned_top_local": ("local sfx_set_volume = 0", 1, 7,
+                          r"^local sfx_set_volume: sfx_set_volume is reserved"),
     "planned_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
                           r"^local sfx_stop_all: sfx_stop_all is reserved"),
     "planned_called": (OBJ + "function A:step() music_play(0, true) end", 3, 19,
@@ -1050,9 +1055,10 @@ class PlannedNames(unittest.TestCase):
             with self.subTest(name=name):
                 svlua.check(f"function {name}() end", "t.lua")
         # The planned constants are constants: a script may name its own.
-        p = svlua.check("PSG_WAVE = 1\nlocal MAP_LADDER <const> = 2\nSPRITE_BLEND = object {}",
-                        "t.lua")
-        self.assertEqual([s.name for s in p.top_order], ["PSG_WAVE", "MAP_LADDER", "SPRITE_BLEND"])
+        p = svlua.check("PSG_WAVE = 1\nlocal MAP_LADDER <const> = 2\n"
+                        "SPRITE_ASSET_LZ77 = object {}", "t.lua")
+        self.assertEqual([s.name for s in p.top_order],
+                         ["PSG_WAVE", "MAP_LADDER", "SPRITE_ASSET_LZ77"])
 
     def test_planned_constants_need_no_reservation(self):
         """A script's own name hides a header's constant, implemented or
@@ -1449,6 +1455,7 @@ def header_names(defines=None, files=()):
 ECS_H = os.path.join(ROOT, "include", "serval", "ecs.h")
 MAP_H = os.path.join(ROOT, "include", "serval", "map.h")
 PHYSICS_H = os.path.join(ROOT, "include", "serval", "physics.h")
+SCREEN_H = os.path.join(ROOT, "include", "serval", "screen.h")
 FIREFLIES_HEADERS = [os.path.join(ROOT, "examples", "fireflies", "game.h")] + [
     os.path.join(ROOT, "include", "serval", name)
     for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h")]
@@ -1470,7 +1477,7 @@ PROPS = ("X", "Y", "VX", "VY", "SPR", "FRAME", "FLAGS", "ANGLE", "DEPTH", "SCALE
          "BODY_H", "TAGS", "ANIM_TIME", "ANIM_STEP", "BODY_BOUNCE", "BODY_FRICTION",
          "BODY_MAX_FALL", "BODY_GRAVITY", "BODY_CONTACT")
 FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
-SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1)  # vm.md's SYS page
+SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4)  # vm.md's SYS page
 
 
 class VmRun:
@@ -1582,7 +1589,7 @@ GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "glo
 GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
                   "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
                   "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
-                  "SONG_WIN": 0}
+                  "SONG_WIN": 0, "LAYER_FOREGROUND": 2, "LAYER_ALL": 0x3F}
 
 
 class Golden(unittest.TestCase):
@@ -1631,7 +1638,7 @@ class Golden(unittest.TestCase):
                          "PSG_MUSIC_RESUME",
                          "CAMERA_SET", "TEXT_PRINT", "TEXT_PRINT_NUMBER", "RANDOM_RANGE",
                          "BUTTON_DOWN", "BUTTON_PRESSED", "SCREEN_SET_BRIGHTNESS", "PATH_START",
-                         "PATH_STOP"):
+                         "PATH_STOP", "SCREEN_SET_BLEND"):
             with self.subTest(sys=sys_call):
                 self.assertIn(f"SYS {sys_call}", text)
         self.assertIn("SETP FIELD_HP", text)  # an instance field
@@ -2130,6 +2137,22 @@ function Faller:create() self.body_w = 8; self.body_h = 8; self.body_max_fall = 
         self.assertEqual((rester["BODY_CONTACT"], rester["Y"]), (1, 152 * 256))
         self.assertEqual((floater["Y"], floater["VY"], floater["BODY_GRAVITY"]), (20 * 256, 0, -16))
         self.assertEqual((faller["VY"], faller["BODY_MAX_FALL"]), (256, 256))
+
+    @needs_runner
+    def test_screen_set_blend_reaches_the_platform(self):
+        """screen_set_blend is a builtin since alpha blending was
+        implemented: SYS SCREEN_SET_BLEND with its four arguments in order,
+        the layers from screen.h."""
+        run = run_vm(OBJ + """function A:step()
+  screen_set_blend(LAYER_FOREGROUND, LAYER_ALL & ~LAYER_FOREGROUND, 8, 8)
+  screen_set_blend(0, LAYER_PLAYFIELD | LAYER_BACKDROP, 16, 16)
+  screen_set_blend(0, 0, 0, 0)
+end""", attach=["A"], files=[SCREEN_H])
+        self.assertEqual(run.calls_of("SCREEN_SET_BLEND"),
+                         [(0x02, 0x3D, 8, 8), (0, 0x24, 16, 16), (0, 0, 0, 0)])
+        self.assertIn("SYS SCREEN_SET_BLEND",
+                      svlua.compile_source(OBJ + "function A:step() screen_set_blend(1, 2, 3, 4) "
+                                           "end", "t.lua"))
 
     @needs_runner
     def test_kinematic_objects(self):

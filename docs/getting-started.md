@@ -14,7 +14,8 @@ tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install
 cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
-#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba
+#    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
+#    effects.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -31,6 +32,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`shmup`](../examples/shmup/main.c) | A vertical shooter: a stage scrolled by the camera with a wrapping parallax layer, a HUD panel layer, an entity budget with caps, movement patterns from a wave table, aimed bullets, a multi-phase boss, cheap per-frame loops over the entities of each kind |
 | [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
 | [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all a script in the Lua subset ([lua.md](lua.md)), compiled at build time to bytecode for the VM ([vm.md](vm.md)): objects with event handlers (`create`, `step`, `collision`, `destroy`, `anim_end`, `room_start`), waits, fields; and the little C a game made in Studio Advance keeps: the frame loop, the collision pair the VM tests (`vm_collide`), a restart |
+| [`effects`](../examples/effects/main.c) | Screen effects, a scene each: alpha blending (`screen_set_blend`, `SPRITE_BLEND`: a see-through foreground, glows, shadows) and how a brightness fade pauses it; runtime sprite tiles (`sprite_set_tiles`: card faces composed when dealt); a game made of scenes in their own files, art drawn at boot |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 

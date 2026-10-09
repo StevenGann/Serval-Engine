@@ -29,7 +29,7 @@ These could not be added later without breaking games, or were small enough to f
 | `SPRITE_ASSET_STREAMED` removed: residency is a group's (`SpriteGroup.flags`); bit 0 of `SpriteAsset.flags` is reserved | [sprites.md](sprites.md#residency-modes) |
 | Hardware, flag bits, collision types and VRAM reserved for planned features | [core-api.md](core-api.md#hardware-the-engine-uses) and each area's doc |
 | `sprite_groups_mark()` / `sprite_groups_release()`: global and per-room sprite groups | [sprites.md](sprites.md#marks) |
-| `color_mix()`, and the `LAYER_*` constants that `screen_set_blend()` will take | [runtime-systems.md](runtime-systems.md#color-mixing) |
+| `color_mix()`, and the `LAYER_*` constants that `screen_set_blend()` takes | [runtime-systems.md](runtime-systems.md#color-mixing) |
 | `map_tags_in()`: hazards are game tag bits, not a collision type | [tilemaps.md](tilemaps.md#tags) |
 | `vm_collide()` / `vm_collide_clear()`: scripted games collide with no C glue | [vm.md](vm.md#collisions) |
 | `body_bounce` 255 means a perfect bounce in both `sys_physics()` and `sys_map_movement()`: a body comes back up as high as it fell from (it kept 255/256 of its speed before) | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
@@ -49,7 +49,7 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 37 names is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+Each of these 33 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ Each of these 37 names is in the headers with `SERVAL_PLANNED`; its header comme
 | Palette writes | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |
 | Ladders | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#collision-types) |
 | Floor slopes | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#collision-types) |
-| Alpha blending | `screen_set_blend`, `SPRITE_BLEND` | [runtime-systems.md](runtime-systems.md#alpha-blending), [sprites.md](sprites.md#alpha-blending) |
+| Alpha blending: **implemented**, no longer marked planned (scripts: SYS call 14, `SCREEN_SET_BLEND`) | `screen_set_blend`, `SPRITE_BLEND` | [runtime-systems.md](runtime-systems.md#alpha-blending), [sprites.md](sprites.md#alpha-blending) |
 | Raster effects | `raster_scroll`, `raster_backdrop`, `raster_clear` | [runtime-systems.md](runtime-systems.md#raster-effects) |
 
 **Suggested order**, by value to Studio Advance: palette writes; runtime sprite tiles; blending; ladders and slopes; LZ77; Maxmod on the GBA (with the mixer configuration below); streamed groups; raster effects; the wave channel; the web's sampled-audio player. To implement one, follow [development.md](development.md#planned-api): drop the marker, implement, move its line out of `tests/planned/`, and turn its stub test into a feature test.

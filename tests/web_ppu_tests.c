@@ -383,6 +383,78 @@ static void alpha_blend(void) {
     CHECK(pixel(0, 0) == rgb(RGB15(0, 0, 30)));
 }
 
+// What alpha blending in the engine sets up (src/gba/blend.c, SPRITE_BLEND in
+// src/gba/sprites.c): semi-transparent sprites at the engine's default
+// priority (2, in front of BG2), BG2 a second target and BG3 not, as
+// screen_set_blend(0, LAYER_PLAYFIELD | LAYER_BACKDROP, 8, 8) sets; then the
+// brightness's settings, which pause it; then a see-through foreground.
+static void semi_transparent_sprites_as_the_engine_draws_them(void) {
+    reset(0x1E40); // BG1, BG2, BG3, OBJ, 1D mapping
+    palette[0] = backdrop;
+    palette[1] = RGB15(0, 20, 0);        // BG2: green, in the left half
+    palette[2] = RGB15(0, 0, 24);        // BG3: blue, everywhere
+    palette[3] = RGB15(31, 31, 31);      // BG1: white, the top-left tile only
+    io[BG0CNT + 1] = (u16)(10 << 8 | 1); // priority 1, map at 0x5000
+    io[BG0CNT + 2] = (u16)(8 << 8 | 2);  // priority 2, map at 0x4000
+    io[BG0CNT + 3] = (u16)(9 << 8 | 3);  // priority 3, map at 0x4800
+    tile4_fill(32, 1);
+    tile4_fill(64, 2);
+    tile4_fill(96, 3);
+    for (u32 i = 0; i < 1024; i++) {
+        vram16(0x4000 + i * 2, (i % 32) < 16 ? 1 : 0);
+        vram16(0x4800 + i * 2, 2);
+    }
+    const u16 orange = RGB15(30, 10, 2), white = RGB15(31, 31, 31);
+    palette[OBJ_PAL + 1] = orange;
+    palette[OBJ_PAL + 2] = white;
+    tile4_fill(OBJ_TILES + 32, 1);
+    tile4_fill(OBJ_TILES + 64, 2);
+    const u16 semi = 0x0400, prio2 = 2 << 10;
+    set_obj(0, 40 | semi, 8, 1 | prio2);           // over BG2
+    set_obj(1, 40 | semi, 200, 1 | prio2);         // over BG3, not a second target
+    set_obj(2, 60, 8, 1 | prio2);                  // not semi-transparent
+    set_obj(3, 80 | semi, 8, 1 | prio2);           // in front of another sprite:
+    set_obj(4, 80, 8, 2 | prio2);                  //   white, behind it, doesn't show
+    oam[3] = 256;                                  // matrix 0: identity
+    oam[15] = 256;                                 //
+    set_obj(5, 100 | semi | 0x0100, 8, 1 | prio2); // affine
+    io[BLDCNT] = 0x0040 | (0x04 | 0x20) << 8;      // no first targets, alpha, BG2 + backdrop
+    io[BLDALPHA] = 8 | 8 << 8;
+    render();
+    const u32 mixed = rgb(RGB15(15, 15, 1)); // (orange + green) / 2
+    CHECK(pixel(8, 40) == mixed);
+    CHECK(pixel(200, 40) == rgb(orange));
+    CHECK(pixel(8, 60) == rgb(orange));
+    CHECK(pixel(8, 80) == mixed && pixel(15, 87) == mixed);
+    CHECK(pixel(8, 100) == mixed);
+    io[BLDALPHA] = 16 | 16 << 8; // added: a glow
+    render();
+    CHECK(pixel(8, 40) == rgb(RGB15(30, 30, 2)));
+
+    // The brightness: every layer a first target, no second target, so the
+    // sprites fade like the rest instead of blending.
+    io[BLDCNT] = 0x1F | 0x20 | 0xC0;
+    io[BLDY] = 8;
+    render();
+    CHECK(pixel(8, 40) == rgb(RGB15(15, 5, 1)));
+    CHECK(pixel(8, 60) == rgb(RGB15(15, 5, 1)));
+    CHECK(pixel(100, 120) == rgb(RGB15(0, 10, 0)));
+    io[BLDCNT] = 0; // off: opaque
+    render();
+    CHECK(pixel(8, 40) == rgb(orange));
+
+    // A see-through foreground: screen_set_blend(LAYER_FOREGROUND, LAYER_ALL
+    // & ~LAYER_FOREGROUND, 8, 8). BG1's white tile covers (0-7, 0-7); a
+    // sprite under it is the second target.
+    set_obj(6, 0, 0, 1 | prio2);
+    io[BLDCNT] = 0x02 | 0x40 | 0x3D << 8;
+    io[BLDALPHA] = 8 | 8 << 8;
+    vram16(0x5000, 3);
+    render();
+    CHECK(pixel(0, 0) == rgb(RGB15(30, 20, 16))); // (white + orange) / 2
+    CHECK(pixel(8, 40) == mixed);                 // and the sprites still blend
+}
+
 static void window_0(void) {
     reset(0x2100); // BG0, window 0
     palette[0] = backdrop;
@@ -446,4 +518,6 @@ TEST_SUITE(web_ppu_tests, "web_ppu", {"backdrop_only", backdrop_only},
            {"affine_sprite_double_size", affine_sprite_double_size},
            {"sprite_y_wrap", sprite_y_wrap}, {"sprite_cycle_budget", sprite_cycle_budget},
            {"brightness_fade", brightness_fade}, {"alpha_blend", alpha_blend},
+           {"semi_transparent_sprites_as_the_engine_draws_them",
+            semi_transparent_sprites_as_the_engine_draws_them},
            {"window_0", window_0}, {"bitmap_and_affine_modes", bitmap_and_affine_modes});

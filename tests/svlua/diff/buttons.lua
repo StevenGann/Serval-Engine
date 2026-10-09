@@ -1,7 +1,7 @@
 -- Input and engine calls: button_down while a button is held,
 -- button_pressed only on the frame it goes down; the calls the platform
--- makes (text, numbers with and without a width, sounds, brightness), in
--- order, each frame.
+-- makes (text, numbers with and without a width, sounds, brightness,
+-- blending), in order, each frame.
 -- diff: frames=8 start=Pad buttons=2:BUTTON_A:3 buttons=4:BUTTON_B|BUTTON_LEFT:2 buttons=7:BUTTON_A
 Pad = object {}
 
@@ -26,6 +26,7 @@ function Pad:room_start()
     if button_down(BUTTON_B) and button_down(BUTTON_LEFT) then
       combo = combo + 1
       screen_set_brightness(combo)
+      screen_set_blend(LAYER_FOREGROUND, LAYER_ALL & ~LAYER_FOREGROUND, combo, 16 - combo)
     end
     if button_pressed(BUTTON_B | BUTTON_START) then text_print(4, 4, "B!") end
   end

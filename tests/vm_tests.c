@@ -4015,12 +4015,13 @@ static void sys_page_numbers_are_fixed(void) {
                                VM_SYS_SCREEN_SET_BRIGHTNESS,
                                VM_SYS_PATH_START,
                                VM_SYS_TEXT_PRINT_NUMBER,
-                               VM_SYS_PATH_STOP};
+                               VM_SYS_PATH_STOP,
+                               VM_SYS_SCREEN_SET_BLEND};
     u32 moved = 0;
     for (u32 k = 0; k < sizeof page / sizeof page[0]; k++)
         moved += page[k] != k;
     CHECK(moved == 0);
-    CHECK(VM_SYS_COUNT == 14);
+    CHECK(VM_SYS_COUNT == 15);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -4311,6 +4312,51 @@ static void sys_text_print_number(void) {
     CHECK(vm_global(1) == 1);
 #ifndef SERVAL_GBA
     CHECK(last_call4(2, VM_SYS_TEXT_PRINT_NUMBER, 5, 6, INT32_MIN, 12, NULL));
+#endif
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Engine calls": SYS screen_set_blend(top, bottom, top_weight,
+// bottom_weight) pops four and pushes nothing; it is a platform call
+// (vm_internal.h), so on the host the recorder sees its arguments in push
+// order. tests/rom/vm_platform_tests.c checks the registers it sets on the
+// GBA. The last call turns blending off again (on the GBA, at the next
+// frame_end()).
+static void sys_screen_set_blend(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(55);                    // 55
+    push8(LAYER_FOREGROUND);      // 55 top
+    push8(LAYER_ALL);             // 55 top bottom
+    push8(6);                     // 55 top bottom 6
+    push8(10);                    // 55 top bottom 6 10
+    sys(VM_SYS_SCREEN_SET_BLEND); // 55: frame 1
+    stg(0);                       // glob[0] = 55
+    wait_frames(1);               //
+    push8(0);                     // 0
+    push8(0);                     // 0 0
+    push8(0);                     // 0 0 0
+    push8(0);                     // 0 0 0 0
+    sys(VM_SYS_SCREEN_SET_BLEND); // frame 2: off
+    store(1, 1);                  // carried on
+    op(VM_OP_HALT);               //
+    CHECK(load());
+#ifndef SERVAL_GBA
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+#endif
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == 55);
+#ifndef SERVAL_GBA
+    CHECK(last_call4(1, VM_SYS_SCREEN_SET_BLEND, LAYER_FOREGROUND, LAYER_ALL, 6, 10, NULL));
+#endif
+    frame();
+    CHECK(vm_global(1) == 1);
+#ifndef SERVAL_GBA
+    CHECK(last_call4(2, VM_SYS_SCREEN_SET_BLEND, 0, 0, 0, 0, NULL));
 #endif
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
@@ -5786,7 +5832,8 @@ TEST_SUITE(
     {"sys_bad_string_or_song_index", sys_bad_string_or_song_index},
     {"platform_sys_calls_reach_the_platform", platform_sys_calls_reach_the_platform},
     {"sys_text_print_number", sys_text_print_number}, {"sys_path_stop", sys_path_stop},
-    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"sys_screen_set_blend", sys_screen_set_blend}, {"ram_arrays", ram_arrays},
+    {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
     {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
     {"globals_start_at_their_initial_values", globals_start_at_their_initial_values},

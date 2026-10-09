@@ -1,6 +1,6 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
-// sound, music, text (strings and numbers), buttons and brightness. The web
-// build compiles it too.
+// sound, music, text (strings and numbers), buttons, brightness and blending.
+// The web build compiles it too.
 
 #include "../core/vm_internal.h"
 #include "serval/audio.h"
@@ -62,6 +62,11 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         return button_pressed((u16)args[0]);
     case VM_SYS_SCREEN_SET_BRIGHTNESS:
         screen_set_brightness(args[0]);
+        return 0;
+    case VM_SYS_SCREEN_SET_BLEND:
+        // As C converts them: a negative layer mask has bits outside
+        // LAYER_ALL, a negative weight is past 16 (each warns).
+        screen_set_blend((u32)args[0], (u32)args[1], (u32)args[2], (u32)args[3]);
         return 0;
     default:
         return 0;

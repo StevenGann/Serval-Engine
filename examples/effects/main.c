@@ -4,8 +4,13 @@
 //   - The engine's splash screen (serval_splash)
 //   - Scenes that load their own sprites, tileset and map layers, switched
 //     with fades of the screen's brightness (screen_set_brightness)
-//   - Blending (blend_fx.c): alpha blending, screen_set_blend() and
-//     SPRITE_BLEND (a placeholder for now)
+//   - Blending (blend_fx.c): alpha blending with screen_set_blend() and
+//     SPRITE_BLEND: a see-through foreground, sprites that glow, blended
+//     shadows, a metasprite with a blended piece, and blending pausing
+//     while screen_set_brightness() dims the screen
+//   - Art drawn at boot from ASCII pictures and shapes (art.c), map layers
+//     on all three backgrounds, animated background tiles
+//     (tileset_set_tiles)
 //   - Palettes (palette_fx.c): palette writes (a placeholder for now)
 //   - Sprite tiles (sprite_tiles_fx.c): runtime sprite tiles,
 //     sprite_set_tiles(): card faces composed in RAM when they are dealt and
@@ -22,7 +27,31 @@
 //   - L and R switch to the previous and the next scene (after the last,
 //     the first again): the screen fades to black over 8 frames, the next
 //     scene loads, and the screen fades back in.
-//   - Blending: for now the words "ALPHA BLENDING (TO COME)" in the middle.
+//   - Blending: a garden at night. A starry sky with the moon and dark
+//     hills; a red brick wall on the right, with a waterfall pouring down
+//     over it into a pool along the bottom right; grass on the left, with a
+//     street lamp whose lantern has a round warm halo. A serval stands on
+//     the grass with a shadow at its feet, and three pale green wisps drift
+//     above. Row 1 shows the blend call, row 18 what it does, row 19 the
+//     buttons. The waterfall's streaks keep falling.
+//     - First MIX, "blend(FOREGROUND, ALL, 8, 8)": the waterfall and the
+//       pool are see-through, the bricks and the serval showing through the
+//       water; the shadow darkens the ground under the serval; the halo and
+//       the wisps are faint and see-through, also in front of the water.
+//     - A: GLOW, "blend(0, ALL, 16, 16)": the halo and the wisps glow, their
+//       colors added to what is behind them (brightest over the waterfall);
+//       the shadow disappears (black adds nothing); the water is opaque.
+//     - A again: OFF, "blend(0, 0, 0, 0)": everything opaque: solid water, a
+//       black shadow, the halo as solid brown rings, solid green wisps. A
+//       again: MIX.
+//     - Left and right walk the serval, facing the way it walks; in the
+//       pool and behind the waterfall the water covers it (see-through in
+//       MIX).
+//     - Holding B dims the screen, "DIMMED: BLENDING PAUSED" on row 2:
+//       everything turns opaque, then dims (the hardware has one color
+//       effect, and the brightness takes it); releasing B brings the
+//       blending back. The fades between scenes pause it the same way: the
+//       water turns opaque as the screen fades.
 //   - Palettes: for now the words "PALETTE WRITES (TO COME)".
 //   - Sprite tiles: four playing cards on black under "FACES COMPOSED AT
 //     RUN TIME" (the ace of spades, the king of hearts in a gold frame, the
@@ -34,7 +63,8 @@
 //     counter).
 //   - Raster: for now the words "RASTER EFFECTS (TO COME)".
 //   - No sound after the splash.
-//   (In mGBA's default keyboard mapping: L = A key, R = S key.)
+//   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
+//   L = A key, R = S key.)
 //
 // Uses only Serval Engine's API; no third-party headers.
 
@@ -91,6 +121,7 @@ static void show(int index) {
 int main(void) {
     serval_init();
     serval_splash();
+    text_set_shadow(true); // readable over any scene
 
     int current = 0;
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN);

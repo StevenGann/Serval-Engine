@@ -10,6 +10,7 @@
 #include "../core/input_internal.h"
 #include "../core/random_internal.h"
 #include "internal.h"
+#include "screen_internal.h" // blending: serval_blend_apply
 
 // The portable button bits are the GBA's KEYINPUT bits, so no translation is needed.
 _Static_assert(BUTTON_A == KEY_A && BUTTON_B == KEY_B && BUTTON_SELECT == KEY_SELECT &&
@@ -123,6 +124,7 @@ void frame_end(void) {
     serval_sprite_tiles_commit(); // sprite tiles: step 3, sprite_set_tiles() copies
     if (serval_map_commit_hook)
         serval_map_commit_hook();
+    serval_blend_apply(); // blending: step 7, the blend registers
     serval_psg_update();
     frames++;
 }

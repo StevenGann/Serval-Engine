@@ -1,6 +1,7 @@
 // Screen-wide effects: brightness (fade to black or white) through the
-// hardware's color special effect, and the stubs of the planned ones (alpha
-// blending, raster effects; docs/runtime-systems.md#special-effects).
+// hardware's color special effect, and the stubs of the planned ones (raster
+// effects; docs/runtime-systems.md#special-effects). Alpha blending, which
+// shares the color effect with the brightness, is blend.c.
 
 #include "serval/screen.h"
 
@@ -20,11 +21,11 @@ static bool warned_range;
 void serval_screen_apply_brightness(void) {
     // Every layer and the backdrop are first targets, with no second targets,
     // so sprites marked semi-transparent fade too instead of blending; the
-    // mode picks the direction, BLDY (0-16) how far. Level 0 turns the effect
-    // off. (Alpha blending, planned, will put its own settings back here at
-    // level 0: blending pauses during a fade, screen.h.)
+    // mode picks the direction, BLDY (0-16) how far. Level 0 gives the effect
+    // back to alpha blending: its settings, or off (blending pauses during a
+    // fade, screen.h).
     if (brightness == 0)
-        REG_BLDCNT = BLD_OFF;
+        REG_BLDCNT = serval_blend_control(); // blending: resumes at level 0
     else
         REG_BLDCNT = (u16)(BLD_ALL | BLD_BACKDROP | (brightness > 0 ? BLD_WHITE : BLD_BLACK));
     REG_BLDY = (u16)(brightness < 0 ? -brightness : brightness);
@@ -54,14 +55,14 @@ void screen_set_brightness(int level) {
 //
 // Declared in screen.h with SERVAL_PLANNED, not implemented in this engine
 // version (docs/development.md#planned-api). Each stub changes nothing, so the
-// game sees today's behaviour (everything opaque, layers scrolled as a whole,
-// one backdrop color), and says so once per function in debug builds: a game
-// calling them every frame gets one line, not one per frame. They touch no
-// register, so the hardware they will need (the blend registers, DMA 0 and
-// the HBlank interrupt) stays untouched until then.
+// game sees today's behaviour (layers scrolled as a whole, one backdrop
+// color), and says so once per function in debug builds: a game calling them
+// every frame gets one line, not one per frame. They touch no register, so
+// the hardware they will need (DMA 0 and the HBlank interrupt) stays
+// untouched until then.
 
 #ifdef SERVAL_DEBUG
-static bool warned_blend, warned_raster_scroll, warned_raster_backdrop, warned_raster_clear;
+static bool warned_raster_scroll, warned_raster_backdrop, warned_raster_clear;
 
 static void warn_planned(bool* warned, const char* message) {
     if (!*warned) {
@@ -73,15 +74,6 @@ static void warn_planned(bool* warned, const char* message) {
 #else
 #define WARN_PLANNED(flag, message) ((void)0)
 #endif
-
-void screen_set_blend(u32 top, u32 bottom, u32 top_weight, u32 bottom_weight) {
-    (void)top;
-    (void)bottom;
-    (void)top_weight;
-    (void)bottom_weight;
-    WARN_PLANNED(warned_blend, "screen_set_blend: alpha blending is planned, not implemented in "
-                               "this engine version; everything stays opaque");
-}
 
 void raster_scroll(u32 bg, bool vertical, const s16* offsets) {
     (void)bg;

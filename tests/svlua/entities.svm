@@ -3,7 +3,7 @@
 ; Every line names the script's line it comes from.
 ; Constants from the game's C headers (svm.py asm --header for the headers that define them):
 ;   C_POS C_VEL C_SPR SPR_BULLET C_BODY SPR_ENEMY PATH_MIRROR_X BUTTON_A
-;   SND_SHOOT BUTTON_B SONG_WIN
+;   SND_SHOOT BUTTON_B SONG_WIN LAYER_FOREGROUND LAYER_ALL
 
 ; --- Constants ---
 
@@ -215,5 +215,11 @@ bullet_anim_end_instances1_end:         ; entities.lua:51
     SYS PSG_MUSIC_RESUME                ; entities.lua:54
     ; 55: psg_music_stop()
     SYS PSG_MUSIC_STOP                  ; entities.lua:55
-    ; 56: end
-    HALT                                ; entities.lua:56
+    ; 56: screen_set_blend(LAYER_FOREGROUND, LAYER_ALL, 8, 8)
+    PUSH LAYER_FOREGROUND               ; entities.lua:56
+    PUSH LAYER_ALL                      ; entities.lua:56
+    PUSH 8                              ; entities.lua:56
+    PUSH 8                              ; entities.lua:56
+    SYS SCREEN_SET_BLEND                ; entities.lua:56
+    ; 57: end
+    HALT                                ; entities.lua:57
