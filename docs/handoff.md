@@ -17,7 +17,7 @@ Serval Engine is the MIT-licensed C runtime for Game Boy Advance games, built on
 
 ## State at rc.1
 
-- **Implemented:** see the README's feature list and each doc's status line, and what integrating Studio Advance's object system added before the tag: body properties and kinematic bodies for scripts, `vm_object_of`, a larger event queue ([api-freeze.md](api-freeze.md#what-the-freeze-did-100-rc1)). Nine examples ([examples-roadmap.md](examples-roadmap.md)), each with a header comment saying what correct looks like; the website's gallery runs them in the browser.
+- **Implemented:** see the README's feature list and each doc's status line, and what integrating Studio Advance's object system added before the tag: body properties and kinematic bodies for scripts, `vm_object_of`, a larger event queue, field names reserved for later properties ([api-freeze.md](api-freeze.md#what-the-freeze-did-100-rc1)). Nine examples ([examples-roadmap.md](examples-roadmap.md)), each with a header comment saying what correct looks like; the website's gallery runs them in the browser.
 - **Declared, not implemented (planned API):** the table in [api-freeze.md](api-freeze.md#planned-in-1x-declared-now). Each planned name warns at every use and does nothing harmful; `tests/planned/` lists them and the `planned_api` test checks that each warns.
 - **Open:** [open-questions.md](open-questions.md)'s unchecked items, notably the VM's milestone 8 (the debug link and `BRK`, a script benchmark, the IWRAM decision; [vm.md](vm.md#milestones)), the debug link protocol ([debug-link.md](debug-link.md)), real-cartridge save testing, and the capture tool for screenshot tests.
 
@@ -44,6 +44,7 @@ These are the shared contracts. Changing any of them is a cross-repository chang
 
 - **Every loader refuses values it does not understand**, and warns once. A loader that ignored an unknown bit would let a later version change what existing data means ([api-freeze.md](api-freeze.md#principles)).
 - **Hardware claims are API.** The engine's timers, DMA channels, interrupts and VRAM are listed in [core-api.md](core-api.md#hardware-the-engine-uses); claiming another one is a breaking change.
+- **A new VM property's Lua name starts with a reserved prefix** (`body_`, `spr_`, `path_`, ...; [lua.md](lua.md#reserved-names)), normally its C pool's name. Scripts can't have fields by those names; any other name would take over some script's own field.
 - **Performance is measured, not guessed:** `tools/bench.sh` before and after, both numbers in the commit message, a row in [development.md](development.md#benchmark). IWRAM is 32 KB shared with games ([development.md](development.md#memory-use)).
 - **The web build compiles `src/gba/` unchanged** onto virtual GBA hardware ([platforms.md](platforms.md#web)); keep GBA code free of inline assembly outside the guarded places.
 - **Planned API:** `SERVAL_PLANNED` goes on functions and enumerators only; tests that name planned API on purpose define `SERVAL_NO_PLANNED_WARNINGS` before their first include.
