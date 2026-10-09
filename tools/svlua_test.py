@@ -6,8 +6,9 @@ Groups: the lexer and the parser (Lua 5.4's tokens, grammar, precedence and
 associativity); what the subset rejects (one test per construct, checking the
 message and its line and column); names and types (promotion, conflicts,
 conditions, inference from call sites, fields, the wait rule); the field
-names reserved for later properties, and the planned functions' names (read
-from the engine's headers, fake ones too); code generation (golden listings in
+names reserved for later properties, and the engine's function names, planned
+and implemented (read from the engine's headers, fake ones too, and checked
+against GCC's reading); code generation (golden listings in
 tests/svlua/, assembled by svm.py; constant folding, frames, loops); what
 compiled programs compute, run on the engine's VM by svlua_runner
 (tests/svlua/runner.c, built by the host preset); and the fireflies game in
@@ -21,6 +22,7 @@ import importlib.util
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -458,7 +460,8 @@ REJECTED = {
     "reserved_field_parameter": (OBJ + "function tint(e) e.spr_palette = 2 end", 3, 18,
                                  r"e\.spr_palette: spr_ is reserved for engine properties"),
     # Top-level names of the engine's planned functions, and their uses (each
-    # planned in this version: implementing one moves its case elsewhere)
+    # planned in this version: implementing one moves its case to the C
+    # functions' below, or the builtins')
     "planned_function": ("function music_play() end", 1, 10,
                          r"^function music_play: music_play is reserved: it names a planned "
                          r"engine function, which a later engine version may make a builtin$"),
@@ -484,6 +487,21 @@ REJECTED = {
                          r"^raster_clear is planned, not implemented in this engine version"),
     "planned_initial_value": ("x = music_paused", 1, 5,
                               r"^music_paused is planned, not implemented in this engine version"),
+    # Top-level names of the engine's other C functions (implemented, no
+    # builtin), and their uses
+    "c_function": ("function sprite_draw() end", 1, 10,
+                   r"^function sprite_draw: sprite_draw is reserved: it is an engine C function, "
+                   r"which scripts may get as a builtin in a later version$"),
+    "c_function_global": ("frame_count = 0", 1, 1, r"^global frame_count: frame_count is reserved"),
+    "c_function_object": ("map_load = object {}", 1, 1,
+                          r"^object map_load: map_load is reserved: it is an engine C function"),
+    "c_function_inline": ("local fx_mul = 0", 1, 7,
+                          r"^local fx_mul: fx_mul is reserved: it is an engine C function"),
+    "c_function_called": (OBJ + "function A:step() entity_create(0) end", 3, 19,
+                          r"^entity_create is an engine C function, which scripts can't call: this "
+                          r"engine version has no builtin for it$"),
+    "c_function_read": ("x = frame_count", 1, 5,
+                        r"^frame_count is an engine C function, which scripts can't call"),
 }
 
 
@@ -919,9 +937,9 @@ class PlannedNames(unittest.TestCase):
                         "A:step"),
     }
 
-    def refused(self, text, planned=None):
+    def refused(self, text, functions=None):
         with self.assertRaises(svlua.CompileError) as caught:
-            svlua.check(text, "t.lua", planned)
+            svlua.check(text, "t.lua", functions)
         return caught.exception
 
     def test_top_level_names_are_refused_as_builtins_are(self):
@@ -1013,18 +1031,21 @@ class PlannedNames(unittest.TestCase):
                                                          f"this engine version ({what})"))
 
     def test_nothing_else_is_reserved(self):
-        """Every other name in the headers (functions, types, fields,
-        parameters, constants, planned enumerators among them) can name a
-        script's function, unless the subset gives scripts that name."""
-        planned = svlua.planned_functions()
+        """Every name in the headers but the functions' (types, fields,
+        parameters, variables, constants, planned enumerators among them)
+        can name a script's function, unless the subset gives scripts that
+        name."""
+        functions = svlua.engine_functions()
         names = set()
         for header in os.listdir(os.path.join(ROOT, "include", "serval")):
             with open(os.path.join(ROOT, "include", "serval", header), encoding="utf-8") as f:
                 names |= set(re.findall(r"\b[A-Za-z_]\w*", svlua._c_code(f.read())))
-        names -= set(planned) | svlua.ENGINE_NAMES | set(svlua.STDLIB) | svlua.KEYWORDS
-        self.assertIn("PSG_WAVE", names)
-        self.assertIn("psg_music_set_tempo", names)
-        self.assertGreater(len(names), 500)
+        names -= set(functions) | svlua.ENGINE_NAMES | set(svlua.STDLIB) | svlua.KEYWORDS
+        for name in ("PSG_WAVE", "Entity", "SpriteAsset", "frame_times", "buttons", "pos_x",
+                     "ent_mask", "on_entered"):
+            self.assertIn(name, names)
+        self.assertNotIn("psg_music_set_tempo", names)
+        self.assertGreater(len(names), 350)
         for name in sorted(names):
             with self.subTest(name=name):
                 svlua.check(f"function {name}() end", "t.lua")
@@ -1064,22 +1085,28 @@ class PlannedNames(unittest.TestCase):
             planned = svlua.planned_functions(include)
             self.assertEqual(planned, {"fake_play": "fake things (some), docs/fake.md#fake-things",
                                        "fake_more": "more fake things, docs/fake.md#more"})
-            error = self.refused("function fake_play() end", planned)
+            functions = svlua.engine_functions(include)
+            self.assertEqual(functions, {"fake_done": None, **planned})
+            error = self.refused("function fake_play() end", functions)
             self.assertEqual(error.hint, "rename it, e.g. my_fake_play (fake_play is planned: "
                              "fake things (some), docs/fake.md#fake-things)")
-            error = self.refused(OBJ + "function A:step() fake_more() end", planned)
+            error = self.refused(OBJ + "function A:step() fake_more() end", functions)
             self.assertRegex(error.message, r"^fake_more is planned, not implemented in this "
                              r"engine version \(more fake things, docs/fake\.md#more\)")
-            # Not planned there: an ordinary name.
-            svlua.check("function music_play() end\nfunction fake_done() end\n"
-                        "function FAKE_WAVE() end", "t.lua", planned)
-            # Implemented: the marker goes, and so does the reservation.
+            # Not a function there: an ordinary name.
+            svlua.check("function music_play() end\nfunction FAKE_WAVE() end", "t.lua",
+                        functions)
+            # Implemented: the marker goes, and the name stays reserved, as
+            # an engine C function.
             implemented = re.sub(r'SERVAL_PLANNED\(\n[^)]*\)\n', "", PLANNED_HEADER)
             self.assertIn("\nFake fake_more(void);", implemented)
             include = self.write_engine(os.path.join(tmp, "implemented"), implemented)
-            planned = svlua.planned_functions(include)
-            self.assertEqual(list(planned), ["fake_play"])
-            svlua.check("function fake_more() end", "t.lua", planned)
+            self.assertEqual(list(svlua.planned_functions(include)), ["fake_play"])
+            functions = svlua.engine_functions(include)
+            self.assertIsNone(functions["fake_more"])
+            error = self.refused("function fake_more() end", functions)
+            self.assertRegex(error.message, r"^function fake_more: fake_more is reserved: it is an "
+                             r"engine C function")
 
     def test_the_tool_reads_the_headers_beside_it(self):
         """svlua.py, wherever it is run from, reads tools/../include/: the
@@ -1112,7 +1139,8 @@ class PlannedNames(unittest.TestCase):
             r = compile_("A = object {}\n")
             self.assertEqual(r.returncode, 1)
             self.assertIn(f"error: {os.path.join(engine, 'include', 'serval')}: not found "
-                          "(tools/svlua.py reads the engine's planned functions", r.stderr)
+                          "(tools/svlua.py reads the engine's functions, whose names scripts "
+                          "can't take", r.stderr)
 
     def test_check_planned_reads_them_the_same_way(self):
         """tools/check-planned.py, which checks the markers, finds the names
@@ -1133,6 +1161,268 @@ class PlannedNames(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertRegex(errors[0], r"fake\.h:15: SERVAL_PLANNED goes before a function "
                              r"declaration or after an enumerator's name")
+
+
+# A fake engine's header with what a header may hold around its functions:
+# declarations and definitions in comments and macros, typedefs (of a
+# function type too), pointers to functions (variables, fields, parameters),
+# extern variables, an enum with a planned enumerator, a static assertion,
+# C++'s extern "C" block, two functions in one declaration, an attribute,
+# a planned function, a function returning a pointer to a function, and
+# static inline functions whose bodies call functions, and a function
+# declared again.
+C_HEADER = """\
+#include "platform.h"
+// void fake_commented(void);
+/* void fake_block_commented(void);
+   static inline int fake_commented_inline(void) { return 0; } */
+#define FAKE_MACRO(x) ((x) + 1)
+#define fake_lower_macro(x) \\
+    void fake_macro_made(x)
+#ifdef FAKE_GBA
+void fake_conditional(void);
+#endif
+typedef void (*FakeCallback)(int);
+typedef int fake_function_type(int);
+typedef struct {
+    int (*fake_field)(int);
+    void (*fake_other_field)(void);
+} Fake;
+enum {
+    FAKE_A = 0,
+    FAKE_B SERVAL_PLANNED("fake b, docs/fake.md#b") = 1,
+};
+extern int fake_values[FAKE_MACRO(3)], fake_more_values[2];
+extern void (*fake_hook)(void);
+Fake (*fake_factory)(void);
+FakeCallback fake_callback;
+_Static_assert(sizeof(Fake) > 0, "fake (size)");
+#ifdef __cplusplus
+extern "C" {
+#endif
+void fake_plain(int n);
+const char* fake_name(const Fake* f, void (*done)(int code));
+int fake_one(void), fake_two(int x);
+void fake_noreturn(int code) __attribute__((noreturn));
+SERVAL_PLANNED("fake things, docs/fake.md#things")
+void fake_planned(int n);
+void (*fake_returns_hook(int which))(void);
+static inline int fake_inline(int a) {
+    struct { int x; } s = { a };
+    if (a) { return fake_called(a); }
+    return s.x;
+}
+static inline void fake_inline_empty(void) {}
+void fake_plain(int n);
+#ifdef __cplusplus
+}
+#endif
+"""
+# Its functions, and the lines of their names (the first declaration's).
+C_HEADER_FUNCTIONS = {"fake_conditional": 9, "fake_plain": 29, "fake_name": 30, "fake_one": 31,
+                      "fake_two": 31, "fake_noreturn": 32, "fake_planned": 34,
+                      "fake_returns_hook": 35, "fake_inline": 36, "fake_inline_empty": 41}
+
+
+class CFunctionNames(unittest.TestCase):
+    """Every function of the engine's C API (include/serval/*.h), planned or
+    not, is reserved: a script can't declare its name at the top level, as
+    a builtin by its name may come in a later version. Builtins keep their
+    rules, planned functions their messages, and locals may take the names
+    (lua.md, "Reserved names")."""
+
+    # Implemented, no builtin: a function, one a static inline defines, and
+    # functions scripts have in another form (spawn, kill, instances).
+    NAMES = ("sprite_draw", "fx_mul", "ent_has", "entity_create", "psg_music_set_tempo")
+
+    def refused(self, text, functions=None):
+        with self.assertRaises(svlua.CompileError) as caught:
+            svlua.check(text, "t.lua", functions)
+        return caught.exception
+
+    def test_top_level_names_are_refused(self):
+        for case, (construct, code) in PlannedNames.TOP_LEVEL.items():
+            for name in self.NAMES:
+                with self.subTest(case=case, name=name):
+                    text = code.replace("NAME", name) + "\n" + OBJ
+                    error = self.refused(text)
+                    self.assertEqual(error.message, f"{construct} {name}: {name} is reserved: it "
+                                     "is an engine C function, which scripts may get as a "
+                                     "builtin in a later version")
+                    self.assertEqual(error.hint, f"rename it, e.g. my_{name} (scripts can't take "
+                                     "the engine's C function names at the top level, "
+                                     "docs/lua.md#c-functions)")
+                    self.assertEqual(error.line, 1)
+            for name in ("my_sprite_draw", "sprite_draw_x", "Sprite_draw", "SPRITE_DRAW",
+                         "fx_mul2", "draw"):
+                with self.subTest(case=case, name=name):
+                    svlua.check(code.replace("NAME", name) + "\n" + OBJ, "t.lua")
+
+    def test_locals_may_take_them(self):
+        """As for a builtin's name, and for the same reason: in its scope
+        the name is the local, whatever the engine has."""
+        for case, (code, body_name) in PlannedNames.LOCALS.items():
+            for name in self.NAMES:
+                with self.subTest(case=case, name=name):
+                    p = svlua.check(code.replace("NAME", name), "t.lua")
+                    if body_name is not None:
+                        body = next(b for b in p.bodies if b.name == body_name)
+                        self.assertIn(name, [s.name for s in body.params + body.locals])
+
+    def test_a_local_runs_as_a_local(self):
+        if not RUNNER:
+            self.skipTest("no svlua_runner")
+        vm = run_vm(OBJ + "function A:step() local sprite_draw = 6; local fx_mul = 7\n"
+                    "  text_print_number(0, 0, sprite_draw * fx_mul) end", attach=["A"])
+        self.assertEqual(vm.calls_of("TEXT_PRINT_NUMBER"), [(0, 0, 42, 0)])
+
+    def test_using_one_says_it_has_no_builtin(self):
+        uses = {
+            "a call": "function A:step() sprite_draw(0, 1, 2, 3) end",
+            "a value": "function A:step() local f = sprite_draw end",
+            "an assignment": "function A:step() sprite_draw = 1 end",
+            "past a local's scope": "function A:step() do local sprite_draw = 1 end "
+                                    "sprite_draw(0) end",
+        }
+        for case, code in uses.items():
+            with self.subTest(case=case):
+                error = self.refused(OBJ + code)
+                self.assertEqual(error.message, "sprite_draw is an engine C function, which "
+                                 "scripts can't call: this engine version has no builtin for it")
+
+    def test_the_messages(self):
+        error = self.refused(OBJ + "function sprite_draw(id, x, y) end")
+        self.assertEqual(str(error), "t.lua:3:10: error: function sprite_draw: sprite_draw is "
+                         "reserved: it is an engine C function, which scripts may get as a "
+                         "builtin in a later version\n"
+                         "  hint: rename it, e.g. my_sprite_draw (scripts can't take the engine's "
+                         "C function names at the top level, docs/lua.md#c-functions)")
+        error = self.refused(OBJ + "function A:step()\n  map_load(0)\nend")
+        self.assertEqual(str(error), "t.lua:4:3: error: map_load is an engine C function, which "
+                         "scripts can't call: this engine version has no builtin for it\n"
+                         "  hint: scripts call the engine through builtins, named after the C "
+                         "functions they call (docs/lua.md#engine-functions)")
+
+    def test_builtins_keep_their_rules(self):
+        """A builtin's name is a C function's too (psg_play), and stays a
+        builtin: declaring it is the builtins' error, using it calls it, and
+        locals may take it."""
+        functions = svlua.engine_functions()
+        builtins = sorted(set(functions) & svlua.ENGINE_NAMES)
+        self.assertIn("psg_play", builtins)
+        self.assertIn("camera_set", builtins)
+        for name in builtins:
+            with self.subTest(name=name):
+                self.assertIsNone(functions[name])  # implemented
+                error = self.refused(f"function {name}() end")
+                self.assertEqual(error.message, f"{name} is an engine function; a script can't "
+                                 "redefine it")
+                self.assertEqual(error.hint, "choose another name")
+                svlua.check(OBJ + f"function A:step() local {name} = 1 end", "t.lua")
+        listing = svlua.compile_source(OBJ + "function A:step() psg_play(2) camera_set(1, 2) end",
+                                       "t.lua")
+        self.assertIn("SYS PSG_PLAY", listing)
+        self.assertIn("SYS CAMERA_SET", listing)
+
+    def headers_functions(self):
+        """The functions in the engine's headers, found here by a rule of
+        the test's own: the headers start each declaration or definition at
+        a line's start, as type name(..."""
+        rule = re.compile(r"^(?!typedef\b)(?:static inline )?(?:const )?\w+\**[ \t]+\**(\w+)\(",
+                          re.M)
+        found = {}
+        for header in sorted(os.listdir(os.path.join(ROOT, "include", "serval"))):
+            with open(os.path.join(ROOT, "include", "serval", header), encoding="utf-8") as f:
+                text = f.read()
+            for m in rule.finditer(text):
+                found.setdefault(m[1], (f"serval/{header}", text.count("\n", 0, m.start(1)) + 1))
+        return found
+
+    @staticmethod
+    def places(functions):
+        """c_functions()' places, relative to include/."""
+        include = os.path.join(ROOT, "include")
+        return {name: (os.path.relpath(header, include).replace(os.sep, "/"), line)
+                for name, (header, line) in functions.items()}
+
+    def test_the_reader_finds_every_function_in_the_headers(self):
+        found = self.headers_functions()
+        functions = svlua.c_functions(os.path.join(ROOT, "include"))
+        self.assertEqual(self.places(functions), found)
+        for name in ("serval_init", "sprite_draw", "button_secret_set", "debug_exit", "fx_mul",
+                     "ent_has", "body_overlap", "music_play", "psg_play"):
+            self.assertIn(name, found)
+        for name in ("pos_x", "ent_mask", "on_entered", "Entity", "FX", "ECS_FOR_EACH", "C_GAME",
+                     "SERVAL_PLANNED"):
+            self.assertNotIn(name, functions)
+        self.assertGreater(len(found), 150)
+        # engine_functions(): those, the planned ones with their markers' text.
+        self.assertEqual(svlua.engine_functions(),
+                         {name: svlua.planned_functions().get(name) for name in found})
+
+    def test_every_function_is_reserved(self):
+        functions = svlua.engine_functions()
+        for name in self.headers_functions():
+            with self.subTest(name=name):
+                error = self.refused(f"{name} = 0")
+                if name in svlua.ENGINE_NAMES:
+                    expected = f"{name} is an engine function; a script can't redefine it"
+                elif functions[name] is not None:
+                    expected = (f"global {name}: {name} is reserved: it names a planned engine "
+                                "function, which a later engine version may make a builtin")
+                else:
+                    expected = (f"global {name}: {name} is reserved: it is an engine C function, "
+                                "which scripts may get as a builtin in a later version")
+                self.assertEqual(error.message, expected)
+
+    def test_the_reader_agrees_with_gcc(self):
+        """GCC's -aux-info lists every function a translation unit declares
+        or defines, with its place: for one that includes every header, the
+        reader's functions and places."""
+        gcc = os.environ.get("SERVAL_GCC") or shutil.which("gcc")
+        if not gcc:
+            self.skipTest("no gcc")
+        include = os.path.join(ROOT, "include")
+        with tempfile.TemporaryDirectory() as tmp:
+            source, aux = os.path.join(tmp, "all.c"), os.path.join(tmp, "aux.txt")
+            with open(source, "w") as f:
+                for header in sorted(os.listdir(os.path.join(include, "serval"))):
+                    f.write(f'#include "serval/{header}"\n')
+            r = subprocess.run([gcc, "-std=gnu17", "-fsyntax-only", "-aux-info", aux, "-I", include,
+                                source], capture_output=True, text=True)
+            if r.returncode and "aux-info" in r.stderr:
+                self.skipTest(f"{gcc} has no -aux-info (not GCC)")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(aux) as f:
+                lines = f.read().splitlines()
+        found = {}
+        for line in lines:
+            m = re.match(r"/\* (.+):(\d+):\w+ \*/ [^(]*?(\w+) \(", line)
+            if m and os.path.dirname(os.path.dirname(os.path.abspath(m[1]))) == \
+                    os.path.abspath(include):
+                path = os.path.relpath(m[1], include).replace(os.sep, "/")
+                found.setdefault(m[3], (path, int(m[2])))
+        self.assertGreater(len(found), 150)
+        self.assertEqual(self.places(svlua.c_functions(include)), found)
+
+    def test_the_reader_on_a_fake_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "serval"))
+            path = os.path.join(tmp, "serval", "fake.h")
+            with open(path, "w") as f:
+                f.write(C_HEADER)
+            functions = svlua.c_functions(tmp)
+            self.assertEqual({name: line for name, (_, line) in functions.items()},
+                             C_HEADER_FUNCTIONS)
+            self.assertEqual({header for header, _ in functions.values()}, {path})
+            self.assertEqual(svlua.engine_functions(tmp),
+                             {name: "fake things, docs/fake.md#things" if name == "fake_planned"
+                              else None for name in C_HEADER_FUNCTIONS})
+            error = self.refused("function fake_inline() end", svlua.engine_functions(tmp))
+            self.assertRegex(error.message, r"fake_inline is reserved: it is an engine C function")
+            svlua.check("function fake_called() end\nfunction fake_hook() end\n"
+                        "function fake_lower_macro() end\nfunction fake_function_type() end",
+                        "t.lua", svlua.engine_functions(tmp))
 
 
 

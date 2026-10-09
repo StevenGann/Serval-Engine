@@ -30,8 +30,9 @@ check over the call graph, and stack-machine code generation with constant
 folding.
 
 It reads the engine's headers beside it (include/serval/, as in the
-repository and the release archive) for the planned functions (SERVAL_PLANNED),
-whose names a script can't declare (docs/lua.md, "Planned functions").
+repository and the release archive) for the engine's C functions, planned
+(SERVAL_PLANNED) and implemented, whose names a script can't declare
+(docs/lua.md, "Reserved names").
 
 Errors are "file:line:column: error: message", with a hint on the next line;
 exit status 1 and nothing written. Python 3.11+, standard library only.
@@ -1147,12 +1148,152 @@ def planned_functions(include=None):
         serval = os.path.join(include, "serval")
         if not os.path.isdir(serval):
             raise CompileError(f"{os.path.normpath(serval)}: not found ({TOOL} reads the engine's "
-                               "planned functions, whose names scripts can't take, from the "
-                               "headers in include/serval/ beside tools/)")
+                               "functions, whose names scripts can't take, from the headers in "
+                               "include/serval/ beside tools/)")
         names, _ = planned_api(include)  # misplaced markers are check-planned.py's to report
         _planned_functions[include] = {name: p.what for name, p in names.items()
                                        if p.kind == "function"}
     return _planned_functions[include]
+
+
+# --- The engine's C functions ------------------------------------------------
+
+# A token of C code whose comments and preprocessor lines are blanked: a
+# string or character literal, a name, a number, or one other character.
+_C_TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[A-Za-z_]\w*|\.?\d[\w.]*|\S')
+_C_NAME = re.compile(r"[A-Za-z_]\w*")
+# Names that annotate a declaration with a parenthesized argument, and are
+# not part of what it declares. Macros (ALL_CAPS, as SERVAL_PLANNED) too.
+_C_ANNOTATIONS = frozenset(("__attribute__", "__attribute", "__declspec", "_Alignas",
+                            "alignas", "__asm__", "__asm", "asm"))
+_C_STATEMENT_KEYWORDS = frozenset(("sizeof", "return", "if", "while", "for", "switch", "do",
+                                   "else", "case", "goto", "typeof"))
+_C_OPEN, _C_CLOSE = ("(", "[", "{"), (")", "]", "}")
+
+
+def _c_group_end(tokens, i):
+    """The index just past the bracketed group that opens at tokens[i]."""
+    depth = 0
+    for j in range(i, len(tokens)):
+        if tokens[j][0] in _C_OPEN:
+            depth += 1
+        elif tokens[j][0] in _C_CLOSE:
+            depth -= 1
+            if not depth:
+                return j + 1
+    return len(tokens)
+
+
+def _c_is_macro(name):
+    """ALL_CAPS: a macro. The engine's functions are snake_case."""
+    return re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is not None
+
+
+def _c_declared_functions(declaration):
+    """The functions one file-scope declaration (its tokens, (text, line),
+    with any braces of a struct, union, enum or initializer collapsed to
+    "{}") declares: [(name, line)]. Each declarator's name is the first name
+    followed by a parameter list, "(" not followed by "*" (a pointer to a
+    function, int (*f)(void), is a variable). Typedefs declare types, not
+    functions; annotations and macro calls (SERVAL_PLANNED("..."),
+    __attribute__((...))) are left out."""
+    tokens, i = [], 0
+    while i < len(declaration):
+        text = declaration[i][0]
+        if (text in _C_ANNOTATIONS or _c_is_macro(text)) and i + 1 < len(declaration) \
+                and declaration[i + 1][0] == "(":
+            i = _c_group_end(declaration, i + 1)
+        else:
+            tokens.append(declaration[i])
+            i += 1
+    if not tokens or tokens[0][0] == "typedef":
+        return []
+    found, depth, seen_name = [], 0, False
+    for k, (text, line) in enumerate(tokens):
+        if text in _C_OPEN:
+            depth += 1
+        elif text in _C_CLOSE:
+            depth -= 1
+        elif text == "," and depth == 0:  # the next declarator
+            seen_name = False
+        elif not seen_name and _C_NAME.fullmatch(text) and k + 2 < len(tokens) \
+                and tokens[k + 1][0] == "(" and tokens[k + 2][0] != "*" \
+                and text not in _C_KEYWORDS and text not in _C_STATEMENT_KEYWORDS \
+                and not re.match(r"_[A-Z_]", text):  # the implementation's names
+            found.append((text, line))
+            seen_name = True
+    return found
+
+
+def c_functions(include):
+    """Every function the headers under include (and its subdirectories)
+    declare or define (a static inline one), by name: {name: (header,
+    line)}, the first declaration's place. Read from the code, its comments
+    and preprocessor lines left out (so no macro is a function), declaration
+    by declaration at file scope: struct, union and enum bodies and
+    function bodies are skipped, typedefs declare types and extern
+    variables aren't functions (docs/lua.md, "Reserved names")."""
+    functions = {}
+    headers = sorted(os.path.join(d, f) for d, _, files in os.walk(include) for f in files
+                     if f.endswith(".h"))
+    for header in headers:
+        with open(header, encoding="utf-8") as f:
+            text = _c_code(f.read())
+        tokens, line, pos = [], 1, 0
+        for m in _C_TOKEN.finditer(text):
+            line += text.count("\n", pos, m.start())
+            pos = m.start()
+            tokens.append((m[0], line))
+        declarations, declaration, i = [], [], 0
+        while i < len(tokens):
+            token = tokens[i][0]
+            if token == ";":
+                declarations.append(declaration)
+                declaration = []
+                i += 1
+            elif token == "{":
+                if [t for t, _ in declaration] == ["extern", '"C"']:
+                    declaration = []  # extern "C" { ... }: its declarations are the file's
+                    i += 1
+                    continue
+                end = _c_group_end(tokens, i)
+                if declaration and declaration[-1][0] == ")":  # a function's body ends it
+                    declarations.append(declaration)
+                    declaration = []
+                else:  # a struct's, union's or enum's members, or an initializer
+                    declaration.append(("{}", tokens[i][1]))
+                i = end
+            elif token == "}":  # extern "C"'s end
+                i += 1
+            else:
+                declaration.append(tokens[i])
+                i += 1
+        declarations.append(declaration)
+        for declaration in declarations:
+            for name, line in _c_declared_functions(declaration):
+                functions.setdefault(name, (header, line))
+    return functions
+
+
+_engine_functions = {}  # include directory -> engine_functions()
+
+
+def engine_functions(include=None):
+    """{name: what} of every function the engine's headers declare
+    (c_functions(): include/ beside this tool, or the given directory),
+    implemented or planned: what is the SERVAL_PLANNED marker's text for a
+    planned one (planned_functions()), None for the others. Builtins are
+    named after the C functions they call, and any of these may become one
+    in a later version, so scripts can't take these names at the top level
+    (docs/lua.md, "Reserved names"). Raises CompileError if the headers
+    aren't there."""
+    include = os.path.abspath(include or INCLUDE)
+    if include not in _engine_functions:
+        planned = planned_functions(include)
+        functions = {name: None for name in c_functions(include)}
+        functions.update(planned)
+        _engine_functions[include] = functions
+    return _engine_functions[include]
 
 
 # --- Program model -----------------------------------------------------------
@@ -1488,10 +1629,10 @@ class Resolver:
     handlers and functions, each name bound to what it means, and every
     construct outside the subset rejected by name."""
 
-    def __init__(self, chunk, file, planned):
+    def __init__(self, chunk, file, functions):
         self.chunk = chunk
         self.file = file
-        self.planned = planned  # planned_functions()
+        self.functions = functions  # engine_functions(): {name: planned marker's text or None}
         self.p = Program(file)
         self.globals = {}  # non-local top-level names, visible everywhere
         self.top_locals = {}  # top-level locals declared so far
@@ -1538,8 +1679,9 @@ class Resolver:
 
     def check_new_name(self, name, construct):
         """A top-level name the script declares (construct: "function",
-        "global", "local", ...) can't be an engine function's or the
-        standard library's, today's or a planned one's."""
+        "global", "local", ...) can't be a builtin's, the standard
+        library's, or any engine C function's, planned or not (docs/lua.md,
+        "Reserved names")."""
         if name.name in ENGINE_NAMES:
             self.error(name, f"{name.name} is an engine function; a script can't redefine it",
                        "choose another name")
@@ -1547,11 +1689,17 @@ class Resolver:
             what, _ = STDLIB[name.name]
             self.error(name, f"{name.name} is Lua's {what}; the subset doesn't use it, "
                        "but a script can't redefine it either", "choose another name")
-        if name.name in self.planned:
-            self.error(name, f"{construct} {name.name}: {name.name} is reserved: it names a "
-                       "planned engine function, which a later engine version may make a builtin",
-                       f"rename it, e.g. my_{name.name} ({name.name} is planned: "
-                       f"{self.planned[name.name]})")
+        if name.name in self.functions:
+            what = self.functions[name.name]
+            if what is not None:
+                self.error(name, f"{construct} {name.name}: {name.name} is reserved: it names a "
+                           "planned engine function, which a later engine version may make a "
+                           "builtin", f"rename it, e.g. my_{name.name} ({name.name} is planned: "
+                           f"{what})")
+            self.error(name, f"{construct} {name.name}: {name.name} is reserved: it is an engine C "
+                       "function, which scripts may get as a builtin in a later version",
+                       f"rename it, e.g. my_{name.name} (scripts can't take the engine's C "
+                       "function names at the top level, docs/lua.md#c-functions)")
         previous = self.globals.get(name.name) or self.top_locals.get(name.name)
         if previous is not None:
             self.error(name, f"{name.name} is already declared (line {previous.node.line})",
@@ -1771,11 +1919,17 @@ class Resolver:
             if name not in self.builtins:
                 self.builtins[name] = BuiltinSym(name, node)
             return self.builtins[name]
-        if name in self.planned:
-            self.error(node, f"{name} is planned, not implemented in this engine version "
-                       f"({self.planned[name]}): scripts can't use it yet",
-                       "planned API reaches scripts in the engine version that implements it, "
-                       "named as in C (docs/releases.md#planned-api)")
+        if name in self.functions:
+            what = self.functions[name]
+            if what is not None:
+                self.error(node, f"{name} is planned, not implemented in this engine version "
+                           f"({what}): scripts can't use it yet",
+                           "planned API reaches scripts in the engine version that implements "
+                           "it, named as in C (docs/releases.md#planned-api)")
+            self.error(node, f"{name} is an engine C function, which scripts can't call: this "
+                       "engine version has no builtin for it",
+                       "scripts call the engine through builtins, named after the C functions "
+                       "they call (docs/lua.md#engine-functions)")
         if name in STDLIB:
             what, hint = STDLIB[name]
             self.error(node, f"{what} is not in the subset", hint)
@@ -2174,8 +2328,8 @@ class BodyResolver:
             self.expr(arg)
 
 
-def resolve(chunk, file, planned):
-    return Resolver(chunk, file, planned).run()
+def resolve(chunk, file, functions):
+    return Resolver(chunk, file, functions).run()
 
 
 # --- Types -------------------------------------------------------------------
@@ -3410,12 +3564,13 @@ class Checker:
                             "listing leaves it out")
 
 
-def check(text, file="script.lua", planned=None):
+def check(text, file="script.lua", functions=None):
     """Parses and checks a script: names, types, the subset's rules. Returns
-    the Program; raises CompileError. planned: the engine's planned functions
-    ({name: what}), by default planned_functions()'s."""
+    the Program; raises CompileError. functions: the engine's C functions
+    ({name: the planned marker's text, or None}), by default
+    engine_functions()'s."""
     program = resolve(parse(text, file), file,
-                      planned_functions() if planned is None else planned)
+                      engine_functions() if functions is None else functions)
     Checker(program).run()
     return program
 
@@ -4434,24 +4589,24 @@ class Compiled:
         self.program = program
 
 
-def compile_program(text, filename="script.lua", planned=None):
+def compile_program(text, filename="script.lua", functions=None):
     """Compiles a script. Returns a Compiled; raises CompileError."""
-    program = check(text, filename, planned)
+    program = check(text, filename, functions)
     listing = CodeGen(program, text).generate()
     warnings = [(filename, line, column, message) for line, column, message in program.warnings]
     return Compiled(listing, warnings, program)
 
 
-def compile_source(text, filename="script.lua", planned=None):
+def compile_source(text, filename="script.lua", functions=None):
     """The listing (.svm text) for a script; raises CompileError with the
     file, line and column of the first problem."""
-    return compile_program(text, filename, planned).listing
+    return compile_program(text, filename, functions).listing
 
 
-def check_source(text, filename="script.lua", planned=None):
+def check_source(text, filename="script.lua", functions=None):
     """Checks a script without generating code. Returns the warnings;
     raises CompileError."""
-    program = check(text, filename, planned)
+    program = check(text, filename, functions)
     return [(filename, line, column, message) for line, column, message in program.warnings]
 
 

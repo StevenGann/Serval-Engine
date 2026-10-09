@@ -263,7 +263,7 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 
 `text_print_number` prints the value in decimal. With a width of 1 or more it is right-aligned in that many columns, spaces in front, so a number that got shorter (10, then 9) leaves nothing behind; a number wider than the width prints in full. A width of 0 or less prints just the digits. Calls take at most 4 arguments.
 
-The page has no calls yet for API the engine declares but doesn't implement (tracker music, `music_*`, and sampled sound, `sfx_*`, in [audio.md](audio.md); palette writes, runtime sprite tiles, blending): each arrives appended, with its feature's implementation, as do calls for API added later. Meanwhile the Lua subset keeps scripts from declaring their names ([lua.md](lua.md#planned-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
+The page has no calls yet for API the engine declares but doesn't implement (tracker music, `music_*`, and sampled sound, `sfx_*`, in [audio.md](audio.md); palette writes, runtime sprite tiles, blending): each arrives appended, with its feature's implementation, as do calls for API added later. Meanwhile the Lua subset keeps scripts from declaring their names ([lua.md](lua.md#planned-functions)), and every other C function's ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
 
 Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.psg_songs = ..., .psg_song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0). `vm_load` and `vm_unload` keep the bindings.
 

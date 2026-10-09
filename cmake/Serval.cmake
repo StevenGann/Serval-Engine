@@ -258,7 +258,7 @@ endfunction()
 # would #include it, e.g. serval/ecs.h); a Lua script's names in ALL_CAPS
 # come from them. The script is rebuilt when it, a header, svlua.py, svm.py
 # or vm.h changes, and a Lua script when an engine header does (svlua.py reads
-# the planned functions, whose names scripts can't take, from them). Call it
+# the engine's functions, whose names scripts can't take, from them). Call it
 # from the directory that defined the target, after serval_add_rom().
 function(serval_add_script target listing)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")

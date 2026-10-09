@@ -136,7 +136,7 @@ The contact bits are the C headers' constants: `MAP_CONTACT_FLOOR`, `_CEILING`, 
 
 ## Reserved names
 
-Two kinds of names are kept for what later engine versions add: instance fields can't start with the prefixes of later properties ([below](#instance-fields)), and a script can't declare the names of the engine's planned functions, which may become builtins ([below](#planned-functions)).
+Two kinds of names are kept for what later engine versions add: instance fields can't start with the prefixes of later properties ([below](#instance-fields)), and a script can't declare, at the top level, the name of any function of the engine's C API, which may become a builtin: the planned functions ([below](#planned-functions)) and all the others ([C functions](#c-functions)).
 
 ### Instance fields
 
@@ -198,9 +198,33 @@ A planned name is treated as a builtin's is, case by case:
 
 Field names (`self.music_play`) and labels are namespaces of their own, untouched. Names are compared as written: `Music_play` and `MUSIC_PLAY` are ordinary names.
 
-**The set is read, not listed.** `svlua.py` reads the engine's headers beside it (`tools/../include/serval/`, in the repository and in the release archive) by the rule `tools/check-planned.py` checks (both use `svlua.py`'s `planned_api()`), and takes every function marked `SERVAL_PLANNED`; without the headers it stops with an error. A version that implements one drops its marker and, if scripts can call it, adds its SYS call and builtin by the same name ([Engine functions](#engine-functions)): the name goes from reserved to builtin with no list to update. A planned function that stays C-only once implemented, as `vm_collide` is (`audio_bank_set` takes a pointer to the sound bank), leaves the set and its name is free; reserving every planned function keeps the rule mechanical, and costs scripts a couple of dozen names they would rarely want.
+**The set is read, not listed.** `svlua.py` reads the engine's headers beside it (`tools/../include/serval/`, in the repository and in the release archive) by the rule `tools/check-planned.py` checks (both use `svlua.py`'s `planned_api()`), and takes every function marked `SERVAL_PLANNED`; without the headers it stops with an error. A version that implements one drops its marker and, if scripts can call it, adds its SYS call and builtin by the same name ([Engine functions](#engine-functions)): the name goes from reserved to builtin with no list to update. A planned function that stays C-only once implemented (`audio_bank_set` takes a pointer to the sound bank) loses its marker and keeps its reservation, as every engine C function does ([below](#c-functions)).
 
 **Planned constants** need nothing more. A script that names one (`MAP_CONTACT_LADDER`, `PSG_WAVE`) passes it to the assembler, which refuses it as planned, given the header (without it, as for any constant, the name is unknown; [Bodies](#what-compiles-to-what)). And a script that declares a name a header also defines (`local PSG_WAVE <const> = 3`, `MAP_LADDER = 0`) uses its own, for an implemented constant as for a planned one, so implementing a constant changes no script.
+
+Decided before 1.0.0, when no released script could have used one of these names ([api-freeze.md](api-freeze.md#decisions), D9).
+
+### C functions
+
+A script can't declare, at the top level, the name of **any function the engine's public headers declare** (`include/serval/*.h`), implemented or planned, `static inline` ones included: `sprite_draw`, `map_load`, `entity_create`, `psg_music_set_tempo`, `frame_count`, `fx_mul`, `ent_has` and the rest, about 160 names. Builtins keep their own error ([Engine functions](#engine-functions)) and planned functions theirs ([above](#planned-functions)); for the others, `function sprite_draw() ... end` is:
+
+```
+game.lua:3:10: error: function sprite_draw: sprite_draw is reserved: it is an engine C function, which scripts may get as a builtin in a later version
+  hint: rename it, e.g. my_sprite_draw (scripts can't take the engine's C function names at the top level, docs/lua.md#c-functions)
+```
+
+The cases are the planned functions' ([the table above](#planned-functions)): refused as top-level declarations (a function, a global, an object, an array, a `local function`, a top-level `local`); allowed as locals in functions and handlers, parameters and loop variables, which may shadow a builtin, so a builtin arriving can't change what they mean. Using one, which can't break anything, says what it is rather than "not defined":
+
+```
+game.lua:12:3: error: map_load is an engine C function, which scripts can't call: this engine version has no builtin for it
+  hint: scripts call the engine through builtins, named after the C functions they call (docs/lua.md#engine-functions)
+```
+
+**Why.** Builtins are named after the C functions they call ([api-freeze.md](api-freeze.md#decisions), D6), and any function may get one in a later version: one implemented today without a builtin (`sprite_draw`, `map_load`, `psg_music_set_tempo`), or a planned one that stays C-only when implemented (`raster_scroll` and `sprite_set_tiles` take tables, which scripts can't pass) until a later version finds it a builtin. Reserving only the planned functions would free such a name the day its marker went, and a builtin added after that would stop a script that had declared it. Reserving every function makes any builtin an addition: no script can have the name. It costs scripts names they rarely want at the top level, and none as locals: nearly all carry an engine module's prefix (`sprite_`, `map_`, `fx_`, `vm_`, ...).
+
+**The set is read, not listed**, as the planned functions are: `svlua.py` reads every function declaration and definition in the headers beside it, at file scope, leaving out comments, macros (`FX`, `ECS_FOR_EACH`, `C_GAME`), typedefs (of function types too), variables (`pos_x`, `ent_mask`, a pointer to a function) and the members of structs, and reads both branches of an `#if`: a function declared for one platform is reserved on all. A test compares what it reads with what GCC finds (`-aux-info`) in every header.
+
+**Functions a later version adds** are declared planned first ([development.md](development.md#planned-api)), and reserved from the version that declares them, before they work: their implementation and builtin then take nothing more from scripts. The declaration itself takes the name from games that used it, a script's top-level name as a C game's own function of that name, which collides with the header's: adding a name to the API is a minor change, for scripts as for C ([releases.md](releases.md#versioning)). The engine names its functions by module (`sprite_`, `map_`, `music_`, ...), so a script whose top-level names avoid those prefixes stays clear of the names later versions add.
 
 Decided before 1.0.0, when no released script could have used one of these names ([api-freeze.md](api-freeze.md#decisions), D9).
 
@@ -223,7 +247,7 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 
 Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`).
 
-**C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too.
+**C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too. Their names, as every C function's, are [reserved](#c-functions).
 
 **Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins, nor have the other planned functions: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then their names are [reserved](#planned-functions), and a script plays PSG sound and music only.
 
@@ -231,7 +255,7 @@ Lua's `print` is not one of them: it is Lua's console output, which the subset d
 
 ## The tool
 
-`tools/svlua.py`, Python 3 standard library only like the other tools (3.11 or later; `serval_add_script()` stops with an error on an older Python), MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint. It reads the engine's headers beside it (`include/serval/`) for the planned functions, whose names it [reserves](#planned-functions).
+`tools/svlua.py`, Python 3 standard library only like the other tools (3.11 or later; `serval_add_script()` stops with an error on an older Python), MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint. It reads the engine's headers beside it (`include/serval/`) for the engine's functions, planned and implemented, whose names it [reserves](#c-functions).
 
 Studio Advance's event editor compiles its event blocks through the same path (blocks → this subset → bytecode), so there is one compiler to make correct.
 
