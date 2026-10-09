@@ -43,6 +43,8 @@ this version: tracker music, docs/audio.md#tracker-music [-Wdeprecated-declarati
 
 **At run time**, planned API does nothing harmful. A planned function returns 0, `false` or its type's "none" (e.g. `SFX_NONE`) and changes nothing; a loader refuses data that needs a planned feature, as it refuses any data it doesn't understand. Debug builds warn once per problem, e.g. `serval: music_play: tracker music is planned, not implemented in this engine version; nothing plays`.
 
+**In scripts.** Scripts reach a planned feature only once a version implements it: the VM's SYS page has no calls for planned functions ([vm.md](vm.md#engine-calls)), and the script assembler refuses a planned constant by name (`MAP_CONTACT_LADDER is planned, not implemented in this engine version (ladders, ...)`), where C compiles it with the warning. The implementing version makes the name work in scripts with no change to them.
+
 **Lifecycle.** A planned name is part of the API from the version that declares it, with the same compatibility promise as the rest. A minor version implements it: the marker goes, the signature stays, so code written against it compiles without the warning and starts working. If a planned design proves wrong, the fix is additive: a new function, with the old one documented as superseded and kept as a stub. Changing a planned name's signature or meaning after its release is a major change, like any API change.
 
 ## Manifest

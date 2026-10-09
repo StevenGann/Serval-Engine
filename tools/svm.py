@@ -70,7 +70,9 @@ string bytes.
 
 --header FILE scrapes integer constants from a C header, nothing more:
 `#define NAME expr` with expr in the grammar above, and the enumerators of
-enum blocks, valued as C values them. Everything else (function-like macros,
+enum blocks, valued as C values them. A planned enumerator (SERVAL_PLANNED,
+docs/releases.md#planned-api) is no constant: using one is an error that says
+it is planned. Everything else (function-like macros,
 casts, #if, which is ignored so both branches are read) is skipped. A name
 defined twice with different values is an error.
 
@@ -402,21 +404,26 @@ def evaluate_list(text, resolve):
 
 class _Definition:
     """A #define or an enumerator. expr is the value's text, or None for an
-    enumerator without one (the previous enumerator's value plus one, or 0)."""
+    enumerator without one (the previous enumerator's value plus one, or 0).
+    planned: for a planned enumerator (SERVAL_PLANNED), what the marker says;
+    it counts in its enum but is no constant for listings."""
 
-    __slots__ = ("name", "expr", "prev", "file")
+    __slots__ = ("name", "expr", "prev", "file", "planned")
 
-    def __init__(self, name, expr, prev, file):
+    def __init__(self, name, expr, prev, file, planned=None):
         self.name = name
         self.expr = expr
         self.prev = prev
         self.file = file
+        self.planned = planned
 
 
 _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 _DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)(?:[ \t]+(.*?))?[ \t]*$", re.M)
 _ENUM = re.compile(r"\benum\b(?:\s+[A-Za-z_]\w*)?\s*\{([^{}]*)\}")
 _ENUMERATOR = re.compile(r"^([A-Za-z_]\w*)\s*(?:=\s*(.+?))?\s*$", re.S)
+# A planned enumerator: NAME SERVAL_PLANNED("what, docs/x.md#anchor") = value.
+_PLANNED = re.compile(r'\b([A-Za-z_]\w*)\s+SERVAL_PLANNED\s*\(\s*"((?:[^"\\]|\\.)*)"\s*\)')
 
 
 class HeaderNames:
@@ -426,6 +433,7 @@ class HeaderNames:
 
     def __init__(self, fallback=None):
         self.fallback = fallback or {}
+        self.planned = {}  # a planned enumerator's name -> what SERVAL_PLANNED says
         self.definitions = {}  # name -> [_Definition]
         self.order = []  # names in order of first definition
         self._memo = {}  # id(definition) -> value or None (not an integer constant)
@@ -443,12 +451,25 @@ class HeaderNames:
             if expr:
                 self._add(_Definition(name, expr, None, file))
         for m in _ENUM.finditer(text):
+            # Planned enumerators keep their place in the enum (the next one
+            # counts on from them) but stay out of listings' reach, as the
+            # VM's pages leave planned features out until they are
+            # implemented; their markers' text may hold commas.
+            planned = {}
+
+            def unmark(p):
+                planned[p.group(1)] = p.group(2)
+                return p.group(1)
+
             prev = None
-            for item in m.group(1).split(","):
+            for item in _PLANNED.sub(unmark, m.group(1)).split(","):
                 e = _ENUMERATOR.match(item.strip())
                 if e is None:
                     continue
-                definition = _Definition(e.group(1), e.group(2), prev, file)
+                name = e.group(1)
+                definition = _Definition(name, e.group(2), prev, file, planned.get(name))
+                if definition.planned is not None:
+                    self.planned.setdefault(name, definition.planned)
                 self._add(definition)
                 prev = definition
 
@@ -493,6 +514,8 @@ class HeaderNames:
         constant. Raises SvmError if headers define it with different values."""
         values = {}
         for definition in self.definitions.get(name, ()):
+            if definition.planned is not None:
+                continue
             value = self._value(definition)
             if value is not None:
                 values.setdefault(value, definition.file)
@@ -766,6 +789,10 @@ class Assembler:
         if name in self.consts:
             return self.consts[name][0]
         value = self.headers.lookup(name)
+        if value is None and name in self.headers.planned:
+            raise ExprError(f"{name} is planned, not implemented in this engine version "
+                            f"({self.headers.planned[name]}): listings and scripts can use it "
+                            "from the version that implements it")
         if value is None:
             raise ExprError(f"unknown name {name}")
         return value

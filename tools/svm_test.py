@@ -612,16 +612,37 @@ class Headers(unittest.TestCase):
                    h).blob
         self.assertEqual(blob[48:], bytes([2, 7, 2, 64, 1]))
 
+    def test_planned_enumerators(self):
+        """A planned enumerator (SERVAL_PLANNED) keeps its place in its enum,
+        whatever commas its marker's text holds, but is no constant: a
+        listing that uses one is told it is planned."""
+        h = self.scrape('enum {\n  OLD = 4,\n  NEW SERVAL_PLANNED("new things, docs/x.md#new") = '
+                        '1 << 6,\n  AFTER,\n};\n')
+        self.assertEqual((h.lookup("OLD"), h.lookup("NEW"), h.lookup("AFTER")), (4, None, 65))
+        self.assertEqual(h.planned, {"NEW": "new things, docs/x.md#new"})
+        self.assertNotIn("NEW", h.constants())
+        with self.assertRaisesRegex(svm.SvmError, r"test\.svm:3: error: NEW is planned, not "
+                                    r"implemented in this engine version \(new things, "
+                                    r"docs/x\.md#new\): listings and scripts can use it"):
+            asm(".object X\n.handler X CREATE\nPUSH NEW\nHALT\n", h)
+
     def test_real_headers(self):
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         h = svm.HeaderNames(VM.names)
-        for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h"):
+        for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h", "map.h", "physics.h"):
             h.load(os.path.join(root, "include", "serval", name))
         h.check()
         self.assertEqual(h.lookup("C_ANIM"), 1 << 5)  # a backslash-continued #define
         self.assertEqual(h.lookup("BUTTON_DOWN"), 0x80)
         self.assertEqual(h.lookup("SCREEN_BRIGHTNESS_MIN"), -16)
         self.assertIsNone(h.lookup("COLOR_RGB"))
+        self.assertEqual((h.lookup("MAP_CONTACT_FLOOR"), h.lookup("BODY_CONTACT_EXIT")), (1, 32))
+        self.assertEqual(h.lookup("C_KINEMATIC"), 1 << 7)
+        for planned in ("MAP_CONTACT_LADDER", "MAP_LADDER", "MAP_SLOPE_L_LOW", "SPRITE_BLEND",
+                        "SPRITE_GROUP_STREAMED"):
+            with self.subTest(planned=planned):
+                self.assertIsNone(h.lookup(planned))
+                self.assertIn(planned, h.planned)
 
 
 EVERY_OPCODE = """

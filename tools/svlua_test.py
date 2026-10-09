@@ -772,6 +772,7 @@ def header_names(defines=None, files=()):
 
 
 ECS_H = os.path.join(ROOT, "include", "serval", "ecs.h")
+MAP_H = os.path.join(ROOT, "include", "serval", "map.h")
 PHYSICS_H = os.path.join(ROOT, "include", "serval", "physics.h")
 FIREFLIES_HEADERS = [os.path.join(ROOT, "examples", "fireflies", "game.h")] + [
     os.path.join(ROOT, "include", "serval", name)
@@ -1073,6 +1074,15 @@ class Listing(unittest.TestCase):
         start = code.index(".handler A COLLISION")
         self.assertEqual(code[start + 2:start + 6], ["OTHER", "GETP OBJECT", "PUSH OBJ_B", "EQ"])
         self.assertIn("PUSH 0", code[start + 6:])  # A ~= A: false
+
+    def test_planned_constants_are_refused_by_name(self):
+        """A planned constant (MAP_CONTACT_LADDER) passes through the
+        compiler, and the assembler says it is planned."""
+        listing = self.compile(OBJ + "on = false\nfunction A:step() "
+                               "on = self.body_contact & MAP_CONTACT_LADDER ~= 0 end")
+        with self.assertRaisesRegex(svm.SvmError, r"MAP_CONTACT_LADDER is planned, not "
+                                    r"implemented in this engine version \(ladders"):
+            assemble(listing, header_names(files=[MAP_H]))
 
     def test_initial_values_in_the_blob(self):
         """.globals NAME=value: the blob carries the initial values (header
