@@ -7,7 +7,8 @@
 --
 --   - objects, and instances as tables: the engine's properties (x, y, vx,
 --     vy, sprite, ..., body_gravity, truncated to their arrays' types as SETP
---     does; body_contact, which only physics sets, reads 0) and
+--     does; body_contact, which only physics sets, reads 0; object, the
+--     instance's object, false for an entity that isn't attached) and
 --     instance fields (unset ones read 0, 0.0, false or none by the field's
 --     type), entity handles as the ECS hands them out (a FIFO of free slots,
 --     a generation per slot);
@@ -120,6 +121,7 @@ end
 local Entity = {}
 Entity.__index = function(e, name)
   local s = info[e]
+  if name == "object" then return s.attached and s.object or false end
   local v
   if IS_PROP[name] then v = s.props[name] elseif s.attached then v = s.fields[name] end
   if v == nil then return default(name) end

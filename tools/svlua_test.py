@@ -432,6 +432,16 @@ REJECTED = {
                            3, 52, r"BODY_GRAVITY\(n\) takes a constant n from -112 to 143"),
     "body_gravity_variable": (OBJ + "n = 8\nfunction A:step() self.body_gravity = "
                               "BODY_GRAVITY(n) end", 4, 52, r"BODY_GRAVITY\(n\) takes a constant"),
+    "read_only_object": (OBJ + "function A:step() self.object = B end", 3, 19,
+                         r"object is read-only: an instance's object is the one it was spawned "
+                         r"or attached as"),
+    "object_kept": (OBJ + "function A:step() local o = self.object end", 3, 29,
+                    r"self\.object is an object, and objects are compared, not kept"),
+    "object_compared_with_integer": (OBJ + "function A:step() if self.object == 0 then end end",
+                                     3, 37, r"comparing an object with an integer: in Lua they "
+                                     r"are never equal"),
+    "object_ordered": (OBJ + "function A:step() if self.object < B then end end", 3, 22,
+                       r"self\.object is an object, and objects are compared"),
     "header_called": (OBJ + "function A:step() local g = MAX_FALL(2) end", 3, 29,
                       r"MAX_FALL would be a constant from the C headers, and constants aren't "
                       r"functions"),
@@ -703,6 +713,23 @@ end""")
         self.assert_error(OBJ + "function A:step() local g = GRAVITY(2) end",
                           r"constants aren't functions\n  hint: C_GAME\(n\) and BODY_GRAVITY\(n\) "
                           r"are the macros a script can call")
+
+    def test_objects_compare(self):
+        """An entity's object compares with an object's name, or with
+        another entity's object; two names fold."""
+        p = self.check(OBJ + """function A:collision(other)
+  local coin = other.object == B
+  local mine = other.object ~= self.object
+  local folded = (A == B)
+end""")
+        self.assertEqual(local_types(p, "A:collision"), {"coin": "boolean", "mine": "boolean",
+                                                         "folded": "boolean"})
+        self.assert_error(OBJ + "function A:step() spawn(A, 0, 0).object = B end",
+                          r"object is read-only")
+        self.assert_error(OBJ + "function A:step() if self.object == none then end end",
+                          r"comparing an object with an entity")
+        self.assert_error(OBJ + "function f(o) end\nfunction A:step() f(self.object) end",
+                          r"self\.object is an object, and objects are compared")
 
     def test_header_constants_pass_through(self):
         p = self.check(OBJ + "function A:step() if button_down(BUTTON_A | BUTTON_B) then "
@@ -1038,6 +1065,14 @@ class Listing(unittest.TestCase):
             "SELF", "PUSH BODY_GRAVITY(0)", "SETP BODY_GRAVITY", "SELF", "PUSH 640",
             "SETP BODY_MAX_FALL", "SELF", "PUSH 255", "SETP BODY_BOUNCE"])
         self.assertEqual(code[start + 11:start + 14], ["SELF", "GETP BODY_CONTACT", "STL 0"])
+
+    def test_objects_in_the_listing(self):
+        """other.object == Coin is GETP OBJECT against the object's number."""
+        code = self.code(OBJ + "n = 0\nfunction A:collision(other) if other.object == B then "
+                         "n = 1 end; local same = A ~= A end")
+        start = code.index(".handler A COLLISION")
+        self.assertEqual(code[start + 2:start + 6], ["OTHER", "GETP OBJECT", "PUSH OBJ_B", "EQ"])
+        self.assertIn("PUSH 0", code[start + 6:])  # A ~= A: false
 
     def test_initial_values_in_the_blob(self):
         """.globals NAME=value: the blob carries the initial values (header
@@ -1423,6 +1458,30 @@ function Shot:create() self.body_w = 4; self.body_h = 4; self.vx = 3 end
         shot = next(e for e in run.entities.values() if e["object"] == "SHOT")
         self.assertEqual((shot["X"], shot["Y"]), ((200 + 3 * 20) * 256, 20 * 256))  # past 240
         self.assertEqual((shot["VX"], shot["VY"], shot["BODY_CONTACT"]), (3 * 256, 0, 0))
+
+    @needs_runner
+    def test_collisions_tell_objects_apart(self):
+        """A Collision reaction tells what it hit by its object, whatever
+        the tags; an unattached entity (C's) has none."""
+        run = run_vm("""Hero = object { components = C_POS | C_BODY | C_GAME(0) }
+Coin = object { components = C_POS | C_BODY | C_GAME(1) }
+Spike = object { components = C_POS | C_BODY | C_GAME(1) }
+coins = 0
+spikes = 0
+others = 0
+function Hero:create() self.body_w = 8; self.body_h = 8 end
+function Coin:create() self.body_w = 8; self.body_h = 8 end
+function Spike:create() self.body_w = 8; self.body_h = 8 end
+function Hero:collision(other)
+  if other.object == Coin then coins = coins + 1
+  elseif other.object == Spike then spikes = spikes + 1
+  else others = others + 1 end
+end
+""", frames=2, attach=[("HERO", 10, 10), ("COIN", 12, 12), ("SPIKE", 14, 14), ("COIN", 9, 9),
+                       ("COIN", 100, 100)], collide=[("HERO", "COIN"), ("HERO", "SPIKE")],
+                     files=[ECS_H])
+        self.assertEqual((run.globals["COINS"], run.globals["SPIKES"], run.globals["OTHERS"]),
+                         (4, 2, 0))  # two coins and a spike touch, in each of 2 frames
 
     def test_globals_start_at_their_initial_values(self):
         vm = run_vm("Init = object {}\nlives = 3\nspeed = 1.5\nalive = true\nhero = none\n"

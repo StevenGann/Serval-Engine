@@ -368,17 +368,17 @@ static void bind(Entity e, u32 object) {
 
 // The component each engine property belongs to (0: none, VM_P_TAGS).
 static const u32 prop_component[VM_P_COUNT] = {
-    C_POS,  C_POS,  C_VEL, C_VEL,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR,
-    C_BODY, C_BODY, 0,     C_ANIM, C_ANIM, C_BODY, C_BODY, C_BODY, C_BODY, C_BODY};
+    C_POS,  C_POS, C_VEL,  C_VEL,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR,  C_SPR, C_BODY,
+    C_BODY, 0,     C_ANIM, C_ANIM, C_BODY, C_BODY, C_BODY, C_BODY, C_BODY, 0};
 // A property appended to vm.h without a row here would silently get component 0
 // (no warning when it's missing) and fall into set_prop's default case.
-_Static_assert(VM_P_COUNT == 20, "add the new property to prop_component, get_prop and set_prop "
+_Static_assert(VM_P_COUNT == 21, "add the new property to prop_component, get_prop and set_prop "
                                  "(and READ_ONLY_PROPS if scripts can't write it)");
 _Static_assert(VM_P_FIELD0 >= VM_P_COUNT && VM_P_FIELD0 + VM_FIELDS <= 256,
                "the instance fields follow the engine properties, within a u8 operand");
 
 // The properties SETP refuses (warning): the engine sets them.
-#define READ_ONLY_PROPS (1u << VM_P_BODY_CONTACT)
+#define READ_ONLY_PROPS (1u << VM_P_BODY_CONTACT | 1u << VM_P_OBJECT)
 _Static_assert(VM_P_COUNT <= 32, "READ_ONLY_PROPS has a bit per engine property");
 
 static bool read_only(u32 prop) {
@@ -475,6 +475,8 @@ static s32 get_prop(u32 i, u32 prop) {
         return body_gravity[i];
     case VM_P_BODY_CONTACT:
         return body_contact[i];
+    case VM_P_OBJECT: // e is alive in slot i, so a binding there still attached is e's
+        return attached(i) ? bound_object[i] : -1;
     default: // an instance field (prop_slot checked)
         return fields[i][prop - VM_P_FIELD0];
     }
@@ -541,7 +543,8 @@ static void set_prop(u32 i, u32 prop, s32 value) {
     case VM_P_BODY_GRAVITY:
         body_gravity[i] = (s8)value;
         break;
-    case VM_P_BODY_CONTACT: // read-only: SETP refuses it before it gets here
+    case VM_P_BODY_CONTACT: // read-only: SETP refuses them before they get here
+    case VM_P_OBJECT:
         break;
     default: // an instance field (prop_slot checked)
         fields[i][prop - VM_P_FIELD0] = value;
@@ -1107,7 +1110,8 @@ static u32 execute(Context* c, bool reaction) {
             u32 prop = code[pc];
             pc += 1;
             int i = prop_slot(prop, st[sp - 1], at);
-            st[sp - 1] = i < 0 ? 0 : get_prop((u32)i, prop);
+            // No entity is attached to no object: -1, never object 0's number.
+            st[sp - 1] = i >= 0 ? get_prop((u32)i, prop) : prop == VM_P_OBJECT ? -1 : 0;
             break;
         }
         case VM_OP_SETP: {
@@ -1119,8 +1123,8 @@ static u32 execute(Context* c, bool reaction) {
             if (read_only(prop)) { // whatever the entity: the engine owns it
                 sp--;
                 WARN_ONCE(WARN_PROP_READ_ONLY,
-                          "vm: SETP at 0x%x: property %u is read-only (VM_P_BODY_CONTACT: the "
-                          "engine sets it); nothing is written",
+                          "vm: SETP at 0x%x: property %u is read-only (VM_P_BODY_CONTACT, "
+                          "VM_P_OBJECT: the engine sets them); nothing is written",
                           at, prop);
                 break;
             }
@@ -1933,6 +1937,13 @@ void vm_set_global(u16 index, s32 value) {
         return;
     }
     globals[index] = value;
+}
+
+int vm_object_of(Entity e) {
+    u32 slot = entity_index(e);
+    if (e == ENTITY_NONE || slot >= MAX_ENT || bound[slot] != e || !attached(slot))
+        return -1;
+    return bound_object[slot];
 }
 
 int serval_vm_attached_object(Entity e) {

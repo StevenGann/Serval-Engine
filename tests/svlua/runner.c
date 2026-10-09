@@ -37,9 +37,9 @@
 //   array N V0 V1 ...            every RAM array's cells (ROM arrays: none)
 //   entity HANDLE OBJECT P0 ... P19 F0 ... F15
 //                                every attached entity, in slot order: its
-//                                engine properties (VM_P_X to
-//                                VM_P_BODY_CONTACT) as GETP reads them, then
-//                                its instance fields
+//                                object (VM_P_OBJECT), its engine properties
+//                                (VM_P_X to VM_P_BODY_CONTACT) as GETP reads
+//                                them, then its instance fields
 //   warnings N                   at the end: the engine's warnings (debug.h)
 // Exit status 0, or 2 for bad arguments or a blob that vm_load rejects.
 

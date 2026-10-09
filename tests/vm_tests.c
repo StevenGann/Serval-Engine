@@ -3026,7 +3026,8 @@ static void self_and_other(void) {
 // Writes truncate to the array's type; reads extend it back to a cell (sign-
 // extending s8 and s16, zero-extending u8 and u16). VM_P_TAGS is C_GAME(0) to
 // C_GAME(14) of ent_mask as bits 0 to 14; SETP changes only those bits.
-// VM_P_BODY_CONTACT is read-only: not written here (read_only_properties).
+// VM_P_BODY_CONTACT and VM_P_OBJECT are read-only: not written here
+// (read_only_properties, objects_of_entities).
 static const struct {
     s32 written;
     s32 read; // what GETP then gives
@@ -3053,6 +3054,7 @@ static const struct {
     [VM_P_BODY_MAX_FALL] = {-FX(1), 0xFF00, "VM_P_BODY_MAX_FALL truncates to u16, reads unsigned"},
     [VM_P_BODY_GRAVITY] = {0x180, -128, "VM_P_BODY_GRAVITY truncates to s8, reads sign-extended"},
     [VM_P_BODY_CONTACT] = {0, 0, "VM_P_BODY_CONTACT reads body_contact", true},
+    [VM_P_OBJECT] = {0, -1, "VM_P_OBJECT reads -1 for an entity that isn't attached", true},
 };
 
 // Where properties_read_and_write_the_ecs stores what it reads: GETP of
@@ -3128,26 +3130,29 @@ static void properties_read_and_write_the_ecs(void) {
     body_max_fall[i] = 0xFFFF;
     body_gravity[i] = BODY_GRAVITY(-112); // -128
     body_contact[i] = BODY_SIDE_BOTTOM | BODY_CONTACT_EXIT;
-    static const s32 from_c[VM_P_COUNT] = {-FX(7),
-                                           3,
-                                           1,
-                                           -1,
-                                           0xFFFF,
-                                           200,
-                                           0x8001,
-                                           0xFFFF,
-                                           -2,
-                                           -32768,
-                                           200,
-                                           7,
-                                           1 << 1 | 1 << 13,
-                                           250,
-                                           3,
-                                           255,
-                                           7,
-                                           0xFFFF,
-                                           -128,
-                                           BODY_SIDE_BOTTOM | BODY_CONTACT_EXIT};
+    static const s32 from_c[VM_P_COUNT] = {
+        [VM_P_X] = -FX(7),
+        [VM_P_Y] = 3,
+        [VM_P_VX] = 1,
+        [VM_P_VY] = -1,
+        [VM_P_SPR] = 0xFFFF,
+        [VM_P_FRAME] = 200,
+        [VM_P_FLAGS] = 0x8001,
+        [VM_P_ANGLE] = 0xFFFF,
+        [VM_P_DEPTH] = -2,
+        [VM_P_SCALE] = -32768,
+        [VM_P_BODY_W] = 200,
+        [VM_P_BODY_H] = 7,
+        [VM_P_TAGS] = 1 << 1 | 1 << 13,
+        [VM_P_ANIM_TIME] = 250,
+        [VM_P_ANIM_STEP] = 3,
+        [VM_P_BODY_BOUNCE] = 255,
+        [VM_P_BODY_FRICTION] = 7,
+        [VM_P_BODY_MAX_FALL] = 0xFFFF,
+        [VM_P_BODY_GRAVITY] = -128,
+        [VM_P_BODY_CONTACT] = BODY_SIDE_BOTTOM | BODY_CONTACT_EXIT,
+        [VM_P_OBJECT] = -1, // not attached
+    };
     start(1);
     vm_step();
     u32 wrong = 0;
@@ -3344,6 +3349,78 @@ static void read_only_properties(void) {
     CHECK(vm_global(0) == BODY_SIDE_LEFT && vm_global(1) == 42);
     CHECK(vm_idle());
     CHECK_WARNED(before, 2);
+}
+
+// vm.md "Entities": VM_P_OBJECT is the object an entity is attached to, and
+// -1 for one that isn't: never attached, detached, killed (and so dead: that
+// warns, as any property of a dead entity, but reads -1, not 0, which is an
+// object's number), or ENTITY_NONE. It is read-only. vm_object_of() gives C
+// the same, without warnings for entities that simply aren't attached; an
+// entity destroyed behind the VM's back is a stale binding (warns once).
+static void objects_of_entities(void) {
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    handler(0, VM_EV_ROOM_START); // glob[k] = the object of the entity in glob[10 + k]
+    for (u32 k = 0; k < 5; k++) {
+        ldg(10 + k);       // e
+        getp(VM_P_OBJECT); // its object
+        stg(k);            //
+    }
+    ldg(10);                     // e
+    push8(2);                    // e 2
+    setp(VM_P_OBJECT);           // warns: read-only
+    op(VM_OP_HALT);              //
+    handler(2, VM_EV_COLLISION); // glob[5] = 1 if OTHER is attached to object 1
+    op(VM_OP_OTHER);             // other
+    getp(VM_P_OBJECT);           // its object
+    push8(1);                    // its object, 1
+    op(VM_OP_EQ);                // 0 or 1
+    stg(5);                      //
+    op(VM_OP_HALT);              //
+    CHECK(load());
+    CHECK(vm_object_of(ENTITY_NONE) == -1);
+    Entity first = entity_create(C_POS);  // attached to object 0
+    Entity second = entity_create(C_POS); // attached to object 1
+    Entity loose = entity_create(C_POS);  // never attached
+    Entity killed = entity_create(C_POS); // attached, then killed
+    vm_attach(first, 0);
+    vm_attach(second, 1);
+    vm_attach(killed, 1);
+    vm_events();
+    vm_kill(killed);
+    CHECK(vm_object_of(first) == 0 && vm_object_of(second) == 1);
+    CHECK(vm_object_of(loose) == -1 && vm_object_of(killed) == -1);
+    vm_set_global(10, first);
+    vm_set_global(11, second);
+    vm_set_global(12, loose);
+    vm_set_global(13, killed);
+    vm_set_global(14, ENTITY_NONE);
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_ROOM_START) >= 0);
+    vm_step();
+    CHECK(vm_global(0) == 0 && vm_global(1) == 1 && vm_global(2) == -1);
+    CHECK(vm_global(3) == -1 && vm_global(4) == -1); // a dead entity and none: no object 0
+    CHECK(vm_object_of(first) == 0);                 // SETP wrote nothing
+    CHECK_WARNED(before, 2);                         // a dead entity's property; read-only
+    // A Collision reaction tells what it met by its object.
+    Entity target = entity_create(C_POS);
+    vm_attach(target, 2);
+    vm_event(target, second, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(5) == 1);
+    vm_event(target, first, VM_EV_COLLISION);
+    vm_events();
+    CHECK(vm_global(5) == 0);
+    // Detached, or destroyed behind the VM's back (a stale binding: warns).
+    vm_detach(first);
+    CHECK(vm_object_of(first) == -1);
+    before = debug_warning_count();
+    entity_destroy(second);
+    CHECK(vm_object_of(second) == -1);
+    CHECK_WARNED(before, 1);
+    // Nothing is attached without a blob.
+    vm_unload();
+    CHECK(vm_object_of(target) == -1);
 }
 
 // vm.md "Entities": VM_P_BODY_CONTACT is body_contact, what the body touched
@@ -5640,6 +5717,7 @@ TEST_SUITE(
     {"properties_of_handles_past_the_pool", properties_of_handles_past_the_pool},
     {"property_without_its_component_warns", property_without_its_component_warns},
     {"body_size_properties", body_size_properties}, {"read_only_properties", read_only_properties},
+    {"objects_of_entities", objects_of_entities},
     {"body_properties_meet_physics", body_properties_meet_physics},
     {"spawned_kinematic_bodies", spawned_kinematic_bodies},
     {"tags_are_the_game_components", tags_are_the_game_components},

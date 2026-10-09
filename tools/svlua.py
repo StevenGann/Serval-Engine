@@ -1041,6 +1041,9 @@ PROPERTIES = {
     "body_bounce": ("BODY_BOUNCE", INT), "body_friction": ("BODY_FRICTION", INT),
     "body_max_fall": ("BODY_MAX_FALL", FIXED), "body_gravity": ("BODY_GRAVITY", INT),
     "body_contact": ("BODY_CONTACT", INT),
+    # The object an entity is attached to: compared with == and ~= only, with
+    # an object's name or another entity's object (other.object == Coin).
+    "object": ("OBJECT", OBJECT),
 }
 # The properties a script reads but can't assign (SETP refuses them): why, and
 # a hint.
@@ -1048,6 +1051,8 @@ READ_ONLY = {
     "body_contact": ("the engine sets it to what the body touched in the last sys_physics() "
                      "(with physics_set_contacts(true)) or sys_map_movement()",
                      "test its bits: self.body_contact & MAP_CONTACT_FLOOR ~= 0"),
+    "object": ("an instance's object is the one it was spawned or attached as",
+               "compare it: other.object == Coin"),
 }
 # The engine's macros a script can call (constant arguments only), which the
 # assembler knows too: (the range of n, what it is).
@@ -2009,6 +2014,16 @@ def _strip(e):
     return e
 
 
+def _object_ref(e):
+    """An object's name, or an entity's object (e.object): the two forms an
+    object takes as a value, which only == and ~= accept."""
+    o = _strip(e)
+    if isinstance(o, Name):
+        return getattr(o, "sym", None) is not None and o.sym.kind == "object"
+    return isinstance(o, Field) and o.name == "object" and not (
+        isinstance(o.obj, Name) and o.obj.sym.kind == "builtin")
+
+
 def _promote(c, node, file):
     """An integer constant as fixed point (FX(n), n * 256)."""
     if c.value is not None:
@@ -2499,10 +2514,13 @@ class Checker:
 
     def misuse(self, e, ty):
         name = _describe(e) or "this"
+        if ty == OBJECT and isinstance(_strip(e), Field):
+            self.fail(e, f"{name} is an object, and objects are compared, not kept or "
+                      "computed with", f"compare it with == or ~=: {name} == Coin")
         if ty == OBJECT:
             self.fail(e, f"{name} is an object, not a value",
                       f"spawn({name}, x, y) makes an instance; for e in instances({name}) "
-                      "visits them")
+                      f"visits them; e.object == {name} tells whether e is one")
         if ty == ARRAY:
             self.fail(e, f"{name} is an array, not a value: arrays can't be assigned or "
                       "passed (LDA and STA name their array)",
@@ -2570,7 +2588,10 @@ class Checker:
                 e.const = Const(ENTITY, 0)
                 return ENTITY
             return BUILTIN
-        return {"object": OBJECT, "array": ARRAY, "function": FUNCTION}[kind]
+        if kind == "object":  # a value only in == and ~= (compare_objects)
+            e.const = Const(OBJECT, None, f"OBJ_{sym.listing}")
+            return OBJECT
+        return {"array": ARRAY, "function": FUNCTION}[kind]
 
     def entity(self, obj, field):
         """obj in obj.field must be an entity."""
@@ -2700,6 +2721,8 @@ class Checker:
             return self.concat(e)
         if op in ("and", "or"):
             return self.logical(e)
+        if op in ("==", "~=") and (_object_ref(e.left) or _object_ref(e.right)):
+            return self.compare_objects(e)
         lt = self.value(e.left)
         rt = self.value(e.right)
         if op in COMPARISONS:
@@ -2776,6 +2799,24 @@ class Checker:
             result = {"==": x == y, "~=": x != y, "<": x < y, "<=": x <= y, ">": x > y,
                       ">=": x >= y}[op]
             e.const = Const(BOOL, int(result))
+        return BOOL
+
+    def compare_objects(self, e):
+        """== and ~= of objects: an object's name or an entity's object, the
+        only places an object is a value. Both sides must be objects: in Lua
+        an object (a table) is never equal to a number or an entity."""
+        for side in (e.left, e.right):
+            if not _object_ref(side):
+                ty = self.value(side)
+                self.fail(side, f"comparing an object with {article(ty) if ty else 'a value'}: "
+                          "in Lua they are never equal", "compare an entity's object with an "
+                          "object: other.object == Coin")
+            if isinstance(_strip(side), Field):
+                self.entity(_strip(side).obj, _strip(side))
+            self.expr(side)
+        a, b = _strip(e.left), _strip(e.right)
+        if isinstance(a, Name) and isinstance(b, Name):  # two objects' names
+            e.const = Const(BOOL, int((a.sym is b.sym) == (e.op == "==")))
         return BOOL
 
     def concat(self, e):

@@ -157,9 +157,9 @@ enum {
 };
 
 // Entity properties for GETP and SETP: the ECS arrays of the same names,
-// then the instance fields (VM_P_FIELD0 on). Append-only; 20 to 63 are
-// reserved for the engine. VM_P_BODY_CONTACT is read-only: SETP of it warns
-// and writes nothing.
+// then the instance fields (VM_P_FIELD0 on). Append-only; 21 to 63 are
+// reserved for the engine. VM_P_BODY_CONTACT and VM_P_OBJECT are read-only:
+// SETP of them warns and writes nothing.
 enum {
     VM_P_X,         // pos_x (FIXED)
     VM_P_Y,         // pos_y (FIXED)
@@ -182,6 +182,7 @@ enum {
     VM_P_BODY_MAX_FALL, // body_max_fall: FIXED pixels per frame in a u16; 0 no limit
     VM_P_BODY_GRAVITY,  // body_gravity: the scale minus 16, as BODY_GRAVITY(sixteenths)
     VM_P_BODY_CONTACT,  // body_contact, read-only: BODY_SIDE_*, MAP_CONTACT_* bits
+    VM_P_OBJECT,        // read-only: the object the entity is attached to, else -1 (vm_object_of)
     VM_P_COUNT          // the engine properties: 0 to VM_P_COUNT - 1
 };
 // Instance fields: VM_FIELDS cells of each attached entity, zeroed when it is
@@ -347,6 +348,16 @@ void vm_events(void);
 
 s32 vm_global(u16 index);
 void vm_set_global(u16 index, s32 value);
+// The object entity e is attached to (vm_attach, SPAWN; an OBJ_* number), or
+// -1 if it isn't attached: a dead entity, ENTITY_NONE, one never attached,
+// detached, or attached before the latest vm_load. Scripts read the same as
+// VM_P_OBJECT (Lua's e.object). E.g. the instance a camera follows:
+//     for (u32 i = 0; i < MAX_ENT; i++)
+//         if (vm_object_of(entity_at(i)) == OBJ_PLAYER) ...
+// An entity destroyed behind the VM's back (entity_destroy rather than
+// vm_kill) is not attached: its binding is cleared, its script halted, with a
+// warning, as wherever the VM finds one.
+int vm_object_of(Entity e);
 u32 vm_ops_this_frame(void); // opcodes run since the latest vm_step() began
 bool vm_idle(void);          // no context live and no event queued
 

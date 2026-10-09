@@ -42,6 +42,7 @@ These could not be added later without breaking games, or were small enough to f
 | --- | --- |
 | Scripts tune bodies and read their contacts: the properties `VM_P_BODY_BOUNCE` (15), `VM_P_BODY_FRICTION` (16), `VM_P_BODY_MAX_FALL` (17), `VM_P_BODY_GRAVITY` (18) and the read-only `VM_P_BODY_CONTACT` (19), Lua's `body_bounce`, `body_friction`, `body_max_fall` (fixed), `body_gravity` and `body_contact`, each with its C pool's numbers; `BODY_GRAVITY(n)` in listings and scripts; read-only properties (`SETP` warns and writes nothing; assigning one is a compile error) | [vm.md](vm.md#entities), [lua.md](lua.md#what-compiles-to-what) |
 | `C_KINEMATIC`, engine component bit 7, which `entity_create` refused until then: a body (`C_POS \| C_VEL \| C_BODY`) that moves only by its velocity; `sys_physics` skips it, its body collides. A script's object can have it in its components, so a script spawns one. Bits 8-15 stay reserved | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
+| `vm_object_of(e)`, the object an entity is attached to or −1, and the read-only property `VM_P_OBJECT` (20; Lua's `e.object`, compared with an object's name: `other.object == Coin`, the subset's one use of an object as a value) | [vm.md](vm.md#entities), [lua.md](lua.md#types) |
 
 ## Planned in 1.x (declared now)
 
