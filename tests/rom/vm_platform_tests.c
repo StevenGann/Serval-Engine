@@ -207,5 +207,49 @@ static void collide_costs(void) {
     ecs_reset();
 }
 
+// One object with no handlers: what attaching and draining cost alone.
+static const u8 no_handlers[VM_HEADER_SIZE + VM_OBJECT_SIZE] = {
+    'S', 'V', 'M', 'B', VM_FORMAT_VERSION, VM_CELL_BYTES, 0, 0, 1, 0, // 1 object, the rest 0
+};
+
+// vm.h VM_EVENT_QUEUE: what loading a full room costs on the GBA, logged:
+// attaching MAX_ENT entities, each queueing a Create (looking through the
+// queue for one already there only if its slot has one queued), then
+// draining the Creates. Twice: the second room, in the slots the first
+// room's entities freed, costs the same.
+static void room_load_costs(void) {
+    ecs_reset();
+    CHECK(vm_load(no_handlers, sizeof no_handlers));
+    SERVAL_EWRAM_BSS static Entity room[MAX_ENT];
+    u32 attach[2], drain[2];
+    u32 before = debug_warning_count();
+    for (u32 r = 0; r < 2; r++) {
+        for (u32 k = 0; k < MAX_ENT; k++)
+            room[k] = entity_create(C_POS);
+        u32 t0 = cycles();
+        for (u32 k = 0; k < MAX_ENT; k++)
+            vm_attach(room[k], 0);
+        u32 t1 = cycles();
+        vm_events();
+        attach[r] = t1 - t0;
+        drain[r] = cycles() - t1;
+        CHECK(vm_idle());
+        for (u32 k = 0; k < MAX_ENT; k++)
+            vm_kill(room[k]);
+    }
+    debug_log(text_format("vm: attaching %u entities %u cycles, draining their Creates %u; "
+                          "the next room %u and %u",
+                          MAX_ENT, attach[0], drain[0], attach[1], drain[1]));
+    // About 58,000 and 55,000 when this was written (gba-release, mGBA; about
+    // 68,000 and 60,000 in gba-ci): about 450 cycles an attach, whatever the
+    // queue holds. Looking through the whole queue on every attach cost
+    // 282,000, a frame.
+    CHECK_TIMING(attach[0] < 100000 && attach[1] < 100000);
+    CHECK(debug_warning_count() == before);
+    vm_unload();
+    ecs_reset();
+}
+
 TEST_SUITE(gba_vm_tests, "gba_vm", {"text_calls_print", text_calls_print},
-           {"text_print_number_width", text_print_number_width}, {"collide_costs", collide_costs});
+           {"text_print_number_width", text_print_number_width}, {"collide_costs", collide_costs},
+           {"room_load_costs", room_load_costs});

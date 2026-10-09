@@ -36,13 +36,14 @@ These could not be added later without breaking games, or were small enough to f
 | `serval_add_rom()` checks `TITLE` (1 to 12 printable ASCII characters), `GAME_CODE` (exactly 4) and `SAVE` at configure time, Studio Advance's rules, and any printable ASCII character reaches the ROM header and the web page unchanged; refusing more later would break builds | [development.md](development.md#building-a-game), [releases.md](releases.md#versioning) |
 | VM and Lua names equal the C names: `VM_SYS_PSG_MUSIC_*`, `VM_SYS_SCREEN_SET_BRIGHTNESS`, `VmBindings.psg_songs`, Lua's `psg_music_play`, `screen_set_brightness`, `text_print_number` and the rest; numbers and golden bytes unchanged | [vm.md](vm.md#engine-calls), [lua.md](lua.md) |
 
-**Added before rc.1**, from integrating Studio Advance's object system. Each is an addition under the rules above: properties appended to the page, a reserved bit given a meaning, a new function; nothing that existed changed meaning.
+**Added before rc.1**, from integrating Studio Advance's object system. Each is an addition under the rules above: properties appended to the page, a reserved bit given a meaning, a new function, an engine limit raised; nothing that existed changed meaning.
 
 | Item | Where |
 | --- | --- |
 | Scripts tune bodies and read their contacts: the properties `VM_P_BODY_BOUNCE` (15), `VM_P_BODY_FRICTION` (16), `VM_P_BODY_MAX_FALL` (17), `VM_P_BODY_GRAVITY` (18) and the read-only `VM_P_BODY_CONTACT` (19), Lua's `body_bounce`, `body_friction`, `body_max_fall` (fixed), `body_gravity` and `body_contact`, each with its C pool's numbers; `BODY_GRAVITY(n)` in listings and scripts; read-only properties (`SETP` warns and writes nothing; assigning one is a compile error) | [vm.md](vm.md#entities), [lua.md](lua.md#what-compiles-to-what) |
 | `C_KINEMATIC`, engine component bit 7, which `entity_create` refused until then: a body (`C_POS \| C_VEL \| C_BODY`) that moves only by its velocity; `sys_physics` skips it, its body collides. A script's object can have it in its components, so a script spawns one. Bits 8-15 stay reserved | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
 | `vm_object_of(e)`, the object an entity is attached to or −1, and the read-only property `VM_P_OBJECT` (20; Lua's `e.object`, compared with an object's name: `other.object == Coin`, the subset's one use of an object as a value) | [vm.md](vm.md#entities), [lua.md](lua.md#types) |
+| `VM_EVENT_QUEUE` raised from 32 to 256, a Create and a Room Start for every entity, so a room loader queues a whole room before the first drain; an engine limit, not format v1's, so raising it only drops fewer events. EWRAM +1.6 KB | [vm.md](vm.md#contexts) |
 
 ## Planned in 1.x (declared now)
 

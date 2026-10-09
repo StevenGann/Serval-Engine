@@ -75,6 +75,12 @@ SERVAL_EWRAM_BSS static Context contexts[VM_CONTEXTS];
 SERVAL_EWRAM_BSS static s32 globals[VM_GLOBALS];
 SERVAL_EWRAM_BSS static s32 array_cells[VM_ARRAY_CELLS]; // the RAM arrays' pool
 SERVAL_EWRAM_BSS static QueuedEvent queue[VM_EVENT_QUEUE];
+// How many Create events in the queue are for an entity in each slot (any
+// generation): create_queued() looks through the queue only for a slot that
+// has one, so attaching a room's worth of entities at once stays linear.
+SERVAL_EWRAM_BSS static u16 creates_queued[MAX_ENT];
+_Static_assert(VM_EVENT_QUEUE >= 2 * MAX_ENT, "a room's Creates and Room Starts fit the queue");
+_Static_assert((VM_EVENT_QUEUE & (VM_EVENT_QUEUE - 1)) == 0, "the queue's ring wraps with a mask");
 // Bindings, by entity slot: the attached entity's handle (ENTITY_NONE: none),
 // its object, its live context + 1 (0: none), its BIND_* flags and its
 // instance fields.
@@ -334,11 +340,16 @@ static bool enqueue(Entity e, Entity other, u32 event) {
     q->other = other;
     q->event = (u8)event;
     queue_count++;
+    if (event == VM_EV_CREATE && entity_index(e) < MAX_ENT)
+        creates_queued[entity_index(e)]++;
     return true;
 }
 
-// True if a Create event for e is in the queue.
+// True if a Create event for e is in the queue. Only a slot with a Create
+// queued needs the look through the queue.
 static bool create_queued(Entity e) {
+    if (entity_index(e) >= MAX_ENT || !creates_queued[entity_index(e)])
+        return false;
     for (u32 k = 0; k < queue_count; k++) {
         const QueuedEvent* q = &queue[(queue_head + k) % VM_EVENT_QUEUE];
         if (q->e == e && q->event == VM_EV_CREATE)
@@ -1376,6 +1387,8 @@ static void drain(void) {
         QueuedEvent q = queue[queue_head];
         queue_head = (queue_head + 1) % VM_EVENT_QUEUE;
         queue_count--;
+        if (q.event == VM_EV_CREATE && entity_index(q.e) < MAX_ENT)
+            creates_queued[entity_index(q.e)]--;
         if (q.event == VM_EV_DESTROY)
             destroy(q.e);
         else
@@ -1828,6 +1841,7 @@ static void install(const u8* b, u32 size, bool keep) {
     }
     queue_head = queue_count = 0;
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
+        creates_queued[slot] = 0;
         bound_context[slot] = 0;
         // A binding kept by a hot reload lost its queued Create with the queue:
         // its Step reaction must not wait for it.

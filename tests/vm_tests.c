@@ -2790,6 +2790,52 @@ static void full_event_queue_drops_with_a_warning(void) {
     CHECK_WARNED(before, 1);
 }
 
+// vm.h VM_EVENT_QUEUE: a room's whole load fits the queue. Every entity the
+// pool holds attached (a Create each) and given a Room Start, with no drain
+// in between, warns nothing; the next vm_step runs them in order, every
+// Create before the first Room Start, so each Create sees the whole room
+// (here: the room's last instance, after the one in glob[5]), and Room Start
+// sees every Create done.
+static void a_full_room_fits_the_queue(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);     // glob[0] += 1; glob[3] += 1 if the last instance is there
+    count(0);                     //
+    ldg(5);                       // the second-to-last instance
+    nexti(0);                     // the next one: the last, once it is attached
+    ldg(6);                       // next, last
+    op(VM_OP_EQ);                 // 0 or 1
+    ldg(3);                       //
+    op(VM_OP_ADD);                //
+    stg(3);                       //
+    op(VM_OP_HALT);               //
+    handler(0, VM_EV_ROOM_START); // glob[4] += 1 if every Create ran before it
+    ldg(0);                       // creates
+    push16(MAX_ENT);              // creates 128
+    op(VM_OP_EQ);                 // 0 or 1
+    ldg(4);                       //
+    op(VM_OP_ADD);                //
+    stg(4);                       //
+    op(VM_OP_HALT);               //
+    CHECK(load());
+    _Static_assert(2 * MAX_ENT <= VM_EVENT_QUEUE, "the room fits");
+    Entity room[MAX_ENT];
+    for (u32 k = 0; k < MAX_ENT; k++)
+        room[k] = entity_create(C_POS);
+    vm_set_global(5, room[MAX_ENT - 2]);
+    vm_set_global(6, room[MAX_ENT - 1]);
+    u32 before = debug_warning_count();
+    for (u32 k = 0; k < MAX_ENT; k++)
+        vm_attach(room[k], 0);
+    for (u32 k = 0; k < MAX_ENT; k++)
+        vm_event(room[k], ENTITY_NONE, VM_EV_ROOM_START);
+    CHECK(!vm_idle());
+    vm_step();
+    CHECK(vm_global(0) == MAX_ENT && vm_global(3) == MAX_ENT && vm_global(4) == MAX_ENT);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
 // vm.h, vm.md "Exact semantics: Draining": with every context in use,
 // vm_start returns -1 and a drained event is dropped: one kind of problem (no
 // free context), so one warning.
@@ -5445,8 +5491,8 @@ static void collide_runs_after_the_queued_events(void) {
 }
 
 // vm.h vm_collide: the queue holds each overlap's events only until they
-// run, so a pass with more events than VM_EVENT_QUEUE drops none: 6 x 6
-// overlapping entities raise 72 events, and nothing warns.
+// run, so a pass with more events than VM_EVENT_QUEUE drops none: 12 x 12
+// overlapping entities raise 288 events, and nothing warns.
 static void collide_never_fills_the_queue(void) {
     reset();
     blob_begin(1, 0, GLOBALS);
@@ -5455,12 +5501,13 @@ static void collide_never_fills_the_queue(void) {
     op(VM_OP_HALT);
     CHECK(load());
     CHECK(vm_collide(TAG_A, TAG_B));
-    for (u32 k = 0; k < 12; k++)
-        vm_attach(collider(k < 6 ? TAG_A : TAG_B, (s32)k, (s32)k, 16, 16, (s16)k), 0);
+    for (u32 k = 0; k < 24; k++) // all within 11 pixels of each other: every pair overlaps
+        vm_attach(collider(k < 12 ? TAG_A : TAG_B, (s32)(k % 12), (s32)(k % 12), 16, 16, (s16)k),
+                  0);
     u32 before = debug_warning_count();
     frame();
-    CHECK(6 * 6 * 2 > VM_EVENT_QUEUE);
-    CHECK(vm_global(1) == 6 * 6 * 2);
+    CHECK(12 * 12 * 2 > VM_EVENT_QUEUE);
+    CHECK(vm_global(1) == 12 * 12 * 2);
     CHECK_WARNED(before, 0);
 }
 
@@ -5705,6 +5752,7 @@ TEST_SUITE(
     {"spawn_creates_an_attached_entity", spawn_creates_an_attached_entity},
     {"spawn_failures_push_zero", spawn_failures_push_zero},
     {"full_event_queue_drops_with_a_warning", full_event_queue_drops_with_a_warning},
+    {"a_full_room_fits_the_queue", a_full_room_fits_the_queue},
     {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
     {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
     {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
