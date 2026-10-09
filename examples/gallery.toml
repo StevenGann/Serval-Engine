@@ -107,7 +107,7 @@ thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:
 
 [examples.effects]
 title = "EFFECTS"
-summary = "The engine's screen effects, a scene each: alpha blending (a see-through waterfall, glowing wisps and halo, blended shadows), runtime sprite tiles (card faces composed at run time), streamed sprites (plasma orbs of 32 frames drawn from 8 slots), palette writes and raster effects"
+summary = "The engine's screen effects, a scene each: alpha blending (a see-through waterfall, glowing wisps and halo, blended shadows), palette writes (a fade to dusk, a palette cycle, a hit flash), runtime sprite tiles (card faces composed at run time), streamed sprites (plasma orbs of 32 frames drawn from 8 slots) and raster effects (rippling reflections, a sunset gradient)"
 tags = ["effects", "tilemaps", "metasprites"]
 level = 2
 thumbnail = { frame = 300, keys = ["200:S:2", "230:r:60"] }

@@ -15,9 +15,10 @@
 #include "serval/sprites.h"
 #include "test.h"
 
-// The planned values are part of the frozen data formats and draw flags
-// (docs/sprites.md#rom-data-format): they must not move, and must not
-// overlap the bits already in use.
+// The values the API froze as planned are part of the frozen data formats
+// and draw flags (docs/sprites.md#rom-data-format), including those since
+// implemented (SPRITE_GROUP_STREAMED, SPRITE_BLEND): they must not move, and
+// must not overlap the bits already in use.
 static void planned_values_are_fixed(void) {
     CHECK(SPRITE_GROUP_STREAMED == 1 << 0);
     CHECK(SPRITE_ASSET_LZ77 == 1 << 3);
@@ -32,30 +33,19 @@ static void planned_values_are_fixed(void) {
 #ifdef SERVAL_GBA
 // Hardware memory, read directly: the shared suites don't see libtonc.
 #define OAM ((const volatile u16*)0x07000000) // 4 halfwords per sprite
-#define OBJ_VRAM ((const volatile u32*)0x06010000)
-#define OAM_ATTR0(k) OAM[(k) * 4]
-#define OAM_HIDDEN(k) ((OAM_ATTR0(k) & 0x0300) == 0x0200) // not affine, disabled
-#define OAM_MODE(k) (OAM_ATTR0(k) & 0x0C00)               // 0 normal, 0x400 semi-transparent
 #define OAM_BANK(k) (OAM[(k) * 4 + 2] >> 12)
 
-enum { SPR_DOT, SPR_SHADOW, SPR_META, SPR_PACKED, SPRITE_COUNT };
+enum { SPR_DOT, SPR_PACKED, SPRITE_COUNT };
 
 static const u32 dot_tiles[8] = {0x11111111, 0x11111111};
-static const SpritePiece shadow_pieces[] = {
-    {.sprite = SPR_DOT},
-    {.x = 2, .y = 2, .sprite = SPR_DOT, .flags = SPRITE_BLEND}, // a piece may blend
-};
 static const SpriteAsset dot = {.size = SPRITE_8x8, .tiles = dot_tiles};
-static const SpriteAsset shadow = {
-    .flags = SPRITE_ASSET_METASPRITE, .pieces = shadow_pieces, .piece_count = 2};
 static const SpriteAsset packed = {
     .size = SPRITE_8x8, .tiles = dot_tiles, .flags = SPRITE_ASSET_LZ77};
-static const SpriteAsset* const table[SPRITE_COUNT] = {
-    [SPR_DOT] = &dot, [SPR_SHADOW] = &shadow, [SPR_META] = &shadow, [SPR_PACKED] = &packed};
+static const SpriteAsset* const table[SPRITE_COUNT] = {[SPR_DOT] = &dot, [SPR_PACKED] = &packed};
 static const u16 palettes[32] = {[1] = 0x1234, [17] = 0x0567};
-static const u16 group_ids[] = {SPR_DOT, SPR_SHADOW};
+static const u16 group_ids[] = {SPR_DOT};
 static const SpriteGroup group = {
-    .sprite_ids = group_ids, .palettes = palettes, .sprite_count = 2, .palette_count = 2};
+    .sprite_ids = group_ids, .palettes = palettes, .sprite_count = 1, .palette_count = 2};
 
 // Checks that `count` warnings were reported since `before` (none in release
 // builds, which report nothing).
