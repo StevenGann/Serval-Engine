@@ -185,6 +185,7 @@ Every bit and value of the data formats and flag words that this version doesn't
 | VM blob header flags | Bit 1 (an extended handler table), bits 2-15 | | `vm_load()` refuses the blob | [vm.md](vm.md#header-16-bytes) |
 | VM blob reserved fields | Bytes 6-7 of an object record, byte 3 of an array record: must be 0 | | Refused | [vm.md](vm.md#blob-format) |
 | VM entity properties | 21-63 (later engine properties); 80-255, past the 16 instance fields (64-79), are unassigned (more fields would change `VM_FIELDS`, which format v1 fixes) | | Read 0, write nothing (warns) | [vm.md](vm.md#entities) |
+| Lua names | Top-level names (functions, globals, objects, arrays, top-level locals) that are planned functions' (`SERVAL_PLANNED`): the builtins implementing them will take them | | `svlua.py` refuses them (a compile error); locals and parameters may take them | [lua.md](lua.md#planned-functions) |
 | Lua field names | Instance fields starting `anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_`: every property added later takes one of these prefixes | | `svlua.py` refuses them (a compile error); today's properties keep their names | [lua.md](lua.md#reserved-names) |
 | VM engine calls and opcodes | SYS numbers from `VM_SYS_COUNT` on (calls for tracker music, sampled sound and later features, appended); unassigned opcodes | | Halt the script (warns) | [vm.md](vm.md#engine-calls) |
 

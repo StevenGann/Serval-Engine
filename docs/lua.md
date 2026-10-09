@@ -136,6 +136,10 @@ The contact bits are the C headers' constants: `MAP_CONTACT_FLOOR`, `_CEILING`, 
 
 ## Reserved names
 
+Two kinds of names are kept for what later engine versions add: instance fields can't start with the prefixes of later properties ([below](#instance-fields)), and a script can't declare the names of the engine's planned functions, which may become builtins ([below](#planned-functions)).
+
+### Instance fields
+
 An instance field's name can't start with **`anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_`**: those names belong to the engine's properties, today's and the ones later versions add. `self.body_speed = 2` is a compile error:
 
 ```
@@ -162,6 +166,44 @@ The prefixes are those of the engine's per-entity data, in C and in Lua:
 
 Not reserved: `sys_` (C's systems are functions, never per-entity data), the engine's other function prefixes (`sprite_`, `camera_`, `text_`, `psg_`: global state, not an entity's) and `engine_` or `serval_` (`ent_` already holds what fits nowhere else).
 
+### Planned functions
+
+A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set`, `psg_waves_set`, `sprite_set_colors`, `sprite_set_tiles`, `tileset_set_colors`, `screen_set_blend`, `raster_scroll` and the rest. `function music_play() ... end` is a compile error:
+
+```
+game.lua:3:10: error: function music_play: music_play is reserved: it names a planned engine function, which a later engine version may make a builtin
+  hint: rename it, e.g. my_music_play (music_play is planned: tracker music, docs/audio.md#tracker-music)
+```
+
+The hint quotes the marker: the feature and the doc that describes it. Using a planned function is an error too, saying it is planned, where any other undefined name would be "not defined":
+
+```
+game.lua:12:3: error: music_play is planned, not implemented in this engine version (tracker music, docs/audio.md#tracker-music): scripts can't use it yet
+  hint: planned API reaches scripts in the engine version that implements it, named as in C (docs/releases.md#planned-api)
+```
+
+A planned name is treated as a builtin's is, case by case:
+
+| The name as | A builtin's (`psg_play`) | A planned function's (`music_play`) |
+| --- | --- | --- |
+| A top-level declaration: `function name`, a global, object or array (`name = ...`), `local function name`, a top-level `local name` (`<const>` too) | Error: an engine function | Error: reserved |
+| A local in a function or handler, a parameter (a collision handler's too), a `for` loop's variable | Allowed: in its scope the name is the local | Allowed, the same way |
+| A use: a call, a value, an assignment in a function, a global's initial value | The builtin (assigning it is an error) | Error: planned |
+
+**Why each case.**
+
+- **Top-level declarations** are refused for a builtin's name: a script can't redefine an engine function. So the day a planned function became a builtin, a script that had declared its name would stop compiling, and implementing planned API, a minor version, would break it. Refused now, no script can have one. Top-level locals are VM globals in the subset ([Program structure](#program-structure)), refused like globals.
+- **Locals, parameters and loop variables** may shadow a builtin, as in Lua: within its scope the name means the local, whatever the engine has. Its meaning can't change when the builtin arrives, so there is nothing to refuse, and a script keeps short local names like `sfx_play` for a sound it is about to play.
+- **Uses** can't break anything: no script can use a planned function now. Saying "planned" instead of "not defined" tells the author it exists and why it doesn't work yet.
+
+Field names (`self.music_play`) and labels are namespaces of their own, untouched. Names are compared as written: `Music_play` and `MUSIC_PLAY` are ordinary names.
+
+**The set is read, not listed.** `svlua.py` reads the engine's headers beside it (`tools/../include/serval/`, in the repository and in the release archive) by the rule `tools/check-planned.py` checks (both use `svlua.py`'s `planned_api()`), and takes every function marked `SERVAL_PLANNED`; without the headers it stops with an error. A version that implements one drops its marker and, if scripts can call it, adds its SYS call and builtin by the same name ([Engine functions](#engine-functions)): the name goes from reserved to builtin with no list to update. A planned function that stays C-only once implemented, as `vm_collide` is (`audio_bank_set` takes a pointer to the sound bank), leaves the set and its name is free; reserving every planned function keeps the rule mechanical, and costs scripts a couple of dozen names they would rarely want.
+
+**Planned constants** need nothing more. A script that names one (`MAP_CONTACT_LADDER`, `PSG_WAVE`) passes it to the assembler, which refuses it as planned, given the header (without it, as for any constant, the name is unknown; [Bodies](#what-compiles-to-what)). And a script that declares a name a header also defines (`local PSG_WAVE <const> = 3`, `MAP_LADDER = 0`) uses its own, for an implemented constant as for a planned one, so implementing a constant changes no script.
+
+Decided before 1.0.0, when no released script could have used one of these names ([api-freeze.md](api-freeze.md#decisions), D9).
+
 ## Engine functions
 
 Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#engine-calls)) is that name in capitals: `psg_music_play` is `VM_SYS_PSG_MUSIC_PLAY`, which calls `psg_music_play()`.
@@ -183,13 +225,13 @@ Lua's `print` is not one of them: it is Lua's console output, which the subset d
 
 **C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too.
 
-**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then a script plays PSG sound and music only.
+**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins, nor have the other planned functions: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then their names are [reserved](#planned-functions), and a script plays PSG sound and music only.
 
 **Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), `^` except between constants (folded: the VM has no power operation), and floats beyond the fixed-point rules.
 
 ## The tool
 
-`tools/svlua.py`, Python 3 standard library only like the other tools (3.11 or later; `serval_add_script()` stops with an error on an older Python), MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint.
+`tools/svlua.py`, Python 3 standard library only like the other tools (3.11 or later; `serval_add_script()` stops with an error on an older Python), MIT like the engine. It compiles a `.lua` script to a `.svm` listing; [`svm.py`](vm.md#tools) assembles that, so `serval_add_script()` accepts a `.lua` file and runs both. Stages: a lexer, a recursive-descent parser for the subset (Lua 5.4's grammar, with anything outside the subset parsed far enough to name it in the error), name resolution, whole-program type inference, the wait and call-graph checks, and stack-machine code generation with constant folding. Errors give `file:line:column`, the construct, and a hint. It reads the engine's headers beside it (`include/serval/`) for the planned functions, whose names it [reserves](#planned-functions).
 
 Studio Advance's event editor compiles its event blocks through the same path (blocks → this subset → bytecode), so there is one compiler to make correct.
 

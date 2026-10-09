@@ -6,7 +6,8 @@ Groups: the lexer and the parser (Lua 5.4's tokens, grammar, precedence and
 associativity); what the subset rejects (one test per construct, checking the
 message and its line and column); names and types (promotion, conflicts,
 conditions, inference from call sites, fields, the wait rule); the field
-names reserved for later properties; code generation (golden listings in
+names reserved for later properties, and the planned functions' names (read
+from the engine's headers, fake ones too); code generation (golden listings in
 tests/svlua/, assembled by svm.py; constant folding, frames, loops); what
 compiled programs compute, run on the engine's VM by svlua_runner
 (tests/svlua/runner.c, built by the host preset); and the fireflies game in
@@ -16,6 +17,7 @@ tests that run programs are skipped). SVLUA_UPDATE_GOLDEN=1 rewrites the
 golden listings from the compiler.
 """
 
+import importlib.util
 import io
 import os
 import re
@@ -455,6 +457,33 @@ REJECTED = {
                             3, 39, r"other\.path_speed: path_ is reserved for engine properties"),
     "reserved_field_parameter": (OBJ + "function tint(e) e.spr_palette = 2 end", 3, 18,
                                  r"e\.spr_palette: spr_ is reserved for engine properties"),
+    # Top-level names of the engine's planned functions, and their uses (each
+    # planned in this version: implementing one moves its case elsewhere)
+    "planned_function": ("function music_play() end", 1, 10,
+                         r"^function music_play: music_play is reserved: it names a planned "
+                         r"engine function, which a later engine version may make a builtin$"),
+    "planned_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
+    "planned_object": ("raster_clear = object {}", 1, 1,
+                       r"^object raster_clear: raster_clear is reserved"),
+    "planned_array": ("sprite_set_tiles = array(4)", 1, 1,
+                      r"^array sprite_set_tiles: sprite_set_tiles is reserved"),
+    "planned_rom_array": ("tileset_set_colors = { 1, 2 }", 1, 1,
+                          r"^array tileset_set_colors: tileset_set_colors is reserved"),
+    "planned_local_function": ("local function music_stop() end", 1, 16,
+                               r"^local function music_stop: music_stop is reserved"),
+    "planned_top_local": ("local screen_set_blend = 0", 1, 7,
+                          r"^local screen_set_blend: screen_set_blend is reserved"),
+    "planned_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
+                          r"^local sfx_stop_all: sfx_stop_all is reserved"),
+    "planned_called": (OBJ + "function A:step() music_play(0, true) end", 3, 19,
+                       r"^music_play is planned, not implemented in this engine version \(tracker "
+                       r"music, docs/audio\.md#tracker-music\): scripts can't use it yet$"),
+    "planned_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
+                     r"^sfx_playing is planned, not implemented in this engine version"),
+    "planned_assigned": (OBJ + "function A:step() raster_clear = 1 end", 3, 19,
+                         r"^raster_clear is planned, not implemented in this engine version"),
+    "planned_initial_value": ("x = music_paused", 1, 5,
+                              r"^music_paused is planned, not implemented in this engine version"),
 }
 
 
@@ -834,6 +863,276 @@ end""", "t.lua")
                                 name.startswith(svlua.RESERVED_PREFIXES),
                                 f"{name}: a new property's name starts with one of "
                                 "RESERVED_PREFIXES (docs/lua.md, \"Reserved names\")")
+
+
+# A fake engine's header: two planned functions (one with a marker of two
+# strings), a planned enumerator, an ordinary function, and markers in a
+# comment and a #define, which don't count.
+PLANNED_HEADER = """\
+#include "platform.h"
+// SERVAL_PLANNED("commented out, docs/x.md#x") void fake_commented(void);
+#define FAKE_MACRO(x) SERVAL_PLANNED("a macro, docs/x.md#x") void x(void)
+typedef int Fake;
+enum {
+    FAKE_DONE = 0,
+    FAKE_WAVE SERVAL_PLANNED("fake waves, docs/fake.md#waves") = 1,
+};
+void fake_done(int n);
+SERVAL_PLANNED("fake things (some), docs/fake.md#fake-things")
+void fake_play(int n, const unsigned char* data);
+SERVAL_PLANNED(
+    "more " "fake things, docs/fake.md#more")
+Fake fake_more(void);
+"""
+
+
+class PlannedNames(unittest.TestCase):
+    """The engine's planned functions (SERVAL_PLANNED in its headers) are
+    reserved: a script can't declare them at the top level, as it can't
+    declare today's builtins, and using one says it is planned. Locals may
+    take them, as they may shadow builtins (lua.md, "Reserved names")."""
+
+    # Each top-level declaration, NAME for the name: (the construct the
+    # message names, the script).
+    TOP_LEVEL = {
+        "function": ("function", "function NAME() end"),
+        "global": ("global", "NAME = 0"),
+        "object": ("object", "NAME = object {}"),
+        "array": ("array", "NAME = array(2)"),
+        "rom array": ("array", "NAME = { 1, 2 }"),
+        "local function": ("local function", "local function NAME() end"),
+        "top-level local": ("local", "local NAME = 0"),
+        "top-level constant": ("local", "local NAME <const> = 0"),
+    }
+    # Where a script's locals may take a builtin's name: (the script, the
+    # body whose local or parameter NAME is).
+    LOCALS = {
+        "local in a handler": (OBJ + "function A:step() local NAME = 1; NAME = NAME + 1 end",
+                               "A:step"),
+        "local in a function": (OBJ + "function f() local NAME = 2 return NAME end\n"
+                                "function A:step() local n = f() end", "f"),
+        "parameter": (OBJ + "function f(NAME) return NAME + 1 end\n"
+                      "function A:step() local n = f(1) end", "f"),
+        "collision parameter": (OBJ + "function A:collision(NAME) kill(NAME) end", None),
+        "numeric for": (OBJ + "function A:step() for NAME = 1, 3 do end end", "A:step"),
+        "generic for": (OBJ + "function A:step() for NAME in instances(B) do kill(NAME) end end",
+                        "A:step"),
+    }
+
+    def refused(self, text, planned=None):
+        with self.assertRaises(svlua.CompileError) as caught:
+            svlua.check(text, "t.lua", planned)
+        return caught.exception
+
+    def test_top_level_names_are_refused_as_builtins_are(self):
+        for case, (construct, code) in self.TOP_LEVEL.items():
+            with self.subTest(case=case):
+                text = code + "\n" + OBJ
+                error = self.refused(text.replace("NAME", "psg_play"))
+                self.assertRegex(error.message, r"psg_play is an engine function")
+                error = self.refused(text.replace("NAME", "music_play"))
+                self.assertEqual(error.message, f"{construct} music_play: music_play is reserved: "
+                                 "it names a planned engine function, which a later engine "
+                                 "version may make a builtin")
+                self.assertEqual(error.line, 1)
+                for name in ("my_music_play", "music_play_x", "Music_play", "MUSIC_PLAY"):
+                    svlua.check(text.replace("NAME", name), "t.lua")
+
+    def test_locals_may_take_them_as_they_may_shadow_builtins(self):
+        """A local's meaning can't change when a builtin of its name
+        arrives: in its scope the name is the local."""
+        for case, (code, body_name) in self.LOCALS.items():
+            for name in ("psg_play", "music_play"):
+                with self.subTest(case=case, name=name):
+                    p = svlua.check(code.replace("NAME", name), "t.lua")
+                    if body_name is not None:
+                        body = next(b for b in p.bodies if b.name == body_name)
+                        self.assertIn(name, [s.name for s in body.params + body.locals])
+
+    def test_a_local_runs_as_a_local(self):
+        if not RUNNER:
+            self.skipTest("no svlua_runner")
+        vm = run_vm(OBJ + "function A:step() local music_play = 6; local sfx_play = 7\n"
+                    "  text_print_number(0, 0, music_play * sfx_play) end", attach=["A"])
+        self.assertEqual(vm.calls_of("TEXT_PRINT_NUMBER"), [(0, 0, 42, 0)])
+
+    def test_using_one_says_it_is_planned(self):
+        uses = {
+            "a call": "function A:step() music_play(0, true) end",
+            "a value": "function A:step() local f = music_play end",
+            "an assignment": "function A:step() music_play = 1 end",
+            "past a local's scope": "function A:step() do local music_play = 1 end "
+                                    "music_play(0, true) end",
+            "a parameter elsewhere": "function f(music_play) return music_play end\n"
+                                     "function A:step() local n = f(1); music_play(0, true) end",
+        }
+        for case, code in uses.items():
+            with self.subTest(case=case):
+                error = self.refused(OBJ + code)
+                self.assertRegex(error.message, r"^music_play is planned, not implemented in this "
+                                 r"engine version \(tracker music, docs/audio\.md#tracker-music\)")
+
+    def test_the_messages(self):
+        error = self.refused(OBJ + "function music_play(song) end")
+        self.assertEqual(str(error), "t.lua:3:10: error: function music_play: music_play is "
+                         "reserved: it names a planned engine function, which a later engine "
+                         "version may make a builtin\n"
+                         "  hint: rename it, e.g. my_music_play (music_play is planned: tracker "
+                         "music, docs/audio.md#tracker-music)")
+        error = self.refused(OBJ + "function A:step()\n  sfx_play(SFX_JUMP)\nend")
+        self.assertEqual(str(error), "t.lua:4:3: error: sfx_play is planned, not implemented in "
+                         "this engine version (sampled sound effects, "
+                         "docs/audio.md#sampled-sound-effects): scripts can't use it yet\n"
+                         "  hint: planned API reaches scripts in the engine version that "
+                         "implements it, named as in C (docs/releases.md#planned-api)")
+
+    def headers_planned_functions(self):
+        """The planned functions in the engine's headers, found here by a
+        rule of the test's own: a SERVAL_PLANNED marker at the start of a
+        line, and the declaration below it."""
+        found = {}
+        for header in sorted(os.listdir(os.path.join(ROOT, "include", "serval"))):
+            with open(os.path.join(ROOT, "include", "serval", header), encoding="utf-8") as f:
+                text = f.read()
+            for m in re.finditer(r'^SERVAL_PLANNED\(\s*"([^"]*)"\s*\)\n[^;]*?(\w+)\(', text, re.M):
+                found[m[2]] = m[1]
+        return found
+
+    def test_every_planned_function_is_reserved(self):
+        planned = self.headers_planned_functions()
+        self.assertIn("music_play", planned)
+        self.assertEqual(svlua.planned_functions(), planned)
+        for name, what in planned.items():
+            with self.subTest(name=name):
+                self.assertNotIn(name, svlua.ENGINE_NAMES)  # implemented: no longer planned
+                error = self.refused(f"function {name}() end")
+                self.assertEqual(error.hint, f"rename it, e.g. my_{name} ({name} is planned: "
+                                 f"{what})")
+                error = self.refused(OBJ + f"function A:step() {name}() end")
+                self.assertTrue(error.message.startswith(f"{name} is planned, not implemented in "
+                                                         f"this engine version ({what})"))
+
+    def test_nothing_else_is_reserved(self):
+        """Every other name in the headers (functions, types, fields,
+        parameters, constants, planned enumerators among them) can name a
+        script's function, unless the subset gives scripts that name."""
+        planned = svlua.planned_functions()
+        names = set()
+        for header in os.listdir(os.path.join(ROOT, "include", "serval")):
+            with open(os.path.join(ROOT, "include", "serval", header), encoding="utf-8") as f:
+                names |= set(re.findall(r"\b[A-Za-z_]\w*", svlua._c_code(f.read())))
+        names -= set(planned) | svlua.ENGINE_NAMES | set(svlua.STDLIB) | svlua.KEYWORDS
+        self.assertIn("PSG_WAVE", names)
+        self.assertIn("psg_music_set_tempo", names)
+        self.assertGreater(len(names), 500)
+        for name in sorted(names):
+            with self.subTest(name=name):
+                svlua.check(f"function {name}() end", "t.lua")
+        # The planned constants are constants: a script may name its own.
+        p = svlua.check("PSG_WAVE = 1\nlocal MAP_LADDER <const> = 2\nSPRITE_BLEND = object {}",
+                        "t.lua")
+        self.assertEqual([s.name for s in p.top_order], ["PSG_WAVE", "MAP_LADDER", "SPRITE_BLEND"])
+
+    def test_planned_constants_need_no_reservation(self):
+        """A script's own name hides a header's constant, implemented or
+        planned alike, so implementing a planned constant changes no
+        script."""
+        for name in ("MAP_CONTACT_FLOOR", "MAP_CONTACT_LADDER"):
+            with self.subTest(name=name):
+                listing = svlua.compile_source(
+                    OBJ + f"local {name} <const> = 3\nn = 0\nfunction A:step() n = {name} end",
+                    "t.lua")
+                self.assertIn(f".const {name} 3", listing)
+                assembled = assemble(listing, header_names(files=[MAP_H]))
+                self.assertTrue(assembled.blob.startswith(svm.MAGIC))
+
+    def write_engine(self, root, header=PLANNED_HEADER, tool=False):
+        """A fake engine: include/serval/fake.h, and tools/svlua.py if tool."""
+        os.makedirs(os.path.join(root, "include", "serval"))
+        with open(os.path.join(root, "include", "serval", "fake.h"), "w") as f:
+            f.write(header)
+        if tool:
+            os.makedirs(os.path.join(root, "tools"))
+            with open(svlua.__file__, encoding="utf-8") as f, \
+                    open(os.path.join(root, "tools", "svlua.py"), "w", encoding="utf-8") as g:
+                g.write(f.read())
+        return os.path.join(root, "include")
+
+    def test_the_set_is_the_headers_planned_functions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            include = self.write_engine(os.path.join(tmp, "engine"))
+            planned = svlua.planned_functions(include)
+            self.assertEqual(planned, {"fake_play": "fake things (some), docs/fake.md#fake-things",
+                                       "fake_more": "more fake things, docs/fake.md#more"})
+            error = self.refused("function fake_play() end", planned)
+            self.assertEqual(error.hint, "rename it, e.g. my_fake_play (fake_play is planned: "
+                             "fake things (some), docs/fake.md#fake-things)")
+            error = self.refused(OBJ + "function A:step() fake_more() end", planned)
+            self.assertRegex(error.message, r"^fake_more is planned, not implemented in this "
+                             r"engine version \(more fake things, docs/fake\.md#more\)")
+            # Not planned there: an ordinary name.
+            svlua.check("function music_play() end\nfunction fake_done() end\n"
+                        "function FAKE_WAVE() end", "t.lua", planned)
+            # Implemented: the marker goes, and so does the reservation.
+            implemented = re.sub(r'SERVAL_PLANNED\(\n[^)]*\)\n', "", PLANNED_HEADER)
+            self.assertIn("\nFake fake_more(void);", implemented)
+            include = self.write_engine(os.path.join(tmp, "implemented"), implemented)
+            planned = svlua.planned_functions(include)
+            self.assertEqual(list(planned), ["fake_play"])
+            svlua.check("function fake_more() end", "t.lua", planned)
+
+    def test_the_tool_reads_the_headers_beside_it(self):
+        """svlua.py, wherever it is run from, reads tools/../include/: the
+        layout of the repository and of the release archive."""
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = os.path.join(tmp, "engine")
+            self.write_engine(engine, tool=True)
+            game = os.path.join(tmp, "game")
+            os.makedirs(game)
+
+            def compile_(text):
+                with open(os.path.join(game, "game.lua"), "w") as f:
+                    f.write(text)
+                return subprocess.run(
+                    [sys.executable, os.path.join(engine, "tools", "svlua.py"), "compile",
+                     "game.lua", "--check"], cwd=game, capture_output=True, text=True)
+
+            r = compile_("function fake_play() end\n")
+            self.assertEqual(r.returncode, 1)
+            self.assertEqual(r.stderr, "game.lua:1:10: error: function fake_play: fake_play is "
+                             "reserved: it names a planned engine function, which a later engine "
+                             "version may make a builtin\n  hint: rename it, e.g. my_fake_play "
+                             "(fake_play is planned: fake things (some), "
+                             "docs/fake.md#fake-things)\n")
+            r = compile_("A = object {}\nfunction music_play() end\n"
+                         "function A:step() music_play() end\n")
+            self.assertEqual((r.returncode, r.stderr), (0, ""))
+            # Without the headers it can't know what is planned: an error.
+            os.rename(os.path.join(engine, "include"), os.path.join(engine, "moved"))
+            r = compile_("A = object {}\n")
+            self.assertEqual(r.returncode, 1)
+            self.assertIn(f"error: {os.path.join(engine, 'include', 'serval')}: not found "
+                          "(tools/svlua.py reads the engine's planned functions", r.stderr)
+
+    def test_check_planned_reads_them_the_same_way(self):
+        """tools/check-planned.py, which checks the markers, finds the names
+        with svlua.py's planned_api(): the same planned names."""
+        spec = importlib.util.spec_from_file_location(
+            "check_planned", os.path.join(ROOT, "tools", "check-planned.py"))
+        check_planned = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check_planned)
+        names, errors = check_planned.planned_names(os.path.join(ROOT, "include"))
+        self.assertEqual(errors, [])
+        self.assertLessEqual(set(svlua.planned_functions()), set(names))
+        self.assertIn("PSG_WAVE", names)
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = 'typedef struct { int x SERVAL_PLANNED("f, docs/x.md#x"); } Bad;\n'
+            include = self.write_engine(tmp, PLANNED_HEADER + bad)
+            names, errors = check_planned.planned_names(include)
+            self.assertEqual(set(names), {"FAKE_WAVE", "fake_play", "fake_more"})
+            self.assertEqual(len(errors), 1)
+            self.assertRegex(errors[0], r"fake\.h:15: SERVAL_PLANNED goes before a function "
+                             r"declaration or after an enumerator's name")
 
 
 

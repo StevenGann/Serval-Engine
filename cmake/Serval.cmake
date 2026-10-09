@@ -257,8 +257,9 @@ endfunction()
 # to the current source directory, or to the engine's include/ as the game
 # would #include it, e.g. serval/ecs.h); a Lua script's names in ALL_CAPS
 # come from them. The script is rebuilt when it, a header, svlua.py, svm.py
-# or vm.h changes. Call it from the directory that defined the target, after
-# serval_add_rom().
+# or vm.h changes, and a Lua script when an engine header does (svlua.py reads
+# the planned functions, whose names scripts can't take, from them). Call it
+# from the directory that defined the target, after serval_add_rom().
 function(serval_add_script target listing)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
     if(NOT TARGET ${target})
@@ -327,10 +328,11 @@ function(serval_add_script target listing)
         # The compiler's listing, which the assembler turns into the blob.
         set(script "${listing}")
         set(listing "${out_dir}/${base}.svm")
+        file(GLOB engine_headers "${engine_dir}/include/serval/*.h")
         add_custom_command(
             OUTPUT "${listing}"
             COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svlua}" compile "${script}" -o "${listing}"
-            DEPENDS "${script}" "${svlua}"
+            DEPENDS "${script}" "${svlua}" ${engine_headers}
             COMMENT "Compiling ${base}.lua"
             VERBATIM)
     endif()

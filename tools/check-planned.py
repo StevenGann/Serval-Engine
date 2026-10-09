@@ -10,6 +10,9 @@ wherever a game uses it. This keeps that true, for one compiler:
    come before a function declaration or after an enumerator's name. Anything
    else is an error: the warning is unreliable on struct fields, and a
    planned typedef warns inside the headers (docs/development.md#planned-api).
+   The headers are read by tools/svlua.py's planned_api(), as the script
+   compiler reads them to reserve the planned functions' names (docs/lua.md,
+   "Planned functions"), so the two can't disagree on what is planned.
 2. It compiles each tests/planned/*.c (one file per header, using each of its
    header's planned names on a line that ends "// planned") at -O0 and at -O2,
    with the engine's warning flags, and checks that every marked line warns
@@ -39,6 +42,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from svlua import planned_api  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MESSAGE = "Serval: planned, not implemented in this version"
 # GCC and Clang: "file:line:column: warning: 'name' is deprecated: message".
@@ -51,13 +57,6 @@ LEVELS = ("-O0", "-O2")
 # The engine's own warning flags (serval_warnings, cmake/Serval.cmake).
 FLAGS = ["-std=gnu17", "-Wall", "-Wextra", "-Wshadow", "-Wundef", "-Wstrict-prototypes",
          "-Wmissing-prototypes"]
-KEYWORDS = {"auto", "bool", "char", "const", "double", "enum", "extern", "float", "inline", "int",
-            "long", "register", "restrict", "short", "signed", "static", "struct", "typedef",
-            "union", "unsigned", "void", "volatile"}
-COMMENT_OR_STRING = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
-STRING = re.compile(r'"(?:\\.|[^"\\\n])*"')
-PLACEMENT = ("SERVAL_PLANNED goes before a function declaration or after an enumerator's name, "
-             "nowhere else (docs/development.md#planned-api)")
 
 
 def show(path):
@@ -66,59 +65,10 @@ def show(path):
     return path if rel.startswith("..") else rel.replace(os.sep, "/")
 
 
-def code_only(text):
-    """The text with comments and preprocessor lines blanked; line numbers kept."""
-    text = COMMENT_OR_STRING.sub(
-        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0][0] == "/" else m[0], text)
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        if lines[i].lstrip().startswith("#"):  # the macro's own definitions among them
-            while True:
-                continued = lines[i].endswith("\\")
-                lines[i] = ""
-                i += 1
-                if not continued or i == len(lines):
-                    break
-        else:
-            i += 1
-    return "\n".join(lines)
-
-
 def planned_names(include):
     """{name: "header:line"} of every planned name, and the errors found."""
-    names, errors = {}, []
-    headers = sorted(os.path.join(d, f) for d, _, files in os.walk(include) for f in files
-                     if f.endswith(".h"))
-    for header in headers:
-        with open(header, encoding="utf-8") as f:
-            text = code_only(f.read())
-        for m in re.finditer(r"\bSERVAL_PLANNED\s*\(", text):
-            where = f"{show(header)}:{text.count(chr(10), 0, m.start()) + 1}"
-            # The end of the macro's argument: its string may hold parentheses.
-            depth, i = 1, m.end()
-            while depth and i < len(text):
-                s = STRING.match(text, i)
-                if s:
-                    i = s.end()
-                    continue
-                depth += {"(": 1, ")": -1}.get(text[i], 0)
-                i += 1
-            after = text[i:].lstrip()
-            if after[:1] in ("=", ",", "}"):  # NAME SERVAL_PLANNED("...") = value,
-                name = re.search(r"(\w+)\s*$", text[:m.start()])
-            else:  # SERVAL_PLANNED("...") type name(parameters);
-                declaration = re.match(r"[^;{]*", after)[0]
-                name = None
-                if "(" in declaration and not re.match(r"typedef\b", declaration):
-                    name = re.search(r"(\w+)\s*$", declaration[:declaration.index("(")])
-            if not name or name[1] in KEYWORDS or name[1].startswith("__") or name[1][0].isdigit():
-                errors.append(f"{where}: {PLACEMENT}")
-            elif name[1] in names:
-                errors.append(f"{where}: {name[1]} is declared planned twice (also {names[name[1]]})")
-            else:
-                names[name[1]] = where
-    return names, errors
+    names, errors = planned_api(include, show)
+    return {name: f"{show(p.header)}:{p.line}" for name, p in names.items()}, errors
 
 
 def run(command):

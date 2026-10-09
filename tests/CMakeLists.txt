@@ -42,7 +42,8 @@ if(SERVAL_TARGET_WEB)
     add_custom_command(OUTPUT "${_serval_planned_stamp}"
         COMMAND ${_serval_planned_check}
         COMMAND "${CMAKE_COMMAND}" -E touch "${_serval_planned_stamp}"
-        DEPENDS "${PROJECT_SOURCE_DIR}/tools/check-planned.py" ${_serval_planned_inputs}
+        DEPENDS "${PROJECT_SOURCE_DIR}/tools/check-planned.py"
+                "${PROJECT_SOURCE_DIR}/tools/svlua.py" ${_serval_planned_inputs}
         COMMENT "Checking that every planned API warns (tools/check-planned.py)"
         VERBATIM)
     add_custom_target(serval_planned_api_check ALL DEPENDS "${_serval_planned_stamp}")

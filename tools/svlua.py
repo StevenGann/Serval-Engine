@@ -29,6 +29,10 @@ program model and name resolution, whole-program type inference, the wait
 check over the call graph, and stack-machine code generation with constant
 folding.
 
+It reads the engine's headers beside it (include/serval/, as in the
+repository and the release archive) for the planned functions (SERVAL_PLANNED),
+whose names a script can't declare (docs/lua.md, "Planned functions").
+
 Errors are "file:line:column: error: message", with a hint on the next line;
 exit status 1 and nothing written. Python 3.11+, standard library only.
 """
@@ -1025,6 +1029,132 @@ def c_div(a, b):
     return q if (a < 0) == (b < 0) else -q
 
 
+# --- The engine's planned API ------------------------------------------------
+
+# The engine's public headers, beside the tools in the repository and in the
+# release archive (docs/releases.md, "Release contents").
+INCLUDE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "include")
+
+_C_KEYWORDS = frozenset((
+    "auto", "bool", "char", "const", "double", "enum", "extern", "float", "inline", "int",
+    "long", "register", "restrict", "short", "signed", "static", "struct", "typedef", "union",
+    "unsigned", "void", "volatile"))
+_C_COMMENT_OR_STRING = re.compile(
+    r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
+_C_STRING = re.compile(r'"((?:\\.|[^"\\\n])*)"')
+_PLANNED_MARK = re.compile(r"\bSERVAL_PLANNED\s*\(")
+PLANNED_PLACEMENT = ("SERVAL_PLANNED goes before a function declaration or after an enumerator's "
+                     "name, nowhere else (docs/development.md#planned-api)")
+
+
+class Planned:
+    """A name the engine's headers declare planned: SERVAL_PLANNED(what)
+    before a function's declaration (kind "function") or after an
+    enumerator's name ("enumerator"). what is the marker's text, "the
+    feature, docs/x.md#anchor"; header and line, where the marker is."""
+
+    __slots__ = ("name", "kind", "what", "header", "line")
+
+    def __init__(self, name, kind, what, header, line):
+        self.name = name
+        self.kind = kind
+        self.what = what
+        self.header = header
+        self.line = line
+
+
+def _c_code(text):
+    """C text with its comments and preprocessor lines blanked, strings kept,
+    line numbers unchanged."""
+    text = _C_COMMENT_OR_STRING.sub(
+        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0][0] == "/" else m[0], text)
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("#"):  # the macro's own definitions among them
+            while True:
+                continued = lines[i].endswith("\\")
+                lines[i] = ""
+                i += 1
+                if not continued or i == len(lines):
+                    break
+        else:
+            i += 1
+    return "\n".join(lines)
+
+
+def planned_api(include, show=str):
+    """Every name the headers under include (and its subdirectories) declare
+    planned, read by the rule tools/check-planned.py enforces: each
+    SERVAL_PLANNED(...) outside comments and preprocessor lines, before a
+    function's declaration or after an enumerator's name. Returns
+    ({name: Planned}, problems): a marker anywhere else, or a name declared
+    planned twice, is a problem, a "header:line: message" string (show turns
+    a header's path into the text to print). This compiler reserves the
+    planned functions' names; check-planned.py checks the markers."""
+    names, problems = {}, []
+    headers = sorted(os.path.join(d, f) for d, _, files in os.walk(include) for f in files
+                     if f.endswith(".h"))
+    for header in headers:
+        with open(header, encoding="utf-8") as f:
+            text = _c_code(f.read())
+        for m in _PLANNED_MARK.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            where = f"{show(header)}:{line}"
+            # The end of the macro's argument: its string may hold parentheses.
+            depth, i = 1, m.end()
+            while depth and i < len(text):
+                s = _C_STRING.match(text, i)
+                if s:
+                    i = s.end()
+                    continue
+                depth += {"(": 1, ")": -1}.get(text[i], 0)
+                i += 1
+            what = "".join(re.sub(r"\\(.)", r"\1", s) for s in _C_STRING.findall(text, m.end(), i))
+            after = text[i:].lstrip()
+            if after[:1] in ("=", ",", "}"):  # NAME SERVAL_PLANNED("...") = value,
+                kind, name = "enumerator", re.search(r"(\w+)\s*$", text[:m.start()])
+            else:  # SERVAL_PLANNED("...") type name(parameters);
+                declaration = re.match(r"[^;{]*", after)[0]
+                kind, name = "function", None
+                if "(" in declaration and not re.match(r"typedef\b", declaration):
+                    name = re.search(r"(\w+)\s*$", declaration[:declaration.index("(")])
+            if not name or name[1] in _C_KEYWORDS or name[1].startswith("__") \
+                    or name[1][0].isdigit():
+                problems.append(f"{where}: {PLANNED_PLACEMENT}")
+            elif name[1] in names:
+                other = names[name[1]]
+                problems.append(f"{where}: {name[1]} is declared planned twice (also "
+                                f"{show(other.header)}:{other.line})")
+            else:
+                names[name[1]] = Planned(name[1], kind, what, header, line)
+    return names, problems
+
+
+_planned_functions = {}  # include directory -> planned_functions()
+
+
+def planned_functions(include=None):
+    """{name: what the marker says} of every function the engine's headers
+    declare planned: include/ beside this tool, or the given directory. A
+    planned function becomes a builtin by that name when a version
+    implements it (if scripts can call it), so scripts can't take these
+    names, and using one says it is planned (docs/lua.md, "Reserved names").
+    Implementing one drops its marker, and its name leaves this set. Raises
+    CompileError if the headers aren't there."""
+    include = os.path.abspath(include or INCLUDE)
+    if include not in _planned_functions:
+        serval = os.path.join(include, "serval")
+        if not os.path.isdir(serval):
+            raise CompileError(f"{os.path.normpath(serval)}: not found ({TOOL} reads the engine's "
+                               "planned functions, whose names scripts can't take, from the "
+                               "headers in include/serval/ beside tools/)")
+        names, _ = planned_api(include)  # misplaced markers are check-planned.py's to report
+        _planned_functions[include] = {name: p.what for name, p in names.items()
+                                       if p.kind == "function"}
+    return _planned_functions[include]
+
+
 # --- Program model -----------------------------------------------------------
 
 # The engine's properties by their Lua field names: (the VM_P_* name, type).
@@ -1358,9 +1488,10 @@ class Resolver:
     handlers and functions, each name bound to what it means, and every
     construct outside the subset rejected by name."""
 
-    def __init__(self, chunk, file):
+    def __init__(self, chunk, file, planned):
         self.chunk = chunk
         self.file = file
+        self.planned = planned  # planned_functions()
         self.p = Program(file)
         self.globals = {}  # non-local top-level names, visible everywhere
         self.top_locals = {}  # top-level locals declared so far
@@ -1401,11 +1532,14 @@ class Resolver:
                     self.declare_global(target, value, is_local=False)
         elif isinstance(stat, FunctionStat) and stat.method is None and len(stat.path) == 1:
             name = stat.path[0]
-            self.check_new_name(name)
+            self.check_new_name(name, "function")
             sym = FunctionSym(name.name, name, is_local=False)
             self.globals[name.name] = sym
 
-    def check_new_name(self, name):
+    def check_new_name(self, name, construct):
+        """A top-level name the script declares (construct: "function",
+        "global", "local", ...) can't be an engine function's or the
+        standard library's, today's or a planned one's."""
         if name.name in ENGINE_NAMES:
             self.error(name, f"{name.name} is an engine function; a script can't redefine it",
                        "choose another name")
@@ -1413,21 +1547,26 @@ class Resolver:
             what, _ = STDLIB[name.name]
             self.error(name, f"{name.name} is Lua's {what}; the subset doesn't use it, "
                        "but a script can't redefine it either", "choose another name")
+        if name.name in self.planned:
+            self.error(name, f"{construct} {name.name}: {name.name} is reserved: it names a "
+                       "planned engine function, which a later engine version may make a builtin",
+                       f"rename it, e.g. my_{name.name} ({name.name} is planned: "
+                       f"{self.planned[name.name]})")
         previous = self.globals.get(name.name) or self.top_locals.get(name.name)
         if previous is not None:
             self.error(name, f"{name.name} is already declared (line {previous.node.line})",
                        "a top-level name is declared once")
 
     def declare_global(self, name, value, is_local):
-        self.check_new_name(name)
         kind = _rhs_kind(value)
+        category = {"object": "object", "array": "array", "rom": "array"}.get(kind, "global")
+        self.check_new_name(name, "local" if is_local else category)
         if kind == "object":
             sym = ObjectSym(name.name, name, value)
         elif kind in ("array", "rom"):
             sym = ArraySym(name.name, name, value, rom=kind == "rom", is_local=is_local)
         else:
             sym = GlobalSym(name.name, name, value, is_local)
-        category = {"object": "object", "array": "array", "rom": "array"}.get(kind, "global")
         if hasattr(sym, "listing"):
             key = (category, sym.listing)
             other = self.listing_names.get(key)
@@ -1450,7 +1589,7 @@ class Resolver:
         elif isinstance(stat, FunctionStat):
             self.top_function(stat)
         elif isinstance(stat, LocalFunction):
-            self.check_new_name(stat.name)
+            self.check_new_name(stat.name, "local function")
             sym = FunctionSym(stat.name.name, stat.name, is_local=True)
             self.top_locals[stat.name.name] = sym
             self.function_body(sym, stat)
@@ -1479,7 +1618,7 @@ class Resolver:
         for name, attrib, value in zip(stat.names, stat.attribs, stat.values):
             if attrib == "close":
                 self.error(name, "to-be-closed variables (<close>) are not in the subset")
-            self.check_new_name(name)
+            self.check_new_name(name, "local")
             kind = _rhs_kind(value)
             if attrib == "const" and kind == "global":
                 self.top_expr(value)
@@ -1632,6 +1771,11 @@ class Resolver:
             if name not in self.builtins:
                 self.builtins[name] = BuiltinSym(name, node)
             return self.builtins[name]
+        if name in self.planned:
+            self.error(node, f"{name} is planned, not implemented in this engine version "
+                       f"({self.planned[name]}): scripts can't use it yet",
+                       "planned API reaches scripts in the engine version that implements it, "
+                       "named as in C (docs/releases.md#planned-api)")
         if name in STDLIB:
             what, hint = STDLIB[name]
             self.error(node, f"{what} is not in the subset", hint)
@@ -2030,8 +2174,8 @@ class BodyResolver:
             self.expr(arg)
 
 
-def resolve(chunk, file):
-    return Resolver(chunk, file).run()
+def resolve(chunk, file, planned):
+    return Resolver(chunk, file, planned).run()
 
 
 # --- Types -------------------------------------------------------------------
@@ -3266,10 +3410,12 @@ class Checker:
                             "listing leaves it out")
 
 
-def check(text, file="script.lua"):
+def check(text, file="script.lua", planned=None):
     """Parses and checks a script: names, types, the subset's rules. Returns
-    the Program; raises CompileError."""
-    program = resolve(parse(text, file), file)
+    the Program; raises CompileError. planned: the engine's planned functions
+    ({name: what}), by default planned_functions()'s."""
+    program = resolve(parse(text, file), file,
+                      planned_functions() if planned is None else planned)
     Checker(program).run()
     return program
 
@@ -4288,24 +4434,24 @@ class Compiled:
         self.program = program
 
 
-def compile_program(text, filename="script.lua"):
+def compile_program(text, filename="script.lua", planned=None):
     """Compiles a script. Returns a Compiled; raises CompileError."""
-    program = check(text, filename)
+    program = check(text, filename, planned)
     listing = CodeGen(program, text).generate()
     warnings = [(filename, line, column, message) for line, column, message in program.warnings]
     return Compiled(listing, warnings, program)
 
 
-def compile_source(text, filename="script.lua"):
+def compile_source(text, filename="script.lua", planned=None):
     """The listing (.svm text) for a script; raises CompileError with the
     file, line and column of the first problem."""
-    return compile_program(text, filename).listing
+    return compile_program(text, filename, planned).listing
 
 
-def check_source(text, filename="script.lua"):
+def check_source(text, filename="script.lua", planned=None):
     """Checks a script without generating code. Returns the warnings;
     raises CompileError."""
-    program = check(text, filename)
+    program = check(text, filename, planned)
     return [(filename, line, column, message) for line, column, message in program.warnings]
 
 
