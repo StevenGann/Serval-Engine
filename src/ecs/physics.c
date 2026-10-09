@@ -282,6 +282,24 @@ static inline void wrap_axis(FIXED* pos, FIXED* vel, FIXED lo, FIXED hi, FIXED s
     *vel += gravity;
 }
 
+// True for the bodies sys_physics() moves: C_POS, C_VEL and C_BODY, alive,
+// and neither a map body nor a kinematic body. The mask of those six bits
+// takes two ARM instructions, so C_KINEMATIC is tested by moving it onto
+// C_ALIVE instead: bit 7 shifted left by 24 is bit 31, and one BIC with a
+// shifted operand (mask & ~(mask << 24)) clears C_ALIVE for a kinematic body,
+// which then fails the test of the other five, one AND and one CMP. The game's
+// bits it changes (24-30) aren't tested. This costs the loops one instruction
+// per slot, about 130 cycles a frame; testing the six bits as written cost
+// bunnymark about 410 (GCC split the mask into four BICs), and a separate
+// test of C_KINEMATIC about 1,700 (the loop, out of registers, was compiled
+// differently around the extra branch).
+_Static_assert(C_KINEMATIC << 24 == C_ALIVE, "physics_body() moves C_KINEMATIC onto C_ALIVE");
+static inline __attribute__((always_inline)) bool physics_body(u32 mask) {
+    mask &= ~(mask << 24);
+    return (mask & (C_ALIVE | C_POS | C_VEL | C_BODY | C_MAPBODY)) ==
+           (C_ALIVE | C_POS | C_VEL | C_BODY);
+}
+
 // Functions kept out of IWRAM (in ROM on the GBA, so calls from IWRAM code
 // must be long calls).
 #ifdef SERVAL_GBA
@@ -352,10 +370,10 @@ static inline __attribute__((always_inline)) void physics_loop(bool general, boo
     const bool open_right = open_edges & PHYSICS_EDGE_RIGHT;
     const bool open_bottom = open_edges & PHYSICS_EDGE_BOTTOM;
     const FIXED gravity_x = serval_gravity_x, gravity_y = serval_gravity_y;
-    // Map bodies (C_MAPBODY) move with sys_map_movement() instead.
+    // Map bodies (C_MAPBODY) move with sys_map_movement() instead, and
+    // kinematic bodies (C_KINEMATIC) only by their velocity.
     for (u32 i = 0; i < MAX_ENT; i++) {
-        if ((ent_mask[i] & (C_ALIVE | C_POS | C_VEL | C_BODY | C_MAPBODY)) !=
-            (C_ALIVE | C_POS | C_VEL | C_BODY))
+        if (!physics_body(ent_mask[i]))
             continue;
         if (general && scaled && body_gravity[i]) {
             update_scaled_body(i);
@@ -402,8 +420,7 @@ static ROM_CALL void report_exits(void) {
     const FIXED left = FX(bounds_left), right = FX(bounds_right);
     const FIXED top = FX(bounds_top), bottom = FX(bounds_bottom);
     for (u32 i = 0; i < MAX_ENT; i++) {
-        if ((ent_mask[i] & (C_ALIVE | C_POS | C_VEL | C_BODY | C_MAPBODY)) !=
-            (C_ALIVE | C_POS | C_VEL | C_BODY))
+        if (!physics_body(ent_mask[i]))
             continue;
         u32 exits = 0;
         if (!wrap_x) {
@@ -436,8 +453,7 @@ static ROM_CALL void report_exits(void) {
 static ROM_CALL void limit_group(u32 first) {
     const FIXED gravity_x = serval_gravity_x, gravity_y = serval_gravity_y;
     for (u32 i = first; i < first + 16; i++) {
-        if (!body_max_fall[i] || (ent_mask[i] & (C_ALIVE | C_POS | C_VEL | C_BODY | C_MAPBODY)) !=
-                                     (C_ALIVE | C_POS | C_VEL | C_BODY))
+        if (!body_max_fall[i] || !physics_body(ent_mask[i]))
             continue;
         vel_x[i] = serval_limit_fall(vel_x[i], serval_body_gravity(gravity_x, body_gravity[i]),
                                      &body_max_fall[i]);

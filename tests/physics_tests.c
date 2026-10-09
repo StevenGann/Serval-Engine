@@ -897,6 +897,53 @@ static void max_fall_takes_fractions(void) {
     CHECK(vel_y[0] == FX(30) / 4);
 }
 
+// physics.h: a kinematic body (C_KINEMATIC) moves only by its velocity.
+// sys_movement() moves it; sys_physics() leaves it alone in each of its
+// loops (the fast one; the general one, here with contacts and an open edge;
+// with a scaled gravity; wrapping): no gravity, no bounds to bounce off or
+// wrap around, no maximum fall, no contacts or exits, while a plain body
+// beside it falls. body_overlap() and body_hit_side() test it as any body.
+static void kinematic_bodies_move_only_by_velocity(void) {
+    for (int loop = 0; loop < 4; loop++) {
+        reset();
+        physics_set_gravity(0, FX_ONE / 4);
+        physics_set_contacts(loop == 1);
+        physics_set_open_edges(loop == 1 ? PHYSICS_EDGE_RIGHT : 0);
+        physics_set_wrap(loop == 3, false);
+        Entity e = entity_create(C_POS | C_VEL | C_BODY | C_KINEMATIC);
+        u32 k = entity_index(e);
+        pos_x[k] = FX(50);
+        pos_y[k] = FX(50);
+        vel_x[k] = FX(3);
+        vel_y[k] = FX(2);
+        body_w[k] = body_h[k] = 8;
+        body_bounce[k] = 224;
+        body_friction[k] = 255;
+        body_max_fall[k] = FX(1); // not applied
+        u32 b = make_body(FX(10), FX(10), 0, 0);
+        if (loop == 2)
+            body_gravity[b] = BODY_GRAVITY(8); // sys_physics' scaled path
+        u32 contacts = 0; // any frame's: an exit is reported for one frame only
+        for (int f = 0; f < 20; f++) {
+            step(1);
+            contacts |= body_contact[k];
+        }
+        CHECK(pos_x[k] == FX(110) && pos_y[k] == FX(90)); // past the right bound: no bounce
+        CHECK(vel_x[k] == FX(3) && vel_y[k] == FX(2));
+        CHECK(contacts == 0);
+        CHECK(vel_y[b] > 0 && pos_y[b] > FX(10)); // the plain body falls
+        // A static collider just ahead: k ran into its left side this frame.
+        Entity wall = entity_create(C_POS | C_BODY);
+        u32 w = entity_index(wall);
+        pos_x[w] = FX(117);
+        pos_y[w] = FX(90);
+        body_w[w] = body_h[w] = 8;
+        CHECK(body_overlap(k, w));
+        CHECK(body_hit_side(k, w) == BODY_SIDE_RIGHT);
+    }
+    reset();
+}
+
 TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_accelerates_bodies},
            {"bounds_include_the_body_size", bounds_include_the_body_size},
            {"walls_bounce_perfectly_without_gravity", walls_bounce_perfectly_without_gravity},
@@ -936,5 +983,5 @@ TEST_SUITE(physics_tests, "physics", {"gravity_accelerates_bodies", gravity_acce
            {"contacts_report_exits_on_the_exact_frame", contacts_report_exits_on_the_exact_frame},
            {"wrapping_axes_report_no_contacts", wrapping_axes_report_no_contacts},
            {"max_fall_takes_fractions", max_fall_takes_fractions},
-           {"screen_and_world_bodies_meet_in_the_world",
-            screen_and_world_bodies_meet_in_the_world});
+           {"screen_and_world_bodies_meet_in_the_world", screen_and_world_bodies_meet_in_the_world},
+           {"kinematic_bodies_move_only_by_velocity", kinematic_bodies_move_only_by_velocity});

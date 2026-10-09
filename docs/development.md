@@ -216,7 +216,7 @@ At `01fd31b` they were within 300 bytes of these (`hello` 9,536, `breakout` 21,8
 
 Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `2a3f5a1`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 
-Bouncing bodies' `body_gravity` and `body_contact` pools add 256 bytes to games that use `sys_physics` or `sys_map_movement`, and `ecs_count` and `ecs_gather` about 120 bytes each to games that call them (each has an IWRAM section of its own).
+Bouncing bodies' `body_gravity` and `body_contact` pools add 256 bytes to games that use `sys_physics` or `sys_map_movement`, and `ecs_count` and `ecs_gather` about 120 bytes each to games that call them (each has an IWRAM section of its own). Skipping kinematic bodies (`C_KINEMATIC`) adds 8-16 bytes to games that use `sys_physics` (an instruction in each of its loops; 116-120 bytes in Debug builds), measured against `c882915`.
 
 Games that load map layers add about 2.2 KB: the streaming loops (1.4 KB of ARM code, [tilemaps.md](tilemaps.md#streaming)), the runtime cell change table (384 bytes, read by every collision query) and the per-background state. The screenblock copies (6 KB) and the redraw list are in EWRAM.
 

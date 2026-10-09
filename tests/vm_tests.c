@@ -3395,6 +3395,64 @@ static void body_properties_meet_physics(void) {
     physics_set_gravity(0, 0);
 }
 
+// vm.md "Exact semantics: Spawning": SPAWN creates the entity with its
+// object's component mask, C_KINEMATIC (physics.h) included: a shot that
+// moves only by its velocity, which sys_physics() leaves alone (no gravity),
+// and whose body vm_collide() tests like any other.
+static void spawned_kinematic_bodies(void) {
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    object(1, C_POS | C_VEL | C_BODY | C_KINEMATIC | C_GAME(0), 0);
+    object(2, C_POS | C_BODY | C_GAME(1), 0);
+    handler(0, VM_EV_ROOM_START); // the gun
+    push32(FX(10));               // x
+    push32(FX(20));               // x y
+    spawn(1);                     // shot
+    stg(0);                       // glob[0] = shot
+    op(VM_OP_HALT);               //
+    handler(1, VM_EV_CREATE);     // the shot
+    op(VM_OP_SELF);               // self
+    push32(FX(2));                // self 2.0
+    setp(VM_P_VX);                //
+    op(VM_OP_SELF);               // self
+    push8(4);                     // self 4
+    setp(VM_P_BODY_W);            //
+    op(VM_OP_SELF);               // self
+    push8(4);                     // self 4
+    setp(VM_P_BODY_H);            //
+    op(VM_OP_HALT);               //
+    handler(2, VM_EV_COLLISION);  // the target: glob[1] = the frame it is hit
+    ldg(2);                       // frame
+    stg(1);                       //
+    op(VM_OP_HALT);               //
+    CHECK(load());
+    CHECK(vm_collide(C_GAME(1), C_GAME(0)));
+    physics_set_gravity(0, FX_ONE / 4);
+    Entity target = entity_create(C_POS | C_BODY | C_GAME(1));
+    u32 t = entity_index(target);
+    pos_x[t] = FX(30);
+    pos_y[t] = FX(20);
+    body_w[t] = body_h[t] = 4;
+    vm_attach(target, 2);
+    CHECK(vm_start(0, VM_EV_ROOM_START) >= 0);
+    u32 before = debug_warning_count();
+    for (s32 f = 1; f <= 9; f++) {
+        vm_set_global(2, f);
+        vm_step();
+        sys_movement();
+        sys_physics();
+        vm_events();
+    }
+    Entity shot = (Entity)vm_global(0);
+    u32 i = entity_index(shot);
+    CHECK(entity_alive(shot) &&
+          ent_mask[i] == (C_POS | C_VEL | C_BODY | C_KINEMATIC | C_GAME(0) | C_ALIVE));
+    CHECK(pos_x[i] == FX(10 + 2 * 9) && pos_y[i] == FX(20) && vel_y[i] == 0); // straight on
+    CHECK(vm_global(1) == 9); // x 28: its 4 pixels reach the target at 30
+    CHECK_WARNED(before, 0);
+    physics_set_gravity(0, 0);
+}
+
 // vm.md "Entities": VM_P_TAGS reads C_GAME(0) to C_GAME(14) as bits 0 to 14,
 // and SETP changes only those components: the engine's, and C_ALIVE, stay
 // (bit 15 and up of the value are ignored). Systems see the change at once.
@@ -5583,6 +5641,7 @@ TEST_SUITE(
     {"property_without_its_component_warns", property_without_its_component_warns},
     {"body_size_properties", body_size_properties}, {"read_only_properties", read_only_properties},
     {"body_properties_meet_physics", body_properties_meet_physics},
+    {"spawned_kinematic_bodies", spawned_kinematic_bodies},
     {"tags_are_the_game_components", tags_are_the_game_components},
     {"instance_fields", instance_fields},
     {"nexti_loops_over_an_objects_instances", nexti_loops_over_an_objects_instances},

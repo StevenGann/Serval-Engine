@@ -8,8 +8,9 @@
 // items that walk on, land on or bounce off a tilemap are map bodies
 // (C_MAPBODY and sys_map_movement() in map.h), which sys_physics() skips.
 //
-// An entity with C_POS, C_VEL and C_BODY is a body. Each frame, after
-// sys_movement() has moved it, sys_physics():
+// An entity with C_POS, C_VEL and C_BODY is a body, unless it is a map body
+// or a kinematic body (C_KINEMATIC, below), which sys_physics() leaves alone.
+// Each frame, after sys_movement() has moved it, sys_physics():
 //   - bounces it off the world bounds, using its size (body_w x body_h);
 //   - applies gravity to its velocity, then limits its fall speed
 //     (body_max_fall).
@@ -81,6 +82,22 @@ extern s8 body_gravity[MAX_ENT];
 #define BODY_GRAVITY(sixteenths) ((s8)((sixteenths) - 16))
 // Map bodies (C_MAPBODY, map.h) use the same four to bounce off, slide along
 // and fall onto the map; see sys_map_movement().
+
+// A kinematic body: with C_POS, C_VEL and C_BODY, a body that moves only by
+// its velocity. sys_movement() moves it as any entity with C_POS and C_VEL,
+// and sys_physics() leaves it alone: no gravity, bounds, bounces, friction,
+// maximum fall, contacts or exits (its body_contact stays 0). Its body still
+// collides: body_overlap(), body_hit_side() and vm_collide() test it like any
+// other. Shots, enemies on a script's or a path's course, platforms the game
+// moves by velocity:
+//     Entity shot = entity_create(C_POS | C_VEL | C_BODY | C_KINEMATIC);
+// A script's object can have it (its components), and so its spawns.
+// sys_physics() reads its body_gravity and body_max_fall only to find out
+// whether any body needs its slower loops, so leave them at 0. A map body
+// (C_MAPBODY, map.h) is moved by sys_map_movement() whether or not it has
+// C_KINEMATIC, which changes nothing for it (entity_create() warns, once in
+// debug builds, about a mask with both).
+#define C_KINEMATIC (1u << 7)
 
 // Acceleration added to every body's velocity each frame, in pixels per frame
 // per frame (FX_ONE / 4 is a quarter pixel). Zero (the default) turns gravity
@@ -222,8 +239,9 @@ extern u8 body_contact[MAX_ENT];
 void physics_set_contacts(bool on);
 
 // Bounces bodies off the bounds and applies gravity, maximum fall speed and
-// friction, and with physics_set_contacts(true) sets body_contact. Run once
-// per frame, after sys_movement().
+// friction, and with physics_set_contacts(true) sets body_contact. Skips map
+// bodies (C_MAPBODY) and kinematic bodies (C_KINEMATIC). Run once per frame,
+// after sys_movement().
 void sys_physics(void);
 
 #endif // SERVAL_PHYSICS_H

@@ -35,19 +35,21 @@ static u8 free_slots[MAX_ENT];
 static u32 free_head; // index in free_slots of the next slot handed out
 static u32 free_count;
 
-// Component bits 7-15, reserved for engine components of later versions
+// Component bits 8-15, reserved for engine components of later versions
 // (ecs.h). entity_create() leaves them out, so no entity it creates has one
 // before an engine version gives it a meaning: that version's change is then
 // a meaning for a value this one refuses, which is compatible
 // (docs/releases.md), rather than a new meaning for a bit games already set.
-#define RESERVED_ENGINE_BITS 0xFF80u
-_Static_assert(((C_POS | C_VEL | C_SPR | C_BODY | C_MAPBODY | C_ANIM | C_PATH) &
+// Bit 7, reserved in the same way until then, became C_KINEMATIC.
+#define RESERVED_ENGINE_BITS 0xFF00u
+_Static_assert(((C_POS | C_VEL | C_SPR | C_BODY | C_MAPBODY | C_ANIM | C_PATH | C_KINEMATIC) &
                 RESERVED_ENGINE_BITS) == 0,
                "an engine component uses a reserved bit: shrink RESERVED_ENGINE_BITS and the "
                "reservation in ecs.h and docs/ecs.md");
 
 #ifdef SERVAL_DEBUG
-static bool warned_full, warned_alive_bit, warned_reserved_bits, warned_alive_cleared;
+static bool warned_full, warned_alive_bit, warned_reserved_bits, warned_alive_cleared,
+    warned_kinematic_map_body;
 #endif
 
 static u8 next_generation(u8 gen) {
@@ -62,6 +64,7 @@ static Entity make_handle(u32 index) {
 void ecs_reset(void) {
 #ifdef SERVAL_DEBUG
     warned_full = warned_alive_bit = warned_reserved_bits = warned_alive_cleared = false;
+    warned_kinematic_map_body = false;
 #endif
     free_head = 0;
     free_count = 0;
@@ -87,9 +90,15 @@ Entity entity_create(u32 components) {
     }
     if ((components & RESERVED_ENGINE_BITS) && !warned_reserved_bits) {
         warned_reserved_bits = true;
-        SERVAL_WARN("entity_create: bits 0x%x are reserved for engine components (7-15); left "
+        SERVAL_WARN("entity_create: bits 0x%x are reserved for engine components (8-15); left "
                     "out. Use C_GAME(0) to C_GAME(14)",
                     components & RESERVED_ENGINE_BITS);
+    }
+    if ((components & (C_MAPBODY | C_KINEMATIC)) == (C_MAPBODY | C_KINEMATIC) &&
+        !warned_kinematic_map_body) {
+        warned_kinematic_map_body = true;
+        SERVAL_WARN("entity_create: C_KINEMATIC with C_MAPBODY: sys_map_movement() moves a map "
+                    "body whatever C_KINEMATIC says; drop one of them");
     }
 #endif
     components &= ~RESERVED_ENGINE_BITS;

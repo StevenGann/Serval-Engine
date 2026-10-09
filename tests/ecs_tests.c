@@ -284,16 +284,17 @@ static void alive_bit_in_create_mask_warns(void) {
     CHECK(C_GAME(14) == (1u << 30));
 }
 
-// Bits 7-15 are reserved for engine components of later versions:
+// Bits 8-15 are reserved for engine components of later versions:
 // entity_create() leaves them out (warning once in debug builds), so no
 // entity has one before a version gives it a meaning. The engine's own bits
-// (0-6) and the game's (16-30) are kept.
+// (0-7; bit 7, C_KINEMATIC, was reserved this way until it got its meaning)
+// and the game's (16-30) are kept.
 static void reserved_engine_bits_are_left_out(void) {
     ecs_reset();
-    const u32 engine = C_POS | C_VEL | C_SPR | C_BODY | C_MAPBODY | C_ANIM | C_PATH;
-    CHECK(engine == 0x7Fu); // bits 0-6: none in the reserved range
+    const u32 engine = C_POS | C_VEL | C_SPR | C_BODY | C_MAPBODY | C_ANIM | C_PATH | C_KINEMATIC;
+    CHECK(engine == 0xFFu); // bits 0-7: none in the reserved range
     u32 warnings = debug_warning_count();
-    for (u32 bit = 7; bit <= 15; bit++) {
+    for (u32 bit = 8; bit <= 15; bit++) {
         Entity e = entity_create(C_POS | (1u << bit));
         CHECK(ent_mask[entity_index(e)] == (C_POS | C_ALIVE));
     }
@@ -304,9 +305,37 @@ static void reserved_engine_bits_are_left_out(void) {
 #endif
     Entity all = entity_create(~C_ALIVE); // every bit but C_ALIVE
     CHECK(ent_mask[entity_index(all)] == (0x7FFF0000u | engine | C_ALIVE));
-    CHECK(ecs_count(1u << 7) == 0 && ecs_count(1u << 15) == 0);
+    CHECK(ecs_count(1u << 8) == 0 && ecs_count(1u << 15) == 0);
     Entity game = entity_create(C_SPR | C_GAME(0) | C_GAME(14));
     CHECK(ent_mask[entity_index(game)] == (C_SPR | C_GAME(0) | C_GAME(14) | C_ALIVE));
+    ecs_reset();
+}
+
+// Bit 7 is C_KINEMATIC (physics.h): entity_create() keeps it, quietly. With
+// C_MAPBODY, for which it changes nothing, it is kept too, with a warning
+// (once, until ecs_reset()).
+static void kinematic_bit_is_kept(void) {
+    ecs_reset();
+    const u32 kinematic = C_POS | C_VEL | C_BODY | C_KINEMATIC;
+    const u32 both = kinematic | C_MAPBODY;
+    u32 warnings = debug_warning_count();
+    Entity k = entity_create(kinematic);
+    CHECK(ent_mask[entity_index(k)] == (kinematic | C_ALIVE));
+    CHECK(ecs_count(C_KINEMATIC) == 1);
+    CHECK(debug_warning_count() == warnings);
+    Entity m = entity_create(both);
+    CHECK(ent_mask[entity_index(m)] == (both | C_ALIVE));
+    entity_create(both);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 1); // reported once
+#else
+    CHECK(debug_warning_count() == warnings);
+#endif
+    ecs_reset();
+    entity_create(both);
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == warnings + 2); // again after ecs_reset()
+#endif
     ecs_reset();
 }
 
@@ -454,6 +483,7 @@ TEST_SUITE(ecs_tests, "ecs", {"create_sets_mask", create_sets_mask},
            {"freed_slots_are_reused_oldest_first", freed_slots_are_reused_oldest_first},
            {"alive_bit_in_create_mask_warns", alive_bit_in_create_mask_warns},
            {"reserved_engine_bits_are_left_out", reserved_engine_bits_are_left_out},
+           {"kinematic_bit_is_kept", kinematic_bit_is_kept},
            {"gather_lists_matches_in_order", gather_lists_matches_in_order},
            {"gather_with_no_matches_writes_nothing", gather_with_no_matches_writes_nothing},
            {"gather_a_full_pool", gather_a_full_pool},

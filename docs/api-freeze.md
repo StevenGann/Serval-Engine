@@ -24,7 +24,7 @@ These could not be added later without breaking games, or were small enough to f
 | Item | Where |
 | --- | --- |
 | The planned-API mechanism: `SERVAL_PLANNED`, `SERVAL_NO_PLANNED_WARNINGS`, `tools/check-planned.py` and the `planned_api` test, the stub test suites | `platform.h`, [releases.md](releases.md#planned-api), [development.md](development.md#planned-api) |
-| Loaders refuse unknown values: `SpriteAsset.flags`, `SpriteGroup.flags` and `.slots`, `SpritePiece.flags`, `MapLayer.flags`, `Tileset.flags`; `map_load` warns about collision types it does not implement yet (they load, colliding as described); `entity_create` leaves out the reserved engine component bits 7-15, with a warning | [sprites.md](sprites.md#rom-data-format), [tilemaps.md](tilemaps.md#collision-types), [ecs.md](ecs.md#component-bits) |
+| Loaders refuse unknown values: `SpriteAsset.flags`, `SpriteGroup.flags` and `.slots`, `SpritePiece.flags`, `MapLayer.flags`, `Tileset.flags`; `map_load` warns about collision types it does not implement yet (they load, colliding as described); `entity_create` leaves out the reserved engine component bits 7-15, with a warning (8-15 since bit 7 became `C_KINEMATIC`, below) | [sprites.md](sprites.md#rom-data-format), [tilemaps.md](tilemaps.md#collision-types), [ecs.md](ecs.md#component-bits) |
 | `Tileset.flags`, a new byte in existing padding (LZ77 and 8bpp need a field) | [tilemaps.md](tilemaps.md#tilesets) |
 | `SPRITE_ASSET_STREAMED` removed: residency is a group's (`SpriteGroup.flags`); bit 0 of `SpriteAsset.flags` is reserved | [sprites.md](sprites.md#residency-modes) |
 | Hardware, flag bits, collision types and VRAM reserved for planned features | [core-api.md](core-api.md#hardware-the-engine-uses) and each area's doc |
@@ -41,6 +41,7 @@ These could not be added later without breaking games, or were small enough to f
 | Item | Where |
 | --- | --- |
 | Scripts tune bodies and read their contacts: the properties `VM_P_BODY_BOUNCE` (15), `VM_P_BODY_FRICTION` (16), `VM_P_BODY_MAX_FALL` (17), `VM_P_BODY_GRAVITY` (18) and the read-only `VM_P_BODY_CONTACT` (19), Lua's `body_bounce`, `body_friction`, `body_max_fall` (fixed), `body_gravity` and `body_contact`, each with its C pool's numbers; `BODY_GRAVITY(n)` in listings and scripts; read-only properties (`SETP` warns and writes nothing; assigning one is a compile error) | [vm.md](vm.md#entities), [lua.md](lua.md#what-compiles-to-what) |
+| `C_KINEMATIC`, engine component bit 7, which `entity_create` refused until then: a body (`C_POS \| C_VEL \| C_BODY`) that moves only by its velocity; `sys_physics` skips it, its body collides. A script's object can have it in its components, so a script spawns one. Bits 8-15 stay reserved | [ecs.md](ecs.md#bodies), [runtime-systems.md](runtime-systems.md#physics) |
 
 ## Planned in 1.x (declared now)
 

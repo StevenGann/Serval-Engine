@@ -1411,6 +1411,19 @@ function Faller:create() self.body_w = 8; self.body_h = 8; self.body_max_fall = 
         self.assertEqual((floater["Y"], floater["VY"], floater["BODY_GRAVITY"]), (20 * 256, 0, -16))
         self.assertEqual((faller["VY"], faller["BODY_MAX_FALL"]), (256, 256))
 
+    @needs_runner
+    def test_kinematic_objects(self):
+        """An object whose components have C_KINEMATIC: its spawns move only
+        by their velocity, through sys_physics' gravity and bounds."""
+        run = run_vm("""Gun = object {}
+Shot = object { components = C_POS | C_VEL | C_BODY | C_KINEMATIC }
+function Gun:room_start() spawn(Shot, 200, 20) end
+function Shot:create() self.body_w = 4; self.body_h = 4; self.vx = 3 end
+""", frames=20, start=["GUN"], movement=True, physics=64, files=[ECS_H, PHYSICS_H])
+        shot = next(e for e in run.entities.values() if e["object"] == "SHOT")
+        self.assertEqual((shot["X"], shot["Y"]), ((200 + 3 * 20) * 256, 20 * 256))  # past 240
+        self.assertEqual((shot["VX"], shot["VY"], shot["BODY_CONTACT"]), (3 * 256, 0, 0))
+
     def test_globals_start_at_their_initial_values(self):
         vm = run_vm("Init = object {}\nlives = 3\nspeed = 1.5\nalive = true\nhero = none\n"
                     "low = math.mininteger\nhigh = math.maxinteger\n"

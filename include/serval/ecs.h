@@ -13,9 +13,10 @@
 
 // Component bits, in ent_mask and the masks entity_create(), ent_has(),
 // ECS_FOR_EACH, ecs_count() and ecs_gather() take:
-//   - Bits 0-6, the engine's components: C_POS, C_VEL, C_SPR, C_BODY and
-//     C_ANIM here, C_MAPBODY (bit 4) in map.h, C_PATH (bit 6) in path.h.
-//   - Bits 7-15, reserved for engine components of later versions. Never use
+//   - Bits 0-7, the engine's components: C_POS, C_VEL, C_SPR, C_BODY and
+//     C_ANIM here, C_MAPBODY (bit 4) in map.h, C_PATH (bit 6) in path.h,
+//     C_KINEMATIC (bit 7) in physics.h.
+//   - Bits 8-15, reserved for engine components of later versions. Never use
 //     them: entity_create() leaves them out (warning once in debug builds),
 //     and nothing checks them in ent_mask, where a later engine version would
 //     give them a meaning.
@@ -34,6 +35,8 @@
     (1u << 5) // spr_anim_time, spr_anim_step; with C_SPR, sys_animate plays the
               // sprite's animation
 // C_PATH (1u << 6), entities following a path (sys_path), is in path.h.
+// C_KINEMATIC (1u << 7), bodies that move only by their velocity (sys_physics
+// skips them), is in physics.h.
 #define C_GAME(n) ((1u << (16 + (n))) + 0u * (u32)sizeof(char[(unsigned)(n) < 15u ? 1 : -1]))
 #define C_ALIVE (1u << 31)
 
@@ -52,7 +55,7 @@ typedef u16 Entity;
 // (ent_mask[i] |= C_SPR; ent_mask[i] &= ~C_SHIELD): a permanent part of the
 // API, which later versions may wrap in helpers but never take away. Keep
 // C_ALIVE: a slot without it matches no system and no ent_has(). Leave bits
-// 7-15 clear (reserved, above), and add C_PATH only through path_start()
+// 8-15 clear (reserved, above), and add C_PATH only through path_start()
 // (path.h). Create and destroy entities only with entity_create() and
 // entity_destroy().
 extern u32 ent_mask[MAX_ENT];
@@ -97,10 +100,11 @@ void ecs_reset(void);
 
 // Creates an entity with the given component bits (C_ALIVE is added). Its
 // components are zeroed. Returns ENTITY_NONE if the pool is full (warning
-// once in debug builds). Reserved bits 7-15 in `components` are left out of
+// once in debug builds). Reserved bits 8-15 in `components` are left out of
 // its mask (warning once in debug builds), so no entity has one before an
-// engine version gives it a meaning. The warnings are reported again after
-// ecs_reset().
+// engine version gives it a meaning. C_KINEMATIC with C_MAPBODY, which
+// changes nothing for a map body, is kept (warning once in debug builds). The
+// warnings are reported again after ecs_reset().
 Entity entity_create(u32 components);
 
 // Destroys the entity. Does nothing if the handle is stale or ENTITY_NONE.
