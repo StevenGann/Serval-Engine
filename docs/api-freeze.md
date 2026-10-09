@@ -59,7 +59,7 @@ Each of these 37 names is in the headers with `SERVAL_PLANNED`; its header comme
 | PSG wave channel | `PSG_WAVE`, `psg_waves_set` | [audio.md](audio.md#wave-channel) |
 | Streamed sprite groups | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
-| Runtime sprite tiles | `sprite_set_tiles`, `SPRITE_MAX_TILE_UPDATES` | [sprites.md](sprites.md#runtime-tiles) |
+| Runtime sprite tiles: **implemented**, no longer marked planned (no SYS call: scripts can't hold tile data) | `sprite_set_tiles`, `SPRITE_MAX_TILE_UPDATES` | [sprites.md](sprites.md#runtime-tiles) |
 | Palette writes | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |
 | Ladders | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#collision-types) |
 | Floor slopes | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#collision-types) |

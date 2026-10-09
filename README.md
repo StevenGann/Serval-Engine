@@ -19,7 +19,7 @@ It is designed as three layers:
 Implemented in 1.0:
 
 - Frame loop with CPU-cycle timing; buttons with held-button repeat for menus; 24.8 fixed point, integer helpers, division-free trig with `angle_of` (atan2) and `fx_length`; deterministic random numbers seeded from the player's input.
-- Sprites: resident sprite groups, loaded in layers (global and per-room groups with marks), 12 hardware sizes, flips, layers, rotation and scaling (32 shared matrices per frame; per-frame counts of what the hardware limits drop), metasprites (pieces drawn, rotated and depth-sorted as one, about any pivot), depth sorting (cheap with few depths), any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; 128 on screen.
+- Sprites: resident sprite groups, loaded in layers (global and per-room groups with marks), 12 hardware sizes, flips, layers, rotation and scaling (32 shared matrices per frame; per-frame counts of what the hardware limits drop), metasprites (pieces drawn, rotated and depth-sorted as one, about any pivot), depth sorting (cheap with few depths), any palette of the group per draw, hidden and screen-space sprites; animation with per-frame timing and frame sequences with per-step flips; a loaded sprite's frames rewritten at run time (card faces, counters), copied in VBlank; 128 on screen.
 - Tilemaps: one tileset per room, up to three layers of 16x16 metatiles on BG1-BG3, streamed around a camera (any map size); parallax, wrapping, fixed and self-scrolling layers; runtime cell changes; animated tiles; four game tag bits per metatile (hazards, water, goals), found under a rectangle with `map_tags_in()`.
 - ECS: 128 entities with generational handles; engine components for position, velocity, sprite, animation, body, map body, kinematic body and path; movement, physics, map movement, animation, path and render systems; game-defined components and systems; `ecs_count` and `ecs_gather` for cheap per-kind loops.
 - Physics: bouncing bodies (gravity in any direction and per body, bounce up to a perfect one that never loses height, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; kinematic bodies that move only by their velocity; rectangle overlap and hit-side tests.
@@ -35,7 +35,7 @@ Implemented in 1.0:
 Planned, declared in 1.0 and implemented in 1.x versions (designed in [`docs/`](docs/README.md); the [full list of names](docs/api-freeze.md#planned-in-1x-declared-now)):
 
 - Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank; the PSG wave channel.
-- Sprites: streamed groups, LZ77-compressed sprites, runtime sprite tiles, palette writes, alpha-blended sprites.
+- Sprites: streamed groups, LZ77-compressed sprites, palette writes, alpha-blended sprites.
 - Tilemaps: LZ77-compressed tilesets, background palette writes, ladders and floor slopes.
 - Screen: alpha blending, raster effects (a scroll offset or backdrop color per scanline).
 

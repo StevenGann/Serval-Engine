@@ -38,6 +38,32 @@ extern SpriteStats serval_sprite_stats;
 extern bool serval_scanline_stats;
 void serval_count_scanlines(SpriteStats* stats);
 
+// sprite tiles: runtime sprite tiles (sprite_tiles.c). frame_end() calls
+// serval_sprite_tiles_commit() in VBlank to copy the frames sprite_set_tiles()
+// queued (step 3 of the flush, docs/frame-loop.md). sprite_groups_reset()
+// calls serval_sprite_tiles_reset() (drops every queued copy) and
+// sprite_groups_release() serval_sprite_tiles_release(first_tile) (drops
+// those to OBJ VRAM tile first_tile and up: the tiles it frees).
+void serval_sprite_tiles_commit(void);
+void serval_sprite_tiles_reset(void);
+void serval_sprite_tiles_release(u32 first_tile);
+// sprite tiles: what a sprite ID is (sprites.c's draw records), for
+// sprite_set_tiles(): an ordinary sprite has frame_count frames of
+// tiles_per_frame tiles each, frame 0's first at OBJ VRAM tile first_tile.
+enum {
+    SERVAL_SPRITE_ABSENT,   // not loaded (or not in the sprite table)
+    SERVAL_SPRITE_ORDINARY, // loaded, with tiles of its own
+    SERVAL_SPRITE_META,     // a loaded metasprite: no tiles of its own
+    SERVAL_SPRITE_STREAMED, // a sprite of a loaded streamed group
+};
+typedef struct {
+    u16 first_tile;
+    u8 tiles_per_frame;
+    u8 frame_count;
+    u8 kind; // SERVAL_SPRITE_*
+} ServalSpriteFrames;
+ServalSpriteFrames serval_sprite_frames(u32 id);
+
 // PSG sound effects (psg.c): set up by serval_init(), advanced once per frame
 // by frame_end().
 void serval_psg_init(void);

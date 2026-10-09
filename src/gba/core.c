@@ -120,6 +120,7 @@ void frame_end(void) {
     last_frame_cycles = cycles_now() - frame_start_cycles;
     VBlankIntrWait();
     oam_copy(oam_mem, serval_shadow_oam, 128);
+    serval_sprite_tiles_commit(); // sprite tiles: step 3, sprite_set_tiles() copies
     if (serval_map_commit_hook)
         serval_map_commit_hook();
     serval_psg_update();

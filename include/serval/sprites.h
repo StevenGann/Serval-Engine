@@ -364,30 +364,30 @@ SpriteStats sprite_stats(void);
 // debug readout, not for every frame of a finished game.
 void sprite_stats_scanlines(bool on);
 
-// --- Changing a loaded sprite (planned) ---
+// --- Changing a loaded sprite ---
 
-// Planned: replaces the pixels of frame `frame` of a loaded sprite with
+// Replaces the pixels of frame `frame` of a loaded sprite with
 // tiles_per_frame tiles from `tiles` (8 words each, as in SpriteAsset.tiles),
 // e.g. a card face composed at run time into a RAM buffer and drawn as one
 // hardware sprite. Every draw of that frame changes, from the frame after the
 // copy: it happens in VBlank at the next frame_end(), so `tiles` must stay
-// valid until then. Up to SPRITE_MAX_TILE_UPDATES calls per frame; a later
-// call for the same sprite and frame replaces the earlier one. Ignored
-// (warning in debug builds) for a sprite that isn't loaded, a metasprite, a
-// sprite of a streamed group, a frame the sprite doesn't have, a NULL
-// `tiles`, or a full queue. sprite_groups_release() and sprite_groups_reset()
-// drop the copies queued for the sprites they unload. The VRAM for frames
-// composed later comes from loading sprites whose .tiles are a blank frame in
-// RAM, which they can all share (each sprite ID gets its own copy in VRAM).
-// The mirror of tileset_set_tiles() (map.h) for sprites. Until implemented:
-// does nothing (the sprite keeps its tiles), with a warning in debug builds
-// (once).
-SERVAL_PLANNED("runtime sprite tiles, docs/sprites.md#runtime-tiles")
+// valid until then (a buffer composed for one sprite can't be reused for
+// another in the same frame). Up to SPRITE_MAX_TILE_UPDATES calls per frame;
+// a later call for the same sprite and frame replaces the earlier one. Each
+// copy takes about 75 cycles of VBlank a tile from EWRAM (a 32x64 frame, 32
+// tiles: about 2,400), so keep it to a few frames per frame. Ignored (warning
+// in debug builds) for a sprite that isn't loaded, a metasprite (set its
+// pieces' sprites' tiles instead), a sprite of a streamed group, a frame the
+// sprite doesn't have, a NULL `tiles`, or a full queue.
+// sprite_groups_release() and sprite_groups_reset() drop the copies queued
+// for the sprites they unload. The VRAM for frames composed later comes from
+// loading sprites whose .tiles are a blank frame in RAM, which they can all
+// share (each sprite ID gets its own copy in VRAM). The mirror of
+// tileset_set_tiles() (map.h) for sprites.
 void sprite_set_tiles(u16 sprite_id, u8 frame, const u32* tiles);
 enum {
-    // Planned: sprite_set_tiles() calls queued per frame.
-    SPRITE_MAX_TILE_UPDATES SERVAL_PLANNED("runtime sprite tiles, docs/sprites.md#runtime-tiles") =
-        8,
+    // sprite_set_tiles() calls queued per frame.
+    SPRITE_MAX_TILE_UPDATES = 8,
 };
 
 // Planned: changes `count` colors of the palettes of the group `sprite_id`

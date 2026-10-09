@@ -15,9 +15,9 @@
 // VRAM and palettes in OBJ palette banks, in load order;
 // sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
 // the start. Planned (declared in sprites.h, stubs or refusals here):
-// streamed groups, LZ77 sprites, runtime tiles (sprite_set_tiles), palette
-// writes (sprite_set_colors) and SPRITE_BLEND (drawn opaque). Palette sharing
-// comes after 1.0.
+// streamed groups, LZ77 sprites, palette writes (sprite_set_colors) and
+// SPRITE_BLEND (drawn opaque). Palette sharing comes after 1.0. Runtime tiles
+// (sprite_set_tiles) are in sprite_tiles.c.
 
 // Rare paths (building a matrix, drawing a metasprite's pieces) are out of
 // line, in ROM on the GBA, so IWRAM code calls them with a long call.
@@ -194,6 +194,7 @@ void sprite_groups_reset(void) {
     // A new serial for segment 0, so marks from before the reset are stale.
     top_segment = 0;
     segments[0] = (Segment){.mark = ++last_mark};
+    serval_sprite_tiles_reset(); // sprite tiles: drop every queued copy
 #ifdef SERVAL_DEBUG
     memset32(warned_ids, 0, sizeof(warned_ids) / 4);
     warned_oam_full = false;
@@ -241,6 +242,7 @@ void sprite_groups_release(u32 mark) {
     next_palette_bank = segments[k].first_palette;
     segments[k].loaded = false;
     top_segment = k;
+    serval_sprite_tiles_release(next_tile); // sprite tiles: drop the unloaded sprites' copies
 }
 
 void sprite_table_set(const SpriteAsset* const* table, u16 count) {
@@ -1000,26 +1002,29 @@ SERVAL_IWRAM_CODE void sys_render_by_depth(void) {
     }
 }
 
+// sprite tiles: what sprite `id` is and where its frames are in OBJ VRAM, for
+// sprite_set_tiles() (sprite_tiles.c).
+ServalSpriteFrames serval_sprite_frames(u32 id) {
+    if (id >= serval_sprite_count)
+        return (ServalSpriteFrames){.kind = SERVAL_SPRITE_ABSENT};
+    const SpriteDraw* d = &sprite_draws[id];
+    if (d->meta_frames)
+        return (ServalSpriteFrames){.kind = SERVAL_SPRITE_META};
+    // Streamed groups: a sprite of one has no frames of its own either, and
+    // must report SERVAL_SPRITE_STREAMED here, before the test below.
+    if (!d->frame_count)
+        return (ServalSpriteFrames){.kind = SERVAL_SPRITE_ABSENT};
+    return (ServalSpriteFrames){.first_tile = (u16)(d->attr2 & ATTR2_ID_MASK),
+                                .tiles_per_frame = d->tiles_per_frame,
+                                .frame_count = d->frame_count,
+                                .kind = SERVAL_SPRITE_ORDINARY};
+}
+
 // --- Planned (sprites.h): stubs that change nothing and say so once ---
 
 #ifdef SERVAL_DEBUG
-static bool warned_set_tiles, warned_set_colors;
+static bool warned_set_colors;
 #endif
-
-// Runtime sprite tiles (docs/sprites.md#runtime-tiles). Implementing it
-// queues the copy for frame_end()'s VBlank, as tileset_set_tiles() does.
-void sprite_set_tiles(u16 sprite_id, u8 frame, const u32* tiles) {
-    (void)sprite_id;
-    (void)frame;
-    (void)tiles;
-#ifdef SERVAL_DEBUG
-    if (!warned_set_tiles) {
-        warned_set_tiles = true;
-        SERVAL_WARN("sprite_set_tiles: runtime sprite tiles is planned, not implemented in this "
-                    "engine version; tiles unchanged");
-    }
-#endif
-}
 
 // Palette writes (docs/sprites.md#palettes). Implementing it writes a shadow
 // of the sprite palette banks that frame_end() copies in VBlank.

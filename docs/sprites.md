@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups, LZ77-compressed sprites, runtime sprite tiles, palette writes through a shadow palette, and alpha-blended sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
+**Status:** implemented: resident, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: streamed groups, LZ77-compressed sprites, palette writes through a shadow palette, and alpha-blended sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes, which the engine doesn't use) with 16 OBJ palette banks of 16 colors.
 
@@ -85,14 +85,14 @@ Until it is implemented, `sprite_set_colors()` does nothing (the colors stay as 
 
 ## Runtime tiles
 
-*Planned:* `sprite_set_tiles(sprite_id, frame, tiles)`, the sprites' counterpart of `tileset_set_tiles()` ([tilemaps.md](tilemaps.md)). It replaces the pixels of one frame of a loaded sprite with `tiles_per_frame` tiles from `tiles` (8 words each, as in `SpriteAsset.tiles`): a card face composed at run time into a RAM buffer and drawn as one hardware sprite instead of several pieces (Blackjack's card faces are metasprites of four pieces today, so four hardware sprites each). Every draw of that frame changes, from the frame after the copy:
+*Implemented:* `sprite_set_tiles(sprite_id, frame, tiles)`, the sprites' counterpart of `tileset_set_tiles()` ([tilemaps.md](tilemaps.md)). It replaces the pixels of one frame of a loaded sprite with `tiles_per_frame` tiles from `tiles` (8 words each, as in `SpriteAsset.tiles`): a card face composed at run time into a RAM buffer and drawn as one hardware sprite instead of several pieces (Blackjack's card faces are metasprites of four pieces, so four hardware sprites each), a score or a counter drawn into one sprite, a name tag. Every draw of that frame changes, from the frame after the copy:
 
-- The copy happens in VBlank at the next `frame_end()`, so `tiles` must stay valid until then.
-- Up to `SPRITE_MAX_TILE_UPDATES` (8) calls per frame; a later call for the same sprite and frame replaces the earlier one.
-- Ignored (*warns*): a sprite that isn't loaded, a metasprite, a sprite of a streamed group, a frame the sprite doesn't have, a NULL `tiles`, a full queue. `sprite_groups_release()` and `sprite_groups_reset()` drop the copies queued for the sprites they unload.
-- VRAM for frames composed later comes from loading sprites whose `.tiles` are a blank frame in RAM, which they can all share: each sprite ID gets its own copy in VRAM.
+- The copy happens in VBlank at the next `frame_end()`, step 3 of its flush ([frame-loop.md](frame-loop.md#vblank-flush)), so `tiles` must stay valid until then: a buffer composed for one frame can't be reused for another before `frame_end()`. After it, the buffer is free again.
+- Up to `SPRITE_MAX_TILE_UPDATES` (8) calls per frame; a later call for the same sprite and frame replaces the earlier one and takes no other place in the queue.
+- Ignored (*warns*, once per kind of problem until `sprite_groups_reset()`): a sprite that isn't loaded (or isn't in the sprite table), a metasprite (it has no tiles of its own: set its pieces' sprites' tiles), a sprite of a streamed group (its frames are copied from ROM as they are drawn), a frame the sprite doesn't have, a NULL `tiles`, a full queue. `sprite_groups_release()` and `sprite_groups_reset()` drop the copies queued for the sprites they unload, even if those sprites load again before `frame_end()`.
+- VRAM for frames composed later comes from loading sprites whose `.tiles` are a blank frame in RAM, which they can all share: each sprite ID gets its own copy in VRAM. The tiles stay as written until the sprite is written again or unloaded; loading the group again copies its `.tiles` afresh.
 
-Until it is implemented, `sprite_set_tiles()` does nothing (the sprite keeps its tiles) and warns once in debug builds.
+**Cost.** The call checks the sprite and queues a pointer; the copy is a `memcpy32` to OBJ VRAM in VBlank, about 75 cycles a tile from EWRAM and 58 from ROM (a 32x64 frame, 32 tiles: about 2,400 and 1,850 cycles of VBlank's 83,776), so a few frames a frame fit beside the map's rows and columns. With nothing queued, `frame_end()`'s call is a test of a counter in EWRAM, about 40 cycles of VBlank, and nothing in IWRAM (`sprite_tiles.c`).
 
 ## Alpha blending
 
@@ -231,13 +231,13 @@ void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle,
                     FIXED scale_x, FIXED scale_y, u16 flags);   // rotated and scaled
 SpriteStats sprite_stats(void);                     // last frame: drawn, matrices, dropped
 void sprite_stats_scanlines(bool on);               // also the per-scanline budget
+void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRITE_MAX_TILE_UPDATES
 
 // Planned (SERVAL_PLANNED): warn at compile time, do nothing yet
-void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRITE_MAX_TILE_UPDATES
 void sprite_set_colors(u16 sprite_id, u32 index, const Color *colors, u32 count);
 ```
 
-Planned constants: `SPRITE_GROUP_STREAMED`, `SPRITE_ASSET_LZ77`, `SPRITE_BLEND`, `SPRITE_MAX_TILE_UPDATES` (enumerators, so they warn at every use too).
+Planned constants: `SPRITE_GROUP_STREAMED`, `SPRITE_ASSET_LZ77`, `SPRITE_BLEND` (enumerators, so they warn at every use too).
 
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
@@ -273,8 +273,8 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats.
+Resident, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group, and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank).
 
-**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused), runtime sprite tiles (`sprite_set_tiles()`, `SPRITE_MAX_TILE_UPDATES`; does nothing), palette writes through a shadow palette (`sprite_set_colors()`; does nothing), alpha-blended sprites (`SPRITE_BLEND`; drawn opaque).
+**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): streamed groups (`SPRITE_GROUP_STREAMED`, `SpriteGroup.slots`; refused by the loader), LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused), palette writes through a shadow palette (`sprite_set_colors()`; does nothing), alpha-blended sprites (`SPRITE_BLEND`; drawn opaque).
 
 **After 1.0, no API:** palette sharing with reference counting, VRAM defragmentation, loading in forced blank, and the draw flags reserved in bits 13-14 (mosaic, the object window).

@@ -27,7 +27,6 @@ static void planned_values_are_fixed(void) {
                        SPRITE_ANIM_FLIP_H | SPRITE_ANIM_FLIP_V | SPRITE_SCALED |
                        SPRITE_PALETTE_MASK | SPRITE_SCREEN;
     CHECK((SPRITE_BLEND & others) == 0);
-    CHECK(SPRITE_MAX_TILE_UPDATES == 8);
 }
 
 #ifdef SERVAL_GBA
@@ -43,7 +42,6 @@ static void planned_values_are_fixed(void) {
 enum { SPR_DOT, SPR_SHADOW, SPR_META, SPR_PACKED, SPRITE_COUNT };
 
 static const u32 dot_tiles[8] = {0x11111111, 0x11111111};
-static const u32 other_tiles[8] = {0x22222222, 0x22222222};
 static const SpritePiece shadow_pieces[] = {
     {.sprite = SPR_DOT},
     {.x = 2, .y = 2, .sprite = SPR_DOT, .flags = SPRITE_BLEND}, // a piece may blend
@@ -74,18 +72,6 @@ static void check_warnings(u32 before, u32 count) {
     (void)count;
     CHECK(debug_warning_count() == before);
 #endif
-}
-
-static void sprite_set_tiles_changes_nothing(void) {
-    load();
-    for (u32 call = 0; call < 2; call++) {
-        u32 before = debug_warning_count();
-        frame_begin();
-        sprite_set_tiles(SPR_DOT, 0, other_tiles);
-        frame_end();
-        CHECK(OBJ_VRAM[0] == 0x11111111); // tile 0 is SPR_DOT's, as loaded
-        check_warnings(before, call == 0);
-    }
 }
 
 static void sprite_set_colors_changes_nothing(void) {
@@ -190,8 +176,7 @@ static void blended_sprites_draw_opaque_and_warn_once(void) {
 
 #ifdef SERVAL_GBA
 #define GBA_CASES                                                                                  \
-    , {"sprite_set_tiles_changes_nothing", sprite_set_tiles_changes_nothing},                      \
-        {"sprite_set_colors_changes_nothing", sprite_set_colors_changes_nothing},                  \
+    , {"sprite_set_colors_changes_nothing", sprite_set_colors_changes_nothing},                    \
         {"loads_needing_planned_features_are_refused",                                             \
          loads_needing_planned_features_are_refused},                                              \
     {                                                                                              \
