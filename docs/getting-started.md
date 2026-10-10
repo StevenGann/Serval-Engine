@@ -2,11 +2,11 @@
 
 Write a GBA game in C with Serval Engine. This covers building the examples, the shape of a game, and the engine's main pieces. Function details are in [api-reference.md](api-reference.md).
 
-**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, fades, paths, save data, web builds). Maxmod music is not implemented yet: tracker music and sampled sound effects are declared as *planned* API (`music_*()`, `sfx_*()`, [audio.md](audio.md)), which compiles with a warning and does nothing yet, like every planned name ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now) lists them; [the README](../README.md#features) lists what is implemented). The scripting VM is implemented, with game logic written in a [Lua subset](lua.md) ([Scripting](#2-create-your-game) below; `fireflies` is a whole game in it); this page's examples are in C.
+**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, tracker music and sampled sound effects, fades, paths, save data, web builds). Planned names compile with a warning and do nothing yet ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now) lists them; [the README](../README.md#features) lists what is implemented). The scripting VM is implemented, with game logic written in a [Lua subset](lua.md) ([Scripting](#2-create-your-game) below; `fireflies` is a whole game in it); this page's examples are in C.
 
 ## 1. Build the examples
 
-Install CMake ≥ 3.25, Ninja, Python 3.11 or later and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). On Debian or Ubuntu, `tools/setup-dev.sh` installs everything: CMake, Ninja and Python from the distribution's packages (it stops if CMake is older than 3.25), the ARM toolchain, mgba-rom-test and Emscripten at the versions CI uses. Details: [development.md](development.md#requirements).
+Install CMake ≥ 3.25, Ninja, Python 3.11 or later and an `arm-none-eabi` GCC (the [ARM GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 15.3 is what CI uses; devkitARM should also work). On Debian or Ubuntu, `tools/setup-dev.sh` installs everything: CMake, Ninja and Python from the distribution's packages (it stops if CMake is older than 3.25), the ARM toolchain, mgba-rom-test, Emscripten and BlocksDS's `mmutil` (which builds sound banks) at the versions CI uses. Details: [development.md](development.md#requirements).
 
 ```sh
 tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
@@ -15,7 +15,7 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba
+#    effects.gba, jukebox.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -198,7 +198,7 @@ debug_log(text_format("spawned %u", count));              // mGBA's log window
 - [core-api.md](core-api.md): hardware the engine uses and reserves, and what games must not touch.
 - [sprites.md](sprites.md#animation): sprite animation (`sys_animate`, frame sequences).
 - [tilemaps.md](tilemaps.md): tilesets, map layers, the camera, map bodies and map collision.
-- [audio.md](audio.md#psg-music): PSG music.
+- [audio.md](audio.md#psg-music): PSG music; [tracker music and sampled sound effects](audio.md#sound-bank) from a sound bank (`serval_add_soundbank()`, [development.md](development.md#building-a-game); the `jukebox` example).
 - [runtime-systems.md](runtime-systems.md): save data, fades, paths, physics details.
 - [development.md](development.md#memory-use): memory (IWRAM) budgets, and [the benchmark](development.md#benchmark).
 - [licensing.md](licensing.md): the notices a shipped game must include.

@@ -11,12 +11,11 @@
 //   (PsgSound, psg_play()) suit bleeps, hits, jumps, pickups and short
 //   jingles; songs (PsgSong, psg_music_*()) play looping chiptunes of notes on
 //   the same channels, and sound effects take a channel over while they play.
-// - Tracker music and sampled sound effects (planned): modules (MOD, S3M, XM,
-//   IT; music_*()) and recorded samples (WAV files; sfx_*()) from one sound
-//   bank (audio_bank_set()), mixed in software into the Direct Sound channels
-//   by Maxmod (the BlocksDS fork) while the PSG plays on. Unlike the PSG,
-//   mixing costs CPU time for every channel playing; the engine's figures will
-//   be measured when it is implemented (docs/audio.md has Maxmod's own).
+// - Tracker music and sampled sound effects: modules (MOD, S3M, XM, IT;
+//   music_*()) and recorded samples (WAV files; sfx_*()) from one sound bank
+//   (audio_bank_set()), mixed in software into the Direct Sound channels by
+//   Maxmod (the BlocksDS fork) while the PSG plays on. Unlike the PSG, mixing
+//   costs CPU time for every channel playing (docs/audio.md#cpu-and-memory).
 //
 // The two music players are separate and can play at once: psg_music_*()
 // play a PsgSong on the tone generators (scripts reach this one, through the
@@ -26,16 +25,13 @@
 // sfx_play_ex() take 0-255, the mixer's finer steps, so fades are smooth.
 //
 // frame_end() steps sound once per frame, after the VBlank flush: PSG sound
-// effects, then PSG music, then (once implemented) the mixer, which mixes the
-// next frame's samples; Maxmod's VBlank handler will run in the engine's
-// VBlank interrupt.
+// effects, then PSG music, then the mixer (once a bank is registered), which
+// mixes the next frame's samples; Maxmod's VBlank handler runs in the
+// engine's VBlank interrupt.
 //
-// Planned names compile with a warning, and in this engine version do nothing
-// and return false or SFX_NONE, warning once in debug builds
-// (docs/releases.md#planned-api). On the web the PSG plays as on the GBA;
-// tracker music and sampled effects will stay silent there (the calls work,
-// play nothing and warn once) even once the GBA plays them, until the web has
-// a player of its own. Future targets: GB/GBC has the same four tone
+// On the web the PSG plays as on the GBA; tracker music and sampled effects
+// stay silent there (the calls work, play nothing and warn once) until the
+// web has a player of its own. Future targets: GB/GBC has the same four tone
 // generators but no Direct Sound, so only the PSG will play there; DS will run
 // Maxmod's DS version behind the same calls.
 //
@@ -259,117 +255,99 @@ void psg_music_set_tempo(u16 tempo);
 // (warns).
 void psg_music_set_volume(u8 volume);
 
-// --- Tracker music and sampled sound effects (planned) ----------------------
+// --- Tracker music and sampled sound effects -------------------------------
 //
 // Modules (MOD, S3M, XM and IT files) and sampled sound effects (WAV files),
 // mixed in software into the two Direct Sound channels while the PSG plays
-// on. Maxmod (the BlocksDS fork) will play them. A game's modules and samples
-// are built into one sound bank by Maxmod's mmutil (Studio Advance runs it),
-// which also numbers them from 0 in the header it generates: MOD_<file> for
-// each module, SFX_<file> for each sample. The bank's format is that of the
-// Maxmod the engine links, and is the engine's business: games register it
-// whole (audio_bank_set()) and play by those numbers. A bank must be built by
-// the mmutil matching the engine's Maxmod (docs/audio.md#sound-bank).
+// on, by Maxmod (the BlocksDS fork, linked into a game only if it registers a
+// sound bank). A game's modules and samples are built into one sound bank by
+// Maxmod's mmutil (Studio Advance runs it; games built by hand use CMake's
+// serval_add_soundbank()), which also numbers them from 0 in the header it
+// generates: MOD_<file> for each module, SFX_<file> for each sample. The
+// bank's format is that of the Maxmod the engine links, and is the engine's
+// business: games register it whole (audio_bank_set()) and play by those
+// numbers. A bank must be built by the mmutil matching the engine's Maxmod
+// (serval.json's toolchain.mmutil; docs/audio.md#sound-bank).
 //
-// Mixing costs CPU time for every channel playing, unlike the PSG; the
-// engine's figures are measured when it is implemented (docs/audio.md has
-// Maxmod's own). PSG music (psg_music_*() above) is a separate player.
+// The mixer plays 15,768 Hz stereo, with 12 channels shared by the music's
+// notes and the effects; a module may use up to 8 channels, so at least 4 are
+// left for effects. Unlike the PSG, mixing costs CPU time for every channel
+// playing: about 2.9% of a frame with nothing playing and 1.4% more per
+// channel (docs/audio.md#cpu-and-memory), counted in frame_cpu_cycles(). It
+// keeps the audio fed even through frames that overrun. PSG music
+// (psg_music_*() above) is a separate player.
 //
-// Everything here is planned (docs/releases.md#planned-api): in this engine
-// version each function does nothing, returns false or SFX_NONE, and warns
-// once in debug builds. On the web they will stay so after the GBA plays
-// them, until the web has a player of its own (docs/audio.md#web).
+// On the web these functions are silent stubs (they play nothing, return
+// false or SFX_NONE, and warn once in debug builds) until the web has a
+// player of its own (docs/audio.md#web).
 
 // Registers the game's sound bank, the data mmutil built (in ROM, where it
 // stays: it must stay valid while registered), and stops any tracker music
 // and sampled effects playing. Call it once at startup, before music_play()
-// and sfx_play(); registering another bank replaces it, NULL unregisters it.
-// An invalid pointer is refused (warns), leaving no bank. The PSG is
-// unaffected.
-//
-// Planned (docs/audio.md#sound-bank): in this engine version it ignores the
-// bank and warns once (debug builds).
-SERVAL_PLANNED("tracker music and sampled sound, docs/audio.md#sound-bank")
+// and sfx_play(); registering another bank replaces it, NULL unregisters it
+// (the mixer stops and costs nothing again). A pointer that isn't such a bank
+// (one built for the DS, or by another mmutil version, included) is refused
+// (warns), leaving no bank. The PSG is unaffected. The music and effects
+// volumes set before carry over.
 void audio_bank_set(const void* bank);
 
 // Starts module `music_id` of the bank (a MOD_* number) from its beginning,
 // replacing the module playing (paused or not). `loop` true plays it until
 // music_stop(); false plays it once, then music_playing() turns false.
 // Resets music_set_speed() to 100; music_set_volume() stays. Ignored (warns)
-// without a bank, or for an ID the bank doesn't have. PSG music
+// without a bank, or for an ID the bank doesn't have. A module that uses more
+// than 8 channels stops where it first needs more (warns). PSG music
 // (psg_music_play()) is a separate player and plays on.
-//
-// Planned (docs/audio.md#tracker-music): in this engine version nothing plays
-// (warns once, debug builds).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_play(u16 music_id, bool loop);
 
 // Stops the tracker music. Sampled effects and the PSG play on. Nothing
 // happens if no module plays.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_stop(void);
 
 // True while a module plays, paused or not: from music_play() until
 // music_stop() or audio_bank_set(), or until a module played once ends.
-//
-// Planned: in this engine version it returns false (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 bool music_playing(void);
 
 // Pauses the tracker music where it is: its time stands still and it goes
 // quiet. Nothing happens if no module plays or it is already paused.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_pause(void);
 
 // Resumes paused tracker music exactly where it stopped. Nothing happens if
 // the music isn't paused. music_play(), music_stop() and audio_bank_set() also
 // end a pause.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_resume(void);
 
 // True while the tracker music is paused (music_playing() is true too).
-//
-// Planned: in this engine version it returns false (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 bool music_paused(void);
 
 // Tracker music volume, 0 (silent) to 255 (the default: the module's own
-// volumes), at once, for the module playing and the next. Finer than
+// volumes), from the module's next tick (at most a few frames), for the
+// module playing and the next, and across audio_bank_set(). Finer than
 // psg_music_set_volume()'s 0-15, so a fade of one step a frame is smooth.
 // Sampled effects and the PSG are unaffected.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
 void music_set_volume(u8 volume);
 
 // Tracker music speed, in percent of the module's own tempo, from where it
 // is: 100 as written, 50 half speed, 200 double; the pitch stays. 0 means
-// 100; other values outside 50-200 are clamped (warns). music_play() resets
-// it to 100. E.g. a hurry-up: music_set_speed(125). (PSG music has
-// psg_music_set_tempo(), in beats per minute.)
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("tracker music, docs/audio.md#tracker-music")
+// 100; other values outside 50-200 are clamped (warns). Ignored without a
+// module playing (warns). music_play() resets it to 100. E.g. a hurry-up:
+// music_set_speed(125). (PSG music has psg_music_set_tempo(), in beats per
+// minute.)
 void music_set_speed(u16 percent);
 
 // A sampled effect playing, from sfx_play(): a handle, like Entity, that goes
 // stale when the effect ends or is stopped (then sfx_playing() is false and
 // sfx_stop() does nothing). Generational, so a stale handle never stops a
-// later effect that took its channel. Not an effect's ID: IDs number the
-// bank's samples (SFX_* in mmutil's header, from 0), a handle names one
-// playing of one.
+// later effect that took its channel: handles count up, so one names a later
+// effect only after 65,535 more effects have played. Not an effect's ID: IDs
+// number the bank's samples (SFX_* in mmutil's header, from 0), a handle
+// names one playing of one.
 typedef u16 Sfx;
 
 // Never refers to an effect: what sfx_play() and sfx_play_ex() return when
-// nothing played, and a safe initial value for an Sfx. Not planned itself
-// (the planned functions already return it). No sample may be named "none":
-// mmutil's header would define SFX_NONE for it too.
+// nothing played, and a safe initial value for an Sfx. No sample may be named
+// "none": mmutil's header would define SFX_NONE for it too
+// (serval_add_soundbank() refuses one).
 #define SFX_NONE ((Sfx)0)
 
 // Plays sample `sfx_id` of the bank (an SFX_* number) as an effect, at full
@@ -377,10 +355,6 @@ typedef u16 Sfx;
 // 255, 0, FX_ONE, 0). Returns its handle, or SFX_NONE if it didn't play: no
 // bank or an ID the bank doesn't have (both warn), or no mixer channel free
 // and every effect playing of higher priority (see sfx_play_ex).
-//
-// Planned (docs/audio.md#sampled-sound-effects): in this engine version
-// nothing plays; it returns SFX_NONE (warns once, debug builds).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
 Sfx sfx_play(u16 sfx_id);
 
 // Like sfx_play(), with:
@@ -390,41 +364,27 @@ Sfx sfx_play(u16 sfx_id);
 //   recorded, FX(2) an octave up, FX_ONE / 2 an octave down. 0 means FX_ONE;
 //   values outside FX_ONE / 16 to FX(16) are clamped (warns);
 // - priority: 0 to 255. When no mixer channel is free (the music's notes and
-//   the effects share them), the playing effect of lowest priority stops for
-//   this one if this one's priority is at least as high (as PsgSound.priority
-//   does); otherwise this one doesn't play.
+//   the effects share them), the playing effect of lowest priority (the
+//   oldest of those) stops for this one if this one's priority is at least
+//   as high (as PsgSound.priority does); otherwise this one doesn't play.
 // An effect whose sample loops (loop points set in the sample) plays until
 // sfx_stop() or sfx_stop_all(). Returns its handle, or SFX_NONE.
-//
-// Planned: in this engine version nothing plays; it returns SFX_NONE (warns
-// once).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
 Sfx sfx_play_ex(u16 sfx_id, u8 volume, s8 pan, FIXED pitch, u8 priority);
 
 // Stops an effect at once. Nothing happens for SFX_NONE or a stale handle.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
 void sfx_stop(Sfx sfx);
 
-// True while the effect plays; false for SFX_NONE and stale handles.
-//
-// Planned: in this engine version it returns false (warns once).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
+// True while the effect plays; false for SFX_NONE and stale handles. An
+// effect that has played to its end turns false at the next frame_end().
 bool sfx_playing(Sfx sfx);
 
 // Stops every sampled effect. The tracker music and the PSG play on.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
 void sfx_stop_all(void);
 
 // Volume of all sampled effects, 0 (silent) to 255 (the default: each
-// effect's own), at once, for playing effects too: an options menu's "sound
-// volume". The tracker music and the PSG are unaffected.
-//
-// Planned: in this engine version it does nothing (warns once).
-SERVAL_PLANNED("sampled sound effects, docs/audio.md#sampled-sound-effects")
+// effect's own), at once, for playing effects too, and across
+// audio_bank_set(): an options menu's "sound volume". The tracker music and
+// the PSG are unaffected.
 void sfx_set_volume(u8 volume);
 
 #endif // SERVAL_AUDIO_H

@@ -1,8 +1,8 @@
 # Audio
 
-Two kinds of sound: the PSG (the GBA's tone generators, almost free to play) for sound effects and chiptune music, and, planned, tracker music and sampled sound effects mixed in software by Maxmod. Samples stay in ROM; the scarce resource is CPU time for software mixing.
+Two kinds of sound: the PSG (the GBA's tone generators, almost free to play) for sound effects and chiptune music, and tracker music and sampled sound effects mixed in software by Maxmod. Samples stay in ROM; the scarce resource is CPU time for software mixing.
 
-**Status:** PSG sound effects (with priorities) and PSG music on all four tone generators, square 1, square 2, the [wave channel](#wave-channel) (`PSG_WAVE`, `psg_waves_set()`) and noise, are implemented ([below](#psg-channels), reference in [api-reference.md](api-reference.md#audioh)); they play in web builds too, which emulate the PSG from the same registers. Planned, and declared in `audio.h` so that the API is complete ([releases.md](releases.md#planned-api): every use compiles with a warning; the calls do nothing yet and warn once in debug builds): the [sound bank](#sound-bank) (`audio_bank_set()`), [tracker music](#tracker-music) (`music_*()`) and [sampled sound effects](#sampled-sound-effects) (`sfx_*()`, with the `Sfx` handle type and `SFX_NONE`). Tracker music and sampled effects will use Maxmod's [BlocksDS fork](#maxmod-blocksds), which is chosen but not linked yet.
+**Status:** PSG sound effects (with priorities) and PSG music on all four tone generators, square 1, square 2, the [wave channel](#wave-channel) (`PSG_WAVE`, `psg_waves_set()`) and noise, are implemented ([below](#psg-channels), reference in [api-reference.md](api-reference.md#audioh)); they play in web builds too, which emulate the PSG from the same registers. So are the [sound bank](#sound-bank) (`audio_bank_set()`, built by `mmutil`, with `serval_add_soundbank()` for games built by hand), [tracker music](#tracker-music) (`music_*()`) and [sampled sound effects](#sampled-sound-effects) (`sfx_*()`, with the `Sfx` handle type and `SFX_NONE`), played on the GBA by Maxmod's [BlocksDS fork](#maxmod-blocksds) (`v1.24.0-blocks`, vendored in `third_party/maxmod/`, `src/gba/maxmod.c`, with the calls in `src/gba/sampled_audio.c`); web builds keep silent stubs for them ([below](#web)). The `jukebox` example plays both. `audio.h` has no planned names left.
 
 **Hardware:** Direct Sound A/B (two 8-bit PCM channels, each fed from a FIFO by DMA at a timer's rate) and four legacy PSG channels (two squares, wave, noise). More than two PCM voices requires software mixing, whose cost scales with voice count × mix rate.
 
@@ -10,12 +10,12 @@ Two kinds of sound: the PSG (the GBA's tone generators, almost free to play) for
 
 The PSG and the mixer are separate, and so are their APIs: `psg_*()` for the tone generators, `music_*()` and `sfx_*()` for the mixer. Both play at once.
 
-| | PSG music | Tracker music (planned) |
+| | PSG music | Tracker music |
 | --- | --- | --- |
 | Calls | `psg_music_play()` ... `psg_music_set_volume()` | `music_play()` ... `music_set_speed()` |
 | Data | a `PsgSong` of notes (C data, generated or hand-written), by pointer | a module (MOD, S3M, XM, IT) in the [sound bank](#sound-bank), by ID |
 | Plays on | the tone generators: square 1, square 2, the wave channel, noise | Direct Sound A and B, mixed in software |
-| CPU | about 200 cycles a frame for three tracks | a cost per channel playing (to be measured; [Maxmod's figures](#cpu-and-memory)) |
+| CPU | about 200 cycles a frame for three tracks | about 3% of a frame for the mixer, plus 1.4% per channel playing ([measured](#cpu-and-memory)) |
 | Volume | 0-15 | 0-255 |
 | Tempo | `psg_music_set_tempo()`, beats per minute | `music_set_speed()`, percent (50-200) |
 | Scripts | SYS calls ([vm.md](vm.md#engine-calls)) | none yet (appended to the SYS page later) |
@@ -23,13 +23,13 @@ The PSG and the mixer are separate, and so are their APIs: `psg_*()` for the ton
 
 Sound effects are split the same way: `psg_play()` plays a `PsgSound` (a tone or a melody) on a tone generator, `sfx_play()` a recorded sample through the mixer. `psg_stop_all()` stops only the PSG; `music_stop()` and `sfx_stop_all()` only the mixer's sounds.
 
-**Volume ranges differ, on purpose.** `psg_music_set_volume()` takes 0-15 because the tone generators have 16 volume steps, so every value is a real step. `music_set_volume()`, `sfx_set_volume()` and `sfx_play_ex()`'s volume take 0-255, the mixer's per-channel range (Maxmod's effect volume is 0-255; the engine will scale the music and effects master volumes to Maxmod's 0-1024), fine enough that a fade of one step a frame is smooth.
+**Volume ranges differ, on purpose.** `psg_music_set_volume()` takes 0-15 because the tone generators have 16 volume steps, so every value is a real step. `music_set_volume()`, `sfx_set_volume()` and `sfx_play_ex()`'s volume take 0-255, the mixer's per-channel range (Maxmod's effect volume is 0-255; the engine scales the music and effects master volumes to Maxmod's 0-1024, 255 being exactly 1024), fine enough that a fade of one step a frame is smooth.
 
 ## PSG channels
 
-Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI bleeps, pickups) and chiptune music. PSG music is the engine's only music until tracker music is implemented.
+Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI bleeps, pickups) and chiptune music, which play beside tracker music and sampled effects at their full volume (the engine keeps the tone generators' share of the output at 100% when Maxmod starts).
 
-**Sound effects** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2, the [wave channel](#wave-channel) (3) and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color; on the wave channel, the waveform), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests, each lasting `.frames`), stepped once per frame by `frame_end()`. Fields left out default sensibly (duty 50%, full volume, or silence for a fade-in); out-of-range fields are clamped (`.duty` wraps around) and sounds that can't play are skipped, with a warning in debug builds (a square's `.frequency` or note below 64 Hz plays at 64 Hz, the wave channel's below 32 Hz at 32 Hz). Every example except `hello` and `bunnymark` uses the PSG for all its sounds, and `serval_splash()` for its jingle; `breakout`, `platformer`, `shmup`, `blackjack` and `fireflies` (from its Lua script) also play PSG music, `blackjack`'s walking bass on the wave channel.
+**Sound effects** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2, the [wave channel](#wave-channel) (3) and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color; on the wave channel, the waveform), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests, each lasting `.frames`), stepped once per frame by `frame_end()`. Fields left out default sensibly (duty 50%, full volume, or silence for a fade-in); out-of-range fields are clamped (`.duty` wraps around) and sounds that can't play are skipped, with a warning in debug builds (a square's `.frequency` or note below 64 Hz plays at 64 Hz, the wave channel's below 32 Hz at 32 Hz). Every example except `hello`, `bunnymark` and `jukebox` (whose music and effects are sampled, with PSG blips for its menu) uses the PSG for all its sounds, and `serval_splash()` for its jingle; `breakout`, `platformer`, `shmup`, `blackjack` and `fireflies` (from its Lua script) also play PSG music, `blackjack`'s walking bass on the wave channel.
 
 **Priorities:** each channel plays one sound at a time. A sound's `.priority` (0 by default) decides what happens when another is played on its channel while it plays: one of equal or higher priority replaces it, one of lower priority is dropped. So a jingle with priority 1 can share square 2 with priority-0 gunfire without being cut off. A sound plays for its `.frames`; one without `.frames` that fades out holds its channel until it is silent (computed from its volume and fade), one that holds its volume or fades in holds it until replaced.
 
@@ -100,14 +100,12 @@ psg_play(SND_HIT);
 
 ## Maxmod (BlocksDS)
 
-**Decided:** tracker music and sampled sound effects will be played by Maxmod, from the BlocksDS fork ([blocksds/maxmod](https://github.com/blocksds/maxmod), a mirror of [codeberg.org/blocksds/maxmod](https://codeberg.org/blocksds/maxmod)): it is actively maintained, needs no devkitARM, and is the ecosystem the DS target plans on ([platforms.md](platforms.md#targets)). Not linked yet. What the choice implies:
+**Implemented:** tracker music and sampled sound effects are played by Maxmod, from the BlocksDS fork ([blocksds/maxmod](https://github.com/blocksds/maxmod), a mirror of [codeberg.org/blocksds/maxmod](https://codeberg.org/blocksds/maxmod)): it is actively maintained, needs no devkitARM, and is the ecosystem the DS target plans on ([platforms.md](platforms.md#targets)). The engine vendors tag `v1.24.0-blocks` (`a797317`, 2026-09-13, the latest tag), its GBA sources only (`third_party/maxmod/`, whose `VENDORED.md` says what was left out: the DS build, the makefiles, the documentation), compiled into the engine's library as upstream's GBA build compiles it (Thumb, `-O2`, its hot routines in IWRAM as ARM code). A game links it only if it registers a bank: `audio_bank_set()` hooks the mixer into `frame_end()` and the VBlank handler, as palette writes and raster effects hook themselves in, and sets the table through which `music_*()` and `sfx_*()` reach Maxmod (`src/gba/sampled_audio.c`, which without a bank only warns), so other games keep their IWRAM, also those that call `music_*()` and `sfx_*()` (every scripted game does, through the VM's SYS calls; `tests/rom/sampled_audio_calls_main.c` checks its link map).
 
-- **Licence: ISC** (`COPYING`: © 2008-2009 Mukunda Johnson, 2021-2026 Antonio Niño Díaz, 2023 Lorenzooone). Games will include its notice ([licensing.md](licensing.md)); no copyleft.
-- **`mmutil` from BlocksDS builds the sound bank** ([blocksds/mmutil](https://github.com/blocksds/mmutil), also ISC). Studio Advance runs it; a CMake function for games built by hand is post-1.0.
+- **Licence: ISC** (`COPYING`: © 2008-2009 Mukunda Johnson, 2021-2025 Antonio Niño Díaz, 2023 Lorenzooone). A game that links it includes its notice ([licensing.md](licensing.md)); no copyleft.
+- **`mmutil` from BlocksDS builds the sound bank** ([blocksds/mmutil](https://github.com/blocksds/mmutil), also ISC: `COPYING` © 2008 Mukunda Johnson; its `source/nds.c` adds © 2026 Antonio Niño Díaz), at the same tag, `v1.24.0-blocks` (`f8abd4f`). Studio Advance runs it; games built by hand call `serval_add_soundbank()` ([below](#sound-bank)). `tools/build-mmutil.sh DIR` builds it from that tag (checking its commit), and `tools/setup-dev.sh` installs it into `~/opt/mmutil-1.24.0-blocks/` and exports `SERVAL_MMUTIL`.
 - **The bank's format is the linked Maxmod's soundbank format**, opaque to games ([below](#sound-bank)), so the API doesn't depend on it.
-- **`serval.json` will gain an `mmutil` version** (an additive manifest field, [releases.md](releases.md#manifest)) when the sound bank, tracker music and sampled effects are implemented, so that the editor runs the `mmutil` matching the engine's Maxmod.
-
-Checked against BlocksDS's sources at tag `v1.24.0-blocks` (`a797317`, 2026-09-13, the latest tag) and `master` at `0ca65d5` (2026-10-07).
+- **`serval.json` names the `mmutil` version**, `"toolchain": {"mmutil": "1.24.0-blocks"}` (exact; the BlocksDS tag is `v` and this, and `mmutil -V` prints `mmutil v1.24.0-blocks`), an additive manifest field ([releases.md](releases.md#manifest)), so that the editor runs the `mmutil` matching the engine's Maxmod. `serval_add_soundbank()` refuses any other version.
 
 ### What the player and the mixer are written in
 
@@ -120,78 +118,94 @@ Checked against BlocksDS's sources at tag `v1.24.0-blocks` (`a797317`, 2026-09-1
 | A GBA mixer in C (`MM_GBA_MIXER_IN_C`; `master` only, since 2026-09-24) | C | `source/gba/mixer.c`; its comment says it is for debugging: "much slower than the assembly version", with noise during playback |
 | A headless backend (`master` only, since 2026-09-25): the same player, with a C mixer writing 8-bit stereo at any sample rate into a buffer (`mmMix()`) | C | `source/headless/`, `include/maxmod_headless.h`; built by the repository's `CMakeLists.txt` (which builds only this backend), for Emscripten too (`build_emscripten.sh`, with an SDL3 demo player) |
 
-**What this means for the web:** the GBA mixer can't run there (it is ARM assembly, and feeds DMA FIFOs the web doesn't emulate), but the player is C, so the web doesn't need a different MOD/XM player: Maxmod's C player with a C mixer can mix straight into the page's audio output, from the same bank. The headless backend is exactly that, once it is in a release; its mixer reads the GBA bank's sample format (`mm_mas_gba_sample`, in `source/headless/mixer.c`). To check then: it allocates (its mixer `calloc`s a buffer in every `mmMix()` call, `mmInitDefaultMem()` allocates the channels, and the `mmInit()` taking the caller's memory is still private: "TODO: Make this public"), against the engine's no-malloc rule, and it outputs 8-bit samples. Until a web player exists the web keeps [silent stubs](#web), also after the GBA plays tracker music and sampled effects.
+**What this means for the web:** the GBA mixer can't run there (it is ARM assembly, and feeds DMA FIFOs the web doesn't emulate), but the player is C, so the web doesn't need a different MOD/XM player: Maxmod's C player with a C mixer can mix straight into the page's audio output, from the same bank. The headless backend is exactly that, once it is in a release: it isn't in `v1.24.0-blocks`, the release the engine vendors (checked when vendoring it, 2026-10-09: the tag has no `source/headless/`). Its mixer reads the GBA bank's sample format (`mm_mas_gba_sample`, in `source/headless/mixer.c`). To check then: it allocates (its mixer `calloc`s a buffer in every `mmMix()` call, `mmInitDefaultMem()` allocates the channels, and the `mmInit()` taking the caller's memory is still private: "TODO: Make this public"), against the engine's no-malloc rule, and it outputs 8-bit samples. Until a web player exists the web keeps [silent stubs](#web).
 
 ### Hardware it claims
 
-From `source/gba/mixer.c` (every hardware register the GBA build writes is in that file) and `documentation/hardware_usage.md`:
+From `source/gba/mixer.c` (every hardware register the GBA build writes is in that file) and Maxmod's `documentation/hardware_usage.md`. All of it from `audio_bank_set()` with a bank until `audio_bank_set(NULL)`; nothing before the first bank, in a game that never registers one, or in web builds.
 
-- **Timer 0:** the sample clock (reloaded with −2^24 / rate: −1064 at 15,768 Hz), from `mmInit()` to `mmEnd()`.
+- **Timer 0:** the sample clock (reloaded with −2^24 / rate: −1064 at 15,768 Hz).
 - **DMA 1 and DMA 2:** feed FIFO A and FIFO B from the wave buffer (repeat, FIFO timing, 32-bit), restarted by `mmVBlank()` every other VBlank.
-- **Direct Sound A and B** and their FIFOs: A plays left, B right. `SOUNDCNT_H` is written whole: `0x9A0C` in `mmInit()` (A and B at 100%, both on timer 0, FIFOs reset), 0 in `mmEnd()`. Both writes also set its bits 0-1, the tone generators' share of the volume, to 25%: the engine must set them back to 100% (`SDS_DMG100`, as `serval_psg_init()` does) after either, or the PSG drops to a quarter of its volume when a bank is registered.
+- **Direct Sound A and B** and their FIFOs: A plays left, B right. `SOUNDCNT_H` is written whole: `0x9A0C` in `mmInit()` (A and B at 100%, both on timer 0, FIFOs reset), 0 when the bank is unregistered (Maxmod's `mmMixerEnd()`). Both writes also set its bits 0-1, the tone generators' share of the volume, to 25%; the engine sets them back to 100% (`SDS_DMG100`, as `serval_psg_init()` does) after each, so the PSG keeps its volume.
 - **`SOUNDCNT_X`:** master enable (`0x80`; the engine already turns sound on).
-- **The VBlank interrupt:** `mmVBlank()` swaps the double buffer's halves. "The timing is extremely critical, so make sure the handler does not get interrupted" (`hardware_usage.md`): it runs first in the engine's VBlank handler, from libtonc's interrupt dispatcher, which the engine owns.
+- **The VBlank interrupt:** `mmVBlank()` swaps the double buffer's halves. "The timing is extremely critical, so make sure the handler does not get interrupted" (`hardware_usage.md`): it runs first in the engine's VBlank handler, from libtonc's interrupt dispatcher, which doesn't nest. The handler then mixes for frames that overrun ([below](#frame-loop)), then restarts raster effects' DMA 0 if one is on ([core-api.md](core-api.md#hardware-the-engine-uses)).
 - **Not used:** DMA 0 and 3, timers 1-3, `SOUNDCNT_L` and the tone generators.
 
 ### CPU and memory
 
-Maxmod's own figures, for 8 channels mixed at 16 kHz (`documentation/cpu_usage.md`, `documentation/memory_usage.md`), measured with the same `WAITCNT` as `serval_init()` sets (`0x4317`, libtonc's `WS_STANDARD`):
+Measured with the engine's fixed settings ([configuration](#configuration): 15,768 Hz, 12 mixer channels), in a release build, by the sampled audio tests (`tests/rom/sampled_audio_tests.c`, which log them), as `frame_cpu_cycles()` counts them; a frame's budget is 280,896 cycles:
 
-- **CPU:** about 2.6% of a frame with nothing playing; per active channel, about 1.2-1.5% for mixing (hard-panned channels mix fastest) and about 2% with module playback, so roughly 2.6% + 2% × channels: about 18% of a frame for an 8-channel module at its busiest.
-- **Memory:** IWRAM about 5.7 KB (including the assembly mixer, the player's ARM routines and the mixing buffer: 1,056 bytes at 16 kHz), EWRAM about 1.8 KB (the wave buffer, the same size, and the channel arrays: 40 + 28 + 16 bytes per channel), ROM about 6.5 KB, plus the bank. IWRAM is the scarce one: 32 KB shared with games, of which the bigger examples use 16-22 KB ([development.md](development.md#memory-use)).
+| Playing | Cycles a frame | Of a frame |
+| --- | --- | --- |
+| Nothing (a bank registered) | 8,175 | 2.9% |
+| A module's single note | 14,539 | 5.2% |
+| 4 effects | 23,832 | 8.5% |
+| 8 effects | 39,563 | 14.1% |
+| 12 effects (every mixer channel) | 55,470 | 19.7% |
 
-The engine's own figures (`frame_cpu_cycles()`, `tools/bench.sh`, `arm-none-eabi-size`) are measured when it is implemented.
+So about 2.9% + 1.4% per channel playing: 14-15% for a busy 8-channel module, 20% with every channel busy. Maxmod's own figures (`documentation/cpu_usage.md`, 8 channels at 16 kHz, the same `WAITCNT`) are in line: about 2.6% with nothing playing, 1.2-1.5% per channel mixing, about 2% with module playback. The `jukebox` example's theme (a four-channel MOD) takes 11.0% of a frame on average and 17.9% at its busiest, the example's own work included (`frame_cpu_cycles()` over its first 30 seconds, release build); with two effects started every 2 seconds on top, 11.5% and 20.3%.
+
+**Memory**, for the `jukebox` example's release build (`arm-none-eabi-size`, the map): IWRAM 6,504 bytes (Maxmod's assembly mixer 1,968, its ARM routines 2,504, the mixing buffer 1,056, the mixer's fetch buffer 400, the player's state and the engine's), EWRAM 2,028 bytes (the wave buffer, 1,056, the channels, 848, the effects' handles, 96, and the mixer's counts), ROM about 15 KB of code, plus the bank (the jukebox's is 50 KB). Maxmod's own figures say about 5.7 KB of IWRAM. IWRAM is the scarce one: 32 KB shared with games, of which the bigger examples use 16-22 KB ([development.md](development.md#memory-use)). Games that never register a bank link none of it, even if they call `music_*()` and `sfx_*()` (about 400 bytes of ROM and 8 of IWRAM for the calls); every ROM pays 8 bytes of IWRAM for `frame_end()`'s hook and flag.
 
 ## Sound bank
 
-**Planned.** Declared: `audio_bank_set(const void* bank)`. In this engine version it ignores the bank and warns once.
+**Implemented** (`audio_bank_set(const void* bank)`, `src/gba/maxmod.c`; `serval_add_soundbank()` in `cmake/Serval.cmake`, `tools/soundbank.py`).
 
-- **Built by BlocksDS's `mmutil`** from the project's modules and WAV files: a binary bank, linked into the ROM, and a header numbering modules `MOD_<file>` and samples `SFX_<file>` from 0, plus `MSL_NSONGS`, `MSL_NSAMPS` and `MSL_BANKSIZE` (`source/msl.cpp` in mmutil). The sample count includes the modules' samples. A sample file named `none` would make mmutil define `SFX_NONE`, which `audio.h` already defines: the build must refuse it.
-- **Opaque:** its format is the linked Maxmod's soundbank (mmutil's GBA format). Games and Studio Advance pass it whole; nothing in the engine's API depends on its layout. Projects keep modules and WAVs as sources, like all assets, so a format change in a Maxmod update costs a rebuild with the matching `mmutil`, not a project change; `serval.json`'s `mmutil` version says which one.
+- **Built by BlocksDS's `mmutil`** from the project's modules and WAV files: a binary bank, linked into the ROM, and a header numbering modules `MOD_<file>` and samples `SFX_<file>` from 0, plus `MSL_NSONGS`, `MSL_NSAMPS` and `MSL_BANKSIZE` (`source/msl.c` in mmutil). The numbers follow the order the files are given; the sample count includes the modules' samples, numbered as each module is added, before the WAVs after it (a jukebox of two modules then four WAVs numbers the WAVs 11-14). A file's name gives its define up to the first dot, upper-cased, with punctuation as `_`. A sample file named `none` would make mmutil define `SFX_NONE`, which `audio.h` already defines: the build refuses it.
+- **`serval_add_soundbank(<target> <name> <files...>)`** builds one at build time for a game built by hand (Studio Advance runs `mmutil` itself), from modules (`.mod`, `.s3m`, `.xm`, `.it`) and WAV samples (`.wav`): `<name>.c`, the bank as `const unsigned char <name>[]` (word-aligned, in ROM), joins the target's sources, and `<name>.h`, mmutil's defines plus the bank's declaration, its include path. The game calls `audio_bank_set(<name>)`. It refuses another kind of file, two files whose names give the same define, and a sample named `none` (also a module's sample named `#none`, which mmutil also gives an `SFX_` define), and an `mmutil` other than `serval.json`'s version; it finds `mmutil` as `SERVAL_MMUTIL` (a CMake or environment variable) or on the `PATH`. The engine's tests and the `jukebox` example use it (`tests/CMakeLists.txt`, `examples/CMakeLists.txt`); web builds build the bank too, since the game's code names it.
+- **Scripts:** the header's defines are plain `#define NAME number` lines, so `svm.py --header` reads them (mmutil's own header too, with its CRLF line ends): a Lua script names `MOD_*` and `SFX_*` like any other constant of the headers `serval_add_script()` is given.
+- **Opaque:** its format is the linked Maxmod's soundbank (mmutil's GBA format). Games and Studio Advance pass it whole; nothing in the engine's API depends on its layout. Projects keep modules and WAVs as sources, like all assets, so a format change in a Maxmod update costs a rebuild with the matching `mmutil`, not a project change; `serval.json`'s `toolchain.mmutil` says which one.
 - **Stays in ROM:** Maxmod reads samples and patterns in place (`mmInit()` keeps the pointer), so the bank must stay valid while registered.
-- **Registering** stops any tracker music and sampled effects; another bank replaces it; NULL unregisters it; an invalid pointer is refused (warns), leaving no bank. The PSG is unaffected.
+- **Registering** stops any tracker music and sampled effects (their handles go stale) and starts Maxmod ([hardware](#hardware-it-claims)); another bank replaces it; NULL unregisters it, stopping Maxmod: Direct Sound off, DMA 1 and 2 and timer 0 stopped, the mixer out of `frame_end()` and the VBlank handler, costing nothing again. The music and effects volumes set before carry over. The PSG is unaffected, and keeps its share of the output.
+- **Refused** (warns, leaving no bank, the one registered before stopped too): a pointer outside RAM and ROM or not word-aligned, data without the bank's `*maxmod*` mark, and a bank whose samples and modules aren't where its table says, of their kind (a DS bank's samples are another kind) and of the MAS format version this Maxmod reads (`0x18`, written by `mmutil` 1.24.0: a bank from an `mmutil` of another format is refused rather than misread).
 
 ## Tracker music
 
-**Planned.** Declared: `music_play(u16 music_id, bool loop)`, `music_stop()`, `music_playing()`, `music_pause()`, `music_resume()`, `music_paused()`, `music_set_volume(u8 volume)`, `music_set_speed(u16 percent)`. In this engine version each does nothing (`music_playing()` and `music_paused()` return false) and warns once. The calls mirror `psg_music_*()`:
+**Implemented** (`music_play(u16 music_id, bool loop)`, `music_stop()`, `music_playing()`, `music_pause()`, `music_resume()`, `music_paused()`, `music_set_volume(u8 volume)`, `music_set_speed(u16 percent)`). The calls mirror `psg_music_*()`:
 
 - `music_play()` starts a module (a `MOD_*` number) from its beginning, replacing the one playing, paused or not; `loop` false plays it once, then `music_playing()` turns false. It resets the speed to 100; the volume stays. Without a bank, or with an ID the bank doesn't have, it is ignored with a warning. (Maxmod: `mmStart()` with `MM_PLAY_LOOP` or `MM_PLAY_ONCE`.)
+- **Channels:** a module plays at most 8 channels (the engine's fixed setting, [configuration](#configuration)). One that uses more stops when it reaches the first row that does (Maxmod stops it, `MMCB_SONGERROR`), and debug builds warn; `music_playing()` turns false.
 - `music_stop()`; `music_playing()` is true while a module plays, paused or not.
-- `music_pause()` / `music_resume()` hold the music exactly where it is; `music_paused()` tells paused from playing. Pausing with nothing playing, pausing twice and resuming music that isn't paused do nothing; `music_play()`, `music_stop()` and `audio_bank_set()` end a pause. (Maxmod: `mmPause()`, `mmResume()`.)
-- `music_set_volume()`: 0 (silent) to 255 (the default: the module's own volumes), at once, for this module and the next. (Maxmod: `mmSetModuleVolume()`, 0-1024.)
-- `music_set_speed()`: percent of the module's tempo, from where it is, pitch unchanged; 0 means 100, and values outside 50-200 are clamped with a warning: Maxmod's tempo factor ranges from 0.5 to 2.0 (`mmSetModuleTempo()`, `0x200`-`0x800` in Q10).
+- `music_pause()` / `music_resume()` hold the music exactly where it is; `music_paused()` tells paused from playing. Pausing with nothing playing, pausing twice and resuming music that isn't paused do nothing; `music_play()`, `music_stop()` and `audio_bank_set()` end a pause. (Maxmod: `mmPause()`, which silences the module's channels and stops its time, and `mmResume()`.) Effects play on.
+- `music_set_volume()`: 0 (silent) to 255 (the default: the module's own volumes), from the module's next tick (at most a few frames), for this module and the next, and across banks. (Maxmod: `mmSetModuleVolume()`, 0-1024.)
+- `music_set_speed()`: percent of the module's tempo, from where it is, pitch unchanged; 0 means 100, and values outside 50-200 are clamped with a warning: Maxmod's tempo factor ranges from 0.5 to 2.0 (`mmSetModuleTempo()`, `0x200`-`0x800` in Q10). Without a module playing it is ignored, with a warning (as `psg_music_set_tempo()`).
+- **Scripts:** none yet (appended to the SYS page later, [post-1.0](#post-10-planned)).
 
 ## Sampled sound effects
 
-**Planned.** Declared: `typedef u16 Sfx`, `SFX_NONE`, `sfx_play(u16 sfx_id)`, `sfx_play_ex(u16 sfx_id, u8 volume, s8 pan, FIXED pitch, u8 priority)`, `sfx_stop(Sfx)`, `sfx_playing(Sfx)`, `sfx_stop_all()`, `sfx_set_volume(u8 volume)`. In this engine version each does nothing (`sfx_play()` and `sfx_play_ex()` return `SFX_NONE`, `sfx_playing()` false) and warns once. `Sfx` and `SFX_NONE` are not planned themselves: `SFX_NONE` already means what it always will.
+**Implemented** (`typedef u16 Sfx`, `SFX_NONE`, `sfx_play(u16 sfx_id)`, `sfx_play_ex(u16 sfx_id, u8 volume, s8 pan, FIXED pitch, u8 priority)`, `sfx_stop(Sfx)`, `sfx_playing(Sfx)`, `sfx_stop_all()`, `sfx_set_volume(u8 volume)`).
 
-- **IDs and handles:** `sfx_id` is a sample's number in the bank (an `SFX_*` from mmutil's header, from 0). `sfx_play()` returns an `Sfx`, a handle to that one playing, like an `Entity`: it goes stale when the effect ends or is stopped, and is generational, so a stale handle never stops a later effect. `SFX_NONE` (0) never refers to an effect; it is also Maxmod's invalid handle (`MM_SFXHAND_INVALID`).
-- **`sfx_play_ex()`:** volume 0-255; pan −128 (left) to 127 (right), 0 centred; pitch a `FIXED` factor of the recorded pitch (`FX_ONE` as recorded, `FX(2)` an octave up; 0 means `FX_ONE`; clamped to `FX_ONE / 16`-`FX(16)` with a warning); priority 0-255. `sfx_play(id)` is `sfx_play_ex(id, 255, 0, FX_ONE, 0)`. (Maxmod: `mmEffectEx()`, whose rate is 6.10 fixed point and panning 0-255.)
-- **Priority:** when no mixer channel is free, the playing effect of lowest priority stops for the new one if the new one's priority is at least as high, as `PsgSound.priority` works; otherwise the new one doesn't play (`SFX_NONE`). Maxmod's effects have no priority (a new one takes a free channel, else the quietest channel in the background, never a note the music is playing or an effect that hasn't been released: `mmAllocChannel()` in `source/core/mas_arm.c`, channel types in `source/core/channel_types.h`), so the engine keeps it.
-- **Loops:** an effect whose sample has loop points plays until `sfx_stop()` or `sfx_stop_all()`.
-- **`sfx_set_volume()`:** the volume of all effects, 0-255 (255, the default, leaves each effect's own), at once, playing ones too: an options menu's "sound volume". The music and the PSG are unaffected. (Maxmod: `mmSetEffectsVolume()`, 0-1024.)
+- **IDs and handles:** `sfx_id` is a sample's number in the bank (an `SFX_*` from mmutil's header, from 0). `sfx_play()` returns an `Sfx`, a handle to that one playing, like an `Entity`: it goes stale when the effect ends (`sfx_playing()` turns false at the next `frame_end()`) or is stopped, or a bank is registered, and is generational, so a stale handle never stops a later effect: handles count up from 1, skipping `SFX_NONE` and those in use, so a stale one could name a later effect only after 65,535 more have played. `SFX_NONE` (0) never refers to an effect; it is also Maxmod's invalid handle (`MM_SFXHAND_INVALID`). The engine keeps its own handles beside Maxmod's (whose counter is 8 bits).
+- **`sfx_play_ex()`:** volume 0-255; pan −128 (left) to 127 (right), 0 centred; pitch a `FIXED` factor of the recorded pitch (`FX_ONE` as recorded, `FX(2)` an octave up; 0 means `FX_ONE`; clamped to `FX_ONE / 16`-`FX(16)` with a warning); priority 0-255. `sfx_play(id)` is `sfx_play_ex(id, 255, 0, FX_ONE, 0)`. (Maxmod: `mmEffectEx()`, whose rate is 6.10 fixed point, the pitch times 4, and panning 0-255, the pan plus 128.)
+- **Priority:** when no mixer channel is free, the playing effect of lowest priority (the oldest of those) stops for the new one if the new one's priority is at least as high, as `PsgSound.priority` works; otherwise the new one doesn't play (`SFX_NONE`). Maxmod's effects have no priority (a new one takes a free channel, else the quietest channel in the background, never a note the music is playing or an effect that hasn't been released: `mmAllocChannel()` in `source/core/mas_arm.c`, channel types in `source/core/channel_types.h`), so the engine keeps it: when `mmEffectEx()` finds no channel, it cancels that effect and tries again. A module's notes keep their channels, and since a module plays at most 8 of the 12, at least 4 effects can always play.
+- **Loops:** an effect whose sample has loop points (a WAV's `smpl` chunk, forward) plays until `sfx_stop()`, `sfx_stop_all()` or a new bank.
+- **`sfx_set_volume()`:** the volume of all effects, 0-255 (255, the default, leaves each effect's own), at once, playing ones too (Maxmod scales an effect's volume when it starts, so the engine rescales those playing), and across banks: an options menu's "sound volume". The music and the PSG are unaffected. (Maxmod: `mmSetEffectsVolume()`, 0-1024.)
+- **Scripts:** none yet (appended to the SYS page later, [post-1.0](#post-10-planned)).
 
 ## Frame loop
 
-Today `frame_end()` waits for VBlank, does the VBlank flush, then steps PSG sound effects and PSG music ([frame-loop.md](frame-loop.md)). Once tracker music and sampled effects are implemented:
+**Implemented.** Maxmod's wave buffer holds two VBlanks of samples a side (264 at 15,768 Hz, round(rate / 59.737)), in two halves: DMA plays one while the next VBlank's samples are mixed into the other.
 
-- **`frame_end()`**, after the PSG step, calls Maxmod's `mmFrame()`: it runs the player's ticks and mixes the next VBlank's worth of samples (round(rate / 59.737): 264 at 15,768 Hz) into the half of the double buffer that DMA isn't playing.
-- **The VBlank interrupt** runs `mmVBlank()` first, which on alternate VBlanks restarts DMA 1 and 2 at the buffer's start or rewinds the write position (`source/gba/mixer.c`).
+- **`frame_end()`**, after the PSG step, calls Maxmod's `mmFrame()`: it runs the effects' and the player's ticks and mixes the next VBlank's samples into the half DMA isn't playing ([frame-loop.md](frame-loop.md#vblank-flush), step 8).
+- **The VBlank interrupt** runs `mmVBlank()` first, which on alternate VBlanks restarts DMA 1 and 2 at the buffer's start or rewinds the write position (`source/gba/mixer.c`); then raster effects' part, if one is on.
+- **`frame_cpu_cycles()` counts the mixer:** `frame_end()` measures `mmFrame()` and adds its cycles to the frame's, which it counts up to the VBlank wait (the mixer runs after it). So `frame_cpu_cycles()` and `frame_cpu_permille()` say what the game and the mixer together take of a frame; the rest of the VBlank flush (copies to VRAM, OAM and palette RAM, the PSG) stays uncounted, as before.
 
-To settle in the implementation:
+**Frames that overrun.** `mmFrame()` must run once per VBlank: a half left unmixed plays again what it held two VBlanks before (stale, audible). A game frame that overruns into a second VBlank would leave one, and its music would lose a frame's time. So the VBlank handler checks whether `frame_end()` is waiting for that VBlank (`frame_end()` sets a flag around its wait): if not, the game is still at work and can't mix before the next VBlank, so the handler runs `mmFrame()` itself, at once, a whole frame before that half is due. No stale audio, and the music keeps time; the same keeps the audio going while a game runs without calling `frame_end()` (a long load). It costs the overrunning frame the mixer's time, inside the interrupt (other interrupts wait that long; Direct Sound and HBlank DMA don't). Two cases are handled apart:
 
-- `mmFrame()` must run exactly once per VBlank. A game frame that overruns into a second VBlank leaves a half buffer unmixed, which plays stale (audible); the implementation must decide how to handle it (e.g. mixing from the VBlank interrupt instead).
-- `frame_cpu_cycles()` counts a frame up to the VBlank wait, so mixing after it would go unreported: the mixer's cost needs to be reported (folded into the count, or separately).
-- `SOUNDCNT_H`'s PSG share must be restored after `mmInit()` and `mmEnd()` ([above](#hardware-it-claims)).
-- Initialise with `mmInit()` and static buffers (mixing buffer in IWRAM, wave buffer and channels in EWRAM), never `mmInitDefault()`, which `calloc`s. `mmEnd()` calls `free()` (for `mmInitDefault()`'s buffer), so calling it would link newlib's allocator, which every ROM's `*_rom_checks` refuses ([licensing.md](licensing.md#rules-that-keep-it-this-way)); changing banks must avoid it or the engine must supply `free`.
+- **The game is inside a call into Maxmod** (`sfx_play()`, `music_play()`, ...) when the VBlank comes: the handler leaves the mixing to the call, which mixes as it returns (early in the frame: the VBlank has just happened).
+- **A frame ends within a few cycles of VBlank,** after `frame_end()` has set its flag but before the BIOS's `VBlankIntrWait()` starts waiting, which then sleeps through that VBlank to the next. The handler finds the half starting to play unmixed, mixes it at once, from its start, ahead of the DMA reading it (the mixer writes faster than the DMA plays), and points the mixer at the other half again. Only the first few milliseconds of that half (the mixer's time before it writes) can play stale; the music keeps time.
+
+Measured by the sampled audio tests in mGBA: frames of 1.5 VBlanks and 20 VBlanks without `frame_end()` get one mix per VBlank, every one early (none late, none stale), and a module played once ends on the frame it would have without the overruns; frames inside effect calls at VBlank mix as the call returns; the late case is mixed late in each half, with no half left silent; and at every VBlank the half starting to play is the one last mixed (the handler checks it, and the tests read the count).
+
+**Not done:** mixing always from the interrupt would serve every case alike, but would put the mixer's 3-20% of a frame at the start of VBlank, before `frame_end()`'s copies to VRAM, OAM and palette RAM, which must finish within VBlank.
 
 ## Configuration
 
-**Planned, post-1.0.** The mix rate and the channel counts will be set per game at build time (new `serval_add_rom()` keywords; additive); until then the implementation uses fixed defaults. Maxmod's rates are presets with a whole number of samples per VBlank: 8, 10, 13, 16 (its standard), 18, 21, 27 and 31 kHz, quality and CPU cost both rising with the rate. It takes up to 32 module channels and 32 mixer channels (`mmInit()` refuses more); the music's notes and the effects share the mixer channels.
+**Fixed in this version** (per game at build time is planned, post-1.0: new `serval_add_rom()` keywords, additive): Maxmod's 16 kHz rate, **15,768 Hz** (`MM_MIX_16KHZ`, its standard: 264 samples a VBlank), **8 module channels** and **12 mixer channels**, the music's notes and the effects sharing the mixer channels. Chosen from Maxmod's figures and measured ([above](#cpu-and-memory)): 15,768 Hz is Maxmod's "OK quality" standard, the mixer costs per channel playing, and 12 channels at their busiest take 20% of a frame; 8 module channels play most MODs and XMs (4-8 channels), and leave 4 mixer channels to effects whatever the music does. Maxmod's rates are presets with a whole number of samples per VBlank: 8, 10, 13, 16 (its standard), 18, 21, 27 and 31 kHz, quality and CPU cost both rising with the rate. It takes up to 32 module channels and 32 mixer channels (`mmInit()` refuses more).
 
 ## Web
 
-The PSG plays on the web as on the GBA: `src/web/apu.c` emulates the tone generators from the same registers, the wave channel included ([above](#wave-channel)). Tracker music and sampled effects don't: the web build compiles the same stubs (`src/gba/sampled_audio.c`), so the calls work, play nothing, and warn once in debug builds (in the browser console), and it keeps them after the GBA implements the mixer, until it has a player of its own (post-1.0, no API change). Direct Sound, timers, DMA and interrupts are not emulated ([platforms.md](platforms.md#what-is-faked-or-missing)); Maxmod's player being C, the web's player can be [Maxmod's own](#what-the-player-and-the-mixer-are-written-in), mixing into the page's audio output instead of going through emulated Direct Sound.
+The PSG plays on the web as on the GBA: `src/web/apu.c` emulates the tone generators from the same registers, the wave channel included ([above](#wave-channel)). Tracker music and sampled effects don't: the web build compiles silent stubs (`src/web/sampled_audio.c`), so the calls work, play nothing (`music_playing()` false, `sfx_play()` `SFX_NONE`), and warn once each in debug builds (in the browser console); the `jukebox` example's page shows its menus without the music and effects. Direct Sound, timers, DMA and interrupts are not emulated ([platforms.md](platforms.md#what-is-faked-or-missing)), and Maxmod's headless C backend, which could mix into the page's audio output from the same bank ([above](#what-the-player-and-the-mixer-are-written-in)), isn't in the release the engine vendors. A web player is post-1.0, with no API change.
 
 ## Other targets
 
@@ -219,7 +233,7 @@ bool psg_music_paused(void);
 void psg_music_set_tempo(u16 tempo);  // BPM from the current position; 0: the song's own
 ```
 
-Planned (declared, warn when used; [releases.md](releases.md#planned-api)):
+Implemented (Maxmod; silent stubs on the web):
 
 ```c
 // The sound bank, tracker music
@@ -243,11 +257,23 @@ void sfx_stop_all(void);
 void sfx_set_volume(u8 volume);                    // 0-255, all effects
 ```
 
+```cmake
+serval_add_soundbank(<target> <name> <files...>)   # modules and WAVs -> <name>.c, <name>.h
+```
+
+Planned (declared, warn when used; [releases.md](releases.md#planned-api)):
+
+```c
+// The wave channel
+PSG_WAVE                                           // PsgSound.channel, PsgTrack.channel: 3
+void psg_waves_set(const u32 *waves, u8 count);    // 32 4-bit steps (4 words) per waveform
+```
+
 ## Post-1.0 (planned)
 
 Each is additive: new functions, CMake keywords or SYS calls.
 
-- Configuration: the mix rate and channel counts per game, and a CMake function building a bank with `mmutil` for games built without Studio Advance.
+- Configuration: the mix rate and channel counts per game.
 - Tracker music and sampled effects on the web ([above](#web)).
 - Jingles (Maxmod's second player layer, `mmJingleStart()`), the module's position and song events, changing a playing effect (volume, pan, pitch: `mmEffectVolume()`, `mmEffectPanning()`, `mmEffectRate()`).
 - SYS calls for tracker music and effects, appended to the VM's SYS page.

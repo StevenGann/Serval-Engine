@@ -25,6 +25,7 @@ Implemented in 1.0:
 - Physics: bouncing bodies (gravity in any direction and per body, bounce up to a perfect one that never loses height, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; kinematic bodies that move only by their velocity; rectangle overlap and hit-side tests.
 - Paths: movement patterns as data tables (lines, swoops, circles, weaves), mirrored or rotated per entity.
 - Sound on the four PSG tone generators, the wave channel's waveforms the game's own: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
+- Tracker music (MOD, S3M, XM, IT) and sampled sound effects (WAV), mixed by Maxmod (BlocksDS's) from a sound bank built by `mmutil` (`serval_add_soundbank()`), beside the PSG: modules looped or played once, pause and resume, volume and speed; effects with volume, pan, pitch, priorities, loops and generational handles; the audio kept fed through frames that overrun (silent on the web for now).
 - Screen fades (hardware brightness), alpha blending (see-through layers and semi-transparent sprites: `screen_set_blend()`, `SPRITE_BLEND`), color mixing (`color_mix()`, matching the hardware's blending), palette writes for palette cycles and fades (`sprite_set_colors()`, `tileset_set_colors()`, copied in VBlank) and the backdrop color; raster effects: a scroll offset or backdrop color per scanline (a ripple, a sky gradient), by HBlank DMA, drawn the same on the web.
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
@@ -34,7 +35,6 @@ Implemented in 1.0:
 
 Planned, declared in 1.0 and implemented in 1.x versions (designed in [`docs/`](docs/README.md); the [full list of names](docs/api-freeze.md#planned-in-1x-declared-now)):
 
-- Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank.
 - Sprites: LZ77-compressed sprites.
 - Tilemaps: LZ77-compressed tilesets, ladders and floor slopes.
 
@@ -61,6 +61,7 @@ Later, with no API yet (each can be added without breaking games): palette shari
 | [`blackjack`](examples/blackjack/main.c) | Blackjack in a bold, bouncy modern card-game style: cards composed of shared sprite pieces that slide, flip, tilt and wobble, a swirling background, banners, chip and number pops, a swing tune with its walking bass on the wave channel, a bankroll kept in save data |
 | [`fireflies`](examples/fireflies/main.c) | A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely a script in the Lua subset (`fireflies.lua`), compiled to bytecode for the VM at build time: objects with event handlers, waits, spawning, scoring, the timer, the HUD, sound and music; C only loads the blob, names the collision pair the VM tests (`vm_collide()`) and runs the frame loop |
 | [`effects`](examples/effects/main.c) | The engine's screen effects, a scene each, switched with L and R: alpha blending (a see-through waterfall, glowing wisps and a lamp's halo, blended shadows, blending paused by a brightness fade), palette writes (a sky fading to dusk, a palette cycle on the water, a gem's hit flash), runtime sprite tiles (card faces composed when they are dealt, a frame counter rebuilt every frame), streamed sprites (plasma orbs of 32 frames drawn from 8 slots) and raster effects (a lake's reflections rippling line by line, a sunset sky gradient) |
+| [`jukebox`](examples/jukebox/main.c) | Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop, beside PSG blips; the frame's CPU time, the mixer's included, on screen |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.
 
@@ -71,15 +72,16 @@ Requires CMake ≥ 3.25, Ninja, Python 3.11 or later and an `arm-none-eabi` GCC 
 ```sh
 tools/setup-dev.sh --add-to-shell && . ~/opt/serval-env.sh   # Linux; or install by hand and
                                                              # export ARM_GNU_TOOLCHAIN=/path/to/arm-gnu-toolchain
+                                                             # (and SERVAL_MMUTIL: tools/build-mmutil.sh)
 cmake --preset gba-release
 cmake --build --preset gba-release
 # -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba
+#    effects.gba, jukebox.gba
 ```
 
 Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()` (and compiles Lua scripts with `serval_add_script()`); see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.
 
 ## License
 
-Serval Engine is released under the [MIT License](LICENSE), so it can be linked into any game, including commercial ones. Games must include the engine's copyright notice and libtonc's (and Maxmod's, once the engine links it for tracker music and sampled sound; web builds also Emscripten's and musl's); see [docs/licensing.md](docs/licensing.md).
+Serval Engine is released under the [MIT License](LICENSE), so it can be linked into any game, including commercial ones. Games must include the engine's copyright notice and libtonc's (and Maxmod's, if they play tracker music or sampled sound; web builds also Emscripten's and musl's); see [docs/licensing.md](docs/licensing.md).

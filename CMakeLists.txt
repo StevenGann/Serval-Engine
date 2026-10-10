@@ -90,6 +90,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/core.c
         src/gba/debug.c
         src/gba/map.c
+        src/gba/maxmod.c
         src/gba/music.c
         src/gba/palette.c
         src/gba/psg.c
@@ -109,6 +110,12 @@ if(SERVAL_TARGET_GBA)
     # libtonc stays available to games that want it, but public engine headers
     # never require it.
     target_link_libraries(serval PUBLIC tonc PRIVATE serval_warnings)
+    # maxmod: tracker music and sampled sound effects (src/gba/maxmod.c).
+    # Maxmod's objects are part of the engine's library; its headers are the
+    # engine's business (no public header includes them).
+    target_sources(serval PRIVATE $<TARGET_OBJECTS:maxmod>)
+    target_include_directories(serval PRIVATE
+        $<TARGET_PROPERTY:maxmod,INTERFACE_INCLUDE_DIRECTORIES>)
     # Game code (serval_add_rom() targets, and libraries linking serval) gets
     # its own sections too, so --gc-sections drops what the game doesn't use.
     target_compile_options(serval INTERFACE -ffunction-sections -fdata-sections)
@@ -130,7 +137,6 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/palette.c
         src/gba/psg.c
         src/gba/raster.c
-        src/gba/sampled_audio.c
         src/gba/screen.c
         src/gba/splash.c
         src/gba/splash_art.c
@@ -143,6 +149,7 @@ elseif(SERVAL_TARGET_WEB)
         src/web/apu.c
         src/web/platform.c
         src/web/ppu.c
+        src/web/sampled_audio.c
         "${CMAKE_CURRENT_BINARY_DIR}/sys8_glyphs.c"
     )
     target_compile_definitions(serval PUBLIC SERVAL_WEB)

@@ -49,13 +49,13 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 25 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+Each of these 10 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
-| Sound bank | `audio_bank_set` | [audio.md](audio.md#sound-bank) |
-| Tracker music | `music_play`, `music_stop`, `music_playing`, `music_pause`, `music_resume`, `music_paused`, `music_set_volume`, `music_set_speed` | [audio.md](audio.md#tracker-music) |
-| Sampled sound effects | `sfx_play`, `sfx_play_ex`, `sfx_stop`, `sfx_playing`, `sfx_stop_all`, `sfx_set_volume` (the handle type `Sfx` and `SFX_NONE` are ordinary declarations) | [audio.md](audio.md#sampled-sound-effects) |
+| Sound bank: **implemented**, no longer marked planned (on the GBA, by Maxmod; silent stubs on the web; built by `mmutil`, `serval.json`'s `toolchain.mmutil`, or `serval_add_soundbank()`) | `audio_bank_set` | [audio.md](audio.md#sound-bank) |
+| Tracker music: **implemented**, no longer marked planned (no SYS call yet) | `music_play`, `music_stop`, `music_playing`, `music_pause`, `music_resume`, `music_paused`, `music_set_volume`, `music_set_speed` | [audio.md](audio.md#tracker-music) |
+| Sampled sound effects: **implemented**, no longer marked planned (no SYS call yet) | `sfx_play`, `sfx_play_ex`, `sfx_stop`, `sfx_playing`, `sfx_stop_all`, `sfx_set_volume` (the handle type `Sfx` and `SFX_NONE` are ordinary declarations) | [audio.md](audio.md#sampled-sound-effects) |
 | PSG wave channel: **implemented**, no longer marked planned (no SYS call: scripts play it through `psg_play()` of a sound on it and songs with a track on it; `psg_waves_set()` takes a table) | `PSG_WAVE`, `psg_waves_set` | [audio.md](audio.md#wave-channel) |
 | Streamed sprite groups: **implemented**, no longer marked planned (no SYS call: it is a group's flag, in data) | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
@@ -74,8 +74,8 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 
 | Feature | Why adding it later can't break games |
 | --- | --- |
-| Mixer configuration (rate, channels) and a CMake `serval_add_soundbank()` | New CMake keywords and functions; the planned audio API works with defaults |
-| Sampled audio on the web | Implementation behind the planned API; until then the web plays nothing and warns once |
+| Mixer configuration (rate, channels) | New CMake keywords; the audio API works with the fixed defaults (`serval_add_soundbank()`, the CMake function building a bank, came with the implementation) |
+| Sampled audio on the web | Implementation behind the API the GBA implements; until then the web plays nothing and warns once |
 | Jingles, module position and sync events, changing a playing effect; streamed PCM, interactive music | New functions |
 | Palette sharing (reference-counted banks) | Internal: palette writes are already copy-on-write |
 | Palette cycle and fade helpers | New functions over `sprite_set_colors`, `tileset_set_colors` and `color_mix` |
@@ -104,7 +104,7 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 
 - **D1. Version 1.0.0, through 1.0.0-rc.1.** Under semver, 0.x promises nothing, which contradicts the compatibility promise in releases.md and the editor's pin-per-project model. The freeze is what 1.0 means; planned features land in 1.1, 1.2 and so on.
 - **D2. Raster effects are declared as planned API** (the owner's decision, overriding a recommendation to leave them out of 1.0 until implemented). The shape is deliberately small: one table-driven effect at a time (a value per scanline, by HBlank DMA), which suits both the GBA and a web renderer with per-line state. DMA 0 and the HBlank interrupt are reserved for it. More effects, or several at once, can be added later as new functions.
-- **D3. Maxmod comes from BlocksDS.** It is maintained, ISC-licensed, needs no devkitARM, and is the ecosystem the DS target already plans on ([platforms.md](platforms.md)). The audio API does not depend on the choice: the sound bank is opaque and its IDs are the bank's indices. The fork fixes only the bank format (produced by BlocksDS's `mmutil`; `serval.json` gains an `mmutil` version when Maxmod lands) and whether the web can run the same player ([audio.md](audio.md)).
+- **D3. Maxmod comes from BlocksDS.** It is maintained, ISC-licensed, needs no devkitARM, and is the ecosystem the DS target already plans on ([platforms.md](platforms.md)). The audio API does not depend on the choice: the sound bank is opaque and its IDs are the bank's indices. The fork fixes only the bank format (produced by BlocksDS's `mmutil`, whose version `serval.json`'s `toolchain.mmutil` names: `1.24.0-blocks`, the tag the engine vendors) and whether the web can run the same player ([audio.md](audio.md)).
 - **D4. The small implementations were done** (`sprite_groups_mark`/`release`, `color_mix`, `map_tags_in`, `vm_collide`) rather than declared as planned.
 - **D5. `body_bounce` 255 means a perfect bounce.** It closes the "at most 255/256" gap with no new type and no extra IWRAM; widening the pool to `u16` would cost 128 bytes of IWRAM and touch the hot loops for one value.
 - **D6. VM and Lua names equal the C names.** `music_*` is tracker music in C; had the VM kept `VM_SYS_MUSIC_PLAY` and Lua `music_play` for the PSG player, the names would disagree forever.

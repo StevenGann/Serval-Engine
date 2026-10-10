@@ -74,6 +74,38 @@ if(SERVAL_TARGET_GBA)
         GAME_CODE "SVTS")
     target_link_libraries(serval_tests PRIVATE serval_test_harness serval_warnings)
 
+    # maxmod: tracker music and sampled sound effects, in a test ROM of their
+    # own (tests/rom/sampled_audio_main.c: Maxmod's IWRAM doesn't fit beside
+    # the other suites'), with a sound bank of modules and samples made by
+    # tools/make-example-audio.py.
+    serval_add_rom(serval_tests_sampled_audio
+        SOURCES rom/sampled_audio_main.c rom/sampled_audio_tests.c
+        TITLE "SV AUDIO"
+        GAME_CODE "SVTA")
+    target_link_libraries(serval_tests_sampled_audio PRIVATE serval_test_harness serval_warnings)
+    serval_add_rom_checks(serval_tests_sampled_audio)
+    # Every music_*() and sfx_*() call without a bank, as scripted games make
+    # them: no Maxmod linked (rom/check-no-maxmod.cmake reads the map).
+    serval_add_rom(serval_sampled_audio_calls SOURCES rom/sampled_audio_calls_main.c
+        TITLE "SV SFX CALLS" GAME_CODE "SVTC")
+    target_link_libraries(serval_sampled_audio_calls PRIVATE serval_warnings)
+    serval_add_rom_checks(serval_sampled_audio_calls)
+    add_test(NAME sampled_audio_calls_link_no_maxmod
+        COMMAND "${CMAKE_COMMAND}"
+                "-DMAP=$<TARGET_FILE_DIR:serval_sampled_audio_calls>/serval_sampled_audio_calls.map"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/check-no-maxmod.cmake")
+    set(test_audio_dir "${CMAKE_CURRENT_BINARY_DIR}/test_audio")
+    set(test_audio tone.mod wide.mod beep.wav hum.wav)
+    list(TRANSFORM test_audio PREPEND "${test_audio_dir}/")
+    add_custom_command(
+        OUTPUT ${test_audio}
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+                tests "${test_audio_dir}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+        COMMENT "Making the sampled audio tests' modules and samples"
+        VERBATIM)
+    serval_add_soundbank(serval_tests_sampled_audio test_bank ${test_audio})
+
     # One more test ROM per save type other than SRAM: the save suites, on
     # the ROM's Flash or EEPROM (tests/rom/save_main.c).
     set(save_test_types FLASH64K FLASH128K EEPROM8K EEPROM512)
@@ -104,6 +136,15 @@ if(SERVAL_TARGET_GBA)
                     "-DREJECT=Detected (Flash|EEPROM)"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
         set_tests_properties(rom_tests PROPERTIES TIMEOUT 60)
+        add_test(NAME rom_tests_sampled_audio # maxmod:
+            COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
+                    "-DROM=$<TARGET_FILE_DIR:serval_tests_sampled_audio>/serval_tests_sampled_audio.gba"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
+        set_tests_properties(rom_tests_sampled_audio PROPERTIES TIMEOUT 120)
+        add_test(NAME rom_tests_sampled_audio_calls # maxmod:
+            COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
+                    "-DROM=$<TARGET_FILE_DIR:serval_sampled_audio_calls>/serval_sampled_audio_calls.gba"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
         set(expect_FLASH64K "Detected Flash savegame")
         set(reject_FLASH64K "Detected (SRAM|EEPROM)|Updating flash chip")
         set(expect_FLASH128K "Detected Flash savegame@@Updating flash chip from 512kb to 1Mb")
@@ -217,6 +258,12 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # The sound bank builder (tools/soundbank.py): mmutil's names, what it
+    # refuses (a sample named "none" among them), and a whole bank with the
+    # mmutil serval_add_soundbank() found.
+    add_test(NAME soundbank_tool
+        COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_MMUTIL=${SERVAL_MMUTIL}"
+                "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/soundbank_test.py")
     # Runs a script blob on the VM and prints what it did (tests/svlua/runner.c),
     # for the compiler's tests: compiled Lua run on the real VM.
     add_executable(svlua_runner svlua/runner.c)
@@ -257,6 +304,21 @@ else()
     serval_add_script(serval_api_only_check ../examples/fireflies/fireflies.lua
                       HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
                               serval/sprites.h serval/path.h serval/screen.h)
+    # The jukebox example includes its sound bank's header: the bank is built
+    # for this check too (examples/CMakeLists.txt).
+    set(jukebox_audio theme.mod calm.mod coin.wav laser.wav boom.wav engine.wav)
+    list(TRANSFORM jukebox_audio PREPEND "${CMAKE_CURRENT_BINARY_DIR}/jukebox_audio/")
+    add_custom_command(
+        OUTPUT ${jukebox_audio}
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+                jukebox "${CMAKE_CURRENT_BINARY_DIR}/jukebox_audio"
+        DEPENDS "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+        COMMENT "Making the jukebox's modules and samples"
+        VERBATIM)
+    serval_add_soundbank(serval_api_only_check jukebox_bank ${jukebox_audio})
+    # Scripts name a bank's modules and samples from its generated header.
+    serval_add_script(serval_api_only_check soundbank_names.lua
+                      HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h")
     # A hand-written listing (.svm) through serval_add_script() too.
     add_subdirectory(svm)
     add_dependencies(serval_host_tests serval_svm_listing_check)

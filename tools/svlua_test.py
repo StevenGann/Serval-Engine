@@ -485,34 +485,10 @@ REJECTED = {
     "color_rgb_variable": (OBJ + "function A:step() local r = 8; local c = COLOR_RGB(r, 0, 0) "
                            "end", 3, 52, r"^COLOR_RGB\(r, g, b\) takes constants"),
     "color_rgb_arity": ("c = { COLOR_RGB(1, 2) }", 1, 7, r"^COLOR_RGB takes 3 arguments, not 2$"),
-    # Top-level names of the engine's planned functions, and their uses (each
-    # planned in this version: implementing one moves its case to the C
+    # Top-level names of the engine's planned functions, and their uses: none
+    # is left in this version (PlannedNames tests the rules with a planned
+    # function of its own; implementing one moved its cases to the C
     # functions' below, or the builtins')
-    "planned_function": ("function music_play() end", 1, 10,
-                         r"^function music_play: music_play is reserved: it names a planned "
-                         r"engine function, which a later engine version may make a builtin$"),
-    "planned_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
-    "planned_object": ("audio_bank_set = object {}", 1, 1,
-                       r"^object audio_bank_set: audio_bank_set is reserved"),
-    "planned_array": ("music_set_volume = array(4)", 1, 1,
-                      r"^array music_set_volume: music_set_volume is reserved"),
-    "planned_rom_array": ("music_resume = { 1, 2 }", 1, 1,
-                          r"^array music_resume: music_resume is reserved"),
-    "planned_local_function": ("local function music_stop() end", 1, 16,
-                               r"^local function music_stop: music_stop is reserved"),
-    "planned_top_local": ("local sfx_set_volume = 0", 1, 7,
-                          r"^local sfx_set_volume: sfx_set_volume is reserved"),
-    "planned_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
-                          r"^local sfx_stop_all: sfx_stop_all is reserved"),
-    "planned_called": (OBJ + "function A:step() music_play(0, true) end", 3, 19,
-                       r"^music_play is planned, not implemented in this engine version \(tracker "
-                       r"music, docs/audio\.md#tracker-music\): scripts can't use it yet$"),
-    "planned_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
-                     r"^sfx_playing is planned, not implemented in this engine version"),
-    "planned_assigned": (OBJ + "function A:step() music_set_speed = 1 end", 3, 19,
-                         r"^music_set_speed is planned, not implemented in this engine version"),
-    "planned_initial_value": ("x = music_paused", 1, 5,
-                              r"^music_paused is planned, not implemented in this engine version"),
     # Top-level names of the engine's other C functions (implemented, no
     # builtin), and their uses
     "c_function": ("function sprite_draw() end", 1, 10,
@@ -528,6 +504,28 @@ REJECTED = {
                           r"engine version has no builtin for it$"),
     "c_function_read": ("x = frame_count", 1, 5,
                         r"^frame_count is an engine C function, which scripts can't call"),
+    # Tracker music and sampled effects: planned until 1.x implemented them
+    # (C functions now, without builtins yet)
+    "c_function_music": ("function music_play() end", 1, 10,
+                         r"^function music_play: music_play is reserved: it is an engine C "
+                         r"function, which scripts may get as a builtin in a later version$"),
+    "c_function_sfx_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
+    "c_function_bank_object": ("audio_bank_set = object {}", 1, 1,
+                               r"^object audio_bank_set: audio_bank_set is reserved: it is an "
+                               r"engine C function"),
+    "c_function_rom_array": ("music_resume = { 1, 2 }", 1, 1,
+                             r"^array music_resume: music_resume is reserved"),
+    "c_function_local_function": ("local function music_stop() end", 1, 16,
+                                  r"^local function music_stop: music_stop is reserved"),
+    "c_function_top_local": ("local sfx_set_volume = 0", 1, 7,
+                             r"^local sfx_set_volume: sfx_set_volume is reserved"),
+    "c_function_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
+                             r"^local sfx_stop_all: sfx_stop_all is reserved"),
+    "c_function_music_called": (OBJ + "function A:step() music_play(0, true) end", 3, 19,
+                                r"^music_play is an engine C function, which scripts can't call: "
+                                r"this engine version has no builtin for it$"),
+    "c_function_sfx_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
+                            r"^sfx_playing is an engine C function, which scripts can't call"),
 }
 
 
@@ -963,9 +961,17 @@ class PlannedNames(unittest.TestCase):
                         "A:step"),
     }
 
+    # A planned function of the tests' own, beside the engine's real ones,
+    # whose planned functions come and go as versions implement them
+    # (music_play stood for one until tracker music was implemented).
+    WHAT = "fake tunes, docs/fake.md#tunes"
+
+    def functions(self):
+        return dict(svlua.engine_functions(), fake_tune=self.WHAT)
+
     def refused(self, text, functions=None):
         with self.assertRaises(svlua.CompileError) as caught:
-            svlua.check(text, "t.lua", functions)
+            svlua.check(text, "t.lua", self.functions() if functions is None else functions)
         return caught.exception
 
     def test_top_level_names_are_refused_as_builtins_are(self):
@@ -974,21 +980,21 @@ class PlannedNames(unittest.TestCase):
                 text = code + "\n" + OBJ
                 error = self.refused(text.replace("NAME", "psg_play"))
                 self.assertRegex(error.message, r"psg_play is an engine function")
-                error = self.refused(text.replace("NAME", "music_play"))
-                self.assertEqual(error.message, f"{construct} music_play: music_play is reserved: "
+                error = self.refused(text.replace("NAME", "fake_tune"))
+                self.assertEqual(error.message, f"{construct} fake_tune: fake_tune is reserved: "
                                  "it names a planned engine function, which a later engine "
                                  "version may make a builtin")
                 self.assertEqual(error.line, 1)
-                for name in ("my_music_play", "music_play_x", "Music_play", "MUSIC_PLAY"):
-                    svlua.check(text.replace("NAME", name), "t.lua")
+                for name in ("my_fake_tune", "fake_tune_x", "Fake_tune", "FAKE_TUNE"):
+                    svlua.check(text.replace("NAME", name), "t.lua", self.functions())
 
     def test_locals_may_take_them_as_they_may_shadow_builtins(self):
         """A local's meaning can't change when a builtin of its name
         arrives: in its scope the name is the local."""
         for case, (code, body_name) in self.LOCALS.items():
-            for name in ("psg_play", "music_play"):
+            for name in ("psg_play", "fake_tune"):
                 with self.subTest(case=case, name=name):
-                    p = svlua.check(code.replace("NAME", name), "t.lua")
+                    p = svlua.check(code.replace("NAME", name), "t.lua", self.functions())
                     if body_name is not None:
                         body = next(b for b in p.bodies if b.name == body_name)
                         self.assertIn(name, [s.name for s in body.params + body.locals])
@@ -1002,31 +1008,31 @@ class PlannedNames(unittest.TestCase):
 
     def test_using_one_says_it_is_planned(self):
         uses = {
-            "a call": "function A:step() music_play(0, true) end",
-            "a value": "function A:step() local f = music_play end",
-            "an assignment": "function A:step() music_play = 1 end",
-            "past a local's scope": "function A:step() do local music_play = 1 end "
-                                    "music_play(0, true) end",
-            "a parameter elsewhere": "function f(music_play) return music_play end\n"
-                                     "function A:step() local n = f(1); music_play(0, true) end",
+            "a call": "function A:step() fake_tune(0, true) end",
+            "a value": "function A:step() local f = fake_tune end",
+            "an assignment": "function A:step() fake_tune = 1 end",
+            "past a local's scope": "function A:step() do local fake_tune = 1 end "
+                                    "fake_tune(0, true) end",
+            "a parameter elsewhere": "function f(fake_tune) return fake_tune end\n"
+                                     "function A:step() local n = f(1); fake_tune(0, true) end",
         }
         for case, code in uses.items():
             with self.subTest(case=case):
                 error = self.refused(OBJ + code)
-                self.assertRegex(error.message, r"^music_play is planned, not implemented in this "
-                                 r"engine version \(tracker music, docs/audio\.md#tracker-music\)")
+                self.assertRegex(error.message, r"^fake_tune is planned, not implemented in this "
+                                 r"engine version \(fake tunes, docs/fake\.md#tunes\)")
 
     def test_the_messages(self):
-        error = self.refused(OBJ + "function music_play(song) end")
-        self.assertEqual(str(error), "t.lua:3:10: error: function music_play: music_play is "
+        error = self.refused(OBJ + "function fake_tune(song) end")
+        self.assertEqual(str(error), "t.lua:3:10: error: function fake_tune: fake_tune is "
                          "reserved: it names a planned engine function, which a later engine "
                          "version may make a builtin\n"
-                         "  hint: rename it, e.g. my_music_play (music_play is planned: tracker "
-                         "music, docs/audio.md#tracker-music)")
-        error = self.refused(OBJ + "function A:step()\n  sfx_play(SFX_JUMP)\nend")
-        self.assertEqual(str(error), "t.lua:4:3: error: sfx_play is planned, not implemented in "
-                         "this engine version (sampled sound effects, "
-                         "docs/audio.md#sampled-sound-effects): scripts can't use it yet\n"
+                         "  hint: rename it, e.g. my_fake_tune (fake_tune is planned: fake "
+                         "tunes, docs/fake.md#tunes)")
+        error = self.refused(OBJ + "function A:step()\n  fake_tune(SFX_JUMP)\nend")
+        self.assertEqual(str(error), "t.lua:4:3: error: fake_tune is planned, not implemented in "
+                         "this engine version (fake tunes, docs/fake.md#tunes): scripts can't use "
+                         "it yet\n"
                          "  hint: planned API reaches scripts in the engine version that "
                          "implements it, named as in C (docs/releases.md#planned-api)")
 
@@ -1044,7 +1050,6 @@ class PlannedNames(unittest.TestCase):
 
     def test_every_planned_function_is_reserved(self):
         planned = self.headers_planned_functions()
-        self.assertIn("music_play", planned)
         self.assertEqual(svlua.planned_functions(), planned)
         for name, what in planned.items():
             with self.subTest(name=name):

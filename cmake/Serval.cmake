@@ -1,5 +1,5 @@
-# Shared build settings and the serval_add_rom() and serval_add_script()
-# helpers.
+# Shared build settings and the serval_add_rom(), serval_add_script() and
+# serval_add_soundbank() helpers.
 #
 # This file is included from the engine's top-level CMakeLists.txt, which a
 # game project may reach through add_subdirectory(). Everything the helpers
@@ -256,7 +256,9 @@ endfunction()
 # constants the script may use (the game's, and the engine's: a path relative
 # to the current source directory, or to the engine's include/ as the game
 # would #include it, e.g. serval/ecs.h); a Lua script's names in ALL_CAPS
-# come from them. The script is rebuilt when it, a header, svlua.py, svm.py
+# come from them; a header generated in the same directory (a sound bank's,
+# serval_add_soundbank(), with its MOD_* and SFX_*) may be named before it
+# is built. The script is rebuilt when it, a header, svlua.py, svm.py
 # or vm.h changes, and a Lua script when an engine header does (svlua.py reads
 # the engine's functions, whose names scripts can't take, from them). Call it
 # from the directory that defined the target, after serval_add_rom().
@@ -310,7 +312,10 @@ function(serval_add_script target listing)
             set(header "${engine_dir}/include/${header}")
         endif()
         cmake_path(ABSOLUTE_PATH header BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
-        if(NOT EXISTS "${header}")
+        # A header a custom command generates (serval_add_soundbank()'s)
+        # exists only once built.
+        get_source_file_property(generated "${header}" GENERATED)
+        if(NOT EXISTS "${header}" AND NOT generated)
             message(FATAL_ERROR "serval_add_script(${target}): header ${header} does not exist.")
         endif()
         list(APPEND headers "${header}")
@@ -348,6 +353,121 @@ function(serval_add_script target listing)
     # generated sources).
     target_sources(${target} PRIVATE "${c_file}" "${h_file}")
     target_include_directories(${target} PRIVATE "${out_dir}")
+endfunction()
+
+# serval_add_soundbank(<target> <name> <files...>)
+#
+# Builds a Maxmod sound bank for a target made by serval_add_rom() (or any
+# target) at build time, from modules (.mod, .s3m, .xm, .it) and WAV samples
+# (.wav), paths relative to the current source directory: BlocksDS's mmutil
+# builds the bank, and tools/soundbank.py turns it into <name>.c, which
+# defines `const unsigned char <name>[]` (in ROM) and joins the target's
+# sources, and <name>.h, mmutil's numbers: MOD_<FILE> for each module and
+# SFX_<FILE> for each sample, from 0 in the order the files are given (a
+# module's samples are numbered with the samples), and MSL_NSONGS,
+# MSL_NSAMPS and MSL_BANKSIZE. Both go in the target's binary directory, on
+# its include path, so the game includes <name>.h and calls
+# audio_bank_set(<name>); scripts get the same names from the header
+# (serval_add_script(... HEADERS ${CMAKE_CURRENT_BINARY_DIR}/<name>.h)).
+#
+# The build refuses a file of another kind, two files whose names give the
+# same define (mmutil upper-cases a name up to its first dot and turns
+# punctuation into underscores), and a sample named "none" (its SFX_NONE would
+# clash with audio.h's). The mmutil must be the version serval.json's
+# toolchain.mmutil names (the bank format of the engine's Maxmod): found as
+# SERVAL_MMUTIL (a CMake or environment variable, which tools/setup-dev.sh
+# sets) or as mmutil on the PATH; tools/build-mmutil.sh builds it. The bank is
+# rebuilt when a file, mmutil or soundbank.py changes. Web builds build the
+# bank too (the game's code names it), though they don't play it
+# (docs/audio.md#web). Call it from the directory that defined the target,
+# after serval_add_rom().
+function(serval_add_soundbank target name)
+    if(NOT TARGET ${target})
+        message(FATAL_ERROR "serval_add_soundbank(${target}): no such target; call it after "
+                            "serval_add_rom(${target} ...).")
+    endif()
+    if(NOT name MATCHES "^[A-Za-z_][A-Za-z0-9_]*$")
+        message(FATAL_ERROR "serval_add_soundbank(${target}): the bank's name \"${name}\" is "
+                            "not a C identifier.")
+    endif()
+    if(ARGC LESS 3)
+        message(FATAL_ERROR "serval_add_soundbank(${target} ${name}): no modules or samples.")
+    endif()
+    set(engine_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
+    set(tool "${engine_dir}/tools/soundbank.py")
+    if(NOT EXISTS "${tool}")
+        message(FATAL_ERROR "serval_add_soundbank(${target}): ${tool} is missing.")
+    endif()
+    if(NOT SERVAL_PYTHON_EXECUTABLE)
+        message(FATAL_ERROR "serval_add_soundbank(${target}): Python 3 is needed to build the "
+                            "bank (SERVAL_PYTHON_EXECUTABLE is empty).")
+    endif()
+    file(READ "${engine_dir}/serval.json" manifest)
+    string(JSON version ERROR_VARIABLE no_version GET "${manifest}" toolchain mmutil)
+    if(no_version)
+        message(FATAL_ERROR "serval_add_soundbank(${target}): serval.json names no "
+                            "toolchain.mmutil version.")
+    endif()
+    _serval_find_mmutil(mmutil "${version}" "${target}")
+
+    set(files "")
+    foreach(file IN LISTS ARGN)
+        cmake_path(ABSOLUTE_PATH file BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
+        # A file another custom command generates exists only once built.
+        get_source_file_property(generated "${file}" GENERATED)
+        if(NOT EXISTS "${file}" AND NOT generated)
+            message(FATAL_ERROR "serval_add_soundbank(${target}): ${file} does not exist.")
+        endif()
+        list(APPEND files "${file}")
+    endforeach()
+    get_target_property(out_dir ${target} BINARY_DIR)
+    set(c_file "${out_dir}/${name}.c")
+    set(h_file "${out_dir}/${name}.h")
+    add_custom_command(
+        OUTPUT "${c_file}" "${h_file}"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${tool}" --mmutil "${mmutil}" --version "${version}"
+                --name "${name}" --out-dir "${out_dir}" ${files}
+        DEPENDS ${files} "${tool}" "${mmutil}"
+        COMMENT "Building the sound bank ${name}"
+        VERBATIM)
+    # The header is a source too, so every object of the target is built
+    # after it exists.
+    target_sources(${target} PRIVATE "${c_file}" "${h_file}")
+    target_include_directories(${target} PRIVATE "${out_dir}")
+endfunction()
+
+# _serval_find_mmutil(<out_var> <version> <target>)
+#
+# Sets <out_var> to the mmutil to run: SERVAL_MMUTIL (a cache or environment
+# variable) or mmutil on the PATH, checked once to say "mmutil v<version>".
+function(_serval_find_mmutil out_var version target)
+    if(NOT SERVAL_MMUTIL AND DEFINED ENV{SERVAL_MMUTIL})
+        set(SERVAL_MMUTIL "$ENV{SERVAL_MMUTIL}" CACHE FILEPATH
+            "BlocksDS's mmutil, which builds sound banks (serval_add_soundbank)")
+    endif()
+    if(NOT SERVAL_MMUTIL)
+        find_program(SERVAL_MMUTIL mmutil
+            DOC "BlocksDS's mmutil, which builds sound banks (serval_add_soundbank)")
+    endif()
+    if(NOT SERVAL_MMUTIL OR NOT EXISTS "${SERVAL_MMUTIL}")
+        message(FATAL_ERROR "serval_add_soundbank(${target}): mmutil ${version} (BlocksDS's, "
+                            "which builds sound banks) was not found. Install it with "
+                            "tools/setup-dev.sh, or tools/build-mmutil.sh DIR, and point "
+                            "SERVAL_MMUTIL (a CMake or environment variable) at DIR/mmutil.")
+    endif()
+    if(NOT SERVAL_MMUTIL_CHECKED STREQUAL "${SERVAL_MMUTIL}|${version}")
+        execute_process(COMMAND "${SERVAL_MMUTIL}" -V OUTPUT_VARIABLE says
+                        OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE result)
+        if(NOT says STREQUAL "mmutil v${version}")
+            message(FATAL_ERROR "serval_add_soundbank(${target}): ${SERVAL_MMUTIL} says "
+                                "\"${says}\", not \"mmutil v${version}\": the engine's Maxmod "
+                                "reads the banks of mmutil ${version} (serval.json). Install it "
+                                "with tools/build-mmutil.sh and point SERVAL_MMUTIL at it.")
+        endif()
+        set(SERVAL_MMUTIL_CHECKED "${SERVAL_MMUTIL}|${version}" CACHE INTERNAL
+            "The mmutil and version serval_add_soundbank() checked")
+    endif()
+    set(${out_var} "${SERVAL_MMUTIL}" PARENT_SCOPE)
 endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/ServalWeb.cmake")

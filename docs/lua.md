@@ -168,7 +168,7 @@ Not reserved: `sys_` (C's systems are functions, never per-entity data), the eng
 
 ### Planned functions
 
-A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s), `music_play`, `sfx_play`, `audio_bank_set` and the rest. (`sprite_set_colors` and `tileset_set_colors` were planned too, and are builtins now: [Engine functions](#engine-functions). So were `raster_scroll`, `raster_backdrop` and `raster_clear`, implemented C-only: they take per-line tables, which scripts can't pass; and `psg_waves_set`, C-only too: it takes a table of waveforms, and scripts play the wave channel through sounds and songs on it. Like every engine function's, their names stay reserved: [below](#c-functions).) `function music_play() ... end` is a compile error:
+A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s). This version has none left. (`sprite_set_colors` and `tileset_set_colors` were planned too, and are builtins now: [Engine functions](#engine-functions). So were `raster_scroll`, `raster_backdrop` and `raster_clear`, implemented C-only: they take per-line tables, which scripts can't pass; and `psg_waves_set`, C-only too: it takes a table of waveforms, and scripts play the wave channel through sounds and songs on it; and tracker music and sampled effects, `music_*`, `sfx_*` and `audio_bank_set`, C functions without builtins so far. Like every engine function's, their names stay reserved: [below](#c-functions).) The rules below hold for any function a later version declares planned; `music_play` shows them, as they applied to it until tracker music was implemented. `function music_play() ... end` was a compile error:
 
 ```
 game.lua:3:10: error: function music_play: music_play is reserved: it names a planned engine function, which a later engine version may make a builtin
@@ -184,7 +184,7 @@ game.lua:12:3: error: music_play is planned, not implemented in this engine vers
 
 A planned name is treated as a builtin's is, case by case:
 
-| The name as | A builtin's (`psg_play`) | A planned function's (`music_play`) |
+| The name as | A builtin's (`psg_play`) | A planned function's (`music_play` until 1.x) |
 | --- | --- | --- |
 | A top-level declaration: `function name`, a global, object or array (`name = ...`), `local function name`, a top-level `local name` (`<const>` too) | Error: an engine function | Error: reserved |
 | A local in a function or handler, a parameter (a collision handler's too), a `for` loop's variable | Allowed: in its scope the name is the local | Allowed, the same way |
@@ -270,7 +270,7 @@ Lua's `print` is not one of them: it is Lua's console output, which the subset d
 
 **C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too. Their names, as every C function's, are [reserved](#c-functions).
 
-**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), which [audio.md](audio.md) declares as planned, have no SYS calls and so no builtins, nor have the other planned functions: the SYS page is append-only, and their calls arrive with their implementations, named after the same C functions. Until then their names are [reserved](#planned-functions), and a script plays PSG sound and music only.
+**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), implemented in C ([audio.md](audio.md)), have no SYS calls and so no builtins yet: the SYS page is append-only, and their calls arrive appended, named after the same C functions. Until then their names are [reserved](#c-functions), and a script plays PSG sound and music only. A script can already name the bank's modules and samples: `serval_add_soundbank()`'s header defines `MOD_*` and `SFX_*`, which `serval_add_script()`'s `HEADERS` can include.
 
 **Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), `^` except between constants (folded: the VM has no power operation), and floats beyond the fixed-point rules.
 

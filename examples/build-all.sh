@@ -11,10 +11,12 @@
 #
 # GBA builds need an arm-none-eabi GCC on PATH, or ARM_GNU_TOOLCHAIN set to the
 # toolchain's root directory; web builds need Emscripten (EMSDK set, or emcc
-# on PATH). Whichever of the two this shell lacks is taken from the file
-# tools/setup-dev.sh writes, ~/opt/serval-env.sh (SERVAL_ENV_FILE to use
-# another), so a terminal, IDE or task runner started before setup still
-# works; variables already set are kept. See docs/development.md.
+# on PATH); both need BlocksDS's mmutil for the jukebox's sound bank
+# (SERVAL_MMUTIL set, or mmutil on PATH). Whichever of these this shell lacks
+# is taken from the file tools/setup-dev.sh writes, ~/opt/serval-env.sh
+# (SERVAL_ENV_FILE to use another), so a terminal, IDE or task runner started
+# before setup still works; variables already set are kept. See
+# docs/development.md.
 #
 # An example is a directory under examples/ with a main.c; its CMake target
 # (in examples/CMakeLists.txt) has the same name as the directory.
@@ -70,7 +72,7 @@ cd "$root"
 env_file="${SERVAL_ENV_FILE:-$HOME/opt/serval-env.sh}"
 if [[ -f "$env_file" ]]; then
     loaded=()
-    for var in ARM_GNU_TOOLCHAIN EMSDK; do
+    for var in ARM_GNU_TOOLCHAIN EMSDK SERVAL_MMUTIL; do
         [[ -n "${!var:-}" ]] && continue
         value="$(. "$env_file" > /dev/null 2>&1; printf '%s' "${!var:-}")"
         if [[ -n "$value" ]]; then

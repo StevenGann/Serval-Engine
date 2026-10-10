@@ -2,7 +2,7 @@
 
 The lowest engine layer is a raylib-style flat C API over libtonc. It is also the abstraction boundary for future platforms: each call means the same thing on every target (see [platforms.md](platforms.md)).
 
-**Status:** implemented: input, the frame loop, sprites, map backgrounds and the camera, map collision, the ECS and its systems, PSG sound effects and music (the wave channel included), brightness fades, color mixing, alpha blending, palette writes and raster effects, text, math, random, paths, save data, the bytecode VM, debug output. Declared as *planned* API, implemented in a later 1.x version ([releases.md](releases.md#planned-api): every use compiles with a warning, and does nothing harmful today): tracker music, sampled sound effects and the sound bank ([audio.md](audio.md)); LZ77-compressed sprites and tilesets ([sprites.md](sprites.md), [tilemaps.md](tilemaps.md)); ladders and floor slopes ([tilemaps.md](tilemaps.md#collision-types)). After 1.0, with no API yet: tileset groups, palette sharing, windows and mosaic, among others ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). The full list of names with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design, the [hardware the engine uses](#hardware-the-engine-uses) and the [bits and values it reserves](#reserved-bits-and-values).
+**Status:** implemented: input, the frame loop, sprites, map backgrounds and the camera, map collision, the ECS and its systems, PSG sound effects and music (the wave channel included), tracker music, sampled sound effects and the sound bank (played by Maxmod, [audio.md](audio.md)), brightness fades, color mixing, alpha blending, palette writes and raster effects, text, math, random, paths, save data, the bytecode VM, debug output. Declared as *planned* API, implemented in a later 1.x version ([releases.md](releases.md#planned-api): every use compiles with a warning, and does nothing harmful today): LZ77-compressed sprites and tilesets ([sprites.md](sprites.md), [tilemaps.md](tilemaps.md)); ladders and floor slopes ([tilemaps.md](tilemaps.md#collision-types)). After 1.0, with no API yet: tileset groups, palette sharing, windows and mosaic, among others ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). The full list of names with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design, the [hardware the engine uses](#hardware-the-engine-uses) and the [bits and values it reserves](#reserved-bits-and-values).
 
 ```c
 void serval_init(void);               // once at startup: wait states, interrupts, display, ECS, sound
@@ -75,7 +75,7 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 
 | Hardware | Status | Games |
 | --- | --- | --- |
-| Timer 0 | Reserved: the sample clock of tracker music and sampled sound effects (*planned*: Maxmod, [audio.md](audio.md#hardware-it-claims)) | Must not use it, or its interrupt |
+| Timer 0 | In use while a sound bank is registered (`audio_bank_set()`), otherwise reserved for it: the sample clock of tracker music and sampled sound effects (Maxmod, [audio.md](audio.md#hardware-it-claims)) | Must not use it, or its interrupt |
 | Timer 1 | Free | The game's, with its interrupt |
 | Timers 2 and 3 | In use: cascaded into a free-running 32-bit cycle counter, started by `serval_init()`, behind `frame_cpu_cycles()` (`random_entropy()` doesn't use it, so games stay deterministic) | May read them; must not stop, reload or reconfigure them, or enable their interrupts |
 
@@ -84,7 +84,7 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 | Hardware | Status | Games |
 | --- | --- | --- |
 | DMA 0 | In use while a raster effect is on, otherwise reserved for it: started by every horizontal blank, restarted at every VBlank ([runtime-systems.md](runtime-systems.md#raster-effects)) | Must not use it |
-| DMA 1, DMA 2 | Reserved: they will feed the Direct Sound FIFOs A and B for tracker music and sampled sound (*planned*, [audio.md](audio.md#hardware-it-claims)) | Must not use them |
+| DMA 1, DMA 2 | In use while a sound bank is registered, otherwise reserved for it: they feed the Direct Sound FIFOs A and B for tracker music and sampled sound, restarted every other VBlank ([audio.md](audio.md#hardware-it-claims)) | Must not use them |
 | DMA 3 | Shared, in use inside engine calls: the engine may use it during its own calls and leaves it idle when they return. Today only the EEPROM save backend does, inside `save_*()` calls of a game built with `SAVE EEPROM8K` or `EEPROM512`, with interrupts off while it runs | Free between engine calls, for transfers that complete at once (libtonc's `dma3_cpy()`); never one set to repeat or to start at VBlank or HBlank |
 
 **Interrupts**
@@ -92,9 +92,9 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 | Hardware | Status | Games |
 | --- | --- | --- |
 | The dispatcher | In use: `serval_init()` installs libtonc's (`irq_init()`, master handler `isr_master`, which doesn't nest) and turns interrupts on | Add handlers for the free interrupts with libtonc's `irq_add()` or `irq_set()`; never install another master handler (`irq_init()`, `irq_set_master()`) |
-| VBlank | In use: enabled by `serval_init()`; `frame_end()` waits for it with the BIOS's `VBlankIntrWait()`. Its handler is the engine's: while a raster effect is on, it restarts DMA 0 (installed with `irq_add()` when an effect starts, set to none when it ends; [runtime-systems.md](runtime-systems.md#raster-effects)); Maxmod's `mmVBlank()` will run there first, uninterrupted (*planned*, [audio.md](audio.md#frame-loop)), and anything else the engine needs each VBlank later | Must not set a VBlank handler (`irq_add(II_VBLANK, ...)` would replace the engine's) |
+| VBlank | In use: enabled by `serval_init()`; `frame_end()` waits for it with the BIOS's `VBlankIntrWait()`. Its handler is the engine's (`src/gba/core.c`), installed with `irq_add()` while a sound bank is registered or a raster effect is on, set to none when neither is: first Maxmod's part, `mmVBlank()` (uninterrupted: the dispatcher doesn't nest) and the mixing of a frame that overran ([audio.md](audio.md#frame-loop)), then raster effects' restart of DMA 0 ([runtime-systems.md](runtime-systems.md#raster-effects)), each only while its feature is on; anything else the engine needs each VBlank later | Must not set a VBlank handler (`irq_add(II_VBLANK, ...)` would replace the engine's). A game's own interrupts wait while the handler mixes for an overrunning frame (3-20% of a frame) |
 | HBlank | Reserved for raster effects (which use HBlank DMA, not the interrupt, today) | Must not use it |
-| `IME` | In use: turned on by `serval_init()` (`irq_init()`); engine calls that must not be interrupted (EEPROM transfers) turn it off briefly and restore it | Must leave it on; a short critical section that turns it off and restores it is fine |
+| `IME` | In use: turned on by `serval_init()` (`irq_init()`); engine calls that must not be interrupted (EEPROM transfers, and a few instructions of the sampled audio calls) turn it off briefly and restore it | Must leave it on; a short critical section that turns it off and restores it is fine |
 | `IE` | In use: bit 0 (VBlank), set by `serval_init()`; bit 1 (HBlank) reserved for raster effects. The other bits are the free interrupts' | Only the free interrupts' bits, through libtonc's `irq_enable()`, `irq_disable()` or `irq_add()` |
 | `IF` | In use: the dispatcher acknowledges each interrupt it takes | Must not write it |
 | `DISPSTAT` | In use: bit 3, the VBlank interrupt request, set by `serval_init()`; bit 4 (HBlank's) reserved for raster effects. Bits 0-2 are status, read-only | May set bits 5 and 8-15 (the VCount interrupt and its line); must leave bits 3 and 4 alone |
@@ -109,10 +109,10 @@ On the GBA the engine programs the hardware itself, and what it takes is part of
 | --- | --- | --- |
 | `SOUNDCNT_X` (master enable) | In use: sound on since `serval_init()` | Leave it on |
 | `SOUNDCNT_L` | In use: the tone generators' master volume (full) and speaker enables, set by `serval_init()` for all four channels on both speakers (bits 8-15) | Must not write it (`psg_music_set_volume()` sets the music's volume) |
-| `SOUNDCNT_H` | In use: bits 0-1, the tone generators' share of the output (100%). Bits 2-3 and 8-15, Direct Sound A and B (bits 4-7 are unused), are reserved for the mixer (*planned*), which writes the whole register; the engine then sets bits 0-1 back | Must not write it |
+| `SOUNDCNT_H` | In use: bits 0-1, the tone generators' share of the output (100%). Bits 2-3 and 8-15, Direct Sound A and B (bits 4-7 are unused): in use while a sound bank is registered, by the mixer, which writes the whole register (when a bank is registered and unregistered); the engine then sets bits 0-1 back to 100% | Must not write it |
 | PSG channels 1, 2 and 4: square 1, square 2, noise | In use: `audio.h`'s sound effects and music; `serval_splash()`'s jingle on square 1 | Play them through `audio.h` |
 | PSG channel 3 (`SOUND3CNT_L`/`_H`/`_X`, 0x4000070-0x4000075) and wave RAM (0x4000090-0x400009F, both banks) | In use: the wave channel (`PSG_WAVE`, `psg_waves_set()`, [audio.md](audio.md#wave-channel)), its sound effects and music; the engine writes the bank that isn't playing and selects it, and turns the DAC off for silence | Play it through `audio.h` |
-| Direct Sound A and B, FIFOs A and B (0x40000A0-0x40000A7) | Reserved: tracker music and sampled sound effects (*planned*), mixed by Maxmod; A plays left, B right | Must not use them |
+| Direct Sound A and B, FIFOs A and B (0x40000A0-0x40000A7) | In use while a sound bank is registered, otherwise reserved for it: tracker music and sampled sound effects, mixed by Maxmod; A plays left, B right | Must not use them |
 
 **Display and effects**
 
@@ -199,7 +199,7 @@ It borrows the backdrop, BG0 (control register and on/off state), the text layer
 
 ## Dependencies stay behind the API
 
-Games never need to include or call a third-party library (libtonc, or Maxmod once tracker music and sampled sound are implemented) directly; everything they need is Serval API. They may still use libtonc, which stays on the include path:
+Games never need to include or call a third-party library (libtonc, or Maxmod, which plays tracker music and sampled sound) directly; everything they need is Serval API. They may still use libtonc, which stays on the include path:
 
 - Public headers include no third-party headers. The host build compiles them, and the examples, with no libtonc available, so CI fails if one sneaks in.
 - Public names never collide with libtonc's (hence `BUTTON_*` rather than libtonc's `KEY_*` macros). `tests/rom/compat_*.c` include both in either order and must compile warning-free.

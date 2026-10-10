@@ -61,6 +61,23 @@ serval_add_rom(effects SOURCES
                TITLE "EFFECTS" GAME_CODE "SVFX")
 target_link_libraries(effects PRIVATE serval_warnings)
 
+# Tracker music and sampled sound effects. Its modules and WAV samples are
+# made at build time by tools/make-example-audio.py (original, synthesized:
+# nothing is downloaded), and mmutil builds them into jukebox_bank.c and
+# jukebox_bank.h (serval_add_soundbank(), cmake/Serval.cmake).
+serval_add_rom(jukebox SOURCES jukebox/main.c TITLE "JUKEBOX" GAME_CODE "SVJB")
+target_link_libraries(jukebox PRIVATE serval_warnings)
+set(jukebox_audio theme.mod calm.mod coin.wav laser.wav boom.wav engine.wav)
+list(TRANSFORM jukebox_audio PREPEND "${CMAKE_CURRENT_BINARY_DIR}/jukebox_audio/")
+add_custom_command(
+    OUTPUT ${jukebox_audio}
+    COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+            jukebox "${CMAKE_CURRENT_BINARY_DIR}/jukebox_audio"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+    COMMENT "Making the jukebox's modules and samples"
+    VERBATIM)
+serval_add_soundbank(jukebox jukebox_bank ${jukebox_audio})
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -71,4 +88,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(hello bunnymark pong asteroids platformer breakout shmup blackjack
                           fireflies bunnymark_bench)
     serval_add_rom_checks(effects)
+    serval_add_rom_checks(jukebox)
 endif()

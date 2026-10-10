@@ -31,8 +31,8 @@ Planned API is declared in this version but not implemented yet, so that the API
 **The warning.** Every use of a planned name compiles with a warning at the use, at any optimization level, in dead code too:
 
 ```
-main.c:12:5: warning: 'music_play' is deprecated: Serval: planned, not implemented in
-this version: tracker music, docs/audio.md#tracker-music [-Wdeprecated-declarations]
+main.c:12:30: warning: 'MAP_LADDER' is deprecated: Serval: planned, not implemented in
+this version: ladders, docs/tilemaps.md#collision-types [-Wdeprecated-declarations]
 ```
 
 "Deprecated" is the compiler's fixed wording: nothing is being removed. The warning means the call is in the API, and this engine version does nothing useful with it yet. Games built with `-Werror` stop at it.
@@ -45,9 +45,9 @@ this version: tracker music, docs/audio.md#tracker-music [-Wdeprecated-declarati
 | One region | `#pragma GCC diagnostic push`, `#pragma GCC diagnostic ignored "-Wdeprecated-declarations"`, then `#pragma GCC diagnostic pop` (GCC and Clang both honour it) |
 | Keep the warning, but not as an error under `-Werror` | `-Wno-error=deprecated-declarations` |
 
-**At run time**, planned API does nothing harmful. A planned function returns 0, `false` or its type's "none" (e.g. `SFX_NONE`) and changes nothing; a loader refuses data that needs a planned feature, as it refuses any data it doesn't understand. Debug builds warn once per problem, e.g. `serval: music_play: tracker music is planned, not implemented in this engine version; nothing plays`.
+**At run time**, planned API does nothing harmful. A planned function returns 0, `false` or its type's "none" (no function is planned in this version; `sfx_play()` returned `SFX_NONE` until tracker music and sampled effects were implemented) and changes nothing; a loader refuses data that needs a planned feature, as it refuses any data it doesn't understand. Debug builds warn once per problem, e.g. `serval: tileset_load: TILESET_LZ77 (LZ77-compressed tilesets) is planned, not implemented in this engine version; ...`.
 
-**In scripts.** Scripts reach a planned feature only once a version implements it: the VM's SYS page has no calls for planned functions ([vm.md](vm.md#engine-calls)), so the Lua compiler refuses a call of one (`music_play is planned, not implemented in this engine version (tracker music, ...)`), and keeps its name from being declared, as it keeps every C function's ([lua.md](lua.md#planned-functions)); the script assembler refuses a planned constant by name (`MAP_CONTACT_LADDER is planned, not implemented in this engine version (ladders, ...)`), where C compiles it with the warning. The implementing version makes the name work in scripts with no change to them.
+**In scripts.** Scripts reach a planned feature only once a version implements it: the VM's SYS page has no calls for planned functions ([vm.md](vm.md#engine-calls)), so the Lua compiler refuses a call of one (`music_play` was refused so until tracker music was implemented: `music_play is planned, not implemented in this engine version (tracker music, ...)`), and keeps its name from being declared, as it keeps every C function's ([lua.md](lua.md#planned-functions)); the script assembler refuses a planned constant by name (`MAP_CONTACT_LADDER is planned, not implemented in this engine version (ladders, ...)`), where C compiles it with the warning. The implementing version makes the name work in scripts with no change to them.
 
 **Lifecycle.** A planned name is part of the API from the version that declares it, with the same compatibility promise as the rest. A minor version implements it: the marker goes, the signature stays, so code written against it compiles without the warning and starts working. If a planned design proves wrong, the fix is additive: a new function, with the old one documented as superseded and kept as a stub. Changing a planned name's signature or meaning after its release is a major change, like any API change.
 
@@ -59,12 +59,13 @@ The repository root contains `serval.json`, which describes the engine to the to
 {
   "name": "serval-engine",
   "version": "1.4.0",
-  "toolchain": { "gcc": ">=15.3" }
+  "toolchain": { "gcc": ">=15.3", "mmutil": "1.24.0-blocks" }
 }
 ```
 
 - `version` must equal the release tag without the `v`. A suffix such as `0.2.0-rc.1` makes a prerelease. CMake reads it as `SERVAL_VERSION_STRING` (the full string) and `SERVAL_VERSION` (`X.Y.Z` only, for `project()`); anything other than `X.Y.Z[-pre][+build]` fails configuration.
 - `toolchain.gcc` is the minimum GCC version the engine needs (currently 15.3, the version CI builds and tests with). The editor bundles a single toolchain and warns when it is older than this; configuring the engine with an older `arm-none-eabi-gcc` also prints a CMake warning.
+- `toolchain.mmutil` is the exact version of BlocksDS's `mmutil` that builds the engine's sound banks (since the version implementing them; [audio.md](audio.md#sound-bank)): the BlocksDS tag without its `v` (`1.24.0-blocks`; `mmutil -V` prints `mmutil v1.24.0-blocks`). A bank is read by the Maxmod the engine links, so the editor runs this `mmutil` for the project's engine, and `serval_add_soundbank()` refuses any other. Absent in older manifests: those engines play no sound banks.
 
 `serval.json` says `1.0.0-rc.1`: the first release is 1.0.0-rc.1, the release candidate of 1.0.0, whose API is frozen ([api-freeze.md](api-freeze.md)). 1.0.0 follows once Studio Advance has integrated against it ([handoff.md](handoff.md#from-rc1-to-100)).
 

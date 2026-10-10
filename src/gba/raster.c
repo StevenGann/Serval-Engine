@@ -124,15 +124,18 @@ static void commit(void) {
         pal_bg_mem[0] = serval_backdrop;
     serval_backdrop_raster = prepared == BACKDROP_REGISTER;
     if (!prepared) {
-        irq_add(II_VBLANK, NULL);
+        serval_vblank_raster = NULL; // the VBlank handler's part (core.c)
+        serval_vblank_update();
         return;
     }
     current = buffers[back];
     back ^= 1;
     active = prepared;
     restart();
-    if (!was)
-        irq_add(II_VBLANK, vblank);
+    if (!was) {
+        serval_vblank_raster = vblank; // after Maxmod's part, if a bank is registered
+        serval_vblank_update();
+    }
 }
 
 static void attach(void) {

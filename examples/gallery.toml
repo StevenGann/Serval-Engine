@@ -36,6 +36,7 @@ paths = "Movement patterns as path tables"
 ecs = "Entities with engine and game components and systems"
 sound = "Sound effects on the tone generators"
 music = "Songs on the tone generators, with sound effects over them"
+tracker = "Tracker music and sampled sound effects, mixed by Maxmod"
 text = "HUD text"
 save = "Save data that survives power-off"
 vm = "Game logic written for the bytecode VM"
@@ -111,3 +112,10 @@ summary = "The engine's screen effects, a scene each: alpha blending (a see-thro
 tags = ["effects", "tilemaps", "metasprites"]
 level = 2
 thumbnail = { frame = 300, keys = ["200:S:2", "230:r:60"] }
+
+[examples.jukebox]
+title = "JUKEBOX"
+summary = "Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop, beside PSG blips (on the GBA: the browser plays only the blips for now)"
+tags = ["tracker", "sound", "text"]
+level = 2
+thumbnail = { frame = 300, keys = ["200:S:2", "240:D:2", "260:r:2"] }

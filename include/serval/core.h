@@ -53,7 +53,9 @@ u32 frame_count(void);
 
 // CPU cycles the previous frame spent between frame_begin() and frame_end()'s
 // wait for VBlank: the game's work, and frame_end()'s own before the wait
-// (sprite counts, map streaming). Measured with hardware timers 2 and 3,
+// (sprite counts, map streaming); plus, once a sound bank is registered, the
+// mixing of tracker music and sampled effects, which frame_end() does after
+// the wait (docs/audio.md#frame-loop). Measured with hardware timers 2 and 3,
 // which the engine reserves. On the web it is real time, which says nothing
 // about the GBA (docs/platforms.md).
 u32 frame_cpu_cycles(void);

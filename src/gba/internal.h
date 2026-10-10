@@ -194,6 +194,67 @@ extern bool serval_backdrop_raster;
 // (entry y for line y; frame_end() writes entry 0 itself), or NULL.
 const u16* serval_raster_lines(void);
 
+// maxmod: tracker music and sampled sound effects. The calls games and
+// scripts make (sampled_audio.c) reach Maxmod (maxmod.c) only through
+// serval_mixer_ops, which audio_bank_set() sets while a bank is registered
+// (NULL otherwise), so games that never register a bank don't link Maxmod,
+// even if they call music_*() and sfx_*() (scripted games do, through the
+// VM's SYS calls). sampled_audio.c checks for a bank and keeps the volumes
+// set before one (serval_music_volume(), serval_sfx_volume(), 0-255), which
+// audio_bank_set() applies; it clears sampled_audio.c's warnings too.
+typedef struct {
+    void (*music_play)(u16 music_id, bool loop);
+    void (*music_stop)(void);
+    bool (*music_playing)(void);
+    void (*music_pause)(void);
+    void (*music_resume)(void);
+    bool (*music_paused)(void);
+    void (*music_set_volume)(u8 volume);
+    void (*music_set_speed)(u16 percent);
+    Sfx (*sfx_play)(u16 sfx_id, u8 volume, s8 pan, FIXED pitch, u8 priority);
+    void (*sfx_stop)(Sfx sfx);
+    bool (*sfx_playing)(Sfx sfx);
+    void (*sfx_stop_all)(void);
+    void (*sfx_set_volume)(u8 volume);
+} ServalMixerOps;
+extern const ServalMixerOps* serval_mixer_ops;
+u8 serval_music_volume(void);
+u8 serval_sfx_volume(void);
+void serval_mixer_warnings_reset(void);
+// maxmod: the mixer (maxmod.c), hooked in by audio_bank_set() so that games
+// without a bank don't link Maxmod: NULL until then, and again once the bank
+// is unregistered. frame_end() calls
+// serval_mixer_hook after the PSG step (it mixes the next VBlank's samples;
+// its cycles count in frame_cpu_cycles()), and sets serval_frame_waiting
+// while it waits for VBlank (then it will mix after the flush; otherwise the
+// VBlank handler mixes). serval_mixer_stats() and serval_mixer_last() are for
+// tests: how often the mixer ran, and where (frame_end(), the VBlank handler
+// early or late, or a half left stale or mixed in the wrong place), and the samples the last
+// mmFrame() mixed (frame_end()'s or the handler's early one): 264 for the left speaker, and the
+// right's 528 bytes further on (Maxmod's wave buffer holds two VBlanks a side), or NULL before any;
+// and the whole wave buffer.
+extern void (*serval_mixer_hook)(void);
+extern volatile bool serval_frame_waiting;
+typedef struct {
+    u32 mixes;     // mmFrame() calls
+    u32 early;     // ... by the VBlank handler, for a frame that overran
+    u32 deferred;  // ... by a call into Maxmod the VBlank handler interrupted
+    u32 late;      // ... by the VBlank handler, for a half found unmixed as it started
+    u32 stale;     // halves that played unmixed (the game was inside Maxmod)
+    u32 misplaced; // halves that started to play while the last mix was in the other
+} ServalMixerStats;
+ServalMixerStats serval_mixer_stats(void);
+const s8* serval_mixer_last(void);
+const s8* serval_mixer_wave(void);
+
+// The engine's VBlank interrupt handler (core.c), installed by
+// serval_vblank_update() while either part is set, NULL otherwise: maxmod:
+// Maxmod's mmVBlank() and the mixing the game can't do in time, first; then
+// raster: restarting DMA 0 (raster.c).
+extern void (*serval_vblank_mixer)(void);
+extern void (*serval_vblank_raster)(void);
+void serval_vblank_update(void);
+
 #ifdef SERVAL_WEB
 // Web builds: real time in GBA CPU cycles, standing in for the timers that
 // count cycles on the GBA (src/web/platform.c).

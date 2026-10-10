@@ -40,6 +40,27 @@ void (*serval_raster_commit_hook)(void);  // raster:
 Color serval_backdrop;                    // raster:
 bool serval_backdrop_raster;              // raster:
 
+// maxmod: tracker music and sampled sound effects (maxmod.c): the
+// mixer, NULL until audio_bank_set(); whether frame_end() is waiting for
+// VBlank (the mixer's VBlank part mixes when it isn't); and the engine's
+// VBlank handler: Maxmod's part first, then raster effects', each only while
+// its feature is on, installed while either is.
+void (*serval_mixer_hook)(void);
+volatile bool serval_frame_waiting;
+void (*serval_vblank_mixer)(void);
+void (*serval_vblank_raster)(void);
+
+static void vblank_handler(void) {
+    if (serval_vblank_mixer)
+        serval_vblank_mixer();
+    if (serval_vblank_raster)
+        serval_vblank_raster();
+}
+
+void serval_vblank_update(void) {
+    irq_add(II_VBLANK, serval_vblank_mixer || serval_vblank_raster ? vblank_handler : NULL);
+}
+
 static u32 frame_start_cycles;
 static u32 last_frame_cycles;
 static u32 frames; // frame_end() calls since serval_init()
@@ -127,7 +148,9 @@ void frame_end(void) {
         serval_map_prepare_hook();
 
     last_frame_cycles = cycles_now() - frame_start_cycles;
+    serval_frame_waiting = true; // maxmod: this frame_end() mixes after the flush
     VBlankIntrWait();
+    serval_frame_waiting = false; // maxmod:
     oam_copy(oam_mem, serval_shadow_oam, 128);
     serval_stream_commit();       // streaming: step 2, frames newly drawn from streamed groups
     serval_sprite_tiles_commit(); // sprite tiles: step 3, sprite_set_tiles() copies
@@ -141,6 +164,13 @@ void frame_end(void) {
     if (serval_raster_commit_hook) // raster: line 0's value, and DMA 0 restarted
         serval_raster_commit_hook();
     serval_psg_update();
+    // maxmod: step 8, after the PSG: Maxmod's mmFrame(), the next VBlank's
+    // samples. It runs after the count above, so its cycles are added.
+    if (serval_mixer_hook) {
+        u32 start = cycles_now();
+        serval_mixer_hook();
+        last_frame_cycles += cycles_now() - start;
+    }
     frames++;
 }
 

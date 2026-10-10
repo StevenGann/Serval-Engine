@@ -1,24 +1,24 @@
 # Licensing
 
-**Status:** current. Licenses verified against upstream on 2026-10-04; Maxmod's and `mmutil`'s, from BlocksDS (the chosen fork, [audio.md](audio.md#maxmod-blocksds)), again on 2026-10-07. Maxmod is listed but not linked yet: tracker music and sampled sound are planned API.
+**Status:** current. Licenses verified against upstream on 2026-10-04; Maxmod's and `mmutil`'s, from BlocksDS ([audio.md](audio.md#maxmod-blocksds)), against the vendored tag `v1.24.0-blocks` on 2026-10-09. Maxmod is linked into the ROMs of games that play tracker music or sampled sound effects.
 
 ## Engine
 
 The runtime engine and bytecode VM are released under the **[MIT License](../LICENSE)**. It is linked into every game ROM, so the license must be permissive, attribution-light and impose no copyleft on games.
 
-MIT was chosen over zlib for its familiarity and because it matches libtonc's license. zlib would require no attribution in games, but games owe notices for libtonc (and, once the engine links it, Maxmod) regardless, so it would only remove one entry from the notices file. That advantage would return only if the engine stopped using both libraries; relicensing later needs every contributor's consent.
+MIT was chosen over zlib for its familiarity and because it matches libtonc's license. zlib would require no attribution in games, but games owe notices for libtonc (and, when they play sampled sound, Maxmod) regardless, so it would only remove one entry from the notices file. That advantage would return only if the engine stopped using both libraries; relicensing later needs every contributor's consent.
 
 Consequently, every dependency linked into the ROM must be compatible with that goal, and the obligations they place on games are listed below.
 
 ## What ends up in a game ROM
 
-Verified against upstream on 2026-10-04 (Maxmod on 2026-10-07). Verbatim license texts for the libraries compiled into ROMs are in [`third_party/licenses/`](../third_party/licenses/).
+Verified against upstream on 2026-10-04 (Maxmod on 2026-10-09, at the vendored tag). Verbatim license texts for the libraries compiled into ROMs are in [`third_party/licenses/`](../third_party/licenses/).
 
 | Component | Source | License | Obligation for a shipped game |
 | --- | --- | --- | --- |
 | Serval Engine | this repo | MIT | Include copyright and permission notice |
 | libtonc | [gbadev-org/libtonc](https://github.com/gbadev-org/libtonc) | MIT (© 2005-2009 J Vijn) | Include copyright and permission notice |
-| Maxmod (planned: not linked until tracker music and sampled sound are implemented) | [blocksds/maxmod](https://github.com/blocksds/maxmod), BlocksDS's fork (chosen 2026-10-07; [audio.md](audio.md#maxmod-blocksds)) | ISC (© 2008-2009 Mukunda Johnson, 2021-2026 Antonio Niño Díaz, 2023 Lorenzooone) | Include copyright and permission notice |
+| Maxmod (only in ROMs that call tracker music or sampled sound effects) | [blocksds/maxmod](https://github.com/blocksds/maxmod), BlocksDS's fork, tag `v1.24.0-blocks`, vendored in `third_party/maxmod/` ([audio.md](audio.md#maxmod-blocksds)) | ISC (© 2008-2009 Mukunda Johnson, 2021-2025 Antonio Niño Díaz, 2023 Lorenzooone) | Include copyright and permission notice |
 | libgcc (compiler runtime, e.g. division helpers) | GCC | GPL v3 + GCC Runtime Library Exception | None: the exception covers code compiled by GCC |
 | newlib (C library) | toolchain | Mix of BSD-style licenses per file | Mostly "reproduce notice in documentation"; avoid linking it (see below) |
 | C runtime startup + linker script | Serval Engine (`src/gba/crt0.s`, `src/gba/gba.ld`) | MIT | Same as Serval Engine |
@@ -35,7 +35,7 @@ The text layer's 8x8 font (`sys8`) comes from libtonc and is covered by its noti
 
 **Bottom line:** every game must include the notices of Serval Engine and libtonc (plus Emscripten and musl for web builds). The tooling should therefore generate a third-party notices file for every exported game, from [`LICENSE`](../LICENSE) and [`third_party/licenses/`](../third_party/licenses/).
 
-**Once Maxmod is linked** (planned, with tracker music and sampled sound effects, [audio.md](audio.md)): a ROM that contains it must also include Maxmod's notice, [`third_party/licenses/maxmod.txt`](../third_party/licenses/maxmod.txt) (BlocksDS's `COPYING`, already vendored and identical to upstream's). ISC asks for the copyright and permission notice only: no copyleft, no source to offer. Web builds compile the same stubs and link no Maxmod until the web has a player of its own ([platforms.md](platforms.md#planned-features-on-the-web)). `mmutil`, which builds the sound bank, runs on the developer's PC and is not linked into games ([below](#host-tools)).
+**Maxmod** ([audio.md](audio.md)): a ROM that contains it, one whose game calls `audio_bank_set()`, `music_*()` or `sfx_*()`, must also include Maxmod's notice, [`third_party/licenses/maxmod.txt`](../third_party/licenses/maxmod.txt) (the vendored tag's `COPYING`, also in `third_party/maxmod/`). Other ROMs don't contain it (it is linked only through those calls) and owe nothing for it. ISC asks for the copyright and permission notice only: no copyleft, no source to offer. Web builds compile silent stubs and link no Maxmod until the web has a player of its own ([audio.md](audio.md#web)). `mmutil`, which builds the sound bank, runs on the developer's PC and is not linked into games ([below](#host-tools)). Maxmod calls no C library function the engine doesn't provide: the engine never calls `mmInitDefault()` or `mmEnd()`, the two that allocate and free, and `--gc-sections` drops them, so `libc.a` stays out of the link (every such ROM's `*_rom_checks` checks it).
 
 ### Rules that keep it this way
 
@@ -53,7 +53,7 @@ These run on the developer's PC and are not linked into games. Their obligations
 
 | Tool | License | Notes |
 | --- | --- | --- |
-| `mmutil` (soundbank builder; BlocksDS's, [blocksds/mmutil](https://github.com/blocksds/mmutil)) | ISC (© 2008 Mukunda Johnson, 2025-2026 Antonio Niño Díaz) | Redistribution (e.g. in the editor package) must include the copyright and permission notice. Not used by the engine until the sound bank is implemented |
+| `mmutil` (soundbank builder; BlocksDS's, [blocksds/mmutil](https://github.com/blocksds/mmutil), tag `v1.24.0-blocks`) | ISC (`COPYING`: © 2008 Mukunda Johnson; every source file carries `SPDX-License-Identifier: ISC`, and `source/nds.c` adds © 2026 Antonio Niño Díaz) | Redistribution (e.g. in the editor package) must include the copyright and permission notice (`COPYING`, which `tools/build-mmutil.sh` installs beside the binary). Builds the sound banks of the engine's tests and examples (`serval_add_soundbank()`), and of games built by hand |
 | GCC toolchain (devkitARM or ARM `arm-none-eabi-gcc`) | GPL v3 | Compiled games are not GPL. Check devkitARM's redistribution terms before bundling |
 | mGBA fork (emulator / debugger) | MPL 2.0 | File-level copyleft: publish changes to mGBA files |
 
