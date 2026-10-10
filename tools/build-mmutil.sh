@@ -34,6 +34,7 @@ if [[ "$commit" != "$MMUTIL_COMMIT" ]]; then
 fi
 
 # Does the compiler know #embed?
+make_args=()
 mkdir "$work/probe"
 printf 'x' > "$work/probe/byte.bin"
 printf 'const unsigned char b[] = {\n#embed "byte.bin"\n};\n' > "$work/probe/probe.c"
@@ -53,9 +54,12 @@ text = source.read_text(encoding="utf-8")
 source.write_text(re.sub(r'^#embed "([^"]+)"$', expand, text, flags=re.M), encoding="utf-8")
 EOF
     done < <(grep -l '^#embed ' "$src"/source/*.c)
+    # The Makefile passes --embed-dir for #embed, an option an older
+    # compiler refuses: with no #embed left, it passes none.
+    make_args+=(EMBEDDIRS=)
 fi
 
-make -C "$src" HOSTCC="$cc" VERSION_STRING="v$MMUTIL_VERSION" > "$work/build.log" 2>&1 || {
+make -C "$src" HOSTCC="$cc" VERSION_STRING="v$MMUTIL_VERSION" "${make_args[@]}" > "$work/build.log" 2>&1 || {
     tail -30 "$work/build.log" >&2
     echo "error: building mmutil $MMUTIL_VERSION failed" >&2
     exit 1
