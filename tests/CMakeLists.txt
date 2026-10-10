@@ -141,7 +141,9 @@ if(SERVAL_TARGET_GBA)
                     "-DEXPECT=Detected SRAM savegame"
                     "-DREJECT=Detected (Flash|EEPROM)"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
-        set_tests_properties(rom_tests PROPERTIES TIMEOUT 60)
+        # About 26 s in a Debug build; under a busy machine's load it has taken
+        # over 60, so it gets the other test ROMs' 120.
+        set_tests_properties(rom_tests PROPERTIES TIMEOUT 120)
         add_test(NAME rom_tests_sampled_audio # maxmod:
             COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
                     "-DROM=$<TARGET_FILE_DIR:serval_tests_sampled_audio>/serval_tests_sampled_audio.gba"
