@@ -14,6 +14,7 @@ int main(void) {
         &text_format_tests,   &math_tests,
         &physics_tests,       &map_tests,
         &web_ppu_tests,       &web_apu_tests,
+        &web_mixer_tests, // maxmod: the web's mixer
         &anim_tests,          &psg_sequencer_tests,
         &psg_wave_tests, // wave channel
         &save_tests,          &input_tests,

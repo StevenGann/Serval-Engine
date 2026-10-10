@@ -88,6 +88,15 @@ void VBlankIntrWait(void) {
         samples = MAX_FRAME_SAMPLES;
     web_audio_generate((u16*)IO_ADDRESS, frame_audio, samples);
 
+    // maxmod: the VBlank interrupt's Maxmod part (core.c's handler runs it
+    // on the GBA; the web has no interrupts), set only while a sound bank is
+    // registered: mmVBlank() adds the Direct Sound samples that played this
+    // frame to the PSG's above and swaps the mixer's halves
+    // (maxmod_mixer.c). Raster effects' part isn't needed: ppu.c runs their
+    // DMA as if restarted.
+    if (serval_vblank_mixer)
+        serval_vblank_mixer();
+
     web_present(frame_rgba, frame_audio, samples);
 }
 

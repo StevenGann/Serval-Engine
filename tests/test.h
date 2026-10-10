@@ -63,5 +63,6 @@ extern const TestSuite planned_screen_tests;
 // Host-only suites for the web backend's renderer and sound (src/web/).
 extern const TestSuite web_ppu_tests;
 extern const TestSuite web_apu_tests;
+extern const TestSuite web_mixer_tests; // maxmod: the web's mixer
 
 #endif // SERVAL_TEST_H

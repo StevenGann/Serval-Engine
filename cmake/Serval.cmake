@@ -260,8 +260,10 @@ endfunction()
 # serval_add_soundbank(), with its MOD_* and SFX_*) may be named before it
 # is built. The script is rebuilt when it, a header, svlua.py, svm.py
 # or vm.h changes, and a Lua script when an engine header does (svlua.py reads
-# the engine's functions, whose names scripts can't take, from them). Call it
-# from the directory that defined the target, after serval_add_rom().
+# the engine's functions, whose names scripts can't take, from them). For the
+# web it also tells Asyncify that the VM's engine calls never wait for a frame
+# (below). Call it from the directory that defined the target, after
+# serval_add_rom().
 function(serval_add_script target listing)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
     if(NOT TARGET ${target})
@@ -353,6 +355,16 @@ function(serval_add_script target listing)
     # generated sources).
     target_sources(${target} PRIVATE "${c_file}" "${h_file}")
     target_include_directories(${target} PRIVATE "${out_dir}")
+    # Web pages wait for VBlank with Asyncify (cmake/ServalWeb.cmake), which
+    # instruments every function that might be on the stack while the page
+    # waits, and must assume that of every call through a pointer. The VM's
+    # engine calls (serval_vm_platform_call(), src/gba/vm_platform.c) make
+    # such calls (tracker music and sampled effects reach Maxmod through a
+    # table) but never wait for a frame; told so, Asyncify leaves the VM's
+    # interpreter alone: about 4 KB smaller, and faster.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+        target_link_options(${target} PRIVATE -sASYNCIFY_REMOVE=serval_vm_platform_call)
+    endif()
 endfunction()
 
 # serval_add_soundbank(<target> <name> <files...>)
@@ -377,10 +389,9 @@ endfunction()
 # toolchain.mmutil names (the bank format of the engine's Maxmod): found as
 # SERVAL_MMUTIL (a CMake or environment variable, which tools/setup-dev.sh
 # sets) or as mmutil on the PATH; tools/build-mmutil.sh builds it. The bank is
-# rebuilt when a file, mmutil or soundbank.py changes. Web builds build the
-# bank too (the game's code names it), though they don't play it
-# (docs/audio.md#web). Call it from the directory that defined the target,
-# after serval_add_rom().
+# rebuilt when a file, mmutil or soundbank.py changes. Web builds build and
+# play the same bank (docs/audio.md#web). Call it from the directory that
+# defined the target, after serval_add_rom().
 function(serval_add_soundbank target name)
     if(NOT TARGET ${target})
         message(FATAL_ERROR "serval_add_soundbank(${target}): no such target; call it after "

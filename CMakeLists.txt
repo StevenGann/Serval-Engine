@@ -133,10 +133,12 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/blend.c
         src/gba/core.c
         src/gba/map.c
+        src/gba/maxmod.c
         src/gba/music.c
         src/gba/palette.c
         src/gba/psg.c
         src/gba/raster.c
+        src/gba/sampled_audio.c
         src/gba/screen.c
         src/gba/splash.c
         src/gba/splash_art.c
@@ -147,13 +149,25 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/vm_platform.c
         src/gba/wave.c
         src/web/apu.c
+        src/web/maxmod_mixer.c
+        src/web/mixer.c
         src/web/platform.c
         src/web/ppu.c
-        src/web/sampled_audio.c
         "${CMAKE_CURRENT_BINARY_DIR}/sys8_glyphs.c"
     )
     target_compile_definitions(serval PUBLIC SERVAL_WEB)
     target_link_libraries(serval PUBLIC tonc PRIVATE serval_warnings)
+    # maxmod: tracker music and sampled sound effects, as on the GBA
+    # (src/gba/maxmod.c), with the engine's web mixer in place of Maxmod's GBA
+    # one (src/web/maxmod_mixer.c, src/web/mixer.c). Maxmod's headers, its
+    # internal ones too (the web mixer implements its mixer interface, with
+    # the GBA's types: __GBA__), are third-party code: SYSTEM, so the
+    # engine's warnings skip them.
+    target_sources(serval PRIVATE $<TARGET_OBJECTS:maxmod>)
+    target_include_directories(serval SYSTEM PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maxmod/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maxmod/source")
+    set_source_files_properties(src/web/maxmod_mixer.c PROPERTIES COMPILE_DEFINITIONS __GBA__)
     add_library(serval_portable ALIAS serval)
     set(serval_engine_target serval)
 else()

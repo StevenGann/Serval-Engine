@@ -11,8 +11,9 @@ Usage: tools/web-shots.py [--require-picture] PAGE.html FRAMES OUT_PREFIX
                           [audio=FILE] [expect-title=TEXT] [expect-save-key=TEXT]
 Writes OUT_PREFIX-<frame>.png for each shot. audio=FILE writes the sound of
 the FRAMES frames to FILE, a 16-bit stereo WAV at the page's sample rate (48
-kHz), as the web build's PSG emulation made it. save=FILE stands in for the
-cartridge's save memory (as big as the game's save type, like an mGBA .sav):
+kHz), as the web build made it (the PSG, tracker music and sampled effects).
+save=FILE stands in for the cartridge's save memory (as big as the game's
+save type, like an mGBA .sav):
 the game starts from FILE if it exists, and FILE gets the save memory at the
 end if the game used it, so consecutive runs see each other's saves.
 --require-picture fails if a shot is a single flat color (a smoke test that

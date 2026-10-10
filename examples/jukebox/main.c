@@ -49,8 +49,10 @@
 //     them) and the CPU time a frame takes, the mixer's and the script's
 //     included: about 7% with nothing playing (the mixer about 3, the VM
 //     running the script about 4), 20-25% with the music and a few effects.
-//   - In the web build the music and effects are silent (the web has no
-//     player for them yet); the PSG blips play.
+//   - The web build sounds the same: the music, the effects and the PSG
+//     blips (the browser starts the sound at the first click or key press,
+//     so the page waits for one). Its CPU figure is the browser's time, not
+//     the GBA's.
 //   (In mGBA's default keyboard mapping, the D-pad is the arrow keys, A is X,
 //   B is Z, L is A, R is S, START is Enter.)
 //

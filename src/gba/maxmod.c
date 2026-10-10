@@ -4,8 +4,9 @@
 // scripts make (music_*(), sfx_*()) are sampled_audio.c's, which reach this
 // file only through serval_mixer_ops, set by audio_bank_set(): a game that
 // calls them without ever registering a bank (a scripted game, whose SYS
-// calls reach every one) links none of Maxmod. The web keeps silent stubs
-// (src/web/sampled_audio.c, docs/audio.md#web).
+// calls reach every one) links none of Maxmod. Web builds compile this file
+// unchanged, with Maxmod's player and the engine's web mixer in place of
+// Maxmod's GBA mixer (src/web/maxmod_mixer.c, docs/audio.md#web).
 //
 // audio_bank_set() also hooks the mixer into frame_end() (serval_mixer_hook)
 // and into the engine's VBlank handler (serval_vblank_mixer, core.c), as

@@ -576,6 +576,161 @@ static void wave_length(void) {
     CHECK(end > ms(490) && end < ms(520));
 }
 
+// --- Direct Sound (maxmod: tracker music and sampled effects) ----------------
+
+// SOUNDCNT_H as the engine leaves it with a sound bank: Direct Sound A on the
+// left and B on the right, both at 100%, the PSG at 100%.
+#define DS_ENGINE 0x120E
+
+static s8 fifo_a[WEB_DIRECT_SOUND_MAX];
+static s8 fifo_b[WEB_DIRECT_SOUND_MAX];
+
+// Frames as the web plays them (src/web/platform.c): the PSG's samples, then
+// that frame's FIFO samples added (maxmod_mixer.c's mmVBlank()), k a frame
+// (Maxmod's 264), the same ones every frame. Returns the samples made.
+static u32 run_frames(u32 start, u32 frames, u32 k) {
+    static const u32 sizes[] = {804, 803, 804, 803, 803}; // 48 kHz / 59.73
+    u32 at = start;
+    for (u32 f = 0; f < frames; f++) {
+        u32 n = sizes[f % 5];
+        web_audio_generate(io, out + 2 * at, n);
+        web_audio_direct_sound(io, fifo_a, fifo_b, k);
+        at += n;
+    }
+    return at - start;
+}
+
+// FIFO square waves: `period` samples a cycle (a divisor of 264, so that the
+// frames join up), at +-level.
+static void fifo_square(s8* fifo, u32 period, s8 level) {
+    for (u32 i = 0; i < 264; i++)
+        fifo[i] = (s8)(i % period < period / 2 ? level : -level);
+}
+
+static void direct_sound_levels_and_speakers(void) {
+    // A FIFO at 100% spans the whole range, -1 to 1 for -128 to 128 (GBATEK),
+    // on the speakers SOUNDCNT_H gives it; at 50%, half. (Half scale here,
+    // short cycles: the DC blocker's tilt adds about 1% to the swing.)
+    setup();
+    io[SOUNDCNT_H] = DS_ENGINE;
+    fifo_square(fifo_a, 8, 64);
+    for (u32 i = 0; i < 264; i++)
+        fifo_b[i] = 0;
+    u32 n = run_frames(0, 30, 264);
+    CHECK(near(swing(0, n / 2, n), 1.0f, 0.02f));
+    CHECK(swing(1, n / 2, n) < 0.001f);
+    io[SOUNDCNT_H] = DS_ENGINE & ~0x0004; // A at 50%
+    n = run_frames(0, 30, 264);
+    CHECK(near(swing(0, n / 2, n), 0.5f, 0.01f));
+    io[SOUNDCNT_H] = 0x0300 | 0x0004 | 0x0002; // A on both speakers, B nowhere
+    n = run_frames(0, 30, 264);
+    CHECK(near(swing(0, n / 2, n), 1.0f, 0.02f));
+    CHECK(near(swing(1, n / 2, n), 1.0f, 0.02f));
+    // B on the right, A off: A's samples don't sound.
+    fifo_square(fifo_b, 8, 64);
+    io[SOUNDCNT_H] = 0x1000 | 0x0008 | 0x0002;
+    n = run_frames(0, 30, 264);
+    CHECK(swing(0, n / 2, n) < 0.001f);
+    CHECK(near(swing(1, n / 2, n), 1.0f, 0.02f));
+}
+
+static void direct_sound_pitch(void) {
+    // 264 FIFO samples a frame are Maxmod's 15,768 Hz: a 24-sample cycle is
+    // 657 Hz at any page rate.
+    static const u32 rates[] = {48000, 44100, 96000};
+    for (u32 r = 0; r < 3; r++) {
+        setup_rate(rates[r]);
+        io[SOUNDCNT_H] = DS_ENGINE;
+        fifo_square(fifo_a, 24, 127);
+        u32 at = 0;
+        for (u32 f = 0; f < 30; f++) {                  // half a second
+            uint64_t per = (uint64_t)rates[r] * 10000u; // rate / 59.7275, carried over
+            u32 n = (u32)(per * (f + 1) / 597275u - per * f / 597275u);
+            web_audio_generate(io, out + 2 * at, n);
+            web_audio_direct_sound(io, fifo_a, fifo_b, 264);
+            at += n;
+        }
+        CHECK(near(pitch(at / 4, at), 657.0f, 1.0f));
+    }
+}
+
+static void direct_sound_held_and_averaged(void) {
+    // Each FIFO sample holds for its share of the frame: a frame of 264
+    // samples over 792 output samples is three each. A single loud sample
+    // in the middle shows where.
+    setup();
+    io[SOUNDCNT_H] = DS_ENGINE;
+    for (u32 i = 0; i < 264; i++)
+        fifo_a[i] = 0;
+    fifo_a[132] = 127;
+    web_audio_generate(io, out, 792);
+    web_audio_direct_sound(io, fifo_a, fifo_b, 264);
+    u32 loud = 0;
+    for (u32 i = 0; i < 792; i++)
+        if (out[2 * i] > 0.5f)
+            loud++;
+    CHECK(loud == 3 && out[2 * 396] > 0.9f && out[2 * 397] > 0.9f && out[2 * 398] > 0.9f);
+    // Fewer output samples than FIFO samples: each is the average of the two
+    // it covers, so alternating samples cancel instead of aliasing.
+    setup();
+    io[SOUNDCNT_H] = DS_ENGINE;
+    fifo_square(fifo_a, 2, 127);
+    for (u32 f = 0; f < 10; f++) {
+        web_audio_generate(io, out, 132);
+        web_audio_direct_sound(io, fifo_a, fifo_b, 264);
+    }
+    CHECK(swing(0, 0, 132) < 0.001f);
+}
+
+static void direct_sound_beside_the_psg(void) {
+    // The PSG plays as before; Direct Sound adds to it, and the sum clips at
+    // the output's range.
+    setup();
+    io[SOUNDCNT_H] = DS_ENGINE;
+    play_square2(1750, 2); // a quarter of the range: +-0.25
+    for (u32 i = 0; i < 264; i++)
+        fifo_a[i] = fifo_b[i] = 0;
+    u32 n = run_frames(0, 30, 264);
+    CHECK(near(swing(0, n / 2, n), 0.52f, 0.03f)); // as square_amplitude
+    for (u32 i = 0; i < 264; i++)
+        fifo_a[i] = 127;
+    fifo_square(fifo_b, 8, 127);
+    n = run_frames(0, 3, 264);
+    float top = 0;
+    for (u32 i = 0; i < n; i++)
+        top = out[2 * i] > top ? out[2 * i] : top;
+    CHECK(top == 1.0f);                          // clipped
+    CHECK(near(swing(1, n / 2, n), 2.0f, 0.1f)); // the right: B and the PSG, clipped
+    // Sound off (SOUNDCNT_X): Direct Sound is silent too.
+    io[SOUNDCNT_X] = 0;
+    n = run_frames(0, 10, 264);
+    CHECK(swing(0, 0, n) < 0.02f && swing(1, n / 2, n) < 0.001f);
+}
+
+static void direct_sound_needs_samples_every_frame(void) {
+    // A frame given no samples plays none: the FIFO is empty (Maxmod gives
+    // every frame its samples, until the bank is unregistered).
+    setup();
+    io[SOUNDCNT_H] = DS_ENGINE;
+    fifo_square(fifo_a, 8, 127);
+    u32 n = run_frames(0, 10, 264);
+    CHECK(swing(0, n / 2, n) > 1.5f);
+    web_audio_generate(io, out, 803);
+    web_audio_generate(io, out, 803);
+    CHECK(swing(0, 400, 803) < 0.001f);
+    // Started again (web_audio_init()), before any web_audio_generate() call
+    // there is nothing to add to: the last buffer is left alone. With no
+    // samples, nothing happens either.
+    for (u32 i = 0; i < 2 * 803; i++)
+        out[i] = 0;
+    setup();
+    web_audio_direct_sound(io, fifo_a, fifo_b, 264);
+    CHECK(swing(0, 0, 803) == 0);
+    web_audio_generate(io, out, 803);
+    web_audio_direct_sound(io, fifo_a, fifo_b, 0);
+    CHECK(swing(0, 0, 803) < 0.001f);
+}
+
 static void uninitialized_is_silent(void) {
     web_audio_init(0);
     io[SOUNDCNT_X] = 0x80;
@@ -597,4 +752,11 @@ TEST_SUITE(web_apu_tests, "web_apu", {"square pitch", square_pitch},
            {"phase continuity", phase_continuity}, {"mixing", mixing},
            {"wave channel", wave_channel}, {"wave same-frame load", wave_same_frame_load},
            {"wave engine bank switching", wave_engine_bank_switching}, // wave channel
-           {"wave length", wave_length}, {"uninitialized is silent", uninitialized_is_silent});
+           {"wave length", wave_length},
+           // maxmod: Direct Sound, which tracker music and sampled effects play on
+           {"direct sound levels and speakers", direct_sound_levels_and_speakers},
+           {"direct sound pitch", direct_sound_pitch},
+           {"direct sound held and averaged", direct_sound_held_and_averaged},
+           {"direct sound beside the psg", direct_sound_beside_the_psg},
+           {"direct sound needs samples every frame", direct_sound_needs_samples_every_frame},
+           {"uninitialized is silent", uninitialized_is_silent});

@@ -244,10 +244,10 @@ if(SERVAL_TARGET_GBA)
     # the include path.
     serval_add_header_check(serval_gba_header_check SERVAL_GBA)
 else()
-    # The web backend's renderer and sound are plain C, tested natively on
-    # arrays standing in for GBA memory.
+    # The web backend's renderer, sound and mixer are plain C, tested
+    # natively on arrays standing in for GBA memory.
     add_executable(serval_host_tests host/main.c web_ppu_tests.c web_apu_tests.c
-                   ../src/web/ppu.c ../src/web/apu.c)
+                   web_mixer_tests.c ../src/web/ppu.c ../src/web/apu.c ../src/web/mixer.c)
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
     add_test(NAME host_tests COMMAND serval_host_tests)
 

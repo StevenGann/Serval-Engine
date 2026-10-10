@@ -277,9 +277,8 @@ void psg_music_set_volume(u8 volume);
 // keeps the audio fed even through frames that overrun. PSG music
 // (psg_music_*() above) is a separate player.
 //
-// On the web these functions are silent stubs (they play nothing, return
-// false or SFX_NONE, and warn once in debug builds) until the web has a
-// player of its own (docs/audio.md#web).
+// Web builds play them as the GBA does, from the same bank, with Maxmod's
+// player and a C port of its GBA mixer (docs/audio.md#web).
 
 // Registers the game's sound bank, the data mmutil built (in ROM, where it
 // stays: it must stay valid while registered), and stops any tracker music

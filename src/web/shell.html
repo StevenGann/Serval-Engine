@@ -205,14 +205,15 @@
   }
   canvas.addEventListener("dblclick", toggleFullscreen);
 
-  // Sound: an AudioWorklet plays the samples each frame produces, keeping a
+  // Sound: an AudioWorklet plays the samples each frame produces (the PSG,
+  // tracker music and sampled effects, mixed in src/web/apu.c), keeping a
   // small queue (about three frames) to ride out timing jitter.
   const sound = { ctx: null, node: null };
   if (!test && window.AudioContext) {
     try { sound.ctx = new AudioContext({ latencyHint: "interactive" }); } catch (e) { sound.ctx = null; }
   }
   const WORKLET = `
-    class ServalPsg extends AudioWorkletProcessor {
+    class ServalSound extends AudioWorkletProcessor {
       constructor() {
         super();
         this.queue = []; this.offset = 0; this.queued = 0; this.waiting = true;
@@ -237,13 +238,13 @@
         return true;
       }
     }
-    registerProcessor("serval-psg", ServalPsg);`;
+    registerProcessor("serval-sound", ServalSound);`;
   async function startSound() {
     if (!sound.ctx || sound.node) return;
     try {
       const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
       await sound.ctx.audioWorklet.addModule(url);
-      sound.node = new AudioWorkletNode(sound.ctx, "serval-psg", { numberOfInputs: 0, outputChannelCount: [2] });
+      sound.node = new AudioWorkletNode(sound.ctx, "serval-sound", { numberOfInputs: 0, outputChannelCount: [2] });
       sound.node.connect(sound.ctx.destination);
     } catch (e) {
       console.warn("serval: no sound (" + e + ")");

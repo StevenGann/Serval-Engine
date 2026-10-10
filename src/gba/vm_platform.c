@@ -1,7 +1,8 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
 // sound, music, text (strings and numbers), buttons, brightness, blending,
 // palette writes, and tracker music and sampled effects. The web build
-// compiles it too.
+// compiles it too. None may wait for a frame: web pages built with a script
+// tell Asyncify so (serval_add_script(), cmake/Serval.cmake).
 
 #include "../core/vm_internal.h"
 #include "serval/audio.h"

@@ -28,6 +28,16 @@
 // levels over its interval), which suppresses most aliasing of high square
 // waves and fast noise, then AC-coupled by a DC-blocking high-pass filter as
 // the hardware's output is.
+//
+// Direct Sound A and B (the two 8-bit sample channels Maxmod plays tracker
+// music and sampled effects on) are added by web_audio_direct_sound(), which
+// only games with a sound bank link (maxmod_mixer.c calls it once a frame,
+// with the samples Maxmod mixed for the frame, as the GBA's DMA feeds them
+// to the FIFOs): held and box-filtered the same way, AC-coupled likewise,
+// mixed as SOUNDCNT_H routes them, at GBATEK's levels: a FIFO at 100% spans
+// the whole output range, -1 to 1, a PSG channel at full volume (master
+// volume 7, PSG at 100%) a quarter of it; the sum is clipped to that range,
+// as the hardware's 10-bit output is.
 
 #include "web.h"
 
@@ -46,6 +56,15 @@
 #define SOUNDCNT_H (0x82 / 2)  // PSG volume ratio, Direct Sound control
 #define SOUNDCNT_X (0x84 / 2)  // master enable, channel status
 #define WAVE_RAM (0x90 / 2)    // 16 bytes
+
+// SOUNDCNT_H's Direct Sound bits: each FIFO's volume (100%, else 50%) and
+// the speakers it plays on.
+#define DS_A_FULL 0x0004
+#define DS_B_FULL 0x0008
+#define DS_A_RIGHT 0x0100
+#define DS_A_LEFT 0x0200
+#define DS_B_RIGHT 0x1000
+#define DS_B_LEFT 0x2000
 
 #define TRIGGER 0x8000
 #define LENGTH_ENABLE 0x4000
@@ -94,6 +113,12 @@ static struct {
     float dc_coeff;  // DC blocker pole
     float dc_in[2];  // last input, left and right
     float dc_out[2]; // last output, left and right
+    float* out;      // the last web_audio_generate() call's samples, and how many
+    u32 out_count;
+    // Direct Sound's own DC blocker (it is linear: filtering the PSG and
+    // Direct Sound apart filters their sum).
+    float ds_dc_in[2];
+    float ds_dc_out[2];
 } apu;
 
 // Duty cycle waveforms (12.5%, 25%, 50%, 75%), one bit per step.
@@ -123,6 +148,10 @@ void web_audio_init(u32 sample_rate) {
     apu.dc_coeff = r < 0 ? 0 : r;
     apu.dc_in[0] = apu.dc_in[1] = 0;
     apu.dc_out[0] = apu.dc_out[1] = 0;
+    apu.out = NULL;
+    apu.out_count = 0;
+    apu.ds_dc_in[0] = apu.ds_dc_in[1] = 0;
+    apu.ds_dc_out[0] = apu.ds_dc_out[1] = 0;
 }
 
 // --- Register handling -------------------------------------------------------
@@ -438,6 +467,8 @@ void web_audio_generate(u16* io, float* out, u32 count) {
             out[i] = 0;
         return;
     }
+    apu.out = out; // for web_audio_direct_sound()
+    apu.out_count = count;
     apply_registers(io);
     double dt = apu.cycles_per_sample;
 
@@ -490,4 +521,54 @@ void web_audio_generate(u16* io, float* out, u32 count) {
         if (apu.ch[c].active)
             status |= (u16)(1u << c);
     io[SOUNDCNT_X] = (u16)((io[SOUNDCNT_X] & ~0x000Fu) | status);
+}
+
+// --- Direct Sound ----------------------------------------------------------
+
+static float ds_dc_block(u32 side, float x) {
+    float y = x - apu.ds_dc_in[side] + apu.dc_coeff * apu.ds_dc_out[side];
+    apu.ds_dc_in[side] = x;
+    apu.ds_dc_out[side] = y;
+    return y;
+}
+
+void web_audio_direct_sound(const u16* io, const s8* a, const s8* b, u32 count) {
+    float* out = apu.out;
+    u32 n = apu.out_count;
+    if (!out || !n || !count || !apu.enabled) // sound off: silent
+        return;
+    if (count > WEB_DIRECT_SOUND_MAX)
+        count = WEB_DIRECT_SOUND_MAX;
+    // SOUNDCNT_H: bits 2-3 the FIFOs' volumes, 8-13 their speakers (which
+    // timer plays them, bits 10 and 14, doesn't matter: a frame's samples
+    // are spread over the frame).
+    u16 control = io[SOUNDCNT_H];
+    float scale = 1.0f / ((float)count * 128.0f);
+    float gain_a = (control & DS_A_FULL ? 1.0f : 0.5f) * scale;
+    float gain_b = (control & DS_B_FULL ? 1.0f : 0.5f) * scale;
+    // Each output sample is the exact average of the held FIFO samples over
+    // its time: in 1/n of a FIFO sample, output sample i covers count units,
+    // FIFO sample j covers n.
+    u32 j = 0, rest = n; // FIFO sample j has `rest` units left
+    for (u32 i = 0; i < n; i++) {
+        s32 sum_a = 0, sum_b = 0;
+        for (u32 need = count; need > 0;) {
+            u32 take = need < rest ? need : rest;
+            sum_a += a[j] * (s32)take;
+            sum_b += b[j] * (s32)take;
+            need -= take;
+            rest -= take;
+            if (rest == 0) {
+                j++;
+                rest = n;
+            }
+        }
+        float level_a = (float)sum_a * gain_a, level_b = (float)sum_b * gain_b;
+        float left = (control & DS_A_LEFT ? level_a : 0) + (control & DS_B_LEFT ? level_b : 0);
+        float right = (control & DS_A_RIGHT ? level_a : 0) + (control & DS_B_RIGHT ? level_b : 0);
+        float l = out[2 * i] + ds_dc_block(0, left);
+        float r = out[2 * i + 1] + ds_dc_block(1, right);
+        out[2 * i] = l > 1.0f ? 1.0f : l < -1.0f ? -1.0f : l;
+        out[2 * i + 1] = r > 1.0f ? 1.0f : r < -1.0f ? -1.0f : r;
+    }
 }
