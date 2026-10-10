@@ -237,6 +237,7 @@ enum {
 };
 extern const PsgSound* const sound_table[SOUND_COUNT];
 extern const PsgSong lounge_song; // the tune of the title and the table, looping
+extern const u32 bass_wave[4];    // the walking bass's waveform, for the wave channel
 
 // --- Game components (C_GAME bits) -------------------------------------------
 

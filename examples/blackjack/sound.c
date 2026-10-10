@@ -2,10 +2,13 @@
 //
 // Channels: noise for the cards (the hiss of a deal, the click of a flip),
 // square 1 for short UI blips and thumps (landing cards, the cursor, the
-// bankroll's count), square 2 for chips and jingles. The music uses all
-// three: a walking bass on square 1, the melody on square 2, a brushed ride
-// on noise; effects play over it and the tune comes back on that channel
-// when they end.
+// bankroll's count), square 2 for chips and jingles. The music uses three of
+// the four tone generators: the melody on square 2, a brushed ride on noise,
+// and a walking bass on the wave channel (PSG_WAVE), in a round waveform of
+// its own (bass_wave) that sounds like a plucked upright bass, where a square
+// buzzes. Effects play over the melody and the ride, and the tune comes back
+// on that channel when they end; square 1 is the UI's alone, so its blips no
+// longer interrupt the bass.
 //
 // Priorities: count ticks and cursor blips are 0, card sounds 1, chips 1;
 // results (win, blackjack, lose, bust, push) are 2, so a chip clink or a
@@ -290,6 +293,13 @@ static const PsgNote melody[] = {
     {PSG_REST, 6},
 };
 
+// The walking bass's waveform (psg_waves_set, in game_init): 32 steps of
+// sin(x) + 0.3 sin(2x) + 0.1 sin(3x), scaled to 0-15, so a fundamental with a
+// soft second harmonic: 8, 10, 12, 14, 15, 15, 15, 14, 13, 13, 12, 11, 11,
+// 10, 9, 8, 8, 7, 6, 5, 4, 4, 3, 2, 2, 1, 0, 0, 0, 1, 3, 5, two steps a byte,
+// the first in the high nibble.
+const u32 bass_wave[4] = {0xFEFFCE8A, 0x98BACBDD, 0x32446587, 0x35010021};
+
 // Walking bass: a quarter note per beat (6 ticks, the track's .length).
 static const PsgNote bass[] = {
     {PSG_F2, 0},  {PSG_A2, 0},  {PSG_C3, 0},  {PSG_E3, 0},  // Fmaj7
@@ -322,9 +332,13 @@ static const PsgTrack lounge_tracks[] = {
      .fade = -4,
      .notes = melody,
      .note_count = sizeof melody / sizeof melody[0]},
-    {.channel = PSG_SQUARE1,
-     .duty = PSG_DUTY_50,
-     .volume = 11,
+    // The wave channel's waveform 0 (bass_wave). Full volume and a slow fade:
+    // a plucked note, still sounding (at 25%) when the next one starts. As
+    // loud as the square bass it replaces (volume 11) was: a rounder wave
+    // carries less power at the same height.
+    {.channel = PSG_WAVE,
+     .duty = 0,
+     .volume = 15,
      .fade = -3,
      .length = 6,
      .notes = bass,

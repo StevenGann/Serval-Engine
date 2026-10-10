@@ -42,9 +42,11 @@
 //     moves half as far, so the layers slide over each other. Green felt at the table, plum on the
 //     title (two tilesets with the same tiles)
 //   - Screen fades (screen_set_brightness) between the title and the table
-//   - Music (PsgSong): an original swing tune with a walking bass, and sound
-//     effects over it with priorities (a card or a chip never cuts a result's
-//     jingle short)
+//   - Music (PsgSong): an original swing tune, its walking bass on the PSG's
+//     wave channel (PSG_WAVE) in a round waveform of the game's own
+//     (psg_waves_set), and sound effects over it with priorities (a card or a
+//     chip never cuts a result's jingle short; the UI's blips and thumps, on
+//     square 1, never cut the bass)
 //   - Save data (save.h): the bankroll and a few stats in one versioned slot,
 //     written after every round (bank.c)
 //   - random_entropy() seeding the shuffle when START is pressed: the same
@@ -59,7 +61,8 @@
 //     cards (ace of spades, king of hearts, jack of diamonds) flying up from
 //     below, flipping over in the air and settling into a gently swaying fan,
 //     a blinking "PRESS START", the bankroll and best bankroll, and the house
-//     rules. A slow swing tune plays (F major, about 38 seconds, looping).
+//     rules. A slow swing tune plays (F major, about 38 seconds, looping): a
+//     muted lead over a round, plucked upright bass and a brushed ride.
 //   - START: a rising chime and a fade to the table, green swirling felt.
 //     Top left: the bankroll (1000 chips on a first boot). Top right: the
 //     shoe, a pile of card backs that thins as it empties. "PLACE YOUR BET"

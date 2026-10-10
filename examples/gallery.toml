@@ -93,7 +93,7 @@ thumbnail = { frame = 830, keys = ["200:S:2", "500:A:400", "600:l:40", "800:r:60
 
 [examples.blackjack]
 title = "BLACKJACK"
-summary = "Blackjack in a bold, bouncy card-game style: cards built from shared sprite pieces that slide, flip, tilt and wobble, a swing tune, a bankroll kept in save data"
+summary = "Blackjack in a bold, bouncy card-game style: cards built from shared sprite pieces that slide, flip, tilt and wobble, a swing tune with its bass on the wave channel, a bankroll kept in save data"
 tags = ["metasprites", "rotation", "tilemaps", "music", "save"]
 level = 4
 thumbnail = { frame = 520, keys = ["200:S:2", "400:A:2"] }

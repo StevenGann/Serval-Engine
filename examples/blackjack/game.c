@@ -788,6 +788,7 @@ void game_init(void) {
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN); // black while building the art
     art_build();
     psg_table_set(sound_table, SOUND_COUNT);
+    psg_waves_set(bass_wave, 1); // the bass's waveform: the wave channel plays it (sound.c)
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprite_group);
     text_set_shadow(true);
