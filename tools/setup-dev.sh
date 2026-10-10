@@ -14,12 +14,15 @@
 #   - mgba-rom-test, built from mGBA's source into DIR/mgba-rom-test
 #     (tools/build-mgba-rom-test.sh); runs the test ROM
 #   - Emscripten (emsdk) into DIR/emsdk, for web builds
+#   - BlocksDS's mmutil, built from source into DIR/mmutil-<version>
+#     (tools/build-mmutil.sh, the version serval.json's toolchain.mmutil
+#     names); builds sound banks (serval_add_soundbank)
 #   - with --with-lua32: Lua 5.4 built with 32-bit integers (LUA_32BITS),
 #     checksum-verified, into DIR/lua-5.4.8-32 (tools/build-lua32.sh), for
 #     the Lua compiler's differential test (CTest svlua_difftest)
 # and writes DIR/serval-env.sh, which sets ARM_GNU_TOOLCHAIN,
-# MGBA_ROM_TEST_DIR and EMSDK for CMake and examples/build-all.sh, and
-# SERVAL_LUA32 when that Lua is installed. Source it
+# MGBA_ROM_TEST_DIR, EMSDK and SERVAL_MMUTIL for CMake and
+# examples/build-all.sh, and SERVAL_LUA32 when that Lua is installed. Source it
 # from your shell startup (--add-to-shell does that for ~/.profile and
 # ~/.bashrc). DIR defaults to ~/opt.
 #
@@ -46,6 +49,7 @@ CLANG_FORMAT_MAJOR=18
 CMAKE_MIN=3.25
 PYTHON_MIN=3.11 # tools/svlua.py's (cmake/Serval.cmake checks it to compile Lua scripts)
 LUA_VERSION=5.4.8 # tools/build-lua32.sh's; ci.yml's host job caches the same
+MMUTIL_VERSION=1.24.0-blocks # serval.json's toolchain.mmutil; tools/build-mmutil.sh's
 
 prefix="$HOME/opt"
 system=1 web=1 rom_tests=1 lua32=0 add_to_shell=0
@@ -190,6 +194,18 @@ if ((web)); then
     fi
 fi
 
+# --- mmutil ------------------------------------------------------------------
+
+say "mmutil $MMUTIL_VERSION (BlocksDS)"
+mmutil_dir="$prefix/mmutil-$MMUTIL_VERSION"
+mmutil_bin="$mmutil_dir/mmutil"
+if [[ -x "$mmutil_bin" && "$("$mmutil_bin" -V 2> /dev/null)" == "mmutil v$MMUTIL_VERSION" ]]; then
+    ok installed "$mmutil_dir"
+else
+    "$repo/tools/build-mmutil.sh" "$mmutil_dir" > /dev/null || die "building mmutil $MMUTIL_VERSION failed"
+    ok installed "$mmutil_dir"
+fi
+
 # --- Lua 5.4 with 32-bit integers (optional) ----------------------------------
 
 lua_dir="$prefix/lua-$LUA_VERSION-32"
@@ -237,6 +253,7 @@ env_file="$prefix/serval-env.sh"
     if ((web)); then
         echo "export EMSDK=\"$emsdk_dir\""
     fi
+    echo "export SERVAL_MMUTIL=\"$mmutil_bin\""
     if [[ -n "$bin_dir" ]]; then
         echo "case \":\$PATH:\" in *\":$bin_dir:\"*) ;; *) export PATH=\"$bin_dir:\$PATH\" ;; esac"
     fi

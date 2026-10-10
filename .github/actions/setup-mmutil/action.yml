@@ -1,0 +1,26 @@
+name: Set up mmutil
+description: >-
+  Builds BlocksDS's mmutil, which builds the sound banks of the tests and examples
+  (serval_add_soundbank), at the version serval.json's toolchain.mmutil names
+  (tools/build-mmutil.sh, cached), and exposes it to CMake as SERVAL_MMUTIL.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore mmutil
+      id: mmutil-cache
+      uses: actions/cache@v6
+      with:
+        path: ~/mmutil
+        key: mmutil-${{ runner.os }}-${{ hashFiles('tools/build-mmutil.sh') }}
+
+    # The runner's GCC 13 lacks C23's #embed, which mmutil uses for its demo
+    # ROMs: tools/build-mmutil.sh expands those lines first.
+    - name: Build mmutil
+      if: steps.mmutil-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: tools/build-mmutil.sh ~/mmutil
+
+    - name: Expose mmutil to CMake
+      shell: bash
+      run: echo "SERVAL_MMUTIL=$HOME/mmutil/mmutil" >> "$GITHUB_ENV"

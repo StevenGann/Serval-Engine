@@ -1,5 +1,5 @@
 name: Set up GBA build environment
-description: Installs CMake, Ninja, the ARM GNU toolchain and mgba-rom-test.
+description: Installs CMake, Ninja, the ARM GNU toolchain, mgba-rom-test and mmutil.
 
 inputs:
   gcc-release:
@@ -35,3 +35,6 @@ runs:
     - name: Expose mgba-rom-test to CMake
       shell: bash
       run: echo "MGBA_ROM_TEST_DIR=$HOME/mgba-rom-test" >> "$GITHUB_ENV"
+
+    - name: Set up mmutil
+      uses: ./.github/actions/setup-mmutil

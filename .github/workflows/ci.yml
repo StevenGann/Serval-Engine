@@ -37,6 +37,9 @@ jobs:
       - name: Install CMake and Ninja
         uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
+      # The jukebox example's sound bank, built for the API-only check.
+      - uses: ./.github/actions/setup-mmutil
+
       - name: Configure
         run: cmake --preset host
 
@@ -72,6 +75,10 @@ jobs:
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 6.0.11 # keep tools/setup-dev.sh and pages.yml in sync
+
+      # The jukebox example's sound bank (the page is silent, but its code
+      # names the bank).
+      - uses: ./.github/actions/setup-mmutil
 
       - name: Configure
         run: cmake --preset web

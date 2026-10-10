@@ -27,3 +27,30 @@ target_include_directories(tonc SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/libto
 target_compile_options(tonc PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-O2 -fno-strict-aliasing -w>
     $<$<COMPILE_LANGUAGE:ASM>:-x assembler-with-cpp -mthumb>)
+
+# Maxmod, vendored from BlocksDS (blocksds/maxmod). See maxmod/VENDORED.md.
+# GBA only: web builds return above (they keep silent stubs,
+# docs/audio.md#web). Compiled as upstream's own GBA build compiles it
+# (Makefile.plat: Thumb, -O2 in debug and release builds alike, C23 with GNU
+# extensions, __GBA__, NDEBUG outside debug builds); its hot routines put
+# themselves in IWRAM as ARM code (.iwram sections, which src/gba/gba.ld
+# places there). An object library: its objects go into the engine's library
+# (CMakeLists.txt), so a game links Maxmod only if it calls tracker music or
+# sampled sound effects, and --gc-sections drops what it doesn't use. The
+# engine's warning flags are not applied.
+add_library(maxmod OBJECT
+    maxmod/source/core/effect.c
+    maxmod/source/core/mas.c
+    maxmod/source/core/mas_arm.c
+    maxmod/source/gba/main_gba.c
+    maxmod/source/gba/mixer.c
+    maxmod/source/gba/mixer_asm.s
+)
+target_include_directories(maxmod
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/maxmod/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/maxmod/source")
+target_compile_definitions(maxmod PRIVATE __GBA__ $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
+set_target_properties(maxmod PROPERTIES C_STANDARD 23 C_EXTENSIONS ON)
+target_compile_options(maxmod PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-O2 -fomit-frame-pointer -w>
+    $<$<COMPILE_LANGUAGE:ASM>:-x assembler-with-cpp>)
