@@ -110,6 +110,19 @@ void serval_psg_tone(u32 channel, u16 control, u16 rate);
 void serval_psg_quiet(u32 channel);
 bool serval_psg_sfx_active(u32 channel);
 
+// wave channel: PSG channel 3 (wave.c), which psg.c drives for PSG_WAVE.
+// serval_wave_tone() starts a note: control as from serval_psg_control() (the
+// volume and fade, and the waveform's number in bits 0-7), rate the frequency
+// register value; serval_wave_quiet() stops the channel; serval_wave_update()
+// steps the note's fade, once a frame (serval_psg_update) while
+// serval_wave_fading is set. For tests: serval_wave_bank(), the wave RAM bank
+// playing.
+void serval_wave_tone(u16 control, u16 rate);
+void serval_wave_quiet(void);
+void serval_wave_update(void);
+extern u8 serval_wave_fading;
+u32 serval_wave_bank(void);
+
 // The music player, hooked in by psg_music_play() so that games without music
 // don't link it. serval_psg_update() calls update() after stepping the sound
 // effects; resume(channel) when a sound effect ends on a channel in

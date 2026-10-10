@@ -24,7 +24,7 @@ Implemented in 1.0:
 - ECS: 128 entities with generational handles; engine components for position, velocity, sprite, animation, body, map body, kinematic body and path; movement, physics, map movement, animation, path and render systems; game-defined components and systems; `ecs_count` and `ecs_gather` for cheap per-kind loops.
 - Physics: bouncing bodies (gravity in any direction and per body, bounce up to a perfect one that never loses height, friction, maximum fall speed, open edges, wrap-around, contact reports); map bodies that collide with solid and one-way metatiles; kinematic bodies that move only by their velocity; rectangle overlap and hit-side tests.
 - Paths: movement patterns as data tables (lines, swoops, circles, weaves), mirrored or rotated per entity.
-- Sound on the PSG tone generators: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
+- Sound on the four PSG tone generators, the wave channel's waveforms the game's own: sound effects (tones, envelopes, pitch slides, melodies, priorities) and music (a track per channel, loops, tempo changes, pause and resume, volume, sound effects over it).
 - Screen fades (hardware brightness), alpha blending (see-through layers and semi-transparent sprites: `screen_set_blend()`, `SPRITE_BLEND`), color mixing (`color_mix()`, matching the hardware's blending), palette writes for palette cycles and fades (`sprite_set_colors()`, `tileset_set_colors()`, copied in VBlank) and the backdrop color; raster effects: a scroll offset or backdrop color per scanline (a ripple, a sky gradient), by HBlank DMA, drawn the same on the web.
 - HUD text (8x8 font) in up to four color styles with a drop shadow, centering, printf-style formatting; a "Made with Serval Engine" splash screen.
 - Save data: numbered slots with checksums, version numbers and power-loss-safe writes, on the cartridge's SRAM, Flash (64 or 128 KiB) or EEPROM (8 KiB or 512 bytes), picked per game (`localStorage` in web builds).
@@ -34,7 +34,7 @@ Implemented in 1.0:
 
 Planned, declared in 1.0 and implemented in 1.x versions (designed in [`docs/`](docs/README.md); the [full list of names](docs/api-freeze.md#planned-in-1x-declared-now)):
 
-- Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank; the PSG wave channel.
+- Sound: tracker music (MOD, S3M, XM, IT) and sampled sound effects, mixed by Maxmod (BlocksDS's), from a sound bank.
 - Sprites: LZ77-compressed sprites.
 - Tilemaps: LZ77-compressed tilesets, ladders and floor slopes.
 

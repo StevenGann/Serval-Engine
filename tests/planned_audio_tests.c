@@ -5,12 +5,11 @@
 // in the test ROM; cases for stubs in src/gba/, which the host build doesn't
 // link, go inside #ifdef SERVAL_GBA.
 //
-// Here: the PSG wave channel's refusals (PSG_WAVE: psg_play() skips the sound,
-// the music sequencer leaves the track out, each warning that it is planned)
-// and psg_waves_set(); the sound bank, tracker music and sampled effects
+// Here: the sound bank, tracker music and sampled effects
 // (src/gba/sampled_audio.c). The stubs must leave the PSG playing and the
 // hardware the planned features will claim (Direct Sound, timer 0, DMA 1 and
-// 2, the wave channel) untouched.
+// 2) untouched. (The wave channel, planned until it was implemented, has its
+// tests in psg_wave_tests.c and rom/wave_tests.c.)
 
 // Calls planned API on purpose: without this, every call would warn.
 #define SERVAL_NO_PLANNED_WARNINGS
@@ -41,34 +40,6 @@
         CHECK(debug_warning_count() - before_ == WARNED);                                          \
     } while (0)
 
-// --- The wave channel in PSG music (portable: the sequencer) ----------------
-
-static const PsgNote wave_notes[] = {{PSG_C3, 4}};
-static const PsgNote square_notes[] = {{PSG_E5, 4}};
-static const PsgTrack tracks_with_wave[] = {
-    {.channel = PSG_WAVE, .notes = wave_notes, .note_count = 1},
-    {.channel = PSG_SQUARE1, .notes = square_notes, .note_count = 1},
-    {.channel = 7, .notes = square_notes, .note_count = 1}, // invalid: its own warning
-};
-static const PsgSong song_with_wave = {.tracks = tracks_with_wave, .track_count = 3};
-static const PsgSong wave_only_song = {.tracks = tracks_with_wave, .track_count = 1};
-
-static void wave_tracks_are_left_out(void) {
-    serval_psg_seq_reset_warnings();
-    PsgSequencer seq;
-    u32 before = debug_warning_count();
-    CHECK(serval_psg_seq_start(&seq, &song_with_wave) == 1u << PSG_SQUARE1);
-    // The wave track and the invalid one are different problems, each
-    // reported once.
-    CHECK(debug_warning_count() - before == 2 * WARNED);
-    before = debug_warning_count();
-    CHECK(serval_psg_seq_start(&seq, &song_with_wave) == 1u << PSG_SQUARE1);
-    CHECK(serval_psg_seq_start(&seq, &wave_only_song) == 0);
-    CHECK(debug_warning_count() == before);
-    CHECK(seq.tracks[PSG_SQUARE1].track == NULL); // the wave-only song plays nothing
-    CHECK(serval_psg_seq_channels(&seq) == 0);
-}
-
 #ifdef SERVAL_GBA
 // --- Stubs and refusals in src/gba/ (the test ROM only) ---------------------
 
@@ -77,59 +48,10 @@ static void wave_tracks_are_left_out(void) {
 #include "../src/gba/internal.h"
 
 #define VOLUME(cnt) ((cnt) >> 12)
-#define WAVE_ENABLED (SDMG_LWAVE | SDMG_RWAVE) // SOUNDCNT_L: channel 3 to either speaker
 
-// The wave channel stays off: not playing, not sent to the speakers.
-static bool wave_channel_off(void) {
-    return !(REG_SNDSTAT & SSTAT_WAVE) && !(REG_SNDDMGCNT & WAVE_ENABLED) &&
-           !(REG_SND3SEL & 0x80); // SOUND3CNT_L bit 7: playback on
-}
-
-enum { SND_WAVE, SND_SQUARE, SND_BAD_CHANNEL, SOUND_COUNT };
-static const PsgSound wave_sound = {.channel = PSG_WAVE, .frequency = 220, .frames = 10};
+enum { SND_SQUARE, SOUND_COUNT };
 static const PsgSound square_sound = {.channel = PSG_SQUARE2, .frequency = 440}; // until replaced
-static const PsgSound bad_channel_sound = {.channel = 7, .frequency = 440, .frames = 10};
-static const PsgSound* const sounds[SOUND_COUNT] = {
-    [SND_WAVE] = &wave_sound, [SND_SQUARE] = &square_sound, [SND_BAD_CHANNEL] = &bad_channel_sound};
-
-static void wave_sounds_are_skipped(void) {
-    psg_table_set(sounds, SOUND_COUNT); // makes sound problems reportable again
-    psg_play(SND_SQUARE);
-    u16 rate = serval_psg_rate(PSG_SQUARE2);
-    TWICE(psg_play(SND_WAVE));
-    CHECK(wave_channel_off());
-    CHECK(VOLUME(REG_SND2CNT) == 15 && serval_psg_rate(PSG_SQUARE2) == rate); // plays on
-    // An invalid channel is a different problem, reported on its own.
-    TWICE(psg_play(SND_BAD_CHANNEL));
-    psg_stop_all();
-}
-
-static void wave_tracks_are_left_out_of_psg_music(void) {
-    psg_table_set(sounds, SOUND_COUNT); // makes song problems reportable again
-    psg_music_play(&song_with_wave);
-    CHECK(psg_music_playing());
-    CHECK(serval_psg_rate(PSG_SQUARE1) == serval_psg_square_rates[PSG_E5]);
-    CHECK(wave_channel_off());
-    psg_music_play(&wave_only_song);
-    CHECK(!psg_music_playing());
-    CHECK(wave_channel_off());
-    psg_stop_all();
-}
-
-static void psg_waves_set_ignores_the_table(void) {
-    static const u32 waves[8] = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476,
-                                 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x00000000};
-    u32 wave_ram[4];
-    for (u32 i = 0; i < 4; i++)
-        wave_ram[i] = (REG_WAVE_RAM)[i];
-    TWICE(psg_waves_set(waves, 2));
-    u32 before = debug_warning_count();
-    psg_waves_set(NULL, 0); // the stub reports once in all, not once per table
-    CHECK(debug_warning_count() == before);
-    for (u32 i = 0; i < 4; i++)
-        CHECK((REG_WAVE_RAM)[i] == wave_ram[i]);
-    CHECK(wave_channel_off());
-}
+static const PsgSound* const sounds[SOUND_COUNT] = {[SND_SQUARE] = &square_sound};
 
 // What the sampled-audio stubs must leave alone: the PSG playing (a song on
 // square 1, a held sound on square 2) and the hardware Maxmod will claim.
@@ -196,13 +118,9 @@ static void sampled_effects_do_nothing(void) {
 }
 
 TEST_SUITE(planned_audio_tests, "planned_audio",
-           {"wave_tracks_are_left_out", wave_tracks_are_left_out},
-           {"wave_sounds_are_skipped", wave_sounds_are_skipped},
-           {"wave_tracks_are_left_out_of_psg_music", wave_tracks_are_left_out_of_psg_music},
-           {"psg_waves_set_ignores_the_table", psg_waves_set_ignores_the_table},
            {"sound_bank_and_tracker_music_do_nothing", sound_bank_and_tracker_music_do_nothing},
            {"sampled_effects_do_nothing", sampled_effects_do_nothing});
 #else
-TEST_SUITE(planned_audio_tests, "planned_audio",
-           {"wave_tracks_are_left_out", wave_tracks_are_left_out});
+// The host build links no stub: every planned name of audio.h is in src/gba/.
+TEST_SUITE(planned_audio_tests, "planned_audio");
 #endif

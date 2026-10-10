@@ -52,7 +52,7 @@ endif()
 add_test(NAME planned_api COMMAND ${_serval_planned_check})
 
 add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c
-    physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c save_tests.c input_tests.c path_tests.c splash_logic_tests.c
+    physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c psg_wave_tests.c save_tests.c input_tests.c path_tests.c splash_logic_tests.c
     vm_tests.c color_tests.c planned_audio_tests.c planned_sprites_tests.c planned_map_tests.c
     planned_screen_tests.c)
 target_link_libraries(serval_test_harness
@@ -68,6 +68,7 @@ if(SERVAL_TARGET_GBA)
                 rom/palette_tests.c
                 rom/sprite_stream_tests.c
                 rom/raster_tests.c
+                rom/wave_tests.c
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")

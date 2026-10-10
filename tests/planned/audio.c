@@ -10,11 +10,6 @@
 
 void planned_audio(void);
 void planned_audio(void) {
-    // The PSG wave channel (B4).
-    static const u8 channel = PSG_WAVE; // planned
-    static const u32 waves[4] = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476};
-    psg_waves_set(waves, 1); // planned
-
     // The sound bank and tracker music (B1, B2).
     audio_bank_set(NULL);           // planned
     music_play(0, true);            // planned
@@ -35,7 +30,6 @@ void planned_audio(void) {
     sfx_set_volume(200);                        // planned
     sfx_stop_all();                             // planned
 
-    (void)channel;
     (void)playing;
     (void)paused;
     (void)sfx_on;

@@ -46,6 +46,7 @@ extern const TestSuite physics_tests;
 extern const TestSuite map_tests;
 extern const TestSuite anim_tests;
 extern const TestSuite psg_sequencer_tests;
+extern const TestSuite psg_wave_tests; // wave channel: its portable parts
 extern const TestSuite save_tests;
 extern const TestSuite input_tests;
 extern const TestSuite path_tests;

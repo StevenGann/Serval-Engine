@@ -22,6 +22,7 @@ extern const TestSuite gba_sprite_tiles_tests; // sprite tiles: runtime sprite t
 extern const TestSuite gba_palette_tests;      // palettes: palette writes
 extern const TestSuite gba_stream_tests;
 extern const TestSuite gba_raster_tests; // raster: raster effects
+extern const TestSuite gba_wave_tests;   // wave channel: the PSG wave channel
 
 void test_output(const char* line) {
     debug_log(line);
@@ -49,6 +50,8 @@ int main(void) {
         &gba_present_tests,
         &gba_blend_tests,
         &psg_sequencer_tests,
+        &psg_wave_tests, // wave channel
+        &gba_wave_tests, // wave channel
         &save_tests,
         &gba_save_tests,
         &input_tests,

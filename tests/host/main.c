@@ -15,6 +15,7 @@ int main(void) {
         &physics_tests,       &map_tests,
         &web_ppu_tests,       &web_apu_tests,
         &anim_tests,          &psg_sequencer_tests,
+        &psg_wave_tests, // wave channel
         &save_tests,          &input_tests,
         &path_tests,          &vm_tests,
         &splash_logic_tests,  &color_tests,

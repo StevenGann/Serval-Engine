@@ -494,8 +494,8 @@ REJECTED = {
     "planned_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
     "planned_object": ("audio_bank_set = object {}", 1, 1,
                        r"^object audio_bank_set: audio_bank_set is reserved"),
-    "planned_array": ("psg_waves_set = array(4)", 1, 1,
-                      r"^array psg_waves_set: psg_waves_set is reserved"),
+    "planned_array": ("music_set_volume = array(4)", 1, 1,
+                      r"^array music_set_volume: music_set_volume is reserved"),
     "planned_rom_array": ("music_resume = { 1, 2 }", 1, 1,
                           r"^array music_resume: music_resume is reserved"),
     "planned_local_function": ("local function music_stop() end", 1, 16,
@@ -509,8 +509,8 @@ REJECTED = {
                        r"music, docs/audio\.md#tracker-music\): scripts can't use it yet$"),
     "planned_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
                      r"^sfx_playing is planned, not implemented in this engine version"),
-    "planned_assigned": (OBJ + "function A:step() psg_waves_set = 1 end", 3, 19,
-                         r"^psg_waves_set is planned, not implemented in this engine version"),
+    "planned_assigned": (OBJ + "function A:step() music_set_speed = 1 end", 3, 19,
+                         r"^music_set_speed is planned, not implemented in this engine version"),
     "planned_initial_value": ("x = music_paused", 1, 5,
                               r"^music_paused is planned, not implemented in this engine version"),
     # Top-level names of the engine's other C functions (implemented, no
@@ -1076,10 +1076,10 @@ class PlannedNames(unittest.TestCase):
             with self.subTest(name=name):
                 svlua.check(f"function {name}() end", "t.lua")
         # The planned constants are constants: a script may name its own.
-        p = svlua.check("PSG_WAVE = 1\nlocal MAP_LADDER <const> = 2\n"
+        p = svlua.check("TILESET_LZ77 = 1\nlocal MAP_LADDER <const> = 2\n"
                         "SPRITE_ASSET_LZ77 = object {}", "t.lua")
         self.assertEqual([s.name for s in p.top_order],
-                         ["PSG_WAVE", "MAP_LADDER", "SPRITE_ASSET_LZ77"])
+                         ["TILESET_LZ77", "MAP_LADDER", "SPRITE_ASSET_LZ77"])
 
     def test_planned_constants_need_no_reservation(self):
         """A script's own name hides a header's constant, implemented or
@@ -1179,7 +1179,7 @@ class PlannedNames(unittest.TestCase):
         names, errors = check_planned.planned_names(os.path.join(ROOT, "include"))
         self.assertEqual(errors, [])
         self.assertLessEqual(set(svlua.planned_functions()), set(names))
-        self.assertIn("PSG_WAVE", names)
+        self.assertIn("MAP_LADDER", names)
         with tempfile.TemporaryDirectory() as tmp:
             bad = 'typedef struct { int x SERVAL_PLANNED("f, docs/x.md#x"); } Bad;\n'
             include = self.write_engine(tmp, PLANNED_HEADER + bad)

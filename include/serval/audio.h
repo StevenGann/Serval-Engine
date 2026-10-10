@@ -5,13 +5,12 @@
 //
 // Two kinds of sound, each with its own music player:
 //
-// - The PSG (implemented): the GBA's tone generators, two square waves and a
-//   noise channel, which cost almost no CPU to play. Sound effects (PsgSound,
-//   psg_play()) suit bleeps, hits, jumps, pickups and short jingles; songs
-//   (PsgSong, psg_music_*()) play looping chiptunes of notes on the same
-//   channels, and sound effects take a channel over while they play. The
-//   fourth tone generator, the wave channel (PSG_WAVE, psg_waves_set()), is
-//   planned.
+// - The PSG (implemented): the GBA's four tone generators, two square waves,
+//   the wave channel (a waveform of the game's own, PSG_WAVE, psg_waves_set())
+//   and a noise channel, which cost almost no CPU to play. Sound effects
+//   (PsgSound, psg_play()) suit bleeps, hits, jumps, pickups and short
+//   jingles; songs (PsgSong, psg_music_*()) play looping chiptunes of notes on
+//   the same channels, and sound effects take a channel over while they play.
 // - Tracker music and sampled sound effects (planned): modules (MOD, S3M, XM,
 //   IT; music_*()) and recorded samples (WAV files; sfx_*()) from one sound
 //   bank (audio_bank_set()), mixed in software into the Direct Sound channels
@@ -55,18 +54,16 @@
 #define PSG_SQUARE2 1 // square wave
 #define PSG_NOISE 2   // noise: hits, explosions, drums
 enum {
-    // The wave channel (planned; docs/audio.md#wave-channel): plays a
-    // waveform of 32 4-bit steps (psg_waves_set()), so it suits bass lines
-    // and soft leads, and reaches an octave below the squares (.frequency 32
-    // Hz and up; notes from PSG_C1). On it, .duty picks the waveform: 0 (the
-    // default) the first registered, 1 the second, and so on; with none
-    // registered, a built-in triangle. .volume plays as the nearest of the
-    // hardware's four levels (25%, 50%, 75% and 100% of 15), and .fade steps
-    // between them; .slide is ignored (warns), as on the noise channel.
-    // In this engine version it is refused like an invalid channel:
-    // psg_play() skips the sound and psg_music_play() leaves the track out,
-    // each warning that the wave channel is planned.
-    PSG_WAVE SERVAL_PLANNED("the PSG wave channel, docs/audio.md#wave-channel") = 3,
+    // The wave channel (docs/audio.md#wave-channel): plays a waveform of 32
+    // 4-bit steps (psg_waves_set()), so it suits bass lines and soft leads,
+    // and reaches an octave below the squares (.frequency 32 Hz and up; notes
+    // from PSG_C1). On it, .duty picks the waveform: 0 (the default) the
+    // first registered, 1 the second, and so on; with none registered, a
+    // built-in triangle. .volume plays as the nearest of the hardware's four
+    // levels (25%, 50%, 75% and 100% of 15), and .fade steps between them,
+    // stepped by the engine as the hardware steps the other channels'
+    // envelopes; .slide is ignored (warns), as on the noise channel.
+    PSG_WAVE = 3,
 };
 
 // PsgSound.duty: a square wave's tone color, from thin and buzzy to full. 0
@@ -80,12 +77,12 @@ enum {
 // of an initializer take sensible defaults; a minimal sound needs only
 // .frequency and .frames.
 typedef struct {
-    u8 channel;       // PSG_SQUARE1 (default), PSG_SQUARE2 or PSG_NOISE (PSG_WAVE is
-                      // planned)
-    u8 duty;          // squares: PSG_DUTY_*; 0 means PSG_DUTY_50. PSG_WAVE (planned):
-                      // the waveform's number (psg_waves_set)
+    u8 channel;       // PSG_SQUARE1 (default), PSG_SQUARE2, PSG_WAVE or PSG_NOISE
+    u8 duty;          // squares: PSG_DUTY_*; 0 means PSG_DUTY_50. PSG_WAVE: the
+                      // waveform's number (psg_waves_set)
     u8 volume;        // starting volume 1-15; 0 means 15, or 0 (silence) for a sound
-                      // that fades in, so it rises from silence to full volume
+                      // that fades in, so it rises from silence to full volume.
+                      // PSG_WAVE plays the nearest of 25%, 50%, 75% and 100%
     s8 fade;          // volume envelope: -1 (fast) to -7 (slow) fades out, 1 (fast) to
                       // 7 (slow) fades in, 0 holds the volume
     s8 slide;         // PSG_SQUARE1 only: pitch slide, -1 (fast) to -7 (slow) down, 1 to
@@ -93,9 +90,9 @@ typedef struct {
     u8 slide_size;    // PSG_SQUARE1: how far each slide step moves, 1 (big) to 7
                       // (small); 0 means 1
     u16 frequency;    // pitch in Hz: squares 64 to 65535 (lower plays at 64, warns);
-                      // noise 4 to 65535, higher is hissier (the noise channel's
-                      // rates are coarse: the closest one is used); PSG_WAVE
-                      // (planned) 32 to 65535
+                      // PSG_WAVE 32 to 65535 (lower plays at 32, warns); noise 4 to
+                      // 65535, higher is hissier (the noise channel's rates are
+                      // coarse: the closest one is used)
     u16 frames;       // how long it plays (each note, for a melody, where it is
                       // required); 0: until it fades out, or until replaced
     const u16* notes; // optional melody: note_count frequencies in Hz (0 = rest),
@@ -123,19 +120,18 @@ void psg_play(u16 sound_id);
 // sampled effects (music_stop(), sfx_stop_all()) are unaffected.
 void psg_stop_all(void);
 
-// Registers the waveforms the wave channel (PSG_WAVE, planned) plays, for
-// sound effects and songs alike: `count` waveforms of 32 4-bit steps, each 4
-// words as wave RAM holds them. The steps play from the first word's lowest
-// byte up, the high nibble of each byte first: a first word of 0x67452301
-// plays 0, 1, 2, ... 7. A sound or track with .duty n plays waves[n]; a .duty
-// of `count` or more plays waves[0] (warns). The table must stay valid while
-// the wave channel plays from it (keep it const). count 0 goes back to the
-// built-in triangle; a NULL or invalid `waves` with a count is ignored
-// (warns). A new table takes effect from the wave channel's next note.
-//
-// Planned (docs/audio.md#wave-channel): in this engine version it ignores the
-// table and warns once (debug builds); the wave channel doesn't play.
-SERVAL_PLANNED("the PSG wave channel, docs/audio.md#wave-channel")
+// Registers the waveforms the wave channel (PSG_WAVE) plays, for sound
+// effects and songs alike: `count` waveforms of 32 4-bit steps, each 4 words
+// as wave RAM holds them. The steps play from the first word's lowest byte
+// up, the high nibble of each byte first: a first word of 0x67452301 plays 0,
+// 1, 2, ... 7. A sound or track with .duty n plays waves[n]; a .duty of
+// `count` or more plays waves[0] (warns). The table must stay valid while the
+// wave channel plays from it (keep it const). count 0 goes back to the
+// built-in triangle (0, 1, ... 15, 15, 14, ... 0), which plays until a table
+// is registered (a .duty past 0 plays it too, and warns); a NULL or invalid
+// `waves` with a count is ignored (warns): the table registered before stays.
+// A new table takes effect from the wave channel's next note. Changing
+// waveform costs a 16-byte copy into wave RAM's bank that isn't playing.
 void psg_waves_set(const u32* waves, u8 count);
 
 // --- PSG music -------------------------------------------------------------
@@ -145,8 +141,9 @@ void psg_waves_set(const u32* waves, u8 count);
 // the sound bank. A song is one track of notes per channel, played in time
 // with a tempo and looped. Notes are numbers: PSG_C4 is middle C, PSG_A4 440
 // Hz, PSG_CS4 C sharp (D flat), and a note plus 12 is an octave up. Square
-// channels play PSG_C2 and up; on the noise channel a note picks the noise
-// rate closest to its pitch (low notes rumble, high ones hiss: drums).
+// channels play PSG_C2 and up, the wave channel PSG_C1 and up (a bass line);
+// on the noise channel a note picks the noise rate closest to its pitch (low
+// notes rumble, high ones hiss: drums).
 // Example:
 //
 //     static const PsgNote lead[] = {{PSG_E4, 2}, {PSG_G4, 2}, {PSG_C5, 4}, {PSG_REST, 8}};
@@ -160,8 +157,8 @@ void psg_waves_set(const u32* waves, u8 count);
 
 // PsgNote.note: a rest, and the notes from C0 (16 Hz) to B10 (31.6 kHz);
 // higher numbers play as PSG_B10 (warns). Square channels play C2 (65 Hz) and
-// up, lower notes as 64 Hz (warns); the wave channel (planned) will play C1
-// (33 Hz) and up.
+// up, lower notes as 64 Hz (warns); the wave channel plays C1 (33 Hz) and up,
+// lower notes as 32 Hz (warns).
 #define PSG_REST 0
 #define SERVAL_PSG_OCTAVE_(o)                                                                      \
     PSG_C##o = 12 * ((o) + 1), PSG_CS##o, PSG_D##o, PSG_DS##o, PSG_E##o, PSG_F##o, PSG_FS##o,      \
@@ -193,10 +190,10 @@ typedef struct {
 
 // The notes one channel plays, and how they sound.
 typedef struct {
-    u8 channel;           // PSG_SQUARE1 (default), PSG_SQUARE2 or PSG_NOISE
-                          // (PSG_WAVE is planned)
-    u8 duty;              // squares: PSG_DUTY_*; 0 means PSG_DUTY_50. PSG_WAVE
-                          // (planned): the waveform's number (psg_waves_set)
+    u8 channel;           // PSG_SQUARE1 (default), PSG_SQUARE2, PSG_WAVE or
+                          // PSG_NOISE
+    u8 duty;              // squares: PSG_DUTY_*; 0 means PSG_DUTY_50. PSG_WAVE:
+                          // the waveform's number (psg_waves_set)
     u8 volume;            // each note's starting volume 1-15, as in PsgSound
     s8 fade;              // each note's volume envelope, as in PsgSound
     u8 length;            // ticks of a note whose .length is 0; 0 means one beat

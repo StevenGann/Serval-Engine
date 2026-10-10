@@ -2,7 +2,7 @@
 
 Two kinds of sound: the PSG (the GBA's tone generators, almost free to play) for sound effects and chiptune music, and, planned, tracker music and sampled sound effects mixed in software by Maxmod. Samples stay in ROM; the scarce resource is CPU time for software mixing.
 
-**Status:** PSG sound effects (with priorities) and PSG music on square 1, square 2 and noise are implemented ([below](#psg-channels), reference in [api-reference.md](api-reference.md#audioh)); they play in web builds too, which emulate the PSG from the same registers. Planned, and declared in `audio.h` so that the API is complete ([releases.md](releases.md#planned-api): every use compiles with a warning; the calls do nothing yet and warn once in debug builds): the [wave channel](#wave-channel) (`PSG_WAVE`, `psg_waves_set()`), the [sound bank](#sound-bank) (`audio_bank_set()`), [tracker music](#tracker-music) (`music_*()`) and [sampled sound effects](#sampled-sound-effects) (`sfx_*()`, with the `Sfx` handle type and `SFX_NONE`). Tracker music and sampled effects will use Maxmod's [BlocksDS fork](#maxmod-blocksds), which is chosen but not linked yet.
+**Status:** PSG sound effects (with priorities) and PSG music on all four tone generators, square 1, square 2, the [wave channel](#wave-channel) (`PSG_WAVE`, `psg_waves_set()`) and noise, are implemented ([below](#psg-channels), reference in [api-reference.md](api-reference.md#audioh)); they play in web builds too, which emulate the PSG from the same registers. Planned, and declared in `audio.h` so that the API is complete ([releases.md](releases.md#planned-api): every use compiles with a warning; the calls do nothing yet and warn once in debug builds): the [sound bank](#sound-bank) (`audio_bank_set()`), [tracker music](#tracker-music) (`music_*()`) and [sampled sound effects](#sampled-sound-effects) (`sfx_*()`, with the `Sfx` handle type and `SFX_NONE`). Tracker music and sampled effects will use Maxmod's [BlocksDS fork](#maxmod-blocksds), which is chosen but not linked yet.
 
 **Hardware:** Direct Sound A/B (two 8-bit PCM channels, each fed from a FIFO by DMA at a timer's rate) and four legacy PSG channels (two squares, wave, noise). More than two PCM voices requires software mixing, whose cost scales with voice count × mix rate.
 
@@ -14,7 +14,7 @@ The PSG and the mixer are separate, and so are their APIs: `psg_*()` for the ton
 | --- | --- | --- |
 | Calls | `psg_music_play()` ... `psg_music_set_volume()` | `music_play()` ... `music_set_speed()` |
 | Data | a `PsgSong` of notes (C data, generated or hand-written), by pointer | a module (MOD, S3M, XM, IT) in the [sound bank](#sound-bank), by ID |
-| Plays on | the tone generators: square 1, square 2, noise | Direct Sound A and B, mixed in software |
+| Plays on | the tone generators: square 1, square 2, the wave channel, noise | Direct Sound A and B, mixed in software |
 | CPU | about 200 cycles a frame for three tracks | a cost per channel playing (to be measured; [Maxmod's figures](#cpu-and-memory)) |
 | Volume | 0-15 | 0-255 |
 | Tempo | `psg_music_set_tempo()`, beats per minute | `music_set_speed()`, percent (50-200) |
@@ -29,7 +29,7 @@ Sound effects are split the same way: `psg_play()` plays a `PsgSound` (a tone or
 
 Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI bleeps, pickups) and chiptune music. PSG music is the engine's only music until tracker music is implemented.
 
-**Sound effects** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2 and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests, each lasting `.frames`), stepped once per frame by `frame_end()`. Fields left out default sensibly (duty 50%, full volume, or silence for a fade-in); out-of-range fields are clamped (`.duty` wraps around) and sounds that can't play are skipped, with a warning in debug builds (a square's `.frequency` or note below 64 Hz plays at 64 Hz). The wave channel (3) is [planned](#wave-channel): a sound on it is skipped, with a warning that says so. Every example except `hello` and `bunnymark` uses the PSG for all its sounds, and `serval_splash()` for its jingle; `breakout`, `platformer`, `shmup`, `blackjack` and `fireflies` (from its Lua script) also play PSG music.
+**Sound effects** (`include/serval/audio.h`, `src/gba/psg.c`): `PsgSound` effects on square channels 1-2, the [wave channel](#wave-channel) (3) and the noise channel, registered with `psg_table_set()` and played by ID with `psg_play()`. A sound has a frequency in Hz, a duration in frames, duty (tone color; on the wave channel, the waveform), volume, a fade envelope, a pitch slide (square 1), and optionally a melody of notes (with rests, each lasting `.frames`), stepped once per frame by `frame_end()`. Fields left out default sensibly (duty 50%, full volume, or silence for a fade-in); out-of-range fields are clamped (`.duty` wraps around) and sounds that can't play are skipped, with a warning in debug builds (a square's `.frequency` or note below 64 Hz plays at 64 Hz, the wave channel's below 32 Hz at 32 Hz). Every example except `hello` and `bunnymark` uses the PSG for all its sounds, and `serval_splash()` for its jingle; `breakout`, `platformer`, `shmup`, `blackjack` and `fireflies` (from its Lua script) also play PSG music.
 
 **Priorities:** each channel plays one sound at a time. A sound's `.priority` (0 by default) decides what happens when another is played on its channel while it plays: one of equal or higher priority replaces it, one of lower priority is dropped. So a jingle with priority 1 can share square 2 with priority-0 gunfire without being cut off. A sound plays for its `.frames`; one without `.frames` that fades out holds its channel until it is silent (computed from its volume and fade), one that holds its volume or fades in holds it until replaced.
 
@@ -37,9 +37,9 @@ Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI blee
 
 ### PSG music
 
-**Implemented** (`PsgSong` in `audio.h`; sequencer in `src/core/psg_sequencer.c`, portable and host-tested; player in `src/gba/music.c`). A song has up to one track per channel (square 1, square 2, noise; the wave channel is [planned](#wave-channel), and a track on it is left out with a warning). A track is an array of `PsgNote`s, each a note number and a length in ticks, plus the track's duty, volume and fade envelope (the same fields as a sound, applied to every note) and a loop point.
+**Implemented** (`PsgSong` in `audio.h`; sequencer in `src/core/psg_sequencer.c`, portable and host-tested; player in `src/gba/music.c`). A song has up to one track per channel (square 1, square 2, the [wave channel](#wave-channel), noise). A track is an array of `PsgNote`s, each a note number and a length in ticks, plus the track's duty, volume and fade envelope (the same fields as a sound, applied to every note) and a loop point.
 
-- **Notes:** `PSG_C0` to `PSG_B10` (MIDI numbering: `PSG_C4` = 60 is middle C, `PSG_A4` = 440 Hz; sharps are `PSG_CS4` and so on, flats are the sharp below; plus 12 is an octave up), and `PSG_REST` (0). Squares play `PSG_C2` (65 Hz) and up. On the noise channel a note selects the noise rate closest to its pitch, so low notes rumble (kick) and high ones hiss (snare, hi-hat). Notes map to register values through two tables in ROM (432 bytes): no division while playing.
+- **Notes:** `PSG_C0` to `PSG_B10` (MIDI numbering: `PSG_C4` = 60 is middle C, `PSG_A4` = 440 Hz; sharps are `PSG_CS4` and so on, flats are the sharp below; plus 12 is an octave up), and `PSG_REST` (0). Squares play `PSG_C2` (65 Hz) and up, the wave channel `PSG_C1` (33 Hz) and up (lower notes play as 64 and 32 Hz, warning). On the noise channel a note selects the noise rate closest to its pitch, so low notes rumble (kick) and high ones hiss (snare, hi-hat). Notes map to register values through two tables in ROM (432 bytes): no division while playing.
 - **Time:** `.tempo` in beats per minute (default 120) and `.ticks_per_beat` (default 4, so a tick is a 16th note). Each frame adds the tempo's ticks per frame (16.16 fixed point) to a phase; each tick falls on the frame closest to its exact time, so tempos needn't divide the frame rate, and a song stays in time indefinitely. A tick can't be shorter than a frame (3583 ticks a minute; faster clamps, with a warning). A note's length 0 means the track's `.length`, which defaults to a beat.
 - **Loops:** each track loops on its own, from its `.loop` note (0 by default: the start; set it past an intro) or plays once with `PSG_NO_LOOP`. A song whose tracks have all ended stops (`psg_music_playing()` turns false).
 - **Sound effects over music:** a sound effect takes over a channel the music uses if its priority is at least the song's `.priority` (0 by default: every sound effect does). The music keeps time underneath and comes back when the sound ends: a held note (track `.fade` 0 or fading in) comes back at once at the current position; a fading note would come back louder than it would be by then, so that track comes back with its next note.
@@ -47,7 +47,7 @@ Unused by Maxmod, so exposed as a zero-mixer-cost API for sound effects (UI blee
 - **Tempo changes:** `psg_music_set_tempo(bpm)` changes the tempo of the song playing from where it is (0: back to the song's `.tempo`); `psg_music_play()` starts every song at its own tempo. The phase keeps the song's exact position within its tick and is re-centred on half a frame at the new tempo, so the song neither jumps nor drifts: later ticks fall on the frame closest to their time at the new tempo (the first one at most a frame late, when it was due within half a frame of the change). The division (ticks per frame for the tempo) happens in the call, not per frame. Without a song it does nothing and warns.
 - **Volume:** `psg_music_set_volume()` (0-15; above 15 plays as 15, with a warning) scales each note's starting volume from each channel's next note; sound effects keep theirs. It doesn't use the master volume (SOUNDCNT_L), which would turn the sound effects down too.
 - **Scripts:** the VM's SYS calls play PSG music: a song by its index in `vm_bind()`'s bindings, plus stop, pause and resume ([vm.md](vm.md#engine-calls)).
-- **Cost:** about 200 cycles per frame on average for a three-track song (peak about 1,300 when all three channels start a note in the same frame), under 0.1% of a frame; about 50 cycles while paused; nothing when no song plays (the player is hooked in by `psg_music_play()`, so games without music don't link it). IWRAM: 6 bytes in every ROM, about 60 more with music.
+- **Cost:** about 200 cycles per frame on average for a three-track song (peak about 1,300 when all three channels start a note in the same frame), under 0.1% of a frame, and about 200 more with a fading bass on the wave channel too, whose fade the engine steps; about 50 cycles while paused; nothing when no song plays (the player is hooked in by `psg_music_play()`, so games without music don't link it). The PSG step itself, `frame_end()`'s, visits only the sound effects that count frames: about 100-125 cycles a frame with nothing playing (150-175 before the wave channel, when it visited every channel). IWRAM: 6 bytes in every ROM, about 75 more with music; the sound effects' state is in EWRAM.
 
 ```c
 static const PsgNote melody[] = {{PSG_E5, 2}, {PSG_A5, 2}, {PSG_C6, 4}, {PSG_REST, 8}};
@@ -59,6 +59,18 @@ static const PsgTrack tracks[] = {
 static const PsgSong theme = {.tempo = 150, .tracks = tracks, .track_count = 2};
 
 psg_music_play(&theme);   // loops until psg_music_stop() or psg_stop_all()
+```
+
+A walking bass on the wave channel, in a waveform of its own:
+
+```c
+// 32 steps of sin(x) + 0.3 sin(2x) + 0.1 sin(3x), from 0 to 15
+static const u32 bass_wave[4] = {0xFEFFCE8A, 0x98BACBDD, 0x32446587, 0x35010021};
+static const PsgNote walk[] = {{PSG_F2, 0}, {PSG_A2, 0}, {PSG_C3, 0}, {PSG_E3, 0}};
+static const PsgTrack bass = {
+    .channel = PSG_WAVE, .duty = 0, .fade = -3, .length = 6, .notes = walk, .note_count = 4};
+
+psg_waves_set(bass_wave, 1);   // once at startup; .duty 0 plays bass_wave
 ```
 
 ```c
@@ -73,16 +85,18 @@ psg_play(SND_HIT);
 
 ### Wave channel
 
-**Planned.** Declared: `PSG_WAVE` (3), a channel for `PsgSound.channel` and `PsgTrack.channel`, and `psg_waves_set(const u32* waves, u8 count)`. In this engine version `psg_play()` skips a sound on `PSG_WAVE` and `psg_music_play()` leaves a track on it out, each warning once (debug builds) that the wave channel is planned, apart from the warning for an invalid channel; `psg_waves_set()` ignores its table and warns once. Nothing touches the channel's registers or wave RAM: it stays off (`serval_init()` sends only channels 1, 2 and 4 to the speakers). Tested by `tests/planned_audio_tests.c`.
+**Implemented** (`PSG_WAVE` (3) for `PsgSound.channel` and `PsgTrack.channel`, and `psg_waves_set(const u32* waves, u8 count)`; the hardware side in `src/gba/wave.c`, the portable parts (pitch, levels, the fade, the waveform a note picks) in `src/core/psg_wave.c`, host-tested). The fourth tone generator plays a waveform of the game's own, so it suits bass lines and soft leads. Sound effects, priorities, music, `psg_music_set_volume()`, pause and tempo work on it as on the other channels; `serval_init()` sends all four channels to both speakers. Tests: `tests/psg_wave_tests.c` (portable, host and ROM) and `tests/rom/wave_tests.c` (the registers and wave RAM in mGBA).
 
-**The hardware:** tone channel 3 plays 32 4-bit samples from wave RAM, at 2,097,152 / (2048 − n) samples a second for frequency register value n, so a 32-step waveform sounds at 65,536 / (2048 − n) Hz: 32 Hz to 65.5 kHz, an octave below a square at the same n. Wave RAM has two 16-byte banks: the CPU writes the one not playing. Its volume has five settings (0, 25%, 50%, 75%, 100%); it has no envelope and no sweep.
+**The hardware:** tone channel 3 plays 32 4-bit samples from wave RAM, at 2,097,152 / (2048 − n) samples a second for frequency register value n, so a 32-step waveform sounds at 65,536 / (2048 − n) Hz: 32 Hz to 65.5 kHz, an octave below a square at the same n. Wave RAM has two 16-byte banks: the CPU reads and writes the one not selected for playback. Its volume has five settings (0, 25%, 50%, 75%, 100%); it has no envelope and no sweep. A bank that plays is rotated in place, a step at a time (it is a shift register), so a waveform restarts from wherever it got to: the same sound, in another phase.
 
-**The design** (fixed by the declarations; no data format changes):
-
-- **Waveforms:** `psg_waves_set()` registers a table of `count` waveforms, each 4 words as wave RAM holds them: the 32 steps play from the first word's lowest byte up, the high nibble of each byte first (a first word of `0x67452301` plays 0, 1, 2, ... 7). The table stays in ROM. `.duty` picks the waveform: n plays the nth (0, the default, the first); with none registered, a built-in triangle; a `.duty` of `count` or more plays waveform 0, with a warning. `count` 0 goes back to the triangle; a NULL or invalid table with a count is ignored (warns). A new table takes effect from the channel's next note. Changing waveform costs a 16-byte copy into the idle bank.
-- **Pitch:** `.frequency` 32 to 65535 Hz; notes from `PSG_C1` (33 Hz). No new note table: a note on the wave channel uses the square table's value for the note an octave up (65,536 / f = 131,072 / 2f).
-- **Volume:** `.volume` plays as the nearest of the four non-zero levels (25%, 50%, 75%, 100% of 15); `.fade` is stepped by the engine between them, since the channel has no envelope. `.slide` is ignored with a warning, as on the noise channel. Priorities, music and `psg_music_set_volume()` behave as on the other channels.
-- **Web:** `src/web/apu.c` already emulates the wave channel with both banks ([platforms.md](platforms.md#what-is-faked-or-missing)), so web builds will play it as the GBA does.
+- **Waveforms:** `psg_waves_set()` registers a table of `count` waveforms, each 4 words as wave RAM holds them: the 32 steps play from the first word's lowest byte up, the high nibble of each byte first (a first word of `0x67452301` plays 0, 1, 2, ... 7). The table stays in ROM (word-aligned, as a `u32` array is). `.duty` picks the waveform: n plays the nth (0, the default, the first); with none registered, a built-in triangle (0, 1, ... 15, 15, ... 0), which every `.duty` plays (past 0, with a warning); a `.duty` of `count` or more plays waveform 0, with a warning (once until the next `psg_waves_set()` or `psg_table_set()`). `count` 0 goes back to the triangle; a NULL, invalid or unaligned table with a count is ignored, warning each time: the table registered before plays on. A new table takes effect from the channel's next note. A track's `.duty` is checked as its notes play, not by `psg_music_play()`, since the table may change while a song plays.
+- **Banks:** a note whose waveform isn't the one playing writes it (16 bytes) into the bank the CPU sees, the idle one, then selects that bank, turns the channel on and restarts it; a note with the waveform playing only restarts the channel. So a bass line in one waveform copies it once, and a sound effect in another waveform costs a copy going in and the music's note one coming back. `psg_waves_set()` makes the next note copy afresh. Silence (a rest, the end of a sound, a pause, `psg_stop_all()`) turns the channel's DAC off, which stops it at once.
+- **Pitch:** `.frequency` 32 to 65535 Hz (lower plays at 32 Hz, with a warning, as squares warn below 64 Hz); notes from `PSG_C1` (33 Hz). No new note table: a note on the wave channel uses the square table's value for the note an octave up (65,536 / f = 131,072 / 2f); the top octave, past the table (`PSG_C10` and up, 16.7 kHz and more), is halfway between the square's value and 2048. Notes below `PSG_C1` play at 32 Hz (warns). Measured in mGBA and in the web build: a 220 Hz tone plays at 220.66 Hz (65,536 / 297) on both.
+- **Volume:** `.volume` plays as the nearest of the four non-zero levels: 1-5 as 25%, 6-9 as 50%, 10-13 as 75% and 14-15 as 100% of 15 (0 means 15, or silence for a fade-in, as on the other channels). `psg_music_set_volume()` scales a track's volume first, then the result is rounded to a level.
+- **Fades:** the channel has no envelope, so `frame_end()`'s PSG step moves `.fade` along once a frame, timed exactly as the hardware's envelope on the other channels: a volume step every |`.fade`| 64ths of a second (a frame is 280,896 cycles and a 64th of a second 262,144, counted in units of 64 cycles with no drift), the level following the volume through 100%, 75%, 50% and 25% to silence (or up from silence, for a fade-in). A sound that fades out without `.frames` holds its channel until silent, as on the others. The step costs about 300 cycles a frame while a note fades (measured with a sound effect's frame count) and nothing otherwise (a flag in IWRAM says whether one does).
+- **`.slide`** is ignored with a warning, as on the noise channel.
+- **Memory and cost:** the channel's state is in EWRAM (16 bytes), and so are the sound effects' voices now (48 bytes, all four channels'), which the PSG step reads only while they count frames; IWRAM keeps two flags. So a game that never plays the wave channel pays nothing for it: 28 bytes less IWRAM than before it (`hello`: 5,716 to 5,688 bytes of `.bss`; with music, whose sequencer has a fourth track, 20 less: `blackjack`, 12,508 to 12,488), and the idle PSG step went from 150-175 cycles to 100-125 ([above](#psg-music)). ROM: about 550 bytes of code more in every ROM, 1.2 KB with music. A note costs about 100 cycles more when it copies a waveform.
+- **Web:** `src/web/apu.c` emulates the wave channel with both banks ([platforms.md](platforms.md#what-is-faked-or-missing)), and plays it as mGBA does: the same pitch, the four levels in the same ratios, the same fades and harmonics (checked by rendering both; `tests/web_apu_tests.c` also plays the engine's bank switching). It doesn't rotate a playing bank, so a waveform restarts from its first step: inaudible. Like the rest of the web's sound it sees the registers once a frame, so when two notes change waveform in the same frame the second's plays, unless it is the one the idle bank held before that frame (the web can't see that write), and then the bank playing keeps the first's until the next change.
 
 ## Maxmod (BlocksDS)
 
@@ -177,7 +191,7 @@ To settle in the implementation:
 
 ## Web
 
-The PSG plays on the web as on the GBA: `src/web/apu.c` emulates the tone generators from the same registers, the wave channel included. Tracker music and sampled effects don't: the web build compiles the same stubs (`src/gba/sampled_audio.c`), so the calls work, play nothing, and warn once in debug builds (in the browser console), and it keeps them after the GBA implements the mixer, until it has a player of its own (post-1.0, no API change). Direct Sound, timers, DMA and interrupts are not emulated ([platforms.md](platforms.md#what-is-faked-or-missing)); Maxmod's player being C, the web's player can be [Maxmod's own](#what-the-player-and-the-mixer-are-written-in), mixing into the page's audio output instead of going through emulated Direct Sound.
+The PSG plays on the web as on the GBA: `src/web/apu.c` emulates the tone generators from the same registers, the wave channel included ([above](#wave-channel)). Tracker music and sampled effects don't: the web build compiles the same stubs (`src/gba/sampled_audio.c`), so the calls work, play nothing, and warn once in debug builds (in the browser console), and it keeps them after the GBA implements the mixer, until it has a player of its own (post-1.0, no API change). Direct Sound, timers, DMA and interrupts are not emulated ([platforms.md](platforms.md#what-is-faked-or-missing)); Maxmod's player being C, the web's player can be [Maxmod's own](#what-the-player-and-the-mixer-are-written-in), mixing into the page's audio output instead of going through emulated Direct Sound.
 
 ## Other targets
 
@@ -189,9 +203,11 @@ The PSG plays on the web as on the GBA: `src/web/apu.c` emulates the tone genera
 Implemented (PSG):
 
 ```c
+PSG_SQUARE1, PSG_SQUARE2, PSG_WAVE, PSG_NOISE   // PsgSound.channel, PsgTrack.channel: 0, 1, 3, 2
 void psg_table_set(const PsgSound *const *table, u16 count); // table of pointers; stops sound effects
 void psg_play(u16 sound_id);      // replaces what its channel plays, unless that has higher priority
 void psg_stop_all(void);          // PSG sound effects and music
+void psg_waves_set(const u32 *waves, u8 count);   // PSG_WAVE's waveforms: 32 4-bit steps (4 words) each
 
 void psg_music_play(const PsgSong *song);
 void psg_music_stop(void);
@@ -206,10 +222,6 @@ void psg_music_set_tempo(u16 tempo);  // BPM from the current position; 0: the s
 Planned (declared, warn when used; [releases.md](releases.md#planned-api)):
 
 ```c
-// The wave channel
-PSG_WAVE                                           // PsgSound.channel, PsgTrack.channel: 3
-void psg_waves_set(const u32 *waves, u8 count);    // 32 4-bit steps (4 words) per waveform
-
 // The sound bank, tracker music
 void audio_bank_set(const void *bank);             // mmutil's bank, in ROM; NULL: none
 void music_play(u16 music_id, bool loop);          // a MOD_* from the bank

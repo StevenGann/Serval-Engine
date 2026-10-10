@@ -528,6 +528,42 @@ static void wave_same_frame_load(void) {
     CHECK(io[WAVE_RAM] == 0x2301); // bank 0's saw
 }
 
+// wave channel: the engine's way of changing waveform (src/gba/wave.c), each
+// in one frame: write the bank the CPU sees (the one not playing), select it
+// for playback with the DAC on, restart. Waveforms alternate between the
+// banks, and each plays as written.
+static void write_wave(const u32* w) {
+    for (u32 i = 0; i < 4; i++) {
+        io[WAVE_RAM + 2 * i] = (u16)w[i];
+        io[WAVE_RAM + 2 * i + 1] = (u16)(w[i] >> 16);
+    }
+}
+
+static void wave_engine_bank_switching(void) {
+    static const u32 saw[4] = {0x67452301, 0xEFCDAB89, 0x67452301, 0xEFCDAB89}; // 2 cycles
+    static const u32 square[4] = {0xFFFFFFFF, 0xFFFFFFFF, 0, 0};                // 1 cycle
+    setup();
+    run(0, 1); // bank 0 selected at power-on: the CPU sees bank 1
+    write_wave(saw);
+    io[SOUND3CNT_L] = 0x00C0; // DAC on, play bank 1
+    io[SOUND3CNT_H] = 0x2000;
+    io[SOUND3CNT_X] = 0x8000 | 1536; // 128 Hz per 32 steps
+    run(0, ms(400));
+    CHECK(near(pitch(ms(100), ms(400)), 256.0f, 1.0f));
+    CHECK(io[WAVE_RAM] == 0); // the CPU sees bank 0 now
+    write_wave(square);
+    io[SOUND3CNT_L] = 0x0080; // play bank 0
+    io[SOUND3CNT_X] = 0x8000 | 1536;
+    run(0, ms(400));
+    CHECK(near(pitch(ms(100), ms(400)), 128.0f, 1.0f));
+    CHECK(near(high_fraction(ms(100), ms(400)), 0.5f, 0.05f));
+    CHECK(io[WAVE_RAM] == 0x2301); // bank 1 still holds the saw
+    // The same waveform again: only a restart.
+    io[SOUND3CNT_X] = 0x8000 | 1536;
+    run(0, ms(300));
+    CHECK(near(pitch(ms(100), ms(300)), 128.0f, 1.0f));
+}
+
 static void wave_length(void) {
     // Field 128: 128/256 s.
     setup();
@@ -560,4 +596,5 @@ TEST_SUITE(web_apu_tests, "web_apu", {"square pitch", square_pitch},
            {"noise rate", noise_rate}, {"master disable", master_disable}, {"dac off", dac_off},
            {"phase continuity", phase_continuity}, {"mixing", mixing},
            {"wave channel", wave_channel}, {"wave same-frame load", wave_same_frame_load},
+           {"wave engine bank switching", wave_engine_bank_switching}, // wave channel
            {"wave length", wave_length}, {"uninitialized is silent", uninitialized_is_silent});

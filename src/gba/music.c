@@ -1,6 +1,7 @@
 #include "serval/audio.h"
 
 #include "../core/psg_sequencer.h"
+#include "../core/psg_wave.h"
 #include "../core/warn.h"
 #include "internal.h"
 
@@ -34,6 +35,8 @@ static void play_note(u32 c) {
     u32 note = seq.tracks[c].note;
     if (note == PSG_REST)
         serval_psg_quiet(c);
+    else if (c == PSG_WAVE) // wave channel: the square table an octave up
+        serval_psg_tone(c, controls[c], serval_psg_wave_note_rate(note));
     else
         serval_psg_tone(c, controls[c],
                         c == PSG_NOISE ? serval_psg_noise_rates[note]

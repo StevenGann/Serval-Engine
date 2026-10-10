@@ -3,18 +3,18 @@
 #include <tonc.h>
 
 #include "../core/psg_sequencer.h"
+#include "../core/psg_wave.h"
 #include "../core/warn.h"
 #include "internal.h"
 
-// PSG sound effects on tone channels 1 (square with sweep), 2 (square) and 4
-// (noise). The hardware plays each tone and its volume envelope by itself;
-// the engine only times notes and lengths, once per frame (serval_psg_update,
-// called by frame_end). Music (music.c) plays on the same channels whenever
-// no sound effect holds them. Tone channel 3, the wave channel (PSG_WAVE,
-// psg_waves_set), is planned: sounds on it are refused, and nothing here
-// touches its registers or wave RAM.
+// PSG sound effects on tone channels 1 (square with sweep), 2 (square), 3
+// (the wave channel, PSG_WAVE: wave.c) and 4 (noise). The hardware plays each
+// tone and, but on the wave channel, its volume envelope by itself; the
+// engine only times notes and lengths, and steps the wave channel's fade,
+// once per frame (serval_psg_update, called by frame_end). Music (music.c)
+// plays on the same channels whenever no sound effect holds them.
 
-#define CHANNELS 3
+#define CHANNELS 4 // PSG_SQUARE1, PSG_SQUARE2, PSG_NOISE, PSG_WAVE
 
 typedef struct {
     const PsgSound* sound; // NULL: idle
@@ -24,7 +24,14 @@ typedef struct {
 
 static const PsgSound* const* psg_table;
 static u16 psg_count;
-static Voice voices[CHANNELS];
+// In EWRAM: serval_psg_update() reads a voice only while it counts frames
+// (timed, below), so the voices needn't take IWRAM, which games keep for
+// themselves.
+static SERVAL_EWRAM_BSS Voice voices[CHANNELS];
+// The channels whose voice counts frames (bits 1 << channel): those with a
+// sound and frames_left. serval_psg_update() steps only these, so idle
+// channels, the wave channel's among them, cost it nothing.
+static u8 timed;
 
 const ServalMusicHooks* serval_music_hooks;
 u8 serval_music_channels;
@@ -54,8 +61,7 @@ enum {
     WARN_VOLUME = 1 << 9,
     WARN_TABLE = 1 << 10,
     WARN_SLIDE_CUTOFF = 1 << 11,
-    WARN_WAVE = 1 << 12,
-    WARN_LOW_SQUARE = 1 << 13,
+    WARN_LOW_SQUARE = 1 << 12,
 };
 static u32 warned;
 
@@ -93,7 +99,9 @@ u16 serval_psg_control(u32 channel, u32 duty, u32 volume, s32 fade) {
         bits |= 1u << 11 | step_of((s8)fade) << 8; // fade in
     else if (fade < 0)
         bits |= step_of((s8)fade) << 8; // fade out
-    if (channel != PSG_NOISE) {
+    if (channel == PSG_WAVE) {
+        bits |= duty & 0xFF; // the waveform's number (wave.c)
+    } else if (channel != PSG_NOISE) {
         // PSG_DUTY_12..PSG_DUTY_75 are 1..4 so 0 can mean the default; the
         // register takes 0..3.
         duty = duty ? duty - 1u : PSG_DUTY_50 - 1u;
@@ -162,6 +170,9 @@ void serval_psg_quiet(u32 channel) {
         REG_SND4CNT = 0;
         REG_SND4FREQ = 0x8000;
         break;
+    case PSG_WAVE:
+        serval_wave_quiet();
+        break;
     }
 }
 
@@ -181,6 +192,9 @@ void serval_psg_tone(u32 channel, u16 control, u16 rate) {
         REG_SND4CNT = control;
         REG_SND4FREQ = (u16)(0x8000 | rate);
         break;
+    case PSG_WAVE:
+        serval_wave_tone(control, rate);
+        break;
     }
 }
 
@@ -191,6 +205,7 @@ bool serval_psg_sfx_active(u32 channel) {
 static void silence(u32 channel) {
     serval_psg_quiet(channel);
     voices[channel].sound = NULL;
+    timed &= (u8) ~(1u << channel);
 }
 
 // Ends the sound effect on a channel; music using the channel comes back.
@@ -226,6 +241,10 @@ static void start_tone(const PsgSound* s, u32 hz) {
         rates[PSG_SQUARE2] = square_rate(hz);
         REG_SND2FREQ = (u16)(0x8000 | rates[PSG_SQUARE2]);
         break;
+    case PSG_WAVE:
+        rates[PSG_WAVE] = serval_psg_wave_rate(hz);
+        serval_wave_tone(control, rates[PSG_WAVE]);
+        break;
     default:
         REG_SND4CNT = control;
         rates[PSG_NOISE] = noise_rate(hz);
@@ -236,8 +255,8 @@ static void start_tone(const PsgSound* s, u32 hz) {
 
 void serval_psg_init(void) {
     REG_SNDSTAT = SSTAT_ENABLE; // must come before the other sound registers
-    // Tone generators at full volume, channels 1, 2 and 4 on both speakers.
-    REG_SNDDMGCNT = SDMG_BUILD_LR(SDMG_SQR1 | SDMG_SQR2 | SDMG_NOISE, 7);
+    // Tone generators at full volume, all four channels on both speakers.
+    REG_SNDDMGCNT = SDMG_BUILD_LR(SDMG_SQR1 | SDMG_SQR2 | SDMG_WAVE | SDMG_NOISE, 7);
     REG_SNDDSCNT = SDS_DMG100;
     psg_stop_all();
 }
@@ -246,6 +265,7 @@ void psg_table_set(const PsgSound* const* table, u16 count) {
 #ifdef SERVAL_DEBUG
     warned = 0;
     serval_psg_seq_reset_warnings();
+    serval_psg_wave_reset_warnings();
 #endif
     if (count && !serval_plausible_pointer(table)) {
         WARN_ONCE(WARN_TABLE, "psg_table_set: the sound table pointer is not valid; no sounds "
@@ -277,6 +297,10 @@ static void play(const PsgSound* s) {
     // forever.
     if (!s->frames && s->fade < 0)
         v->frames_left = fade_frames(start_volume(s->volume, s->fade), step_of(s->fade));
+    if (v->frames_left)
+        timed |= (u8)(1u << s->channel);
+    else
+        timed &= (u8) ~(1u << s->channel);
     start_tone(s, s->note_count ? s->notes[0] : s->frequency);
 }
 
@@ -346,20 +370,10 @@ static bool playable(const PsgSound* s, u32 id) {
                   id);
         return false;
     }
-    if (s->channel == PSG_WAVE) {
-        // Planned (audio.h): refused like an invalid channel until the wave
-        // channel is implemented, but reported as planned, and apart from
-        // invalid channels, so that each is reported once.
-        WARN_ONCE(WARN_WAVE,
-                  "psg_play: the PSG wave channel is planned, not implemented in this engine "
-                  "version; sound %u (PSG_WAVE) is skipped",
-                  id);
-        return false;
-    }
     if (s->channel >= CHANNELS) {
         WARN_ONCE(WARN_CHANNEL,
-                  "psg_play: sound %u has an invalid channel (%u); use PSG_SQUARE1, PSG_SQUARE2 "
-                  "or PSG_NOISE",
+                  "psg_play: sound %u has an invalid channel (%u); use PSG_SQUARE1, PSG_SQUARE2, "
+                  "PSG_WAVE or PSG_NOISE",
                   id, s->channel);
         return false;
     }
@@ -376,7 +390,8 @@ static bool playable(const PsgSound* s, u32 id) {
         return false;
     }
 #ifdef SERVAL_DEBUG
-    if (s->duty > PSG_DUTY_75 && s->channel != PSG_NOISE)
+    // (On PSG_WAVE, .duty is checked against the waveforms as it plays: wave.c.)
+    if (s->duty > PSG_DUTY_75 && s->channel < PSG_NOISE)
         WARN_ONCE(WARN_DUTY, "psg_play: sound %u has .duty %u; use PSG_DUTY_12 to PSG_DUTY_75", id,
                   s->duty);
     if (s->volume > 15)
@@ -395,22 +410,23 @@ static bool playable(const PsgSound* s, u32 id) {
                   "(clamped)",
                   id, s->slide, s->slide_size);
     if (s->channel != PSG_NOISE && !(warned & WARN_LOW_SQUARE)) {
-        // square_rate() raises these to 64 Hz.
+        // square_rate() raises these to 64 Hz, serval_psg_wave_rate() to 32.
+        u32 lowest = s->channel == PSG_WAVE ? 32 : 64;
+        const char* name = s->channel == PSG_WAVE ? "the wave channel" : "a square channel";
         if (s->note_count) {
             for (u32 i = 0; i < s->note_count; i++)
-                if (s->notes[i] && s->notes[i] < 64) {
+                if (s->notes[i] && s->notes[i] < lowest) {
                     WARN_ONCE(WARN_LOW_SQUARE,
-                              "psg_play: sound %u has notes[%u] = %u Hz, below 64 Hz, the lowest "
-                              "a square channel plays (it plays as 64 Hz); double it to raise it "
-                              "an octave",
-                              id, i, s->notes[i]);
+                              "psg_play: sound %u has notes[%u] = %u Hz, below %u Hz, the lowest "
+                              "%s plays (it plays as %u Hz); double it to raise it an octave",
+                              id, i, s->notes[i], lowest, name, lowest);
                     break;
                 }
-        } else if (s->frequency && s->frequency < 64) {
+        } else if (s->frequency && s->frequency < lowest) {
             WARN_ONCE(WARN_LOW_SQUARE,
-                      "psg_play: sound %u has .frequency %u, below 64 Hz, the lowest a square "
-                      "channel plays (it plays as 64 Hz); double it to raise it an octave",
-                      id, s->frequency);
+                      "psg_play: sound %u has .frequency %u, below %u Hz, the lowest %s plays (it "
+                      "plays as %u Hz); double it to raise it an octave",
+                      id, s->frequency, lowest, name, lowest);
         }
     }
     check_slide(s, id);
@@ -436,22 +452,6 @@ void psg_play(u16 sound_id) {
     play(s);
 }
 
-// Planned (audio.h, docs/audio.md#wave-channel): the wave channel isn't
-// implemented, so the table is ignored and wave RAM left alone. Warns on the
-// first call only (debug builds), whatever psg_table_set() does.
-void psg_waves_set(const u32* waves, u8 count) {
-    (void)waves;
-    (void)count;
-#ifdef SERVAL_DEBUG
-    static bool warned_waves;
-    if (!warned_waves) {
-        warned_waves = true;
-        SERVAL_WARN("psg_waves_set: the PSG wave channel is planned, not implemented in this "
-                    "engine version; the waveforms are ignored");
-    }
-#endif
-}
-
 void serval_psg_play_sound(const PsgSound* sound) {
     play(sound);
 }
@@ -462,9 +462,12 @@ void serval_psg_silence(u32 channel) {
 }
 
 void serval_psg_update(void) {
-    for (u32 c = 0; c < CHANNELS; c++) {
+    if (serval_wave_fading) // the wave channel's fade: the others' is the hardware's
+        serval_wave_update();
+    // (end_sound() clears its channel's bit; a melody's next note keeps it.)
+    for (u32 c = 0, left = timed; left; c++, left >>= 1) {
         Voice* v = &voices[c];
-        if (!v->sound || v->frames_left == 0 || --v->frames_left > 0)
+        if (!(left & 1) || --v->frames_left > 0)
             continue;
         const PsgSound* s = v->sound;
         if (s->note_count && ++v->note < s->note_count) {

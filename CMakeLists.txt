@@ -62,6 +62,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/map.c
     src/core/path.c
     src/core/psg_sequencer.c
+    src/core/psg_wave.c
     src/core/random.c
     src/core/save.c
     src/core/splash_logic.c
@@ -102,6 +103,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c
+        src/gba/wave.c
     )
     target_compile_definitions(serval PUBLIC SERVAL_GBA)
     # libtonc stays available to games that want it, but public engine headers
@@ -137,6 +139,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/sprites.c
         src/gba/text.c
         src/gba/vm_platform.c
+        src/gba/wave.c
         src/web/apu.c
         src/web/platform.c
         src/web/ppu.c

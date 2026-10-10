@@ -43,8 +43,7 @@ enum {
     WARN_HIGH_NOTE = 1 << 8,
     WARN_TEMPO = 1 << 9,
     WARN_FIELDS = 1 << 10,
-    WARN_WAVE = 1 << 11,
-    WARN_NO_TRACKS = 1 << 12,
+    WARN_NO_TRACKS = 1 << 11,
 };
 static u32 warned;
 
@@ -61,7 +60,7 @@ static bool first_warning(u32 problem) {
     } while (0)
 
 static const char* const channel_names[SERVAL_PSG_CHANNELS] = {"PSG_SQUARE1", "PSG_SQUARE2",
-                                                               "PSG_NOISE"};
+                                                               "PSG_NOISE", "PSG_WAVE"};
 #else
 #define WARN_ONCE(problem, ...) ((void)0)
 #endif
@@ -100,12 +99,18 @@ static void check_notes(const PsgTrack* t, u32 id) {
                       "psg_music_play: track %u (%s) has note %u at %u, above PSG_B10; it plays "
                       "as PSG_B10",
                       id, channel_names[t->channel], note, i);
-        else if (note != PSG_REST && note < PSG_C2 && t->channel != PSG_NOISE)
+        else if (note != PSG_REST && note < PSG_C2 && t->channel < PSG_NOISE)
             WARN_ONCE(WARN_LOW_NOTE,
                       "psg_music_play: track %u (%s) has note %u at %u, below PSG_C2, the "
                       "lowest a square channel plays (it plays as 64 Hz); raise it an octave "
                       "(+ 12)",
                       id, channel_names[t->channel], note, i);
+        else if (note != PSG_REST && note < PSG_C1 && t->channel == PSG_WAVE)
+            WARN_ONCE(WARN_LOW_NOTE,
+                      "psg_music_play: track %u (PSG_WAVE) has note %u at %u, below PSG_C1, the "
+                      "lowest the wave channel plays (it plays as 32 Hz); raise it an octave "
+                      "(+ 12)",
+                      id, note, i);
     }
 #else
     (void)t;
@@ -152,20 +157,10 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
     u32 channels = 0;
     for (u32 i = 0; i < song->track_count; i++) {
         const PsgTrack* t = &song->tracks[i];
-        if (t->channel == PSG_WAVE) {
-            // Planned (audio.h): left out like an invalid channel until the
-            // wave channel is implemented, but reported as planned, and apart
-            // from invalid channels, so that each is reported once.
-            WARN_ONCE(WARN_WAVE,
-                      "psg_music_play: the PSG wave channel is planned, not implemented in this "
-                      "engine version; track %u (PSG_WAVE) is left out",
-                      i);
-            continue;
-        }
         if (t->channel >= SERVAL_PSG_CHANNELS) {
             WARN_ONCE(WARN_CHANNEL,
                       "psg_music_play: track %u has an invalid channel (%u); use PSG_SQUARE1, "
-                      "PSG_SQUARE2 or PSG_NOISE. It is left out",
+                      "PSG_SQUARE2, PSG_WAVE or PSG_NOISE. It is left out",
                       i, t->channel);
             continue;
         }
@@ -197,7 +192,9 @@ u32 serval_psg_seq_start(PsgSequencer* seq, const PsgSong* song) {
             loop = 0;
         }
         check_notes(t, i);
-        if ((t->duty > PSG_DUTY_75 && t->channel != PSG_NOISE) || t->volume > 15 || t->fade < -7 ||
+        // (A wave track's .duty is checked against the waveforms when its notes
+        // play: psg_waves_set() may change them.)
+        if ((t->duty > PSG_DUTY_75 && t->channel < PSG_NOISE) || t->volume > 15 || t->fade < -7 ||
             t->fade > 7)
             WARN_ONCE(WARN_FIELDS,
                       "psg_music_play: track %u (%s) has .duty %u, .volume %u, .fade %d; use "

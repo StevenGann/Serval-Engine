@@ -7,7 +7,7 @@
 
 #include "serval/audio.h"
 
-#define SERVAL_PSG_CHANNELS 3       // PSG_SQUARE1, PSG_SQUARE2, PSG_NOISE
+#define SERVAL_PSG_CHANNELS 4       // PSG_SQUARE1, PSG_SQUARE2, PSG_NOISE, PSG_WAVE
 #define SERVAL_PSG_NOTE_MAX PSG_B10 // higher notes play as this one
 
 // One frame, in 16.16 ticks: the fastest tempo (a tick per frame).
@@ -58,7 +58,8 @@ u32 serval_psg_tick_step(u16 tempo, u8 ticks_per_beat);
 
 // Frequency register values by note: square channels (f = 131072 / (2048 - n);
 // notes below C2 play as the lowest, 64 Hz) and the noise channel (the closest
-// noise rate, f = 524288 / r / 2^(s+1), as s << 4 | r).
+// noise rate, f = 524288 / r / 2^(s+1), as s << 4 | r). The wave channel uses
+// the square table an octave up (serval_psg_wave_note_rate, psg_wave.h).
 extern const u16 serval_psg_square_rates[SERVAL_PSG_NOTE_MAX + 1];
 extern const u8 serval_psg_noise_rates[SERVAL_PSG_NOTE_MAX + 1];
 
