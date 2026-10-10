@@ -2,7 +2,9 @@
 // script's SYS calls for tracker music and sampled effects (audio.h's
 // music_* and sfx_*, SYS 17 to 30) reach the engine's functions, here with no
 // sound bank registered, as in every scripted game that has none: the main
-// test ROM links no Maxmod. The blob is hand-assembled (docs/vm.md "Blob format"); the shared suite
+// test ROM links no Maxmod. With a bank, through a compiled script:
+// tests/rom/sampled_audio_vm_tests.c, in the sampled audio test ROM. The blob
+// is hand-assembled (docs/vm.md "Blob format"); the shared suite
 // (tests/vm_tests.c) covers the interpreter's side: the arguments in C's
 // ranges, the results, arity and stack room.
 

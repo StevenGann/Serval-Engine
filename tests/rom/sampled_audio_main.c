@@ -10,6 +10,7 @@
 #include "serval/debug.h"
 
 extern const TestSuite gba_sampled_audio_tests;
+extern const TestSuite gba_sampled_audio_vm_tests; // vm sound: a script's calls with a bank
 
 void test_output(const char* line) {
     debug_log(line);
@@ -17,6 +18,7 @@ void test_output(const char* line) {
 
 int main(void) {
     serval_init();
-    static const TestSuite* const suites[] = {&gba_sampled_audio_tests};
+    static const TestSuite* const suites[] = {&gba_sampled_audio_tests,
+                                              &gba_sampled_audio_vm_tests}; // vm sound
     debug_exit(test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0);
 }

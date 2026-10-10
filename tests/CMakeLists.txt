@@ -81,6 +81,7 @@ if(SERVAL_TARGET_GBA)
     # tools/make-example-audio.py.
     serval_add_rom(serval_tests_sampled_audio
         SOURCES rom/sampled_audio_main.c rom/sampled_audio_tests.c
+                rom/sampled_audio_vm_tests.c # vm sound: a script's calls with a bank
         TITLE "SV AUDIO"
         GAME_CODE "SVTA")
     target_link_libraries(serval_tests_sampled_audio PRIVATE serval_test_harness serval_warnings)
@@ -106,6 +107,10 @@ if(SERVAL_TARGET_GBA)
         COMMENT "Making the sampled audio tests' modules and samples"
         VERBATIM)
     serval_add_soundbank(serval_tests_sampled_audio test_bank ${test_audio})
+    # vm sound: a script naming the bank's modules and samples, through the
+    # VM's SYS calls (rom/sampled_audio_vm_tests.c)
+    serval_add_script(serval_tests_sampled_audio rom/sampled_audio_vm.lua
+                      HEADERS "${CMAKE_CURRENT_BINARY_DIR}/test_bank.h")
 
     # One more test ROM per save type other than SRAM: the save suites, on
     # the ROM's Flash or EEPROM (tests/rom/save_main.c).
