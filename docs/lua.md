@@ -168,7 +168,7 @@ Not reserved: `sys_` (C's systems are functions, never per-entity data), the eng
 
 ### Planned functions
 
-A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s). This version has none left. (`sprite_set_colors` and `tileset_set_colors` were planned too, and are builtins now: [Engine functions](#engine-functions). So were `raster_scroll`, `raster_backdrop` and `raster_clear`, implemented C-only: they take per-line tables, which scripts can't pass; and `psg_waves_set`, C-only too: it takes a table of waveforms, and scripts play the wave channel through sounds and songs on it; and tracker music and sampled effects, `music_*`, `sfx_*` and `audio_bank_set`, C functions without builtins so far. Like every engine function's, their names stay reserved: [below](#c-functions).) The rules below hold for any function a later version declares planned; `music_play` shows them, as they applied to it until tracker music was implemented. `function music_play() ... end` was a compile error:
+A script can't declare, at the top level, the name of one of the engine's **planned functions**: every function its headers mark `SERVAL_PLANNED` ([releases.md](releases.md#planned-api); the list is [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)'s). This version has none left. (`sprite_set_colors` and `tileset_set_colors` were planned too, and are builtins now: [Engine functions](#engine-functions). So were `raster_scroll`, `raster_backdrop` and `raster_clear`, implemented C-only: they take per-line tables, which scripts can't pass; and `psg_waves_set`, C-only too: it takes a table of waveforms, and scripts play the wave channel through sounds and songs on it; and tracker music's and sampled effects' `music_*` and `sfx_*`, builtins now ([Engine functions](#engine-functions)), and `audio_bank_set`, C-only: it takes the bank's pointer. Like every engine function's, their names stay reserved: [below](#c-functions).) The rules below hold for any function a later version declares planned; `music_play` shows them, as they applied to it until tracker music was implemented. `function music_play() ... end` was a compile error:
 
 ```
 game.lua:3:10: error: function music_play: music_play is reserved: it names a planned engine function, which a later engine version may make a builtin
@@ -245,6 +245,11 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `screen_set_blend(top, bottom, top_weight, bottom_weight)` | `SCREEN_SET_BLEND` | integers: the `LAYER_*` masks (from `screen.h`) and the weights, 0-16 ([alpha blending](runtime-systems.md#alpha-blending)) |
 | `path_start(e, path, flags)`, `path_stop(e)` | `PATH_START`, `PATH_STOP` | `path` is an index into `VmBindings.paths` |
 | `sprite_set_colors(sprite, index, colors, count)`, `tileset_set_colors(index, colors, count)` | `SPRITE_SET_COLORS`, `TILESET_SET_COLORS` | palette writes ([sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes)): `colors` is a top-level array of integers, by its name, and the call takes its first `count` elements, each a color's low 16 bits; `index` is C's (palette × 16 + color, from 0) |
+| `music_play(id, loop)`, `music_stop()`, `music_pause()`, `music_resume()` | `MUSIC_PLAY`, `_STOP`, `_PAUSE`, `_RESUME` | tracker music ([audio.md](audio.md#tracker-music)): `id` a `MOD_*` of the sound bank, `loop` a boolean |
+| `music_playing()`, `music_paused()` | `MUSIC_PLAYING`, `MUSIC_PAUSED` | booleans |
+| `music_set_volume(volume)`, `music_set_speed(percent)` | `MUSIC_SET_VOLUME`, `MUSIC_SET_SPEED` | integers: 0-255; 50-200 percent of the module's tempo, 0 meaning 100 |
+| `sfx_play(id)`, `sfx_play_ex(id, volume, pan, pitch, priority)` | `SFX_PLAY`, `SFX_PLAY_EX` | sampled effects ([audio.md](audio.md#sampled-sound-effects)): `id` an `SFX_*` of the sound bank; each returns the effect's handle, an integer (0 when nothing played). `pitch` is fixed (`1.0` as recorded, `2` an octave up, `0.5` down), the rest integers: volume 0-255, pan −128 (left) to 127, priority 0-255 |
+| `sfx_stop(sfx)`, `sfx_playing(sfx)`, `sfx_stop_all()`, `sfx_set_volume(volume)` | `SFX_STOP`, `SFX_PLAYING`, `SFX_STOP_ALL`, `SFX_SET_VOLUME` | `sfx` a handle from `sfx_play`; `sfx_playing` a boolean; the volume 0-255 |
 | `none` | | the entity 0 |
 
 **Palette writes** take their colors from an array: a constant table (`{ COLOR_RGB(0, 64, 160), 0x7FFF }`) or a RAM array the script fills, as a palette cycle does:
@@ -266,11 +271,36 @@ end
 
 The VM reads the elements at the call (the array may change right after) and the colors reach the screen at the next `frame_end()`, as from C. A count of 0 does nothing; an array the blob doesn't have, or a count that is negative, past the array's length or past 256, warns and makes no call ([vm.md](vm.md#engine-calls)). There is no `color_mix` builtin: a fade mixes a color's channels with integer arithmetic (`c & 31`, `(c >> 5) & 31` and `(c >> 10) & 31` are its red, green and blue, 0-31).
 
+**Tracker music and sampled effects** take their IDs from the sound bank's header (`MOD_*` for modules, `SFX_*` for samples), which `serval_add_soundbank()` writes with the bank ([audio.md](audio.md#sound-bank); mmutil's own, for a bank Studio Advance builds): name it in `serval_add_script()`'s `HEADERS`, as any game header. An effect's handle is an integer, kept in a local, a global or an instance field and passed back to `sfx_stop` and `sfx_playing`; `0`, C's `SFX_NONE`, when nothing played, and stale once the effect ends. Values outside C's ranges don't wrap as a C cast would: a volume, pan or priority is clamped (warns), an ID past 65535 plays nothing (the call warns; [vm.md](vm.md#engine-calls)).
+
+```lua
+Ship = object { components = C_POS | C_SPR, sprite = SPR_SHIP }
+
+function Ship:create()
+  music_play(MOD_THEME, true)
+  self.hum = sfx_play_ex(SFX_ENGINE, 96, 0, 1.0, 1) -- a sample that loops
+end
+
+function Ship:step()
+  if button_pressed(BUTTON_A) then sfx_play(SFX_LASER) end
+  if button_pressed(BUTTON_START) then
+    if music_paused() then music_resume() else music_pause() end
+  end
+end
+
+function Ship:destroy()
+  sfx_stop(self.hum)
+  sfx_play_ex(SFX_BOOM, 255, 0, 0.5, 200) -- an octave down, over the others
+end
+```
+
+The bank itself is C's: `audio_bank_set` has no builtin, as it takes a pointer; the game registers the bank at boot, as it binds songs and paths.
+
 Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`).
 
 **C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too. Their names, as every C function's, are [reserved](#c-functions).
 
-**Not yet.** Tracker music (`music_*`) and sampled sound effects (`sfx_*`), implemented in C ([audio.md](audio.md)), have no SYS calls and so no builtins yet: the SYS page is append-only, and their calls arrive appended, named after the same C functions. Until then their names are [reserved](#c-functions), and a script plays PSG sound and music only. A script can already name the bank's modules and samples: `serval_add_soundbank()`'s header defines `MOD_*` and `SFX_*`, which `serval_add_script()`'s `HEADERS` can include.
+**Planned functions** have no SYS calls and so no builtins: the SYS page is append-only, and a function scripts can call gets both in the version that implements it, named after the same C function, as tracker music and sampled effects did. Until then its name is [reserved](#planned-functions).
 
 **Not in the subset**, each a compile error naming the construct: tables other than the arrays above (no table constructors with keys, no nested tables, no `pairs`/`ipairs`), metatables, closures over a function's locals, varargs, multiple results, string operations at run time (`..` of two literals is folded), the standard library (`print` included) beyond `math.floor`, `math.abs`, `math.min`, `math.max`, `math.mininteger` and `math.maxinteger` (±2³¹ with 32-bit integers; the literal `-2147483648` is a float in Lua, as in C it overflows before the minus applies), coroutines (handlers already are), `nil` (use `none` for entities), `^` except between constants (folded: the VM has no power operation), and floats beyond the fixed-point rules.
 
@@ -282,7 +312,7 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 
 ## Testing
 
-- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit. It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Sixteen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point, input and palette writes. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
+- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read, tracker music and sampled effects with their arguments as C gets them): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit; the sound queries meet the same stand-in for a mixer on both sides (music plays from `music_play` until `music_stop`, paused from `music_pause` until `music_resume`; effects' handles count from 1 and play until stopped). It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Seventeen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point, input, palette writes and sound. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
 - **Unit tests** for each stage, including one test per rejected construct, checking the message; golden listings; and compiled programs run on the VM (`svlua_test.py`).
 - **`fireflies` in Lua** was compared with the hand-written listing frame by frame on the web build, with scripted input through a whole round, catches, the end and a restart: about a thousand frames, every one pixel-identical, and no warning on the web or the GBA ([examples-roadmap.md](examples-roadmap.md#porting-fireflies-to-lua)).
 

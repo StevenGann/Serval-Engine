@@ -1,0 +1,116 @@
+; sound.svm: sound.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   C_POS MOD_THEME SFX_ENGINE BUTTON_A SFX_JUMP BUTTON_B BUTTON_START
+
+; --- Constants ---
+
+.const FIELD_SHOT VM_P_FIELD0 + 0       ; sound.lua:16 instance field shot (integer)
+
+; --- Objects ---
+
+.object SHIP mask=C_POS sprite=0        ; sound.lua:4 Ship
+
+; --- Globals (vm_load starts them at their initial values) ---
+
+.globals ENGINE                         ; sound.lua:6 engine: integer = 0
+
+; --- Ship:create, a behaviour: it may wait ---
+.handler SHIP CREATE                    ; sound.lua:8
+    ; 9: music_play(MOD_THEME, true)
+    PUSH MOD_THEME                      ; sound.lua:9
+    PUSH 1                              ; sound.lua:9 true
+    SYS MUSIC_PLAY                      ; sound.lua:9
+    ; 10: music_set_volume(192)
+    PUSH 192                            ; sound.lua:10
+    SYS MUSIC_SET_VOLUME                ; sound.lua:10
+    ; 11: engine = sfx_play_ex(SFX_ENGINE, 128, -32, 0.75, 1)
+    PUSH SFX_ENGINE                     ; sound.lua:11
+    PUSH 128                            ; sound.lua:11
+    PUSH -32                            ; sound.lua:11
+    PUSH 192                            ; sound.lua:11 (0.75)
+    PUSH 1                              ; sound.lua:11
+    SYS SFX_PLAY_EX                     ; sound.lua:11
+    STG ENGINE                          ; sound.lua:11
+    ; 12: end
+    HALT                                ; sound.lua:12
+
+; --- Ship:step, a reaction: it runs to completion ---
+.handler SHIP STEP                      ; sound.lua:14
+    ; 15: if button_pressed(BUTTON_A) then
+    PUSH BUTTON_A                       ; sound.lua:15
+    SYS BUTTON_PRESSED                  ; sound.lua:15
+    JZ ship_step_if1_end                ; sound.lua:15
+    ; 16: self.shot = sfx_play(SFX_JUMP)
+    SELF                                ; sound.lua:16
+    PUSH SFX_JUMP                       ; sound.lua:16
+    SYS SFX_PLAY                        ; sound.lua:16
+    SETP FIELD_SHOT                     ; sound.lua:16
+    ; 17: end
+ship_step_if1_end:                      ; sound.lua:17
+    ; 18: if button_pressed(BUTTON_B) and sfx_playing(self.shot) then
+    PUSH BUTTON_B                       ; sound.lua:18
+    SYS BUTTON_PRESSED                  ; sound.lua:18
+    JZ ship_step_if2_end                ; sound.lua:18
+    SELF                                ; sound.lua:18
+    GETP FIELD_SHOT                     ; sound.lua:18
+    SYS SFX_PLAYING                     ; sound.lua:18
+    JZ ship_step_if2_end                ; sound.lua:18
+    ; 19: sfx_stop(self.shot)
+    SELF                                ; sound.lua:19
+    GETP FIELD_SHOT                     ; sound.lua:19
+    SYS SFX_STOP                        ; sound.lua:19
+    ; 20: end
+ship_step_if2_end:                      ; sound.lua:20
+    ; 21: if button_pressed(BUTTON_START) then
+    PUSH BUTTON_START                   ; sound.lua:21
+    SYS BUTTON_PRESSED                  ; sound.lua:21
+    JZ ship_step_if3_end                ; sound.lua:21
+    ; 22: if music_paused() then music_resume() else music_pause() end
+    SYS MUSIC_PAUSED                    ; sound.lua:22
+    JZ ship_step_if4_else               ; sound.lua:22
+    SYS MUSIC_RESUME                    ; sound.lua:22
+    JMP ship_step_if4_end               ; sound.lua:22
+ship_step_if4_else:                     ; sound.lua:22
+    SYS MUSIC_PAUSE                     ; sound.lua:22
+ship_step_if4_end:                      ; sound.lua:22
+    ; 23: end
+ship_step_if3_end:                      ; sound.lua:23
+    ; 24: if not music_playing() then
+    SYS MUSIC_PLAYING                   ; sound.lua:24
+    JNZ ship_step_if5_end               ; sound.lua:24
+    ; 25: music_play(MOD_THEME, false)
+    PUSH MOD_THEME                      ; sound.lua:25
+    PUSH 0                              ; sound.lua:25 false
+    SYS MUSIC_PLAY                      ; sound.lua:25
+    ; 26: music_set_speed(125)
+    PUSH 125                            ; sound.lua:26
+    SYS MUSIC_SET_SPEED                 ; sound.lua:26
+    ; 27: end
+ship_step_if5_end:                      ; sound.lua:27
+    ; 28: sfx_play_ex(SFX_JUMP, 255, 0, 2, 0) -- an integer pitch; the handle unused
+    PUSH SFX_JUMP                       ; sound.lua:28
+    PUSH 255                            ; sound.lua:28
+    PUSH 0                              ; sound.lua:28
+    PUSH 512                            ; sound.lua:28 (2.0)
+    PUSH 0                              ; sound.lua:28
+    SYS SFX_PLAY_EX                     ; sound.lua:28
+    DROP                                ; sound.lua:28 the result isn't used
+    ; 29: end
+    HALT                                ; sound.lua:29
+
+; --- Ship:destroy, a reaction: it runs to completion ---
+.handler SHIP DESTROY                   ; sound.lua:31
+    ; 32: sfx_stop(engine)
+    LDG ENGINE                          ; sound.lua:32
+    SYS SFX_STOP                        ; sound.lua:32
+    ; 33: sfx_stop_all()
+    SYS SFX_STOP_ALL                    ; sound.lua:33
+    ; 34: sfx_set_volume(0)
+    PUSH 0                              ; sound.lua:34
+    SYS SFX_SET_VOLUME                  ; sound.lua:34
+    ; 35: music_stop()
+    SYS MUSIC_STOP                      ; sound.lua:35
+    ; 36: end
+    HALT                                ; sound.lua:36

@@ -28,7 +28,8 @@
 -- runner never meets, is left out: the ops budget (the difftest rejects runs
 -- that hit it), Animation End and WAIT_ANIM (no animations run), paths
 -- (WAIT_MOVE never waits), music and paths' bindings, the queue's and the
--- context pool's limits.
+-- context pool's limits. Tracker music and sampled effects meet the
+-- runner's stand-in for the mixer, below.
 --
 -- Usage: lua stub.lua CONFIG.lua SCRIPT.lua
 -- CONFIG.lua returns a table (tools/svlua_difftest.py writes it):
@@ -364,6 +365,63 @@ end
 function env.tileset_set_colors(index, array, count)
   call("TILESET_SET_COLORS", index, count, colors_of(array, count))
 end
+-- sound: tracker music and sampled effects, logged with their arguments as
+-- the VM passes them, in C's ranges (vm.md's SYS page): an ID past a u16 is
+-- 0xFFFF, a handle 0, a speed below 0 is 1 and past a u16 0xFFFF, loop 0 or
+-- 1, the pitch in 256ths; a volume, pan or priority is clamped. They meet
+-- the runner's stand-in for the mixer: music plays from music_play until
+-- music_stop, and is paused from music_pause until music_resume,
+-- music_play or music_stop; each sfx_play and sfx_play_ex returns the next
+-- handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
+-- or sfx_stop_all.
+local music_on, music_held = false, false
+local next_sfx, sfx_on = 1, {}
+local function u16_or(v, outside)
+  if v >= 0 and v <= 0xFFFF then return v end
+  return outside
+end
+local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+local function new_sfx()
+  local h = next_sfx
+  sfx_on[h] = true
+  next_sfx = h == 0xFFFF and 1 or h + 1
+  return h
+end
+function env.music_play(id, loop)
+  call("MUSIC_PLAY", u16_or(id, 0xFFFF), loop and 1 or 0)
+  music_on, music_held = true, false
+end
+function env.music_stop()
+  call("MUSIC_STOP")
+  music_on, music_held = false, false
+end
+function env.music_playing() call("MUSIC_PLAYING") return music_on end
+function env.music_pause() call("MUSIC_PAUSE") music_held = music_on end
+function env.music_resume() call("MUSIC_RESUME") music_held = false end
+function env.music_paused() call("MUSIC_PAUSED") return music_held end
+function env.music_set_volume(v) call("MUSIC_SET_VOLUME", clamp(v, 0, 255)) end
+function env.music_set_speed(p) call("MUSIC_SET_SPEED", p < 0 and 1 or u16_or(p, 0xFFFF)) end
+function env.sfx_play(id)
+  call("SFX_PLAY", u16_or(id, 0xFFFF))
+  return new_sfx()
+end
+function env.sfx_play_ex(id, volume, pan, pitch, priority)
+  call("SFX_PLAY_EX", u16_or(id, 0xFFFF), clamp(volume, 0, 255), clamp(pan, -128, 127),
+       math.floor(pitch * 256 + 0.5), clamp(priority, 0, 255))
+  return new_sfx()
+end
+function env.sfx_stop(h)
+  h = u16_or(h, 0)
+  call("SFX_STOP", h)
+  sfx_on[h] = nil
+end
+function env.sfx_playing(h)
+  h = u16_or(h, 0)
+  call("SFX_PLAYING", h)
+  return sfx_on[h] == true
+end
+function env.sfx_stop_all() call("SFX_STOP_ALL") sfx_on = {} end
+function env.sfx_set_volume(v) call("SFX_SET_VOLUME", clamp(v, 0, 255)) end
 function env.camera_set(x, y) end
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end

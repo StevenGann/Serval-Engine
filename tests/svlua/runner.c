@@ -25,15 +25,21 @@
 // (frames count from 1) for LENGTH frames (default 1): button_down() sees the
 // held buttons, button_pressed() those held this frame and not the last.
 // Nothing else runs: no paths, no animation, no sprite tables, so WAIT_MOVE
-// continues at once and WAIT_ANIM warns and continues.
+// continues at once and WAIT_ANIM warns and continues. The sound calls meet
+// a stand-in for the mixer, stub.lua's too: music plays from music_play
+// until music_stop, and is paused from music_pause until music_resume,
+// music_play or music_stop; each sfx_play and sfx_play_ex returns the next
+// handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
+// or sfx_stop_all.
 //
 // Output, one record per line, numbers in decimal:
 //   frame F                      at the start of frame F
-//   call FN A0 A1 A2 A3 ["TEXT"]  each engine call the platform makes (VM_SYS_*
+//   call FN A0 A1 A2 A3 A4 ["TEXT"]
+//                                each engine call the platform makes (VM_SYS_*
 //                                number and arguments; TEXT_PRINT's string;
 //                                after a palette call's, the colors it read,
 //                                C0 C1 ...), as it happens; button queries
-//                                are not listed
+//                                are not listed, sound queries are
 //   global G VALUE               after each printed frame: every global the
 //                                blob declares
 //   array N V0 V1 ...            every RAM array's cells (ROM arrays: none)
@@ -157,9 +163,58 @@ static void read_blob(const char* path) {
 
 // --- Engine calls ------------------------------------------------------------
 
+// sound: the stand-in for the mixer (above): the music's state, the next
+// handle, and which handles play.
+static bool music_on, music_held;
+static u32 next_sfx = 1;
+static bool sfx_on[0x10000];
+
+static void sound(ServalHostVmCalls* r) {
+    u32 handle = (u32)r->args[0]; // vm.c has put it in a u16
+    switch (r->fn) {
+    case VM_SYS_MUSIC_PLAY:
+        music_on = true;
+        music_held = false;
+        break;
+    case VM_SYS_MUSIC_STOP:
+        music_on = music_held = false;
+        break;
+    case VM_SYS_MUSIC_PAUSE:
+        music_held = music_on;
+        break;
+    case VM_SYS_MUSIC_RESUME:
+        music_held = false;
+        break;
+    case VM_SYS_MUSIC_PLAYING:
+        r->sound_value = music_on;
+        break;
+    case VM_SYS_MUSIC_PAUSED:
+        r->sound_value = music_held;
+        break;
+    case VM_SYS_SFX_PLAY:
+    case VM_SYS_SFX_PLAY_EX:
+        r->sound_value = (s32)next_sfx;
+        sfx_on[next_sfx] = true;
+        next_sfx = next_sfx == 0xFFFF ? 1 : next_sfx + 1;
+        break;
+    case VM_SYS_SFX_STOP:
+        sfx_on[handle] = false;
+        break;
+    case VM_SYS_SFX_PLAYING:
+        r->sound_value = sfx_on[handle];
+        break;
+    case VM_SYS_SFX_STOP_ALL:
+        memset(sfx_on, 0, sizeof sfx_on);
+        break;
+    default:
+        break;
+    }
+}
+
 // Called by the host platform for each engine call the VM makes there
-// (vm_internal.h): answers the button queries from the held buttons, prints
-// every other call.
+// (vm_internal.h): answers the button queries from the held buttons and the
+// sound queries from the stand-in mixer, prints every other call and the
+// sound queries.
 static void on_call(void) {
     ServalHostVmCalls* r = &serval_host_vm_calls;
     if (r->fn == VM_SYS_BUTTON_DOWN || r->fn == VM_SYS_BUTTON_PRESSED) {
@@ -167,7 +222,9 @@ static void on_call(void) {
         r->button_value = (buttons & (u32)r->args[0]) != 0;
         return;
     }
-    printf("call %u %d %d %d %d", r->fn, r->args[0], r->args[1], r->args[2], r->args[3]);
+    sound(r);
+    printf("call %u %d %d %d %d %d", r->fn, r->args[0], r->args[1], r->args[2], r->args[3],
+           r->args[4]);
     if (r->fn == VM_SYS_TEXT_PRINT && r->ptr)
         printf(" \"%s\"", (const char*)r->ptr);
     if ((r->fn == VM_SYS_SPRITE_SET_COLORS || r->fn == VM_SYS_TILESET_SET_COLORS) && r->ptr) {

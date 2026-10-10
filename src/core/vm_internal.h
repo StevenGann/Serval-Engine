@@ -14,7 +14,8 @@
 
 // fn: a VM_SYS_* number other than the four above. args: the call's
 // arguments in the order they were pushed (args[0] first), as many as the
-// SYS table in docs/vm.md gives it. ptr: what vm.c resolved from an index
+// SYS table in docs/vm.md gives it (the sound calls': already in their C
+// parameters' ranges, vm.c's sound_call). ptr: what vm.c resolved from an index
 // argument (VM_SYS_TEXT_PRINT: the string; VM_SYS_PSG_MUSIC_PLAY: the PsgSong;
 // VM_SYS_SPRITE_SET_COLORS and VM_SYS_TILESET_SET_COLORS: the colors read
 // from the array, as many as the count says, valid until the next SYS call),
@@ -37,9 +38,11 @@ s32 serval_vm_array_cell(u32 n);
 typedef struct {
     u32 calls;            // platform calls since the test last zeroed this
     u32 fn;               // the latest call's VM_SYS_* number
-    s32 args[4];          // its arguments (unused ones 0)
+    s32 args[5];          // its arguments (unused ones 0)
     const void* ptr;      // its resolved string, song or colors
     s32 button_value;     // what VM_SYS_BUTTON_DOWN and VM_SYS_BUTTON_PRESSED return
+    s32 sound_value;      // sound: what the sound calls with a result return (music_playing,
+                          // music_paused, sfx_playing: 0 or 1; sfx_play, sfx_play_ex: a handle)
     void (*during)(void); // if set, called by each call: stands in for game code
                           // that runs during vm_step or vm_events
 } ServalHostVmCalls;

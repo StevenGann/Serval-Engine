@@ -18,7 +18,7 @@ The PSG and the mixer are separate, and so are their APIs: `psg_*()` for the ton
 | CPU | about 200 cycles a frame for three tracks | about 3% of a frame for the mixer, plus 1.4% per channel playing ([measured](#cpu-and-memory)) |
 | Volume | 0-15 | 0-255 |
 | Tempo | `psg_music_set_tempo()`, beats per minute | `music_set_speed()`, percent (50-200) |
-| Scripts | SYS calls ([vm.md](vm.md#engine-calls)) | none yet (appended to the SYS page later) |
+| Scripts | SYS calls ([vm.md](vm.md#engine-calls)) | SYS calls ([vm.md](vm.md#engine-calls)): the module by its `MOD_*` |
 | Web | plays | stub: silent ([below](#web)) |
 
 Sound effects are split the same way: `psg_play()` plays a `PsgSound` (a tone or a melody) on a tone generator, `sfx_play()` a recorded sample through the mixer. `psg_stop_all()` stops only the PSG; `music_stop()` and `sfx_stop_all()` only the mixer's sounds.
@@ -169,7 +169,7 @@ So about 2.9% + 1.4% per channel playing: 14-15% for a busy 8-channel module, 20
 - `music_pause()` / `music_resume()` hold the music exactly where it is; `music_paused()` tells paused from playing. Pausing with nothing playing, pausing twice and resuming music that isn't paused do nothing; `music_play()`, `music_stop()` and `audio_bank_set()` end a pause. (Maxmod: `mmPause()`, which silences the module's channels and stops its time, and `mmResume()`.) Effects play on.
 - `music_set_volume()`: 0 (silent) to 255 (the default: the module's own volumes), from the module's next tick (at most a few frames), for this module and the next, and across banks. (Maxmod: `mmSetModuleVolume()`, 0-1024.)
 - `music_set_speed()`: percent of the module's tempo, from where it is, pitch unchanged; 0 means 100, and values outside 50-200 are clamped with a warning: Maxmod's tempo factor ranges from 0.5 to 2.0 (`mmSetModuleTempo()`, `0x200`-`0x800` in Q10). Without a module playing it is ignored, with a warning (as `psg_music_set_tempo()`).
-- **Scripts:** none yet (appended to the SYS page later, [post-1.0](#post-10-planned)).
+- **Scripts:** SYS calls 17 to 24, the Lua builtins `music_play(id, loop)` to `music_set_speed(percent)` by the same names ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)); a script names the module by its `MOD_*`.
 
 ## Sampled sound effects
 
@@ -180,7 +180,7 @@ So about 2.9% + 1.4% per channel playing: 14-15% for a busy 8-channel module, 20
 - **Priority:** when no mixer channel is free, the playing effect of lowest priority (the oldest of those) stops for the new one if the new one's priority is at least as high, as `PsgSound.priority` works; otherwise the new one doesn't play (`SFX_NONE`). Maxmod's effects have no priority (a new one takes a free channel, else the quietest channel in the background, never a note the music is playing or an effect that hasn't been released: `mmAllocChannel()` in `source/core/mas_arm.c`, channel types in `source/core/channel_types.h`), so the engine keeps it: when `mmEffectEx()` finds no channel, it cancels that effect and tries again. A module's notes keep their channels, and since a module plays at most 8 of the 12, at least 4 effects can always play.
 - **Loops:** an effect whose sample has loop points (a WAV's `smpl` chunk, forward) plays until `sfx_stop()`, `sfx_stop_all()` or a new bank.
 - **`sfx_set_volume()`:** the volume of all effects, 0-255 (255, the default, leaves each effect's own), at once, playing ones too (Maxmod scales an effect's volume when it starts, so the engine rescales those playing), and across banks: an options menu's "sound volume". The music and the PSG are unaffected. (Maxmod: `mmSetEffectsVolume()`, 0-1024.)
-- **Scripts:** none yet (appended to the SYS page later, [post-1.0](#post-10-planned)).
+- **Scripts:** SYS calls 25 to 30, the Lua builtins `sfx_play(id)` to `sfx_set_volume(volume)` by the same names ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)): a handle is an integer cell, and a pitch a fixed one.
 
 ## Frame loop
 
@@ -276,6 +276,5 @@ Each is additive: new functions, CMake keywords or SYS calls.
 - Configuration: the mix rate and channel counts per game.
 - Tracker music and sampled effects on the web ([above](#web)).
 - Jingles (Maxmod's second player layer, `mmJingleStart()`), the module's position and song events, changing a playing effect (volume, pan, pitch: `mmEffectVolume()`, `mmEffectPanning()`, `mmEffectRate()`).
-- SYS calls for tracker music and effects, appended to the VM's SYS page.
 - Streamed PCM (voice, recorded music; ROM-heavy, ADPCM costs decode time).
 - Interactive music (pattern switching or layering by game state).

@@ -57,22 +57,39 @@ static bool host_save_write(u32 offset, const u8* src, u32 count) {
 const SaveDevice serval_platform_save_device = {
     .read = host_save_read, .write = host_save_write, SAVE_LAYOUT_SRAM};
 
-// The VM's sound, music, text, button, brightness, blending and palette calls:
-// recorded, not made (vm_internal.h).
+// The VM's sound, music, text, button, brightness, blending and palette calls,
+// and its tracker music and sampled effects calls: recorded, not made
+// (vm_internal.h).
 ServalHostVmCalls serval_host_vm_calls;
 
 s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     // Arguments per VM_SYS_* call (docs/vm.md's SYS table).
-    static const u8 arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3};
-    _Static_assert(VM_SYS_COUNT == 17, "add the new call's arity");
+    static const u8 arity[VM_SYS_COUNT] = {
+        1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3, //
+        2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
+    };
+    _Static_assert(VM_SYS_COUNT == 31, "add the new call's arity");
     ServalHostVmCalls* r = &serval_host_vm_calls;
     u32 n = fn < VM_SYS_COUNT ? arity[fn] : 0;
     r->calls++;
     r->fn = fn;
-    for (u32 k = 0; k < 4; k++)
+    for (u32 k = 0; k < sizeof r->args / sizeof r->args[0]; k++)
         r->args[k] = args && k < n ? args[k] : 0;
     r->ptr = ptr;
     if (r->during)
         r->during();
-    return fn == VM_SYS_BUTTON_DOWN || fn == VM_SYS_BUTTON_PRESSED ? r->button_value : 0;
+    switch (fn) {
+    case VM_SYS_BUTTON_DOWN:
+    case VM_SYS_BUTTON_PRESSED:
+        return r->button_value;
+    // sound: the calls with a result
+    case VM_SYS_MUSIC_PLAYING:
+    case VM_SYS_MUSIC_PAUSED:
+    case VM_SYS_SFX_PLAY:
+    case VM_SYS_SFX_PLAY_EX:
+    case VM_SYS_SFX_PLAYING:
+        return r->sound_value;
+    default:
+        return 0;
+    }
 }

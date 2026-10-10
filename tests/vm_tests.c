@@ -4023,7 +4023,16 @@ static void sys_page_numbers_are_fixed(void) {
     CHECK(moved == 0);
     CHECK(VM_SYS_SCREEN_SET_BLEND == 14);
     CHECK(VM_SYS_SPRITE_SET_COLORS == 15 && VM_SYS_TILESET_SET_COLORS == 16); // palettes
-    CHECK(VM_SYS_COUNT == 17);
+    // sound: tracker music and sampled effects, in audio.h's order
+    static const u32 sound[] = {
+        VM_SYS_MUSIC_PLAY,   VM_SYS_MUSIC_STOP,    VM_SYS_MUSIC_PLAYING,    VM_SYS_MUSIC_PAUSE,
+        VM_SYS_MUSIC_RESUME, VM_SYS_MUSIC_PAUSED,  VM_SYS_MUSIC_SET_VOLUME, VM_SYS_MUSIC_SET_SPEED,
+        VM_SYS_SFX_PLAY,     VM_SYS_SFX_PLAY_EX,   VM_SYS_SFX_STOP,         VM_SYS_SFX_PLAYING,
+        VM_SYS_SFX_STOP_ALL, VM_SYS_SFX_SET_VOLUME};
+    for (u32 k = 0; k < sizeof sound / sizeof sound[0]; k++)
+        moved += sound[k] != 17 + k;
+    CHECK(moved == 0);
+    CHECK(VM_SYS_COUNT == 31);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -4525,6 +4534,250 @@ static void sys_set_colors_refuse_a_bad_array_or_count(void) {
     CHECK(vm_global(0) == 55);
     CHECK(vm_idle());
     CHECK_WARNED(before, 2);
+#ifndef SERVAL_GBA
+    CHECK(serval_host_vm_calls.calls == 0);
+#endif
+}
+
+// sound: tracker music and sampled effects -----------------------------------
+
+// vm.md "Engine calls": the sound calls (audio.h's music_* and sfx_*) reach
+// the platform with their arguments in push order, and those with a result
+// push it: music_playing, music_paused and sfx_playing a boolean, sfx_play
+// and sfx_play_ex a handle (on the host, the recorder's sound_value). The
+// others push nothing, though the recorder offers 77: the 55 underneath is
+// all that is left. tests/rom/vm_platform_tests.c runs them on the GBA.
+static void sys_sound_calls_reach_the_platform(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(55);                    // 55
+    push8(3);                     // 55 music id
+    push8(1);                     // 55 music id, loop
+    sys(VM_SYS_MUSIC_PLAY);       // frame 1
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_STOP);       // frame 2
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_PLAYING);    // 55 1: frame 3
+    stg(1);                       // glob[1] = 1
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_PAUSE);      // frame 4
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_RESUME);     // frame 5
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_PAUSED);     // 55 1: frame 6
+    stg(2);                       // glob[2] = 1
+    wait_frames(1);               //
+    push16(200);                  // 55 volume
+    sys(VM_SYS_MUSIC_SET_VOLUME); // frame 7
+    wait_frames(1);               //
+    push16(150);                  // 55 percent
+    sys(VM_SYS_MUSIC_SET_SPEED);  // frame 8
+    wait_frames(1);               //
+    push8(7);                     // 55 sample id
+    sys(VM_SYS_SFX_PLAY);         // 55 321: frame 9
+    stg(3);                       // glob[3] = 321
+    wait_frames(1);               //
+    push8(9);                     // 55 id
+    push16(128);                  // 55 id volume
+    push8(-64);                   // 55 id volume pan
+    push16(FX(2) + FX_ONE / 2);   // 55 id volume pan pitch: 2.5
+    push8(4);                     // 55 id volume pan pitch priority
+    sys(VM_SYS_SFX_PLAY_EX);      // 55 322: frame 10
+    stg(4);                       // glob[4] = 322
+    wait_frames(1);               //
+    push16(321);                  // 55 handle
+    sys(VM_SYS_SFX_STOP);         // frame 11
+    wait_frames(1);               //
+    push16(322);                  // 55 handle
+    sys(VM_SYS_SFX_PLAYING);      // 55 1: frame 12
+    stg(5);                       // glob[5] = 1
+    wait_frames(1);               //
+    sys(VM_SYS_SFX_STOP_ALL);     // frame 13
+    wait_frames(1);               //
+    push8(0);                     // 55 volume
+    sys(VM_SYS_SFX_SET_VOLUME);   // frame 14
+    stg(0);                       // glob[0] = 55
+    op(VM_OP_HALT);               //
+    CHECK(load());
+    ServalHostVmCalls* r = &serval_host_vm_calls;
+    *r = (ServalHostVmCalls){.sound_value = 77};
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(last_call(1, VM_SYS_MUSIC_PLAY, 3, 1, 0, NULL));
+    frame();
+    CHECK(last_call(2, VM_SYS_MUSIC_STOP, 0, 0, 0, NULL));
+    r->sound_value = 1;
+    frame();
+    CHECK(last_call(3, VM_SYS_MUSIC_PLAYING, 0, 0, 0, NULL) && vm_global(1) == 1);
+    r->sound_value = 77;
+    frame();
+    CHECK(last_call(4, VM_SYS_MUSIC_PAUSE, 0, 0, 0, NULL));
+    frame();
+    CHECK(last_call(5, VM_SYS_MUSIC_RESUME, 0, 0, 0, NULL));
+    r->sound_value = 1;
+    frame();
+    CHECK(last_call(6, VM_SYS_MUSIC_PAUSED, 0, 0, 0, NULL) && vm_global(2) == 1);
+    r->sound_value = 77;
+    frame();
+    CHECK(last_call(7, VM_SYS_MUSIC_SET_VOLUME, 200, 0, 0, NULL));
+    frame();
+    CHECK(last_call(8, VM_SYS_MUSIC_SET_SPEED, 150, 0, 0, NULL));
+    r->sound_value = 321;
+    frame();
+    CHECK(last_call(9, VM_SYS_SFX_PLAY, 7, 0, 0, NULL) && vm_global(3) == 321);
+    r->sound_value = 322;
+    frame();
+    CHECK(last_call4(10, VM_SYS_SFX_PLAY_EX, 9, 128, -64, FX(2) + FX_ONE / 2, NULL));
+    CHECK(r->args[4] == 4 && vm_global(4) == 322);
+    r->sound_value = 77;
+    frame();
+    CHECK(last_call(11, VM_SYS_SFX_STOP, 321, 0, 0, NULL));
+    r->sound_value = 1;
+    frame();
+    CHECK(last_call(12, VM_SYS_SFX_PLAYING, 322, 0, 0, NULL) && vm_global(5) == 1);
+    r->sound_value = 77;
+    frame();
+    CHECK(last_call(13, VM_SYS_SFX_STOP_ALL, 0, 0, 0, NULL));
+    frame();
+    CHECK(last_call(14, VM_SYS_SFX_SET_VOLUME, 0, 0, 0, NULL));
+    CHECK(vm_global(0) == 55);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+    *r = (ServalHostVmCalls){.calls = 0};
+#endif
+}
+
+#ifndef SERVAL_GBA
+// One sound call: what a script pushes, and what the platform gets.
+typedef struct {
+    u8 fn;
+    s32 pushed[5];
+    s32 passed[5];
+} SoundCase;
+
+// vm.md "Engine calls": what reaches C, in its parameters' ranges.
+static const SoundCase sound_cases[] = {
+    // IDs: past a u16, 0xFFFF, which no bank has (the C function warns).
+    {VM_SYS_MUSIC_PLAY, {0, 1}, {0, 1}},
+    {VM_SYS_MUSIC_PLAY, {0xFFFF, -1}, {0xFFFF, 1}}, // loop: any nonzero cell is 1
+    {VM_SYS_MUSIC_PLAY, {-1, 7}, {0xFFFF, 1}},
+    {VM_SYS_MUSIC_PLAY, {0x10000, 0}, {0xFFFF, 0}},
+    {VM_SYS_SFX_PLAY, {INT32_MIN}, {0xFFFF}},
+    {VM_SYS_SFX_PLAY, {0x12345}, {0xFFFF}},
+    // Volumes, pans and priorities: clamped, warning once per kind.
+    {VM_SYS_MUSIC_SET_VOLUME, {255}, {255}},
+    {VM_SYS_MUSIC_SET_VOLUME, {-1}, {0}}, // warns: a volume
+    {VM_SYS_MUSIC_SET_VOLUME, {256}, {255}},
+    {VM_SYS_SFX_SET_VOLUME, {INT32_MIN}, {0}},
+    {VM_SYS_SFX_SET_VOLUME, {1000}, {255}},
+    {VM_SYS_SFX_PLAY_EX, {0, 0, -128, 0, 0}, {0, 0, -128, 0, 0}},
+    {VM_SYS_SFX_PLAY_EX, {0xFFFF, 255, 127, INT32_MIN, 255}, {0xFFFF, 255, 127, INT32_MIN, 255}},
+    // A pan and a priority (warning once each), a volume, an ID; the
+    // pitch, a FIXED, as it is (sfx_play_ex clamps it).
+    {VM_SYS_SFX_PLAY_EX, {-1, 256, -129, FX(16) + 1, -1}, {0xFFFF, 255, -128, FX(16) + 1, 0}},
+    {VM_SYS_SFX_PLAY_EX, {7, -9, 1000, INT32_MAX, 256}, {7, 0, 127, INT32_MAX, 255}},
+    // A speed: below 0 is 1, past a u16 0xFFFF (music_set_speed clamps
+    // both to 50-200, warning); 0 still means 100.
+    {VM_SYS_MUSIC_SET_SPEED, {0}, {0}},
+    {VM_SYS_MUSIC_SET_SPEED, {-5}, {1}},
+    {VM_SYS_MUSIC_SET_SPEED, {INT32_MIN}, {1}},
+    {VM_SYS_MUSIC_SET_SPEED, {70000}, {0xFFFF}},
+    // Handles: past a u16, SFX_NONE, which names no effect.
+    {VM_SYS_SFX_STOP, {0xFFFF}, {0xFFFF}},
+    {VM_SYS_SFX_STOP, {-1}, {SFX_NONE}},
+    {VM_SYS_SFX_STOP, {0x10000}, {SFX_NONE}},
+    {VM_SYS_SFX_PLAYING, {0x10001}, {SFX_NONE}},
+};
+#endif
+
+// vm.md "Engine calls": the sound calls get their arguments in C's ranges
+// (sound_cases), and only a volume, pan or priority outside its range warns,
+// once per kind (in one loaded blob): no value of its C type is wrong, so
+// the C function couldn't warn. In range, every value passes as it is.
+static void sys_sound_arguments_in_c_ranges(void) {
+#ifndef SERVAL_GBA
+    enum { CASES = sizeof sound_cases / sizeof sound_cases[0] };
+    static const u8 arity[VM_SYS_COUNT] = {
+        [VM_SYS_MUSIC_PLAY] = 2,  [VM_SYS_MUSIC_SET_VOLUME] = 1, [VM_SYS_MUSIC_SET_SPEED] = 1,
+        [VM_SYS_SFX_PLAY] = 1,    [VM_SYS_SFX_PLAY_EX] = 5,      [VM_SYS_SFX_STOP] = 1,
+        [VM_SYS_SFX_PLAYING] = 1, [VM_SYS_SFX_SET_VOLUME] = 1};
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    for (u32 k = 0; k < CASES; k++) {
+        const SoundCase* c = &sound_cases[k];
+        for (u32 a = 0; a < arity[c->fn]; a++)
+            push32(c->pushed[a]);
+        sys(c->fn);
+        if (c->fn == VM_SYS_SFX_PLAY || c->fn == VM_SYS_SFX_PLAY_EX || c->fn == VM_SYS_SFX_PLAYING)
+            op(VM_OP_DROP); // the result
+        wait_frames(1);
+    }
+    store(0, 1); // carried on
+    op(VM_OP_HALT);
+    CHECK(load());
+    ServalHostVmCalls* r = &serval_host_vm_calls;
+    *r = (ServalHostVmCalls){.calls = 0};
+    start(0);
+    u32 before = debug_warning_count();
+    u32 wrong = 0;
+    for (u32 k = 0; k < CASES; k++) {
+        const SoundCase* c = &sound_cases[k];
+        frame();
+        bool right = r->calls == k + 1 && r->fn == c->fn;
+        for (u32 a = 0; a < 5; a++)
+            right = right && r->args[a] == (a < arity[c->fn] ? c->passed[a] : 0);
+        wrong += !right;
+    }
+    CHECK(wrong == 0);
+    frame();
+    CHECK(vm_global(0) == 1 && vm_idle());
+    CHECK_WARNED(before, 3); // a volume, a pan, a priority
+    *r = (ServalHostVmCalls){.calls = 0};
+#endif
+}
+
+// vm.md "Opcode reference": a SYS call with a result and no arguments
+// (music_playing, music_paused) needs a free cell: on a full stack it
+// overflows, warning and halting its context before the call is made. And
+// sfx_play_ex, the one call of 5 arguments, underflows on 4 (a different
+// kind of fault, below).
+static void sys_sound_results_need_room(void) {
+    reset();
+    blob_begin(3, 0, GLOBALS);
+    witness(0);
+    for (u16 obj = 1; obj <= 2; obj++) {
+        handler(obj, VM_EV_CREATE);
+        store(obj, 1);                                              //
+        for (s32 v = 1; v <= VM_STACK; v++)                         //
+            push8(v);                                               // a full stack
+        sys(obj == 1 ? VM_SYS_MUSIC_PLAYING : VM_SYS_MUSIC_PAUSED); // overflows: warns, halts
+        store(obj, 2);                                              // never runs
+        op(VM_OP_HALT);                                             //
+    }
+    CHECK(load());
+#ifndef SERVAL_GBA
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+#endif
+    expect_faults_halt_only_themselves(2);
+    CHECK(vm_global(1) == 1 && vm_global(2) == 1);
+
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    witness(0);
+    handler(1, VM_EV_CREATE);
+    store(1, 1); //
+    for (s32 v = 1; v <= 4; v++)
+        push8(v);            // 1 2 3 4
+    sys(VM_SYS_SFX_PLAY_EX); // takes five: underflows, warns, halts
+    store(1, 2);             // never runs
+    op(VM_OP_HALT);          //
+    CHECK(load());
+    expect_faults_halt_only_themselves(1);
+    CHECK(vm_global(1) == 1);
 #ifndef SERVAL_GBA
     CHECK(serval_host_vm_calls.calls == 0);
 #endif
@@ -5964,7 +6217,10 @@ TEST_SUITE(
     {"sys_screen_set_blend", sys_screen_set_blend},
     {"sys_set_colors_read_their_array", sys_set_colors_read_their_array},
     {"sys_set_colors_refuse_a_bad_array_or_count", sys_set_colors_refuse_a_bad_array_or_count},
-    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"sys_sound_calls_reach_the_platform", sys_sound_calls_reach_the_platform},
+    {"sys_sound_arguments_in_c_ranges", sys_sound_arguments_in_c_ranges},
+    {"sys_sound_results_need_room", sys_sound_results_need_room}, {"ram_arrays", ram_arrays},
+    {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
     {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
     {"globals_start_at_their_initial_values", globals_start_at_their_initial_values},

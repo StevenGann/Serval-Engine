@@ -70,7 +70,12 @@ SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC
              "PSG_MUSIC_RESUME": 0, "CAMERA_SET": 2, "TEXT_PRINT": 2, "RANDOM_RANGE": 2,
              "BUTTON_DOWN": 1, "BUTTON_PRESSED": 1, "SCREEN_SET_BRIGHTNESS": 1, "PATH_START": 3,
              "TEXT_PRINT_NUMBER": 4, "PATH_STOP": 1,
-             "SCREEN_SET_BLEND": 4}  # TEXT_PRINT: col, row, then its text
+             "SCREEN_SET_BLEND": 4,
+             # sound: tracker music and sampled effects
+             "MUSIC_PLAY": 2, "MUSIC_STOP": 0, "MUSIC_PLAYING": 0, "MUSIC_PAUSE": 0,
+             "MUSIC_RESUME": 0, "MUSIC_PAUSED": 0, "MUSIC_SET_VOLUME": 1, "MUSIC_SET_SPEED": 1,
+             "SFX_PLAY": 1, "SFX_PLAY_EX": 5, "SFX_STOP": 1, "SFX_PLAYING": 1, "SFX_STOP_ALL": 0,
+             "SFX_SET_VOLUME": 1}  # TEXT_PRINT: col, row, then its text
 # The palette calls: the arguments compared (not the array's number: Lua
 # passes the table), by position, then the colors the VM read from it.
 COLOR_ARGS = {"SPRITE_SET_COLORS": (0, 1, 3), "TILESET_SET_COLORS": (0, 2)}
@@ -296,16 +301,16 @@ def read_vm(program, output):
             frame = int(rest)
             r.calls[frame] = []
         elif head == "call":
-            words = rest.split(" ", 5)
+            words = rest.split(" ", 6)  # the call, five arguments, then its text
             name = VM.sys_names[int(words[0])]
             if name in COLOR_ARGS:
                 numbers = [int(w) for w in rest.split()[1:]]
-                args = tuple(numbers[k] for k in COLOR_ARGS[name]) + tuple(numbers[4:])
+                args = tuple(numbers[k] for k in COLOR_ARGS[name]) + tuple(numbers[5:])
                 r.calls[frame].append((name,) + args)
                 continue
             args = tuple(int(w) for w in words[1:1 + SYS_ARITY[name]])
             if name == "TEXT_PRINT":
-                args += (words[5][1:-1],)
+                args += (words[6][1:-1],)
             r.calls[frame].append((name,) + args)
         elif head == "global":
             index, cell = (int(w) for w in rest.split())

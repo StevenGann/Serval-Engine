@@ -18,8 +18,8 @@
 //   costs CPU time for every channel playing (docs/audio.md#cpu-and-memory).
 //
 // The two music players are separate and can play at once: psg_music_*()
-// play a PsgSong on the tone generators (scripts reach this one, through the
-// VM's psg_music_* SYS calls), music_*() play a module from the bank. Their
+// play a PsgSong on the tone generators, music_*() play a module from the
+// bank (scripts reach both, through the VM's SYS calls; vm.h). Their
 // volume ranges differ: psg_music_set_volume() takes 0-15, the tone
 // generators' own steps; music_set_volume(), sfx_set_volume() and
 // sfx_play_ex() take 0-255, the mixer's finer steps, so fades are smooth.

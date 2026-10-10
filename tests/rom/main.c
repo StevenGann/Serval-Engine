@@ -24,6 +24,8 @@ extern const TestSuite gba_stream_tests;
 extern const TestSuite gba_raster_tests; // raster: raster effects
 extern const TestSuite gba_wave_tests;   // wave channel: the PSG wave channel
 
+extern const TestSuite gba_vm_sound_tests; // vm sound: scripts' tracker music and sampled effects
+
 void test_output(const char* line) {
     debug_log(line);
 }
@@ -68,6 +70,7 @@ int main(void) {
         &planned_sprites_tests,
         &planned_map_tests,
         &planned_screen_tests,
+        &gba_vm_sound_tests, // vm sound: scripts' sound calls without a bank
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

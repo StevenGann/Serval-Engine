@@ -1379,6 +1379,23 @@ ENGINE = {
     # The colors: an array's first `count` elements (docs/lua.md).
     "sprite_set_colors": ((INT, INT, ARRAY, INT), None, "SYS SPRITE_SET_COLORS"),
     "tileset_set_colors": ((INT, ARRAY, INT), None, "SYS TILESET_SET_COLORS"),
+    # sound: tracker music and sampled effects (audio.h). IDs are the sound
+    # bank's MOD_* and SFX_* (mmutil's header); an effect's handle is an
+    # integer, 0 (SFX_NONE) when nothing played.
+    "music_play": ((INT, BOOL), None, "SYS MUSIC_PLAY"),
+    "music_stop": ((), None, "SYS MUSIC_STOP"),
+    "music_playing": ((), BOOL, "SYS MUSIC_PLAYING"),
+    "music_pause": ((), None, "SYS MUSIC_PAUSE"),
+    "music_resume": ((), None, "SYS MUSIC_RESUME"),
+    "music_paused": ((), BOOL, "SYS MUSIC_PAUSED"),
+    "music_set_volume": ((INT,), None, "SYS MUSIC_SET_VOLUME"),
+    "music_set_speed": ((INT,), None, "SYS MUSIC_SET_SPEED"),
+    "sfx_play": ((INT,), INT, "SYS SFX_PLAY"),
+    "sfx_play_ex": ((INT, INT, INT, FIXED, INT), INT, "SYS SFX_PLAY_EX"),
+    "sfx_stop": ((INT,), None, "SYS SFX_STOP"),
+    "sfx_playing": ((INT,), BOOL, "SYS SFX_PLAYING"),
+    "sfx_stop_all": ((), None, "SYS SFX_STOP_ALL"),
+    "sfx_set_volume": ((INT,), None, "SYS SFX_SET_VOLUME"),
     "kill": ((ENTITY,), None, "KILL"),
     "wait": ((INT,), None, "WAIT"),
     "wait_anim": ((), None, "WAIT_ANIM"),

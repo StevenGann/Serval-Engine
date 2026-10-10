@@ -263,12 +263,36 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 14 | `SCREEN_SET_BLEND` | `screen_set_blend` | top, bottom, top_weight, bottom_weight | |
 | 15 | `SPRITE_SET_COLORS` | `sprite_set_colors` | sprite id, index, array, count | |
 | 16 | `TILESET_SET_COLORS` | `tileset_set_colors` | index, array, count | |
+| 17 | `MUSIC_PLAY` | `music_play` | music id (`MOD_*`), loop | |
+| 18 | `MUSIC_STOP` | `music_stop` | | |
+| 19 | `MUSIC_PLAYING` | `music_playing` | | 0/1 |
+| 20 | `MUSIC_PAUSE` | `music_pause` | | |
+| 21 | `MUSIC_RESUME` | `music_resume` | | |
+| 22 | `MUSIC_PAUSED` | `music_paused` | | 0/1 |
+| 23 | `MUSIC_SET_VOLUME` | `music_set_volume` | volume | |
+| 24 | `MUSIC_SET_SPEED` | `music_set_speed` | percent | |
+| 25 | `SFX_PLAY` | `sfx_play` | sample id (`SFX_*`) | handle |
+| 26 | `SFX_PLAY_EX` | `sfx_play_ex` | sample id, volume, pan, pitch (`FIXED`), priority | handle |
+| 27 | `SFX_STOP` | `sfx_stop` | handle | |
+| 28 | `SFX_PLAYING` | `sfx_playing` | handle | 0/1 |
+| 29 | `SFX_STOP_ALL` | `sfx_stop_all` | | |
+| 30 | `SFX_SET_VOLUME` | `sfx_set_volume` | volume | |
 
-`text_print_number` prints the value in decimal. With a width of 1 or more it is right-aligned in that many columns, spaces in front, so a number that got shorter (10, then 9) leaves nothing behind; a number wider than the width prints in full. A width of 0 or less prints just the digits. Calls take at most 4 arguments.
+`text_print_number` prints the value in decimal. With a width of 1 or more it is right-aligned in that many columns, spaces in front, so a number that got shorter (10, then 9) leaves nothing behind; a number wider than the width prints in full. A width of 0 or less prints just the digits. Calls take at most 5 arguments (`sfx_play_ex`; 4 before it).
 
 The palette calls take their colors from an array (its number: `ARR_NAME` in a listing): the first `count` elements, read at the call, each element's low 16 bits a `Color`; the C function gets them as its `colors`, so the array may change right after. An array the blob doesn't have, or a count that is negative, past the array's length or past 256 (more than any call can write), warns (once per kind) and makes no call; the arguments are popped as usual. The C function checks the rest (a sprite that isn't loaded, colors past its group's palettes or past background color 239) and warns as it does for C.
 
-The page has no calls yet for tracker music (`music_*`) and sampled sound (`sfx_*`), implemented in C ([audio.md](audio.md)), nor for API the engine declares but doesn't implement: each arrives appended, as `SCREEN_SET_BLEND` did with alpha blending's and `SPRITE_SET_COLORS` and `TILESET_SET_COLORS` with palette writes', and as do calls for API added later. Runtime sprite tiles (`sprite_set_tiles()`, implemented) have none: a script can't hold tile data. Meanwhile the Lua subset keeps scripts from declaring their names ([lua.md](lua.md#planned-functions)), and every other C function's ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
+The sound calls (17 to 30) are tracker music's and sampled effects' `music_*` and `sfx_*` ([audio.md](audio.md#tracker-music)). Their IDs are the sound bank's (`MOD_*` and `SFX_*`, from the header `serval_add_soundbank()`, or mmutil, writes with it), and an effect's handle (an `Sfx`) is a cell: `SFX_PLAY` and `SFX_PLAY_EX` push it, 0 (`SFX_NONE`) when nothing played; `MUSIC_PLAYING`, `MUSIC_PAUSED` and `SFX_PLAYING` push 1 or 0. `SFX_PLAY_EX`'s pitch is a `FIXED` cell (256: the recorded pitch). Each argument reaches C in its parameter's range, never wrapped as a C cast would wrap it:
+
+- an ID outside 0-65535 is 65535, which no bank has: the C function warns, as for any ID the bank lacks, and nothing plays;
+- a handle outside 0-65535 is 0 (`SFX_NONE`), which names no effect: nothing happens, as for a stale handle;
+- a speed below 0 is 1 and one past 65535 is 65535, which `music_set_speed` clamps to 50-200, warning (0 still means 100);
+- `loop` is true for any cell but 0;
+- a volume (0-255), pan (−128 to 127) or priority (0-255) outside its range is clamped to it, and the VM warns, once per kind: no value of the C parameter's type is wrong, so the C function couldn't.
+
+A call with a result and no arguments (`MUSIC_PLAYING`, `MUSIC_PAUSED`) needs a free cell for it: on a full stack it overflows (warns, halts the context) before the call is made. `audio_bank_set` has no call: it takes a pointer, and the bank is the game's configuration, registered from C at boot as `vm_bind`'s songs and paths are.
+
+Calls arrive appended, with their feature's implementation, as `SCREEN_SET_BLEND` did with alpha blending's, `SPRITE_SET_COLORS` and `TILESET_SET_COLORS` with palette writes' and the sound calls with tracker music's and sampled effects', and as do calls for API added later. Runtime sprite tiles (`sprite_set_tiles()`) and raster effects have none: a script can't hold tile data or per-line tables. The Lua subset keeps scripts from declaring the name of any engine C function, planned ([lua.md](lua.md#planned-functions)) or not ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
 
 Pointer-taking engine calls go through **bindings** the game registers once: `vm_bind(&(VmBindings){.psg_songs = ..., .psg_song_count = ..., .paths = ..., .path_count = ...})`. A bad index or missing binding warns and does nothing (returns 0). `vm_load` and `vm_unload` keep the bindings.
 
@@ -447,7 +471,8 @@ Shared suite `tests/vm_tests.c`, registered in both `tests/host/main.c` (ASan/UB
 
 - Every opcode at least once; arithmetic edge cases (wrap, `DIV`/`MOD`/`FXDIV` by zero → 0 + warn, shift masking, `FXMUL` precision).
 - Loader rejection: bad magic, version, cell width, counts, out-of-range handler and string offsets.
-- Runtime safety: stack overflow/underflow, call depth, unknown opcode, unknown SYS id (its arity is unknown), `pc` escaping the blob — each warns and halts only the offending context. An unknown property warns and continues (`GETP` pushes 0, `SETP` drops), as the opcode reference says.
+- Engine calls: each call's arguments in push order and its result, the bindings, the palette calls' arrays, the sound calls' arguments in C's ranges (mapped, or clamped with a warning once per kind).
+- Runtime safety: stack overflow/underflow (a SYS call short of arguments, or with a result and no arguments on a full stack), call depth, unknown opcode, unknown SYS id (its arity is unknown), `pc` escaping the blob — each warns and halts only the offending context. An unknown property warns and continues (`GETP` pushes 0, `SETP` drops), as the opcode reference says.
 - Scheduling across simulated frames: `WAIT` counts, `WAIT_ANIM`, `WAIT_MOVE` (with a real path), reactions on top of waiting behaviours (Step every frame, Collision and Animation End while the behaviour waits, the behaviour's stack, frame and wait restored exactly), a wait or a budget overrun in a reaction halting only the reaction, the Destroy reaction then the halt, one Create for a double attach, `SPAWN` running Create in-phase, queue overflow, budget throttling.
 - Frames: arguments and locals, recursion to the limits, `RET`/`RETV` dropping the frame, `ENTER`/`LDL`/`STL` bounds. Arrays (RAM and every ROM kind, bounds, `LEN`, reload rules), instance fields, `NEXTI` (including killing mid-loop), `VM_P_TAGS`, the animation and body properties (each truncated to its pool's type, `VM_P_BODY_CONTACT` read-only and reading what `sys_physics()` reported), `VM_P_OBJECT` and `vm_object_of` (attached, never attached, detached, dead, stale), `LSH`/`IDIV`/`IMOD` against Lua 5.4's results.
 - Collisions (`vm_collide`): both sides and `OTHER`, only attached entities with a handler, the order of pairs and slots, each pair of entities once (one set against itself, sets that share entities, a pair set twice), reactions running before the next test (a kill, a tag change), a slot reused during the pass, the queue drained before the pass, more events than the queue holds, the limits, and the pairs outlasting loads.
@@ -478,7 +503,7 @@ Beyond the byte layout, these are part of format v1, and a compiler may rely on 
 - **Hot reload and behaviour scripts.** `vm_reload` keeps entities attached but halts every context, so an entity whose behaviour lives in a long-running Create handler (a firefly's wander loop) stands still after a reload: nothing restarts it, and re-queueing Create would repeat its side effects (`fireflies` counts live fireflies in Create). To settle with the debug link (milestone 8): a Resume event (a seventh event, so it needs the extended handler table header flag bit 1 is reserved for), a reload flag that re-queues Create, or a convention that behaviour belongs in Step.
 - What the proof example found scripts couldn't say: per-instance variables, iterating an object's instances, arrays, game components a script can set and a field width for printed numbers are closed by milestone 6 ([examples-roadmap.md](examples-roadmap.md#what-fireflies-exposed)). Still open: aiming a path from a script (`path_start` has no heading).
 - The event set will grow (buttons, timers, script-to-script messages); `VM_EV_*`, the property page and the SYS page are all append-only by design. An object record has six handler slots, all taken: header flag bit 1 is reserved for an extended handler table that holds the handlers of later events (a later version defines it; this one refuses blobs that set the bit).
-- SYS calls for tracker music and sampled sound ([audio.md](audio.md), implemented in C), and for the API this version declares but doesn't implement yet, come appended to the page; so do calls for later API, and properties for new pools.
+- SYS calls for later API come with its implementation, appended to the page (as tracker music's and sampled effects' did), and so do properties for new pools.
 - `vm_collide` has no broad phase: a pair costs a test per entity of one set times entity of the other. A spatial grid could come later without changing the API, if games need large sets.
 - 16-bit cells for a GB target: the header field and width-agnostic semantics keep the door open; nothing else is done for it in v1.
 - Whether rooms bring per-room global banks or the compiler just partitions the global space (compiler-side concern for now).

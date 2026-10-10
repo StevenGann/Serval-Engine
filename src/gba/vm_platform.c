@@ -1,6 +1,7 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
-// sound, music, text (strings and numbers), buttons, brightness, blending
-// and palette writes. The web build compiles it too.
+// sound, music, text (strings and numbers), buttons, brightness, blending,
+// palette writes, and tracker music and sampled effects. The web build
+// compiles it too.
 
 #include "../core/vm_internal.h"
 #include "serval/audio.h"
@@ -79,6 +80,45 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         return 0;
     case VM_SYS_TILESET_SET_COLORS:
         tileset_set_colors((u32)args[0], ptr, (u32)args[2]);
+        return 0;
+    // sound: tracker music and sampled effects. vm.c has put each argument in
+    // its C parameter's range (sound_call), so the casts change no value.
+    case VM_SYS_MUSIC_PLAY:
+        music_play((u16)args[0], args[1] != 0);
+        return 0;
+    case VM_SYS_MUSIC_STOP:
+        music_stop();
+        return 0;
+    case VM_SYS_MUSIC_PLAYING:
+        return music_playing();
+    case VM_SYS_MUSIC_PAUSE:
+        music_pause();
+        return 0;
+    case VM_SYS_MUSIC_RESUME:
+        music_resume();
+        return 0;
+    case VM_SYS_MUSIC_PAUSED:
+        return music_paused();
+    case VM_SYS_MUSIC_SET_VOLUME:
+        music_set_volume((u8)args[0]);
+        return 0;
+    case VM_SYS_MUSIC_SET_SPEED:
+        music_set_speed((u16)args[0]);
+        return 0;
+    case VM_SYS_SFX_PLAY:
+        return sfx_play((u16)args[0]);
+    case VM_SYS_SFX_PLAY_EX:
+        return sfx_play_ex((u16)args[0], (u8)args[1], (s8)args[2], args[3], (u8)args[4]);
+    case VM_SYS_SFX_STOP:
+        sfx_stop((Sfx)args[0]);
+        return 0;
+    case VM_SYS_SFX_PLAYING:
+        return sfx_playing((Sfx)args[0]);
+    case VM_SYS_SFX_STOP_ALL:
+        sfx_stop_all();
+        return 0;
+    case VM_SYS_SFX_SET_VOLUME:
+        sfx_set_volume((u8)args[0]);
         return 0;
     default:
         return 0;

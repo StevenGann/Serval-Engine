@@ -485,6 +485,32 @@ REJECTED = {
     "color_rgb_variable": (OBJ + "function A:step() local r = 8; local c = COLOR_RGB(r, 0, 0) "
                            "end", 3, 52, r"^COLOR_RGB\(r, g, b\) takes constants"),
     "color_rgb_arity": ("c = { COLOR_RGB(1, 2) }", 1, 7, r"^COLOR_RGB takes 3 arguments, not 2$"),
+    # sound: tracker music and sampled effects. loop is a boolean, pitch
+    # fixed (an integer converts), the rest integers; the queries return
+    # booleans, sfx_play and sfx_play_ex an integer handle
+    "sound_loop_integer": (OBJ + "function A:step() music_play(0, 1) end", 3, 33,
+                           r"^music_play's second argument is a boolean, and this is an "
+                           r"integer$"),
+    "sound_pitch_boolean": (OBJ + "function A:step() local h = sfx_play_ex(1, 255, 0, true, 0) "
+                            "end", 3, 52, r"^sfx_play_ex's fourth argument is fixed, and this is "
+                            r"a boolean$"),
+    "sound_volume_fixed": (OBJ + "function A:step() sfx_set_volume(0.5) end", 3, 34,
+                           r"^sfx_set_volume's first argument is an integer, and this is fixed$"),
+    "sound_handle_entity": (OBJ + "function A:step() sfx_stop(self) end", 3, 28,
+                            r"^sfx_stop's first argument is an integer, and this is an entity$"),
+    "sound_play_ex_arity": (OBJ + "function A:step() local h = sfx_play_ex(1, 255, 0, 1.0) end",
+                            3, 29, r"^sfx_play_ex takes 5 arguments, not 4$"),
+    "sound_handle_condition": (OBJ + "function A:step() if sfx_play(1) then end end", 3, 22,
+                               r"^conditions must be booleans: sfx_play\(\.\.\.\) is an "
+                               r"integer"),
+    "sound_query_arithmetic": (OBJ + "function A:step() local n = music_playing() + 1 end", 3, 29,
+                               r"^\+ needs numbers, and music_playing\(\.\.\.\) is a boolean$"),
+    "sound_no_result": (OBJ + "function A:step() local x = music_stop() end", 3, 29,
+                        r"^music_stop\(\) returns no value$"),
+    "sound_redefined": ("function sfx_play() end", 1, 10,
+                        r"^sfx_play is an engine function; a script can't redefine it$"),
+    "sound_top_local": ("local music_set_volume = 0", 1, 7,
+                        r"^music_set_volume is an engine function; a script can't redefine it$"),
     # Top-level names of the engine's planned functions, and their uses: none
     # is left in this version (PlannedNames tests the rules with a planned
     # function of its own; implementing one moved its cases to the C
@@ -504,28 +530,24 @@ REJECTED = {
                           r"engine version has no builtin for it$"),
     "c_function_read": ("x = frame_count", 1, 5,
                         r"^frame_count is an engine C function, which scripts can't call"),
-    # Tracker music and sampled effects: planned until 1.x implemented them
-    # (C functions now, without builtins yet)
-    "c_function_music": ("function music_play() end", 1, 10,
-                         r"^function music_play: music_play is reserved: it is an engine C "
-                         r"function, which scripts may get as a builtin in a later version$"),
-    "c_function_sfx_global": ("sfx_play = 0", 1, 1, r"^global sfx_play: sfx_play is reserved"),
+    # Tracker music and sampled effects: planned until 1.x implemented them,
+    # builtins now (SYS 17-30); the sound bank stays a C function
+    "builtin_music": ("function music_play() end", 1, 10,
+                      r"^music_play is an engine function; a script can't redefine it$"),
+    "builtin_sfx_global": ("sfx_play = 0", 1, 1, r"^sfx_play is an engine function"),
     "c_function_bank_object": ("audio_bank_set = object {}", 1, 1,
                                r"^object audio_bank_set: audio_bank_set is reserved: it is an "
                                r"engine C function"),
-    "c_function_rom_array": ("music_resume = { 1, 2 }", 1, 1,
-                             r"^array music_resume: music_resume is reserved"),
-    "c_function_local_function": ("local function music_stop() end", 1, 16,
-                                  r"^local function music_stop: music_stop is reserved"),
-    "c_function_top_local": ("local sfx_set_volume = 0", 1, 7,
-                             r"^local sfx_set_volume: sfx_set_volume is reserved"),
-    "c_function_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
-                             r"^local sfx_stop_all: sfx_stop_all is reserved"),
-    "c_function_music_called": (OBJ + "function A:step() music_play(0, true) end", 3, 19,
-                                r"^music_play is an engine C function, which scripts can't call: "
-                                r"this engine version has no builtin for it$"),
-    "c_function_sfx_read": (OBJ + "function A:step() local on = sfx_playing end", 3, 30,
-                            r"^sfx_playing is an engine C function, which scripts can't call"),
+    "c_function_bank_called": (OBJ + "function A:step() audio_bank_set(0) end", 3, 19,
+                               r"^audio_bank_set is an engine C function, which scripts can't "
+                               r"call: this engine version has no builtin for it$"),
+    "builtin_rom_array": ("music_resume = { 1, 2 }", 1, 1, r"^music_resume is an engine function"),
+    "builtin_local_function": ("local function music_stop() end", 1, 16,
+                               r"^music_stop is an engine function"),
+    "builtin_top_const": ("local sfx_stop_all <const> = 0", 1, 7,
+                          r"^sfx_stop_all is an engine function"),
+    "builtin_sfx_assigned": (OBJ + "function A:step() sfx_playing = 1 end", 3, 19,
+                             r"^sfx_playing is an engine function; it can't be assigned$"),
 }
 
 
@@ -1125,8 +1147,8 @@ class PlannedNames(unittest.TestCase):
             error = self.refused(OBJ + "function A:step() fake_more() end", functions)
             self.assertRegex(error.message, r"^fake_more is planned, not implemented in this "
                              r"engine version \(more fake things, docs/fake\.md#more\)")
-            # Not a function there: an ordinary name.
-            svlua.check("function music_play() end\nfunction FAKE_WAVE() end", "t.lua",
+            # Not a function there: an ordinary name (not a builtin either).
+            svlua.check("function audio_bank_set() end\nfunction FAKE_WAVE() end", "t.lua",
                         functions)
             # Implemented: the marker goes, and the name stays reserved, as
             # an engine C function.
@@ -1163,8 +1185,8 @@ class PlannedNames(unittest.TestCase):
                              "version may make a builtin\n  hint: rename it, e.g. my_fake_play "
                              "(fake_play is planned: fake things (some), "
                              "docs/fake.md#fake-things)\n")
-            r = compile_("A = object {}\nfunction music_play() end\n"
-                         "function A:step() music_play() end\n")
+            r = compile_("A = object {}\nfunction audio_bank_set() end\n"
+                         "function A:step() audio_bank_set() end\n")
             self.assertEqual((r.returncode, r.stderr), (0, ""))
             # Without the headers it can't know what is planned: an error.
             os.rename(os.path.join(engine, "include"), os.path.join(engine, "moved"))
@@ -1503,7 +1525,8 @@ PROPS = ("X", "Y", "VX", "VY", "SPR", "FRAME", "FLAGS", "ANGLE", "DEPTH", "SCALE
          "BODY_H", "TAGS", "ANIM_TIME", "ANIM_STEP", "BODY_BOUNCE", "BODY_FRICTION",
          "BODY_MAX_FALL", "BODY_GRAVITY", "BODY_CONTACT")
 FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
-SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3)  # vm.md's SYS page
+SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3,  # vm.md's SYS page
+             2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1)  # sound: music_play to sfx_set_volume
 COLOR_CALLS = ("SPRITE_SET_COLORS", "TILESET_SET_COLORS")  # their colors follow the arguments
 
 
@@ -1531,13 +1554,13 @@ class VmRun:
             if head == "frame":
                 frame = int(rest)
             elif head == "call":
-                words = rest.split(" ", 5)
-                fn, args = int(words[0]), [int(w) for w in words[1:5]]
+                words = rest.split(" ", 6)  # the call, five arguments, then the rest
+                fn, args = int(words[0]), [int(w) for w in words[1:6]]
                 call = (frame, VM.sys_names[fn], *args[:SYS_ARITY[fn]])
                 if VM.sys_names[fn] in COLOR_CALLS:
-                    call += (tuple(int(w) for w in words[5].split()) if len(words) > 5 else (),)
-                elif len(words) > 5:
-                    call += (words[5][1:-1],)
+                    call += (tuple(int(w) for w in words[6].split()) if len(words) > 6 else (),)
+                elif len(words) > 6:
+                    call += (words[6][1:-1],)
                 self.calls.append(call)
             elif head == "warnings":
                 self.warnings = int(rest)
@@ -1615,11 +1638,13 @@ def lit(n):
 # --- Code generation ---------------------------------------------------------
 
 
-GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals")
+GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals", "sound")
 GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
                   "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
                   "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
-                  "SONG_WIN": 0, "LAYER_FOREGROUND": 2, "LAYER_ALL": 0x3F}
+                  "SONG_WIN": 0, "LAYER_FOREGROUND": 2, "LAYER_ALL": 0x3F,
+                  # sound: a sound bank's header (mmutil's), and a button
+                  "MOD_THEME": 0, "SFX_JUMP": 1, "SFX_ENGINE": 2, "BUTTON_START": 8}
 
 
 class Golden(unittest.TestCase):
@@ -1668,7 +1693,12 @@ class Golden(unittest.TestCase):
                          "PSG_MUSIC_RESUME",
                          "CAMERA_SET", "TEXT_PRINT", "TEXT_PRINT_NUMBER", "RANDOM_RANGE",
                          "BUTTON_DOWN", "BUTTON_PRESSED", "SCREEN_SET_BRIGHTNESS", "PATH_START",
-                         "PATH_STOP", "SCREEN_SET_BLEND"):
+                         "PATH_STOP", "SCREEN_SET_BLEND",
+                         # sound: tracker music and sampled effects
+                         "MUSIC_PLAY", "MUSIC_STOP", "MUSIC_PLAYING", "MUSIC_PAUSE",
+                         "MUSIC_RESUME", "MUSIC_PAUSED", "MUSIC_SET_VOLUME", "MUSIC_SET_SPEED",
+                         "SFX_PLAY", "SFX_PLAY_EX", "SFX_STOP", "SFX_PLAYING", "SFX_STOP_ALL",
+                         "SFX_SET_VOLUME"):
             with self.subTest(sys=sys_call):
                 self.assertIn(f"SYS {sys_call}", text)
         self.assertIn("SETP FIELD_HP", text)  # an instance field
@@ -2286,6 +2316,97 @@ end"""
         self.assertEqual(vm.calls_of("SPRITE_SET_COLORS"),
                          [(3, 2, 0, 3, (blue, light, white)), (4, 0, 0, 0, ())])
         self.assertEqual([c[0] for c in vm.calls], [1, 2, 3, 4, 4])
+
+    @needs_runner
+    def test_sound_calls_pass_their_arguments_and_results(self):
+        """The sound calls (vm.md's SYS page): arguments in order, the pitch
+        in 256ths, results into globals and fields and back. The runner's
+        stand-in for the mixer answers: music plays from music_play until
+        music_stop, paused from music_pause until music_resume; handles
+        count from 1 and play until stopped."""
+        script = """Jukebox = object {}
+Ship = object { components = C_POS }
+engine = 0
+paused = false
+on = false
+still = false
+gone = true
+function Jukebox:room_start()
+  music_play(MOD_THEME, true)
+  music_pause()
+  paused = music_paused()
+  on = music_playing()
+  engine = sfx_play_ex(SFX_ENGINE, 128, -32, 0.75, 1)
+  wait(1)
+  music_resume()
+  music_set_volume(200)
+  music_set_speed(150)
+  sfx_set_volume(64)
+  wait(1)
+  still = sfx_playing(engine)
+  sfx_stop(engine)
+  gone = not sfx_playing(engine)
+  music_stop()
+  if not music_playing() and not music_paused() then on = false end
+end
+function Ship:create()
+  self.shot = sfx_play(SFX_JUMP)
+  self.loud = sfx_play_ex(SFX_JUMP, 255, 127, 2, 255)
+  wait(2)
+  sfx_stop_all()
+  self.heard = sfx_playing(self.loud)
+end
+"""
+        vm = run_vm(script, frames=4, start=["JUKEBOX"], attach=["SHIP"], files=[ECS_H],
+                    headers={"MOD_THEME": 4, "SFX_JUMP": 1, "SFX_ENGINE": 2})
+        self.assertEqual(vm.globals, {"ENGINE": 1, "PAUSED": 1, "ON": 0, "STILL": 1, "GONE": 1})
+        (ship,) = vm.entities.values()
+        self.assertEqual((ship["shot"], ship["loud"], ship["heard"]), (2, 3, 0))
+        self.assertEqual(vm.calls_of("MUSIC_PLAY"), [(4, 1)])
+        self.assertEqual(vm.calls_of("SFX_PLAY_EX"), [(2, 128, -32, 192, 1), (1, 255, 127, 512, 255)])
+        self.assertEqual(vm.calls_of("SFX_PLAY"), [(1,)])
+        self.assertEqual(vm.calls_of("MUSIC_SET_VOLUME"), [(200,)])
+        self.assertEqual(vm.calls_of("MUSIC_SET_SPEED"), [(150,)])
+        self.assertEqual(vm.calls_of("SFX_SET_VOLUME"), [(64,)])
+        self.assertEqual(vm.calls_of("SFX_STOP"), [(1,)])
+        self.assertEqual(vm.calls_of("SFX_PLAYING"), [(1,), (1,), (3,)])
+        self.assertEqual([c[:2] for c in vm.calls if c[1].startswith(("MUSIC", "SFX"))],
+                         [(1, "MUSIC_PLAY"), (1, "MUSIC_PAUSE"), (1, "MUSIC_PAUSED"),
+                          (1, "MUSIC_PLAYING"), (1, "SFX_PLAY_EX"), (1, "SFX_PLAY"),
+                          (1, "SFX_PLAY_EX"), (2, "MUSIC_RESUME"), (2, "MUSIC_SET_VOLUME"),
+                          (2, "MUSIC_SET_SPEED"), (2, "SFX_SET_VOLUME"), (3, "SFX_PLAYING"),
+                          (3, "SFX_STOP"), (3, "SFX_PLAYING"), (3, "MUSIC_STOP"),
+                          (3, "MUSIC_PLAYING"), (3, "MUSIC_PAUSED"), (3, "SFX_STOP_ALL"),
+                          (3, "SFX_PLAYING")])
+
+    @needs_runner
+    def test_sound_arguments_reach_c_in_its_ranges(self):
+        """vm.md's SYS page: a volume, pan or priority outside its range is
+        clamped, warning once per kind; an ID past a u16 is 0xFFFF, a handle
+        SFX_NONE (0), a negative speed 1, none of which warn in the VM."""
+        script = OBJ + """function A:room_start()
+  music_set_volume(300)
+  sfx_set_volume(-4)
+  local h = sfx_play_ex(70000, 999, -200, -1.5, -1)
+  h = sfx_play_ex(-1, 255, 200, 16, 300)
+  music_play(-1, false)
+  music_set_speed(-50)
+  music_set_speed(100000)
+  sfx_stop(65536)
+  local on = sfx_playing(-1)
+end"""
+        vm = run_vm(script, start=["A"], warnings=True)
+        self.assertEqual(vm.calls_of("MUSIC_SET_VOLUME"), [(255,)])
+        self.assertEqual(vm.calls_of("SFX_SET_VOLUME"), [(0,)])
+        self.assertEqual(vm.calls_of("SFX_PLAY_EX"),
+                         [(0xFFFF, 255, -128, -384, 0), (0xFFFF, 255, 127, 4096, 255)])
+        self.assertEqual(vm.calls_of("MUSIC_PLAY"), [(0xFFFF, 0)])
+        self.assertEqual(vm.calls_of("MUSIC_SET_SPEED"), [(1,), (0xFFFF,)])
+        self.assertEqual(vm.calls_of("SFX_STOP"), [(0,)])
+        self.assertEqual(vm.calls_of("SFX_PLAYING"), [(0,)])
+        self.assertEqual(vm.warnings, 3)  # a volume, a pan, a priority
+        self.assertIn("vm: SYS music_set_volume: volume 300 is outside 0 to 255; it plays at "
+                      "255", vm.log)
 
 
 class Tool(unittest.TestCase):

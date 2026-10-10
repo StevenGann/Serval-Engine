@@ -187,7 +187,7 @@ Every bit and value of the data formats and flag words that this version doesn't
 | VM entity properties | 21-63 (later engine properties); 80-255, past the 16 instance fields (64-79), are unassigned (more fields would change `VM_FIELDS`, which format v1 fixes) | | Read 0, write nothing (warns) | [vm.md](vm.md#entities) |
 | Lua names | Top-level names (functions, globals, objects, arrays, top-level locals) that are any engine C function's, planned (`SERVAL_PLANNED`) or not: a builtin, named after its C function, may take them | | `svlua.py` refuses them (a compile error); locals and parameters may take them | [lua.md](lua.md#planned-functions), [lua.md](lua.md#c-functions) |
 | Lua field names | Instance fields starting `anim_`, `body_`, `ent_`, `map_`, `path_`, `pos_`, `spr_`, `vel_` or `vm_`: every property added later takes one of these prefixes | | `svlua.py` refuses them (a compile error); today's properties keep their names | [lua.md](lua.md#reserved-names) |
-| VM engine calls and opcodes | SYS numbers from `VM_SYS_COUNT` on (calls for tracker music, sampled sound and later features, appended); unassigned opcodes | | Halt the script (warns) | [vm.md](vm.md#engine-calls) |
+| VM engine calls and opcodes | SYS numbers from `VM_SYS_COUNT` on (calls for later features, appended); unassigned opcodes | | Halt the script (warns) | [vm.md](vm.md#engine-calls) |
 
 ## Splash screen
 

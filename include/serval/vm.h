@@ -192,13 +192,14 @@ enum {
 
 // Engine calls for SYS, each named after the C function it calls (the Lua
 // subset's builtins have the same names in lower case; docs/lua.md).
-// Arguments are pushed left to right (the last on top). Append-only: the
-// numbers are part of the blob format. Tracker music and sampled sound
-// (audio.h's music_* and sfx_*) have no calls yet; they arrive with their
-// implementations, appended, as screen_set_blend's did. A call that takes
-// colors takes an array (its number: the listing's ARR_NAME) and reads
-// `count` of its elements from the first, each a Color (the cell's low 16
-// bits).
+// Arguments are pushed left to right (the last on top), at most 5. Append-
+// only: the numbers are part of the blob format. A call that takes colors
+// takes an array (its number: the listing's ARR_NAME) and reads `count` of
+// its elements from the first, each a Color (the cell's low 16 bits). The
+// sound calls pass C its arguments in its ranges, never wrapped: an ID past
+// a u16 becomes 0xFFFF, which no sound bank has, and a handle SFX_NONE; a
+// speed below 0 becomes 1 and one past a u16 0xFFFF, for music_set_speed to
+// clamp; a volume, pan or priority outside its range is clamped (warns).
 enum {
     VM_SYS_PSG_PLAY,              // sound id -> psg_play(id)
     VM_SYS_PSG_MUSIC_PLAY,        // song index (VmBindings.psg_songs) -> psg_music_play
@@ -219,6 +220,21 @@ enum {
     VM_SYS_SCREEN_SET_BLEND,      // top, bottom, top_weight, bottom_weight -> screen_set_blend
     VM_SYS_SPRITE_SET_COLORS,     // sprite id, index, array, count -> sprite_set_colors
     VM_SYS_TILESET_SET_COLORS,    // index, array, count -> tileset_set_colors
+    // sound: tracker music and sampled sound effects (audio.h)
+    VM_SYS_MUSIC_PLAY,       // music id (MOD_*), loop (0/1) -> music_play
+    VM_SYS_MUSIC_STOP,       // music_stop()
+    VM_SYS_MUSIC_PLAYING,    // -> 1 if music_playing(), else 0
+    VM_SYS_MUSIC_PAUSE,      // music_pause()
+    VM_SYS_MUSIC_RESUME,     // music_resume()
+    VM_SYS_MUSIC_PAUSED,     // -> 1 if music_paused(), else 0
+    VM_SYS_MUSIC_SET_VOLUME, // volume (0-255) -> music_set_volume
+    VM_SYS_MUSIC_SET_SPEED,  // percent -> music_set_speed
+    VM_SYS_SFX_PLAY,         // sample id (SFX_*) -> sfx_play: its handle (an Sfx)
+    VM_SYS_SFX_PLAY_EX,      // id, volume, pan, pitch (FIXED), priority -> sfx_play_ex: handle
+    VM_SYS_SFX_STOP,         // handle -> sfx_stop
+    VM_SYS_SFX_PLAYING,      // handle -> 1 if sfx_playing(handle), else 0
+    VM_SYS_SFX_STOP_ALL,     // sfx_stop_all()
+    VM_SYS_SFX_SET_VOLUME,   // volume (0-255) -> sfx_set_volume
     VM_SYS_COUNT
 };
 

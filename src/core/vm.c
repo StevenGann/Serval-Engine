@@ -159,6 +159,9 @@ enum {
     WARN_PATH,
     WARN_COLORS_ARRAY,
     WARN_COLORS_COUNT,
+    WARN_SOUND_VOLUME, // sound: a volume, pan or priority outside its range
+    WARN_SOUND_PAN,
+    WARN_SOUND_PRIORITY,
     WARN_STRING,
     WARN_NO_CONTEXT,
     WARN_QUEUE_FULL,
@@ -681,11 +684,17 @@ static s32 array_get(const u8* record, u32 i) {
 // Arguments per VM_SYS_* call (at most SYS_MAX_ARGS), and the calls that push a
 // result. A call appended to vm.h without an entry here would silently take no
 // arguments.
-#define SYS_MAX_ARGS 4
-static const u8 sys_arity[VM_SYS_COUNT] = {1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3};
-_Static_assert(VM_SYS_COUNT == 17, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+#define SYS_MAX_ARGS 5
+static const u8 sys_arity[VM_SYS_COUNT] = {
+    1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3, //
+    2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
+};
+_Static_assert(VM_SYS_COUNT == 31, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 #define SYS_RETURNS                                                                                \
-    (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED)
+    (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED |          \
+     1u << VM_SYS_MUSIC_PLAYING | 1u << VM_SYS_MUSIC_PAUSED | 1u << VM_SYS_SFX_PLAY |              \
+     1u << VM_SYS_SFX_PLAY_EX | 1u << VM_SYS_SFX_PLAYING)
+_Static_assert(VM_SYS_COUNT <= 32, "SYS_RETURNS is a mask of 32 bits");
 
 // The colors SYS sprite_set_colors and tileset_set_colors pass: `count`
 // elements of array n from the first, into sys_colors. NULL (warning) if
@@ -711,6 +720,69 @@ static const Color* colors_from_array(u32 fn, s32 n, s32 count) {
     for (u32 i = 0; i < (u32)count; i++)
         sys_colors[i] = (Color)array_get(record, i);
     return sys_colors;
+}
+
+// sound: tracker music and sampled effects (audio.h's music_* and sfx_*).
+// Their arguments, put in their C parameters' ranges for vm_platform.c to
+// cast (vm.md "Engine calls"): an ID outside a u16 is 0xFFFF, which no sound
+// bank has (music_play and sfx_play warn, as for any ID the bank lacks); a
+// handle outside a u16 is SFX_NONE, which names no effect (nothing happens,
+// as for a stale handle); a speed below 0 is 1 and one past a u16 is 0xFFFF
+// (music_set_speed clamps both to 50-200 and warns; 0 still means 100);
+// loop is 1 for any nonzero cell; the pitch, a FIXED, passes as it is
+// (sfx_play_ex clamps it). A volume, pan or priority outside its range is
+// clamped, with a warning (once per kind): no value of its C type is wrong,
+// so the C function can't warn.
+static s32 sound_u16(s32 value, s32 outside) {
+    return value >= 0 && value <= 0xFFFF ? value : outside;
+}
+
+// Clamps a sound call's argument to lo-hi, warning once per kind of problem
+// (release builds have neither the kinds nor the warnings).
+#define SOUND_CLAMP(arg, lo, hi, problem, call, what)                                              \
+    do {                                                                                           \
+        s32 to_ = (arg) < (lo) ? (lo) : (arg) > (hi) ? (hi) : (arg);                               \
+        if (to_ != (arg))                                                                          \
+            WARN_ONCE(problem, "vm: SYS %s: %s %d is outside %d to %d; it plays at %d", call,      \
+                      what, (int)(arg), (int)(lo), (int)(hi), (int)to_);                           \
+        (arg) = to_;                                                                               \
+    } while (0)
+
+static s32 sound_call(u32 fn, const s32* args) {
+    s32 a[SYS_MAX_ARGS];
+    for (u32 k = 0; k < SYS_MAX_ARGS; k++)
+        a[k] = args[k];
+    switch (fn) {
+    case VM_SYS_MUSIC_PLAY:
+        a[0] = sound_u16(a[0], 0xFFFF);
+        a[1] = a[1] != 0;
+        break;
+    case VM_SYS_MUSIC_SET_VOLUME:
+        SOUND_CLAMP(a[0], 0, 255, WARN_SOUND_VOLUME, "music_set_volume", "volume");
+        break;
+    case VM_SYS_MUSIC_SET_SPEED:
+        a[0] = a[0] < 0 ? 1 : sound_u16(a[0], 0xFFFF);
+        break;
+    case VM_SYS_SFX_PLAY:
+        a[0] = sound_u16(a[0], 0xFFFF);
+        break;
+    case VM_SYS_SFX_PLAY_EX:
+        a[0] = sound_u16(a[0], 0xFFFF);
+        SOUND_CLAMP(a[1], 0, 255, WARN_SOUND_VOLUME, "sfx_play_ex", "volume");
+        SOUND_CLAMP(a[2], -128, 127, WARN_SOUND_PAN, "sfx_play_ex", "pan");
+        SOUND_CLAMP(a[4], 0, 255, WARN_SOUND_PRIORITY, "sfx_play_ex", "priority");
+        break;
+    case VM_SYS_SFX_STOP:
+    case VM_SYS_SFX_PLAYING:
+        a[0] = sound_u16(a[0], SFX_NONE);
+        break;
+    case VM_SYS_SFX_SET_VOLUME:
+        SOUND_CLAMP(a[0], 0, 255, WARN_SOUND_VOLUME, "sfx_set_volume", "volume");
+        break;
+    default: // no arguments
+        break;
+    }
+    return serval_vm_platform_call(fn, a, NULL);
 }
 
 static s32 sys_call(u32 fn, const s32* args) {
@@ -764,6 +836,16 @@ static s32 sys_call(u32 fn, const s32* args) {
         const Color* colors = colors_from_array(fn, args[at], args[at + 1]);
         return colors ? serval_vm_platform_call(fn, args, colors) : 0;
     }
+    // sound: the arguments in their C parameters' ranges (sound_call)
+    case VM_SYS_MUSIC_PLAY:
+    case VM_SYS_MUSIC_SET_VOLUME:
+    case VM_SYS_MUSIC_SET_SPEED:
+    case VM_SYS_SFX_PLAY:
+    case VM_SYS_SFX_PLAY_EX:
+    case VM_SYS_SFX_STOP:
+    case VM_SYS_SFX_PLAYING:
+    case VM_SYS_SFX_SET_VOLUME:
+        return sound_call(fn, args);
     default:
         return serval_vm_platform_call(fn, args, NULL);
     }
@@ -1232,7 +1314,10 @@ static u32 execute(Context* c, bool reaction) {
             }
             u32 n = sys_arity[fn];
             NEED(n);
-            s32 args[SYS_MAX_ARGS] = {0, 0, 0, 0};
+            if (n == 0 && (SYS_RETURNS & 1u << fn)) {
+                ROOM(1); // a result, and no argument popped to make room for it
+            }
+            s32 args[SYS_MAX_ARGS] = {0, 0, 0, 0, 0};
             sp -= n;
             for (u32 k = 0; k < n; k++)
                 args[k] = st[sp + k];
@@ -1240,7 +1325,7 @@ static u32 execute(Context* c, bool reaction) {
             if (c->r.state != CTX_RUNNING)
                 return ops; // halted from outside (cannot happen today)
             if (SYS_RETURNS & 1u << fn)
-                st[sp++] = result; // room: every call with a result pops an argument
+                st[sp++] = result; // room: an argument was popped, or checked above
             break;
         }
 

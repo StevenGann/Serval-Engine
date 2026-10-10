@@ -54,8 +54,8 @@ Each of these 10 names (37 at the freeze, less the implemented rows marked below
 | Feature | Names | Doc |
 | --- | --- | --- |
 | Sound bank: **implemented**, no longer marked planned (on the GBA, by Maxmod; silent stubs on the web; built by `mmutil`, `serval.json`'s `toolchain.mmutil`, or `serval_add_soundbank()`) | `audio_bank_set` | [audio.md](audio.md#sound-bank) |
-| Tracker music: **implemented**, no longer marked planned (no SYS call yet) | `music_play`, `music_stop`, `music_playing`, `music_pause`, `music_resume`, `music_paused`, `music_set_volume`, `music_set_speed` | [audio.md](audio.md#tracker-music) |
-| Sampled sound effects: **implemented**, no longer marked planned (no SYS call yet) | `sfx_play`, `sfx_play_ex`, `sfx_stop`, `sfx_playing`, `sfx_stop_all`, `sfx_set_volume` (the handle type `Sfx` and `SFX_NONE` are ordinary declarations) | [audio.md](audio.md#sampled-sound-effects) |
+| Tracker music: **implemented**, no longer marked planned (scripts: SYS 17-24) | `music_play`, `music_stop`, `music_playing`, `music_pause`, `music_resume`, `music_paused`, `music_set_volume`, `music_set_speed` | [audio.md](audio.md#tracker-music) |
+| Sampled sound effects: **implemented**, no longer marked planned (scripts: SYS 25-30) | `sfx_play`, `sfx_play_ex`, `sfx_stop`, `sfx_playing`, `sfx_stop_all`, `sfx_set_volume` (the handle type `Sfx` and `SFX_NONE` are ordinary declarations) | [audio.md](audio.md#sampled-sound-effects) |
 | PSG wave channel: **implemented**, no longer marked planned (no SYS call: scripts play it through `psg_play()` of a sound on it and songs with a track on it; `psg_waves_set()` takes a table) | `PSG_WAVE`, `psg_waves_set` | [audio.md](audio.md#wave-channel) |
 | Streamed sprite groups: **implemented**, no longer marked planned (no SYS call: it is a group's flag, in data) | `SPRITE_GROUP_STREAMED` (with the field `SpriteGroup.slots`) | [sprites.md](sprites.md#residency-modes) |
 | LZ77 sprites and tilesets | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
