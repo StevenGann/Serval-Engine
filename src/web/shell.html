@@ -28,7 +28,9 @@
   (tools/web-shots.py save=FILE does both). "&persist=1" uses localStorage as
   a normal page does. Test mode also appends, before "done", the page's title
   and its saves' localStorage key, as JSON strings: "title <JSON>" and
-  "key <JSON>".
+  "key <JSON>". "&audio=1" records the sound the frames made (still played to
+  no device) and appends it before "done" as "audio <rate> <base64>": 16-bit
+  stereo samples, little-endian (tools/web-shots.py audio=FILE writes a WAV).
 
   The title and game code (serval_add_rom()'s TITLE and GAME_CODE) are filled
   in by cmake/ServalWeb.cmake, escaped: the title in <title>, and both as JSON
@@ -107,6 +109,7 @@
       for (const c of letters) mask |= codes[c] || 0;
       return { from: Number(frame), to: Number(frame) + Number(length || 1), mask };
     }),
+    audio: params.get("audio") === "1" ? [] : null, // each frame's samples, 16-bit
   } : null;
   let frame = 0;
 
@@ -304,10 +307,22 @@
       ctx.putImageData(image, 0, 0);
       if (sound.node && samples) sound.node.port.postMessage(Module.HEAPF32.slice(audio >> 2, (audio >> 2) + samples * 2));
       frame++;
+      if (test && test.audio && samples) {
+        const from = Module.HEAPF32.subarray(audio >> 2, (audio >> 2) + samples * 2);
+        const pcm = new Int16Array(from.length);
+        for (let i = 0; i < from.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(from[i] * 32767)));
+        test.audio.push(pcm);
+      }
       if (test) {
         if (test.shots.has(frame)) shots.textContent += "frame " + frame + " " + canvas.toDataURL("image/png") + "\n";
         if (frame >= test.frames) {
           if (saves.bytes) shots.textContent += "save " + toBase64(saves.bytes) + "\n";
+          if (test.audio) {
+            const all = new Int16Array(test.audio.reduce((n, a) => n + a.length, 0));
+            let at = 0;
+            for (const a of test.audio) { all.set(a, at); at += a.length; }
+            shots.textContent += "audio " + Module.servalSampleRate() + " " + toBase64(new Uint8Array(all.buffer)) + "\n";
+          }
           shots.textContent += "title " + JSON.stringify(document.title) + "\n";
           shots.textContent += "key " + JSON.stringify(saves.key) + "\n";
           shots.textContent += "done\n";
