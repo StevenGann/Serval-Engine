@@ -115,7 +115,7 @@ thumbnail = { frame = 300, keys = ["200:S:2", "230:r:60"] }
 
 [examples.jukebox]
 title = "JUKEBOX"
-summary = "Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop, beside PSG blips (on the GBA: the browser plays only the blips for now)"
-tags = ["tracker", "sound", "text"]
+summary = "Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop played from a Lua script, beside PSG blips (on the GBA: the browser plays only the blips for now)"
+tags = ["tracker", "sound", "vm", "text"]
 level = 2
 thumbnail = { frame = 300, keys = ["200:S:2", "240:D:2", "260:r:2"] }

@@ -110,7 +110,7 @@ if(SERVAL_TARGET_GBA)
     # vm sound: a script naming the bank's modules and samples, through the
     # VM's SYS calls (rom/sampled_audio_vm_tests.c)
     serval_add_script(serval_tests_sampled_audio rom/sampled_audio_vm.lua
-                      HEADERS "${CMAKE_CURRENT_BINARY_DIR}/test_bank.h")
+                      HEADERS "${CMAKE_CURRENT_BINARY_DIR}/test_bank.h" serval/core.h)
 
     # One more test ROM per save type other than SRAM: the save suites, on
     # the ROM's Flash or EEPROM (tests/rom/save_main.c).
@@ -325,6 +325,9 @@ else()
     # Scripts name a bank's modules and samples from its generated header.
     serval_add_script(serval_api_only_check soundbank_names.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h")
+    # vm sound: the jukebox's main.c includes its script's header
+    serval_add_script(serval_api_only_check ../examples/jukebox/pads.lua
+                      HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
     # A hand-written listing (.svm) through serval_add_script() too.
     add_subdirectory(svm)
     add_dependencies(serval_host_tests serval_svm_listing_check)

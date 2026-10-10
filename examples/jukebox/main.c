@@ -13,6 +13,12 @@
 //     a pitch and a priority; a looped sample held with its handle and
 //     stopped with sfx_stop(); sfx_playing() counting the effects playing;
 //     sfx_set_volume() for all of them
+//   - A script playing them: the effect pads and the pause button are
+//     pads.lua, a Lua-subset script compiled at build time
+//     (serval_add_script()), which names the bank's samples from
+//     jukebox_bank.h and calls the same functions through the VM's SYS
+//     calls; the menu is C, and reads the script's count of effects
+//     playing (vm_global)
 //   - The PSG playing beside the mixer, at its full volume: a short square
 //     wave blip for each move of the cursor
 //   - frame_cpu_permille(), which counts the mixer's time
@@ -39,9 +45,10 @@
 //     time. L: an explosion, priority 2 (it takes a channel from the others
 //     when all are busy). R, held: an engine's hum, looped until R is
 //     released.
-//   - The bottom line shows how many effects are playing and the CPU time a
-//     frame takes, the mixer's included: about 3% with nothing playing, 15-20%
-//     with the music and a few effects.
+//   - The bottom line shows how many effects are playing (the script counts
+//     them) and the CPU time a frame takes, the mixer's and the script's
+//     included: about 7% with nothing playing (the mixer about 3, the VM
+//     running the script about 4), 20-25% with the music and a few effects.
 //   - In the web build the music and effects are silent (the web has no
 //     player for them yet); the PSG blips play.
 //   (In mGBA's default keyboard mapping, the D-pad is the arrow keys, A is X,
@@ -52,6 +59,7 @@
 #include "serval/serval.h"
 
 #include "jukebox_bank.h"
+#include "pads_script.h"
 
 enum { ROW_MUSIC, ROW_VOLUME, ROW_SPEED, ROW_EFFECTS, ROW_COUNT };
 enum { TUNE_THEME, TUNE_CALM, TUNE_OFF, TUNE_COUNT };
@@ -60,7 +68,6 @@ static const char* const tune_names[TUNE_COUNT] = {"THEME", "CALM", "OFF"};
 static const u16 tune_modules[] = {MOD_THEME, MOD_CALM};
 
 #define FIRST_ROW 3 // the text row of ROW_MUSIC
-#define HANDLES 16  // effects remembered for the count shown
 
 // The PSG blip for the cursor.
 static const PsgSound blip = {
@@ -73,22 +80,7 @@ typedef struct {
     int volume; // 0-255
     int speed;  // percent
     int effects;
-    bool laser_left;
-    Sfx hum;
-    Sfx handles[HANDLES]; // the latest effects, to count those still playing
-    u32 next_handle;
 } Jukebox;
-
-static void remember(Jukebox* j, Sfx sfx) {
-    j->handles[j->next_handle++ % HANDLES] = sfx;
-}
-
-static int effects_playing(const Jukebox* j) {
-    int n = 0;
-    for (int i = 0; i < HANDLES; i++)
-        n += sfx_playing(j->handles[i]);
-    return n;
-}
 
 static void play_tune(Jukebox* j) {
     if (j->tune == TUNE_OFF) {
@@ -124,29 +116,6 @@ static void change(Jukebox* j, int by) {
         j->effects = step(j->effects, by * 15, 0, 255);
         sfx_set_volume((u8)j->effects);
         break;
-    }
-}
-
-static void effects(Jukebox* j) {
-    if (button_pressed(BUTTON_A))
-        remember(j, sfx_play(SFX_COIN));
-    if (button_pressed(BUTTON_B)) {
-        // Panned left and right in turn, 0.8 to 1.25 times its pitch.
-        FIXED pitch = random_range(FX_ONE * 4 / 5, FX_ONE * 5 / 4);
-        remember(j, sfx_play_ex(SFX_LASER, 220, j->laser_left ? -96 : 96, pitch, 1));
-        j->laser_left = !j->laser_left;
-    }
-    if (button_pressed(BUTTON_L)) {
-        FIXED pitch = random_range(FX_ONE * 9 / 10, FX_ONE * 11 / 10);
-        remember(j, sfx_play_ex(SFX_BOOM, 255, 0, pitch, 2));
-    }
-    if (button_pressed(BUTTON_R)) {
-        j->hum = sfx_play_ex(SFX_ENGINE, 200, 0, FX_ONE, 1);
-        remember(j, j->hum);
-    }
-    if (!button_down(BUTTON_R) && j->hum != SFX_NONE) {
-        sfx_stop(j->hum);
-        j->hum = SFX_NONE;
     }
 }
 
@@ -189,7 +158,7 @@ static void draw(const Jukebox* j, bool all) {
         text_print_line(3, FIRST_ROW + ROW_COUNT * 2, text_format("MUSIC %s", state));
         u32 permille = frame_cpu_permille();
         text_print_line(1, 19,
-                        text_format("EFFECTS PLAYING %d   CPU %d.%d%%", effects_playing(j),
+                        text_format("EFFECTS PLAYING %d   CPU %d.%d%%", (int)vm_global(G_PLAYING),
                                     (int)(permille / 10), (int)(permille % 10)));
     }
 }
@@ -207,13 +176,20 @@ int main(void) {
     text_print_centered(16, "A COIN  B LASER  L BOOM");
     text_print_centered(17, "R (HOLD) ENGINE HUM");
 
+    // The pads and the pause button: pads.lua's thread.
+    ecs_reset();
+    vm_load(pads_script, pads_script_size);
+    vm_start(OBJ_PADS, VM_EV_ROOM_START);
+
     Jukebox j = {.row = ROW_MUSIC, .tune = TUNE_THEME, .volume = 255, .speed = 100, .effects = 255};
     play_tune(&j);
     draw(&j, true);
 
     for (;;) {
         frame_begin();
-        bool changed = false;
+        vm_step(); // the pads: effects, and START pausing or resuming the music
+        vm_events();
+        bool changed = button_pressed(BUTTON_START); // the state line
         if (button_repeat(BUTTON_UP | BUTTON_DOWN)) {
             int by = button_down(BUTTON_UP) ? -1 : 1;
             j.row = (j.row + by + ROW_COUNT) % ROW_COUNT;
@@ -227,14 +203,6 @@ int main(void) {
             change(&j, 1);
             changed = true;
         }
-        if (button_pressed(BUTTON_START)) {
-            if (music_paused())
-                music_resume();
-            else
-                music_pause();
-            changed = true;
-        }
-        effects(&j);
         draw(&j, changed);
         frame_end();
     }

@@ -77,6 +77,10 @@ add_custom_command(
     COMMENT "Making the jukebox's modules and samples"
     VERBATIM)
 serval_add_soundbank(jukebox jukebox_bank ${jukebox_audio})
+# vm sound: its effect pads, a Lua script naming the bank's samples
+# (pads_script.c and pads_script.h)
+serval_add_script(jukebox jukebox/pads.lua
+                  HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
 
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c

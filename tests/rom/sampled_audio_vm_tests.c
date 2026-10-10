@@ -17,7 +17,10 @@
 #include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/text.h"
 #include "serval/vm.h"
+
+#include <tonc.h>
 
 #include "../../src/gba/internal.h"
 #include "sampled_audio_vm_script.h"
@@ -177,7 +180,45 @@ static void a_script_plays_and_stops_effects(void) {
     end();
 }
 
+// CPU cycles, from the cascaded timers serval_init() starts.
+static u32 cycles(void) {
+    u32 hi, lo;
+    do {
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+}
+
+// What a script's sound loop costs a frame, logged: the jukebox example's
+// pads with no button pressed (vm_step and vm_events, the queries and SYS
+// calls included), and the frame with the mixer and music playing.
+static void costs(void) {
+    begin();
+    music_play(MOD_TONE, true);
+    run(OBJ_PADS);
+    frames(4);
+    u32 vm = 0, frame = 0, n = 60;
+    for (u32 f = 0; f < n; f++) {
+        frame_begin();
+        u32 t0 = cycles();
+        vm_step();
+        vm_events();
+        vm += cycles() - t0;
+        frame_end();
+        frame += frame_cpu_cycles();
+    }
+    u32 ops = vm_ops_this_frame();
+    debug_log(text_format("vm sound: the jukebox's pads, idle: %u ops, %u cycles a frame in the "
+                          "VM; the frame with the music: %u cycles",
+                          ops, vm / n, frame / n));
+    CHECK(vm_global(G_STRAYS) == 0); // none playing
+    CHECK(ops > 0 && ops < 40);
+    end();
+}
+
 TEST_SUITE(gba_sampled_audio_vm_tests, "gba_sampled_audio_vm",
            {"a script plays, pauses and stops music", a_script_plays_pauses_and_stops_music},
            {"a script sets the music volume", a_script_sets_the_music_volume},
-           {"a script plays and stops effects", a_script_plays_and_stops_effects});
+           {"a script plays and stops effects", a_script_plays_and_stops_effects},
+           {"costs", costs});
