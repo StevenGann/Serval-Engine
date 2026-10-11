@@ -24,8 +24,9 @@ int main(void) {
         &planned_audio_tests, &planned_sprites_tests,
         &planned_map_tests,   &planned_screen_tests,
         &lz77_tests,          &web_lz77_tests, // lz77:
-        &planned_debug_tests,                  // debug link: debug_break()
+        &planned_debug_tests,                  // debug link: debug.h's planned names (none)
         &link_tests,                           // debug link: the agent
+        &link_vm_tests,                        // debug link (E6): its VM part
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

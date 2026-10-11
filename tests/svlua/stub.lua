@@ -338,6 +338,7 @@ function env.wait(n)
 end
 function env.wait_move() end -- no paths run: nothing to wait for
 function env.wait_anim() end -- no animations run: the VM warns and goes on
+function env.debug_break() end -- debug link: no debugger here (the VM logs BRK and goes on)
 
 function env.text_print(col, row, text) call("TEXT_PRINT", col, row, text) end
 function env.text_print_number(col, row, n, width)

@@ -31,6 +31,21 @@ void serval_link_platform_stats(ServalLinkFrameStats* s) {
     s->mixer_cycles = serval_mixer_hook ? serval_link_mixer_cycles : 0;
 }
 
+// debug link (E6): the cycle counter frame_cpu_cycles() counts with (core.c):
+// timers 2 and 3 on the GBA, the browser's clock on the web.
+u32 serval_link_platform_cycles(void) {
+#ifdef SERVAL_WEB
+    return serval_web_cycles();
+#else
+    u32 hi, lo;
+    do { // read again if the low half wrapped between the two reads
+        hi = REG_TM3D;
+        lo = REG_TM2D;
+    } while (hi != REG_TM3D);
+    return hi << 16 | lo;
+#endif
+}
+
 #ifndef SERVAL_WEB // the web's end: src/web/link_web.c
 
 #define REG_LINK_PRESENCE (*(volatile u16*)0x04FFF800)

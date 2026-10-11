@@ -1413,6 +1413,9 @@ ENGINE = {
     "wait": ((INT,), None, "WAIT"),
     "wait_anim": ((), None, "WAIT_ANIM"),
     "wait_move": ((), None, "WAIT_MOVE"),
+    # debug link: a script breakpoint, the VM's BRK (no SYS call): it stops
+    # the game while a debugger is attached (docs/debug-link.md)
+    "debug_break": ((), None, "BRK"),
 }
 WAITS = ("wait", "wait_anim", "wait_move")
 # Every name the engine gives a script; none is the entity 0.

@@ -330,6 +330,22 @@ else()
         "SERVAL_LINK_SCRATCH=${SERVAL_LINK_SCRATCH}"
         "SERVAL_LINK_ENGINE_VERSION=\"${SERVAL_VERSION_STRING}\"")
     serval_add_script(serval_host_tests link_probe.lua PREFIX PROBE_ HEADERS serval/ecs.h)
+    # debug link (E6): the agent's VM part against the fake endpoint
+    # (link_vm_tests.c), on link_debug.lua, whose sites' pcs link_sites.py
+    # reads from the maps serval_add_script() writes, as a debugger does
+    target_sources(serval_host_tests PRIVATE link_vm_tests.c)
+    serval_add_script(serval_host_tests link_debug.lua PREFIX DEBUG_ HEADERS serval/ecs.h)
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/link_debug_sites.h"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/link_sites.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/link_debug.lua"
+                "${CMAKE_CURRENT_BINARY_DIR}/link_debug.svmap" "${CMAKE_CURRENT_BINARY_DIR}/link_debug.svdbg"
+                -o "${CMAKE_CURRENT_BINARY_DIR}/link_debug_sites.h"
+        DEPENDS link_debug.lua link_sites.py "${PROJECT_SOURCE_DIR}/tools/check-debug-maps.py"
+                "${CMAKE_CURRENT_BINARY_DIR}/link_debug.svmap" "${CMAKE_CURRENT_BINARY_DIR}/link_debug.svdbg"
+        COMMENT "Finding link_debug.lua's breakpoint sites"
+        VERBATIM)
+    target_sources(serval_host_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/link_debug_sites.h")
     # debug link: tools/svlink.py, the link's reference client, without a
     # browser: the codec, the WebSocket server, its checks (svlink_e2e, in web
     # builds, runs it against a page)

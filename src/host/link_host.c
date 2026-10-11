@@ -45,4 +45,10 @@ void serval_link_platform_stats(ServalLinkFrameStats* s) {
     *s = serval_host_link.stats;
 }
 
+// debug link (E6): each read advances the tests' clock by cycles_step.
+u32 serval_link_platform_cycles(void) {
+    serval_host_link.cycles += serval_host_link.cycles_step;
+    return serval_host_link.cycles;
+}
+
 #endif // SERVAL_LINK_AGENT

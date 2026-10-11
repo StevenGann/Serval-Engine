@@ -62,7 +62,7 @@ extern const TestSuite planned_audio_tests;
 extern const TestSuite planned_sprites_tests;
 extern const TestSuite planned_map_tests;
 extern const TestSuite planned_screen_tests;
-extern const TestSuite planned_debug_tests; // debug link: debug_break()
+extern const TestSuite planned_debug_tests; // debug link: none planned now
 
 // Host-only suites for the web backend's renderer and sound (src/web/).
 extern const TestSuite web_ppu_tests;
@@ -70,5 +70,6 @@ extern const TestSuite web_apu_tests;
 extern const TestSuite web_mixer_tests; // maxmod: the web's mixer
 extern const TestSuite web_lz77_tests;  // lz77: the web's LZ77 decoder
 extern const TestSuite link_tests;      // debug link: the agent, with a fake endpoint
+extern const TestSuite link_vm_tests;   // debug link (E6): the agent's VM part
 
 #endif // SERVAL_TEST_H

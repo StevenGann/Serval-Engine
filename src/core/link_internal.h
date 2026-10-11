@@ -14,9 +14,11 @@
 //     serval_link_ecs, which entity_create() sets, so a game that never
 //     creates an entity keeps none of the pools it doesn't use.
 //   - src/core/vm_link.c: the VM part (globals, arrays, instance fields,
-//     the blob's size and hash, LOADED, the scratch), reached only through
-//     serval_link_vm, which vm.c defines and link.c refers to weakly, so a
-//     game that doesn't link the VM links none of it.
+//     the blob's size and hash, LOADED, the scratch; and BRK's park,
+//     breakpoints with displaced execution, stepping, contexts and frames,
+//     faults), reached only through serval_link_vm, which vm.c defines and
+//     link.c refers to weakly, so a game that doesn't link the VM links none
+//     of it. vm.c calls into it from a few hooks (its debug link blocks).
 //   - the platform's end (below): src/gba/link_gba.c (the presence register
 //     and the doorbell), src/web/link_web.c with src/web/link.js (the page's
 //     end), src/host/link_host.c (a fake endpoint for the tests).
@@ -119,6 +121,31 @@ enum {
     LINK_STOP_DEBUG_BREAK = 7,
 };
 
+// FAULT's kinds (and STOPPED's fault): the VM's faults (docs/vm.md).
+enum {
+    LINK_FAULT_STACK = 1,   // stack overflow or underflow
+    LINK_FAULT_CALLS = 2,   // call depth past VM_CALLS
+    LINK_FAULT_ESCAPED = 3, // pc escaped the blob
+    LINK_FAULT_OPCODE = 4,  // unknown opcode
+    LINK_FAULT_SYS = 5,     // unknown SYS call
+    LINK_FAULT_ENTER = 6,   // ENTER that doesn't fit
+    LINK_FAULT_BUDGET = 7,  // a behaviour throttled, a reaction halted
+    LINK_FAULT_WAIT = 8,    // a wait in a reaction
+    LINK_FAULT_OTHER = 9,   // another halt
+    LINK_FAULT_KINDS = 10,
+};
+
+// BREAK_SET's and BREAK_CLEAR's kinds.
+enum {
+    LINK_SITE_BREAKPOINT = 0, // a breakpoint
+    LINK_SITE_STEP = 1,       // a step site at a call depth up to STEP's
+    LINK_SITE_STEP_ANY = 2,   // a step site at any depth
+    LINK_SITE_KINDS = 3,
+};
+
+// The breakpoint sites the agent can patch at once (AGENT_INFO's sites).
+#define LINK_SITES 256
+
 // --- Mailbox v1 (docs/debug-link.md#mailbox-v1) -------------------------------
 
 #define LINK_MAILBOX_VERSION 1
@@ -131,7 +158,7 @@ enum {
 enum {
     LINK_STATE_RUNNING = 0,
     LINK_STATE_BOUNDARY = 1, // parked at a frame boundary
-    LINK_STATE_INSIDE = 2,   // parked inside a frame (E6: BRK, breakpoints, faults)
+    LINK_STATE_INSIDE = 2,   // parked inside a frame (BRK, breakpoints, steps, faults, debug_break)
 };
 
 typedef struct {
@@ -183,6 +210,17 @@ bool serval_link_started(void);
 bool serval_link_attached(void);
 bool serval_link_parked(void);
 
+// debug link (E6): parks the game inside a frame (mailbox state 2) while a
+// debugger is attached: STOPPED with the reason, context (0xFF: none), pc (0:
+// none) and fault kind (0: none), then the park loop, until RESUME, STEP or
+// the debugger leaving. Returns at once when no debugger is attached. For the
+// VM's part (BRK, breakpoints, steps, faults, a stepped context's end) and
+// debug_break().
+void serval_link_stop(u32 reason, u32 context, u32 pc, u32 fault);
+
+// OPTIONS' flags (bit 0: stop on fault); 0 when no debugger is attached.
+u32 serval_link_options(void);
+
 // --- The ECS part (link.c, through entity_create) --------------------------------
 
 // The entity properties (VM_P_X to VM_P_BODY_CONTACT; vm.h) as GETP reads
@@ -231,16 +269,31 @@ extern const char* serval_link_error_text;
 // FNV-1a over 32 bits (docs/debug-link.md#handshake).
 u32 serval_link_fnv1a(const u8* bytes, u32 size);
 
+// AGENT_INFO's share of the VM part.
 typedef struct {
-    // AGENT_INFO: the blob's size and hash (0, 0: none), computed now; the
-    // VM's limits are compile-time constants link.c writes itself.
-    void (*info)(u32* size, u32* hash, u32* scratch);
-    // Each poll while attached: sends LOADED when the game loaded,
-    // reloaded or unloaded a blob since (`attached`: false to only note the
-    // blob, without an event).
+    u32 size, hash;   // the loaded blob's (0, 0: none), its hash computed now
+    u32 scratch;      // SERVAL_LINK_SCRATCH
+    u32 sites;        // breakpoint sites (0 without a scratch)
+    u32 capabilities; // the VM part's: the VM, breakpoints and stepping, stop on fault
+} ServalLinkVmInfo;
+
+// STATS' share of the VM part.
+typedef struct {
+    u32 ops;        // vm_ops_this_frame()
+    u32 contexts;   // live contexts
+    u32 queued;     // events queued now
+    u32 queue_peak; // the most queued inside the phases since the last poll
+    u32 vm_cycles;  // the last frame's cycles in vm_step() and vm_events()
+} ServalLinkVmStats;
+
+typedef struct {
+    void (*info)(ServalLinkVmInfo* info);
+    // Each poll (frame boundary): the frame's VM cycles are latched for STATS.
     void (*poll)(bool attached);
-    // GLOBALS, SET_GLOBAL, ARRAY_CELLS, SET_ARRAY_CELL: returns 0 or an
-    // error code (with serval_link_error_text), the reply's payload in w.
+    // GLOBALS, SET_GLOBAL, ARRAY_CELLS, SET_ARRAY_CELL, and (E6) CONTEXTS,
+    // FRAMES, SET_LOCAL, BREAK_SET, BREAK_CLEAR and STEP (link.c checks that
+    // the game is parked for the last two): returns 0 or an error code (with
+    // serval_link_error_text), the reply's payload in w.
     u32 (*request)(u32 type, LinkReader* r, LinkWriter* w);
     // The object entity e is attached to, or -1; its instance field n.
     int (*object_of)(Entity e);
@@ -248,8 +301,11 @@ typedef struct {
     void (*set_field)(Entity e, u32 n, s32 value);
     // The context of e's behaviour, or -1.
     int (*context_of)(Entity e);
-    // STATS: ops this frame, live contexts, events queued now.
-    void (*stats)(u32* ops, u32* contexts, u32* queued);
+    void (*stats)(ServalLinkVmStats* s);
+    // The game stopped (any STOPPED): a step is over, its sites cleared.
+    void (*stopped)(void);
+    // The debugger left: every patched opcode restored, no step.
+    void (*detached)(void);
 } ServalLinkVmPart;
 
 // Defined in vm.c (its debug link block), so it exists only in games that
@@ -266,6 +322,67 @@ u32 serval_vm_link_queued(void);
 int serval_vm_link_context_of(Entity e);
 void serval_vm_link_set_field(Entity e, u32 n, s32 value);
 void serval_vm_link_set_array_cell(u32 n, s32 value);
+
+// debug link (E6): the rest of vm.c's state the VM part reads and writes.
+
+// Points the VM at a byte-identical copy of its blob (the agent's scratch):
+// contexts hold blob offsets, so nothing else changes, mid-phase too.
+void serval_vm_link_use_copy(const u8* copy);
+// The most events queued inside the phases since the last call.
+u32 serval_vm_link_queue_peak(void);
+
+// A live context, as CONTEXTS and FRAMES report it: its running activation
+// (a reaction's, while one runs on top of a waiting behaviour), and the
+// behaviour beneath while stacked. The registers are the ones the context
+// saved: at a wait, or where the agent parked it.
+typedef struct {
+    u32 pc;
+    Entity self, other;
+    int object; // self's object, or -1 (a thread, or not attached)
+    u16 wait;   // frames left (state 3)
+    u8 state;   // 1 ready, 2 running, 3 waiting for frames, 4 for its animation, 5 for its path
+    u8 event;   // VM_EV_*
+    u8 sp, fp, base, cp;
+    bool stacked;
+    s32* stack;         // VM_STACK cells (the behaviour's below `base` while stacked)
+    const u32* call_pc; // the activation's return points, [0, cp)
+    const u8* call_fp;  // and the callers' frames
+    struct {            // the behaviour beneath, while stacked
+        u32 pc;
+        u16 wait;
+        u8 state, event, sp, fp, base, cp;
+        const u32* call_pc; // its return points, set aside while the reaction runs
+        const u8* call_fp;
+    } below;
+} ServalVmLinkContext;
+// Fills *c for context k; false if k isn't live.
+bool serval_vm_link_context(u32 k, ServalVmLinkContext* c);
+
+// vm.c calls these, in debug builds with the agent only (vm_link.c):
+//   - a BRK at `at` in context k, its registers saved: the opcode to run in
+//     BRK's place, a patched site's original (displaced execution), or
+//     VM_OP_BRK for a script's own, which goes on after itself (it parks while
+//     a debugger is attached, and logs "vm: BRK at ..." otherwise).
+u32 serval_vm_link_brk(u32 k, u32 at);
+//   - a fault of context k at `at`, its registers saved, before the VM halts
+//     or throttles it: `warning` is the VM's warning when it just logged it
+//     (once per kind per loaded blob), else NULL. Sends FAULT, and parks with
+//     stop on fault.
+void serval_vm_link_fault(u32 k, u32 kind, u32 at, const char* warning);
+//   - the stepped context + 1 while a step runs, else 0: vm.c asks
+//     serval_vm_link_ends() when that context halts, or a reaction on it
+//     ends, and calls serval_vm_link_ended() (which parks: STOPPED, ended)
+//     once the context's state is whole again.
+extern u8 serval_vm_link_stepping;
+bool serval_vm_link_ends(u32 k, bool reaction);
+void serval_vm_link_ended(void);
+//   - vm_step() and vm_events() begin (true) and end (false), while a
+//     debugger is attached (serval_vm_link_attached: 1): STATS' vm_cycles.
+extern u8 serval_vm_link_attached;
+void serval_vm_link_phase(bool begin);
+//   - the game loaded, reloaded or unloaded a blob (install()): LOADED, and
+//     every breakpoint site is gone.
+void serval_vm_link_loaded(void);
 
 // --- The platform's end ---------------------------------------------------------
 
@@ -296,6 +413,11 @@ typedef struct {
     u32 mixer_cycles; // the sound bank's mixer this frame (0 without one)
 } ServalLinkFrameStats;
 void serval_link_platform_stats(ServalLinkFrameStats* s);
+
+// debug link (E6): the CPU cycle counter frame_cpu_cycles() is counted with
+// (GBA: timers 2 and 3; web: the browser's clock; host: the tests'), read
+// around vm_step() and vm_events() for STATS' vm_cycles.
+u32 serval_link_platform_cycles(void);
 
 #endif // SERVAL_LINK_AGENT
 

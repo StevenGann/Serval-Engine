@@ -8,6 +8,7 @@
 #include "../src/core/link_internal.h"
 #include "../src/core/vm_internal.h"
 #include "../src/host/link_host.h"
+#include "link_fake.h" // debug link (E6): the fake endpoint, shared with link_vm_tests.c
 #include "link_probe_script.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
@@ -18,213 +19,7 @@
 
 #ifdef SERVAL_LINK_AGENT
 
-// --- The fake endpoint -----------------------------------------------------------
-
-#define QUEUE_MAX 8192
-#define GOT_MAX 65536
-
-static struct {
-    u8 queue[QUEUE_MAX]; // the debugger's frames, waiting for the inbox
-    u32 queued;
-    u8 got[GOT_MAX]; // every frame the agent sent, in order
-    u32 got_n;
-    bool stuck;             // the endpoint leaves the outbox full at rings
-    u32 rings;              // rings seen
-    u32 parked_rings;       // ... saying "parked at a frame boundary"
-    u32 running_rings;      // ... saying "running"
-    u32 waits;              // waits of a parked agent
-    u32 max_out;            // the most out_len was at a ring
-    void (*on_wait)(u32 n); // the debugger's move while the agent waits (n from 1)
-} fake;
-
-static u16 seq;
-
-static u32 rd16(const u8* p) {
-    return p[0] | (u32)p[1] << 8;
-}
-
-static u32 rd32(const u8* p) {
-    return rd16(p) | rd16(p + 2) << 16;
-}
-
-static void wr16(u8* p, u32 v) {
-    p[0] = (u8)v;
-    p[1] = (u8)(v >> 8);
-}
-
-static void wr32(u8* p, u32 v) {
-    wr16(p, v);
-    wr16(p + 2, v >> 16);
-}
-
-static ServalLinkMailbox* mailbox(void) {
-    return &serval_link_mailbox;
-}
-
-// Writes the queued frames that fit into the inbox, while it is empty.
-static void deliver(void) {
-    ServalLinkMailbox* m = mailbox();
-    if (m->in_len || !fake.queued)
-        return;
-    u32 n = 0;
-    while (n < fake.queued) {
-        u32 size = 2 + rd16(fake.queue + n);
-        if (n + size > LINK_IN_SIZE)
-            break;
-        n += size;
-    }
-    for (u32 i = 0; i < n; i++)
-        m->in[i] = fake.queue[i];
-    for (u32 i = n; i < fake.queued; i++)
-        fake.queue[i - n] = fake.queue[i];
-    fake.queued -= n;
-    m->in_len = (u16)n;
-}
-
-static void fake_ring(ServalLinkMailbox* m) {
-    fake.rings++;
-    if (m->state == LINK_STATE_BOUNDARY)
-        fake.parked_rings++;
-    else if (m->state == LINK_STATE_RUNNING)
-        fake.running_rings++;
-    if (m->out_len > fake.max_out)
-        fake.max_out = m->out_len;
-    if (!fake.stuck) {
-        for (u32 i = 0; i < m->out_len && fake.got_n < GOT_MAX; i++)
-            fake.got[fake.got_n++] = m->out[i];
-        m->out_len = 0;
-    }
-    deliver();
-}
-
-// A parked agent waits: the debugger's next move. With none scripted, or
-// after too many, the debugger leaves (so a broken agent can't hang the test).
-static void fake_wait(void) {
-    fake.waits++;
-    if (fake.on_wait && fake.waits < 100)
-        fake.on_wait(fake.waits);
-    else
-        mailbox()->endpoint = 0;
-}
-
-// Starts the agent as serval_init() does, with an endpoint that answers (or
-// not), and connects the debugger (SVLE).
-static void start(bool present) {
-    vm_unload();
-    vm_bind(NULL);
-    ecs_reset();
-    fake = (typeof(fake)){0};
-    fake.got_n = 0;
-    seq = 0;
-    serval_host_link = (ServalHostLink){.present = present,
-                                        .ring = fake_ring,
-                                        .wait = fake_wait,
-                                        .title = "LINK TESTS",
-                                        .game_code = "SVLT",
-                                        .stats = {.frame = 100, .cycles = 12345}};
-    serval_link_init();
-    if (present)
-        mailbox()->endpoint = LINK_ENDPOINT_MAGIC;
-}
-
-// The game's frame: the endpoint has written the inbox meanwhile, and
-// frame_end() polls.
-static void frame(void) {
-    deliver();
-    serval_host_link.stats.frame++;
-    serval_link_poll();
-    CHECK(serval_vm_bookkeeping_ok()); // the agent's writes leave the scheduler's state alone
-}
-
-// Queues a request; returns its seq.
-static u16 request_flags(u32 type, u32 flags, const u8* payload, u32 n) {
-    u16 s = ++seq;
-    u8* f = fake.queue + fake.queued;
-    wr16(f, 4 + n);
-    f[2] = (u8)type;
-    f[3] = (u8)flags;
-    wr16(f + 4, s);
-    for (u32 i = 0; i < n; i++)
-        f[6 + i] = payload[i];
-    fake.queued += 6 + n;
-    return s;
-}
-
-static u16 request(u32 type, const u8* payload, u32 n) {
-    return request_flags(type, 0, payload, n);
-}
-
-// The nth frame the agent sent (from 0), or NULL.
-static const u8* sent(u32 nth) {
-    for (u32 at = 0; at + 2 <= fake.got_n; at += 2 + rd16(fake.got + at)) {
-        if (nth-- == 0)
-            return fake.got + at;
-    }
-    return NULL;
-}
-
-// The reply to seq s, or NULL.
-static const u8* reply(u16 s) {
-    const u8* f;
-    for (u32 k = 0; (f = sent(k)); k++) {
-        if ((f[3] & LINK_FLAG_REPLY) && rd16(f + 4) == s)
-            return f;
-    }
-    return NULL;
-}
-
-static u32 replies(u16 s) {
-    u32 count = 0;
-    const u8* f;
-    for (u32 k = 0; (f = sent(k)); k++)
-        count += (f[3] & LINK_FLAG_REPLY) && rd16(f + 4) == s;
-    return count;
-}
-
-// A reply without error and with this much payload.
-static bool ok(u16 s, u32 payload) {
-    const u8* f = reply(s);
-    return f && f[3] == LINK_FLAG_REPLY && rd16(f) == 4 + payload;
-}
-
-// An error reply with this code.
-static bool error(u16 s, u32 code) {
-    const u8* f = reply(s);
-    return f && f[3] == (LINK_FLAG_REPLY | LINK_FLAG_ERROR) && f[6] == code && rd16(f) >= 6 &&
-           rd16(f) == 6u + f[7];
-}
-
-// The nth event of a type (from 0), or NULL.
-static const u8* event(u32 type, u32 nth) {
-    const u8* f;
-    for (u32 k = 0; (f = sent(k)); k++) {
-        if (f[2] == type && f[3] == 0 && rd16(f + 4) == 0 && nth-- == 0)
-            return f;
-    }
-    return NULL;
-}
-
-static u32 events(u32 type) {
-    u32 count = 0;
-    while (event(type, count))
-        count++;
-    return count;
-}
-
-static bool text_is(const u8* str, const char* text) {
-    u32 n = str[0];
-    for (u32 i = 0; i < n; i++) {
-        if (!text[i] || text[i] != (char)str[1 + i])
-            return false;
-    }
-    return text[n] == '\0';
-}
-
-static u16 attach(void) {
-    u16 s = request(LINK_AGENT_INFO, NULL, 0);
-    frame();
-    return s;
-}
+// The fake endpoint and the debugger behind it: link_fake.h.
 
 // --- The handshake --------------------------------------------------------------
 
@@ -273,10 +68,12 @@ static void agent_info_attaches(void) {
     CHECK(p[0] == 1 && p[1] == 0);
     CHECK(text_is(p + 2, SERVAL_LINK_ENGINE_VERSION));
     p += 3 + p[2];
-    CHECK(rd32(p) == (LINK_CAP_VM | LINK_CAP_STATS | LINK_CAP_ENTITIES));
+    // debug link (E6): the VM's part's capabilities, its sites
+    CHECK(rd32(p) == (LINK_CAP_VM | LINK_CAP_BREAKPOINTS | LINK_CAP_STEP | LINK_CAP_STATS |
+                      LINK_CAP_ENTITIES | LINK_CAP_STOP_ON_FAULT));
     CHECK(p[4] == VM_CONTEXTS && p[5] == VM_STACK && p[6] == VM_CALLS);
     CHECK(rd16(p + 7) == VM_GLOBALS && p[9] == VM_FIELDS && rd16(p + 10) == VM_ARRAY_CELLS);
-    CHECK(rd16(p + 12) == MAX_ENT && p[14] == VM_P_COUNT && rd16(p + 15) == 0);
+    CHECK(rd16(p + 12) == MAX_ENT && p[14] == VM_P_COUNT && rd16(p + 15) == LINK_SITES);
     CHECK(rd32(p + 17) == SERVAL_LINK_SCRATCH);
     p += 21;
     CHECK(text_is(p, "LINK TESTS"));
@@ -305,9 +102,10 @@ static void requests_before_attaching(void) {
     u16 pause = request(LINK_PAUSE, NULL, 0);
     u16 globals = request(LINK_GLOBALS, (const u8[]){0, 0, 1, 0}, 4);
     u16 step = request(LINK_STEP, (const u8[]){0, 0}, 2);
+    u16 reload = request(LINK_RELOAD_BEGIN, (const u8[]){0, 0, 0, 0, 0, 0, 0, 0}, 8);
     frame();
     CHECK(error(pause, LINK_BAD_REQUEST) && error(globals, LINK_BAD_REQUEST));
-    CHECK(error(step, LINK_UNSUPPORTED));
+    CHECK(error(step, LINK_BAD_REQUEST) && error(reload, LINK_UNSUPPORTED)); // E6: STEP known
     CHECK(!serval_link_parked());
 }
 
@@ -711,7 +509,7 @@ static void stats_every_n_frames(void) {
     if (f) {
         const u8* p = f + 6;
         CHECK(rd32(p) == serval_host_link.stats.frame && rd32(p + 4) == 4321);
-        CHECK(rd32(p + 8) == 0); // vm_cycles: with the VM's part (E6)
+        CHECK(rd32(p + 8) == 0); // vm_cycles: the tests' clock stands still (link_vm_tests.c)
         CHECK(rd32(p + 12) == vm_ops_this_frame());
         CHECK(p[16] == 1); // the Probe's create waits
         CHECK(p[19] == 2); // two entities
@@ -748,7 +546,7 @@ static void loaded_while_attached(void) {
     CHECK(events(LINK_LOADED) == 2);
 }
 
-// OPTIONS: accepted (stop on fault comes with the VM's part).
+// OPTIONS: accepted (stop on fault: link_vm_tests.c).
 static void options_accepted(void) {
     start(true);
     attach();
@@ -802,10 +600,10 @@ static void malformed_frames(void) {
     u16 unknown = request(0x7F, NULL, 0);
     u16 endpoints = request(LINK_READ_MEM, (const u8[]){0, 0, 0, 4, 4, 0}, 6);
     u16 reload = request(LINK_RELOAD_BEGIN, NULL, 0);
-    u16 contexts = request(LINK_CONTEXTS, NULL, 0);
+    u16 commit = request(LINK_RELOAD_COMMIT, NULL, 0); // E6: CONTEXTS answers now
     frame();
     CHECK(error(unknown, LINK_UNSUPPORTED) && error(endpoints, LINK_UNSUPPORTED));
-    CHECK(error(reload, LINK_UNSUPPORTED) && error(contexts, LINK_UNSUPPORTED));
+    CHECK(error(reload, LINK_UNSUPPORTED) && error(commit, LINK_UNSUPPORTED));
 }
 
 // A later minor's additions: trailing bytes are ignored, as are flag bits

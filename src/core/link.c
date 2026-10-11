@@ -14,19 +14,18 @@
 // Implemented here (steps E5 and E7 of docs/debug-link.md#implementation):
 // AGENT_INFO, PAUSE, RESUME, GLOBALS, SET_GLOBAL, ARRAY_CELLS,
 // SET_ARRAY_CELL, ENTITIES, ENTITY, SET_PROPERTY, STATS_SUBSCRIBE, OPTIONS,
-// and the events STOPPED, STATS and LOADED. The VM's part of breakpoints,
-// stepping, contexts, frames, faults and reload (E6, E9) is answered
-// UNSUPPORTED until it comes.
+// and the events STOPPED, STATS and LOADED. The VM's part (E6, vm_link.c)
+// adds BRK's park, breakpoints, stepping, CONTEXTS, FRAMES, SET_LOCAL and
+// faults, through serval_link_stop(), which parks the game inside a frame;
+// hot reload (E9) is answered UNSUPPORTED until it comes.
 //
-// Planned (docs/releases.md#planned-api): debug_break() is declared so that
-// its name is reserved in scripts from 1.0, and is a stub. A stub does nothing
-// harmful: it doesn't stop the game, keeps no state, and in debug builds warns
-// on its first call, saying what happens instead.
+// debug_break() (docs/debug-link.md#script-breakpoints): parks the game while
+// a debugger is attached (STOPPED, debug_break, no context); otherwise, and
+// in release builds, it does nothing.
 
 #include "serval/debug.h"
 
 #include "link_internal.h"
-#include "warn.h"
 
 #ifdef SERVAL_LINK_AGENT
 #include "serval/ecs.h"
@@ -36,13 +35,8 @@
 #endif
 
 void debug_break(void) {
-#ifdef SERVAL_DEBUG
-    static bool warned;
-    if (!warned) {
-        warned = true;
-        SERVAL_WARN("debug_break: script breakpoints are planned, not implemented in this engine "
-                    "version; the game runs on");
-    }
+#ifdef SERVAL_LINK_AGENT
+    serval_link_stop(LINK_STOP_DEBUG_BREAK, 0xFF, 0, 0);
 #endif
 }
 
@@ -69,8 +63,8 @@ typedef struct {
     u8 next_boundary; // RESUME mode 1: a STOPPED reason + 1 for the next boundary, else 0
     u16 stats_every;  // STATS_SUBSCRIBE's frames (0: off)
     u16 stats_count;  // frames since the last STATS
-    u32 options;      // OPTIONS' flags (bit 0: stop on fault, which E6 brings)
-    u32 queue_peak;   // events queued at frame boundaries, at most, since the last STATS
+    u32 options;      // OPTIONS' flags (bit 0: stop on fault)
+    u32 queue_peak;   // events queued at once, at most, since the last STATS
     u32 dropped;      // frames dropped: the endpoint left no room in the outbox
 } Agent;
 SERVAL_EWRAM_BSS static Agent agent;
@@ -189,40 +183,52 @@ void serval_link_event(u32 type, void (*fill)(LinkWriter* w, const void* arg), c
 
 // --- Events --------------------------------------------------------------------
 
-// STOPPED: reason, context (none at a frame boundary), pc (none), the frame,
-// fault (none).
+// STOPPED: reason, context (0xFF: none, at a frame boundary), pc (0: none),
+// the frame, fault (0: none).
+typedef struct {
+    u32 reason, context, pc, fault;
+} Stop;
+
 static void fill_stopped(LinkWriter* w, const void* arg) {
+    const Stop* stop = arg;
     ServalLinkFrameStats s;
     serval_link_platform_stats(&s);
-    serval_link_put8(w, *(const u8*)arg);
-    serval_link_put8(w, 0xFF);
-    serval_link_put32(w, 0);
+    serval_link_put8(w, stop->reason);
+    serval_link_put8(w, stop->context);
+    serval_link_put32(w, stop->pc);
     serval_link_put32(w, s.frame);
-    serval_link_put8(w, 0);
+    serval_link_put8(w, stop->fault);
+}
+
+// Every stop ends a step: its sites are cleared (the VM's part).
+static void send_stopped_at(u32 reason, u32 context, u32 pc, u32 fault) {
+    const ServalLinkVmPart* vm = vm_part();
+    if (vm)
+        vm->stopped();
+    Stop stop = {reason, context, pc, fault};
+    serval_link_event(LINK_STOPPED, fill_stopped, &stop);
 }
 
 static void send_stopped(u32 reason) {
-    u8 r = (u8)reason;
-    serval_link_event(LINK_STOPPED, fill_stopped, &r);
+    send_stopped_at(reason, 0xFF, 0, 0);
 }
 
-// STATS (docs/debug-link.md#messages-protocol-10). vm_cycles is 0 until the
-// VM's part times its two phases (E6), and queue is the most events queued at
-// the frame boundaries since the last STATS (the VM's part will count its
-// peak inside the phases).
+// STATS (docs/debug-link.md#messages-protocol-10). vm_cycles is the cycle
+// counter read around the last frame's two phases, and queue the most events
+// queued at once since the last STATS, inside the phases or at a boundary.
 static void fill_stats(LinkWriter* w, const void* arg) {
     (void)arg;
     ServalLinkFrameStats s;
     serval_link_platform_stats(&s);
-    u32 ops = 0, contexts = 0, queued = 0;
+    ServalLinkVmStats v = {0};
     const ServalLinkVmPart* vm = vm_part();
     if (vm)
-        vm->stats(&ops, &contexts, &queued);
+        vm->stats(&v);
     serval_link_put32(w, s.frame);
     serval_link_put32(w, s.cycles);
-    serval_link_put32(w, 0); // vm_cycles
-    serval_link_put32(w, ops);
-    serval_link_put8(w, contexts);
+    serval_link_put32(w, v.vm_cycles);
+    serval_link_put32(w, v.ops);
+    serval_link_put8(w, v.contexts);
     serval_link_put16(w, agent.queue_peak);
     serval_link_put8(w, MAX_ENT - ecs_free_count());
     serval_link_put8(w, s.drawn);
@@ -372,9 +378,12 @@ static void attach(void) {
     agent.attached = true;
 }
 
-// Leaves the debugger: no stats, no options, the game resumed (E6: every
-// patched opcode restored).
+// Leaves the debugger: no stats, no options, every patched opcode restored
+// (the VM's part), the game resumed.
 static void detach(void) {
+    const ServalLinkVmPart* vm = vm_part();
+    if (vm && agent.attached)
+        vm->detached();
     agent.attached = false;
     agent.parked = false;
     agent.stop = 0;
@@ -385,17 +394,17 @@ static void detach(void) {
 
 static u32 agent_info(LinkWriter* w) {
     const ServalLinkVmPart* vm = vm_part();
-    u32 size = 0, hash = 0, scratch = 0;
+    ServalLinkVmInfo info = {0};
     if (vm)
-        vm->info(&size, &hash, &scratch);
+        vm->info(&info);
     char title[13], game_code[5];
     serval_link_platform_rom(title, game_code);
     serval_link_put8(w, LINK_PROTO_MAJOR);
     serval_link_put8(w, LINK_PROTO_MINOR);
     serval_link_put_str(w, SERVAL_LINK_ENGINE_VERSION);
-    // The VM's capability covers GLOBALS to SET_ARRAY_CELL now, and CONTEXTS,
-    // FRAMES and SET_LOCAL with the VM's part (E6).
-    serval_link_put32(w, (vm ? LINK_CAP_VM : 0) | LINK_CAP_STATS | LINK_CAP_ENTITIES);
+    // The VM's part's: the VM, breakpoints and stepping (with a scratch), stop
+    // on fault.
+    serval_link_put32(w, info.capabilities | LINK_CAP_STATS | LINK_CAP_ENTITIES);
     serval_link_put8(w, vm ? VM_CONTEXTS : 0);
     serval_link_put8(w, vm ? VM_STACK : 0);
     serval_link_put8(w, vm ? VM_CALLS : 0);
@@ -404,12 +413,12 @@ static u32 agent_info(LinkWriter* w) {
     serval_link_put16(w, vm ? VM_ARRAY_CELLS : 0);
     serval_link_put16(w, MAX_ENT);
     serval_link_put8(w, VM_P_COUNT);
-    serval_link_put16(w, 0); // breakpoint sites: the VM's part (E6)
-    serval_link_put32(w, scratch);
+    serval_link_put16(w, info.sites);
+    serval_link_put32(w, info.scratch);
     serval_link_put_str(w, title);
     serval_link_put_str(w, game_code);
-    serval_link_put32(w, size);
-    serval_link_put32(w, hash);
+    serval_link_put32(w, info.size);
+    serval_link_put32(w, info.hash);
     attach();
     return 0;
 }
@@ -448,8 +457,20 @@ static u32 options(LinkReader* r) {
     u32 flags = serval_link_u32(r);
     if (!r->ok)
         return SHORT();
-    agent.options = flags & 1u; // stop on fault: kept for the VM's part (E6)
+    agent.options = flags & 1u; // stop on fault (the VM's part)
     return 0;
+}
+
+// STEP (the VM's part sets the step up): resumes the game.
+static u32 step_request(const ServalLinkVmPart* vm, LinkReader* r, LinkWriter* w) {
+    if (!agent.parked)
+        return fail(LINK_NOT_PARKED, "STEP needs the game parked");
+    u32 code = vm->request(LINK_STEP, r, w);
+    if (!code) {
+        agent.parked = false;
+        agent.next_boundary = 0;
+    }
+    return code;
 }
 
 // ENTITIES: every live entity from slot `first` on, as many as fit.
@@ -543,6 +564,12 @@ static u32 request(u32 type, LinkReader* r, LinkWriter* w) {
     case LINK_SET_PROPERTY:
     case LINK_STATS_SUBSCRIBE:
     case LINK_OPTIONS:
+    case LINK_STEP:        // the VM's part (E6)
+    case LINK_BREAK_SET:   //
+    case LINK_BREAK_CLEAR: //
+    case LINK_CONTEXTS:    //
+    case LINK_FRAMES:      //
+    case LINK_SET_LOCAL:   //
         break;
     default:
         return fail(LINK_UNSUPPORTED, "this agent doesn't support the request");
@@ -564,10 +591,14 @@ static u32 request(u32 type, LinkReader* r, LinkWriter* w) {
         return stats_subscribe(r);
     case LINK_OPTIONS:
         return options(r);
-    default: { // the VM's: GLOBALS, SET_GLOBAL, ARRAY_CELLS, SET_ARRAY_CELL
+    default: { // the VM's: GLOBALS to SET_ARRAY_CELL, and CONTEXTS to STEP
         const ServalLinkVmPart* vm = vm_part();
         if (!vm)
             return fail(LINK_NO_VM, "the game doesn't link the VM");
+        if (type == LINK_STEP)
+            return step_request(vm, r, w);
+        if (type == LINK_SET_LOCAL && !agent.parked)
+            return fail(LINK_NOT_PARKED, "SET_LOCAL needs the game parked");
         return vm->request(type, r, w);
     }
     }
@@ -621,15 +652,16 @@ static void read_inbox(void) {
 
 // --- Parking and the frame hook ------------------------------------------------------
 
-// The game stays here, at the end of frame_end(), until RESUME, RESUME to
-// the next boundary, or the debugger leaving. Each pass rings (with the
+// The game stays here, at the end of frame_end() (state: at a frame
+// boundary) or inside a frame (serval_link_stop), until RESUME, RESUME to the
+// next boundary, STEP, or the debugger leaving. Each pass rings (with the
 // replies, saying "parked": the fork pauses the machine until it delivers a
 // frame), reads the inbox, or waits for the endpoint.
-static void park(void) {
+static void park(u32 state) {
     ServalLinkMailbox* m = &serval_link_mailbox;
     serval_link_platform_park(true);
     while (agent.parked) {
-        ring(LINK_STATE_BOUNDARY);
+        ring(state);
         if (!endpoint_connected()) {
             detach();
             break;
@@ -650,10 +682,11 @@ void serval_link_poll(void) {
     const ServalLinkVmPart* vm = vm_part();
     if (vm) {
         vm->poll(agent.attached);
-        u32 ops, contexts, queued;
-        vm->stats(&ops, &contexts, &queued);
-        if (queued > agent.queue_peak)
-            agent.queue_peak = queued;
+        ServalLinkVmStats v;
+        vm->stats(&v);
+        u32 peak = v.queue_peak > v.queued ? v.queue_peak : v.queued;
+        if (peak > agent.queue_peak)
+            agent.queue_peak = peak;
     }
     if (agent.attached && agent.stats_every && ++agent.stats_count >= agent.stats_every) {
         agent.stats_count = 0;
@@ -670,14 +703,34 @@ void serval_link_poll(void) {
     }
     read_inbox();
     if (agent.parked)
-        park();
+        park(LINK_STATE_BOUNDARY);
     else if (m->out_len)
         ring(LINK_STATE_RUNNING);
+}
+
+void serval_link_stop(u32 reason, u32 context, u32 pc, u32 fault) {
+    if (!agent.attached)
+        return;
+    if (!endpoint_connected()) {
+        detach();
+        return;
+    }
+    agent.parked = true;
+    agent.next_boundary = 0; // a frame step is over too
+    send_stopped_at(reason, context, pc, fault);
+    park(LINK_STATE_INSIDE);
+}
+
+u32 serval_link_options(void) {
+    return agent.attached ? agent.options : 0;
 }
 
 void serval_link_init(void) {
     serval_link_hook = NULL;
     agent = (Agent){0};
+    const ServalLinkVmPart* vm = vm_part();
+    if (vm)
+        vm->detached(); // (re)started: no debugger, so no patched opcode and no step
     if (!serval_link_platform_present())
         return;
     // A fresh mailbox, endpoint field included: an endpoint that finds its
@@ -690,7 +743,6 @@ void serval_link_init(void) {
     m->version = LINK_MAILBOX_VERSION;
     m->size = (u16)sizeof(ServalLinkMailbox);
     agent.started = true;
-    const ServalLinkVmPart* vm = vm_part();
     if (vm)
         vm->poll(false);
     serval_link_hook = serval_link_poll;

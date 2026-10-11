@@ -513,25 +513,24 @@ REJECTED = {
                         r"^sfx_play is an engine function; a script can't redefine it$"),
     "sound_top_local": ("local music_set_volume = 0", 1, 7,
                         r"^music_set_volume is an engine function; a script can't redefine it$"),
-    # Top-level names of the engine's planned functions, and their uses
-    # (PlannedNames tests the rules with a planned function of its own;
-    # implementing one moves its cases to the C functions' below, or the
-    # builtins'). debug link: debug_break(), planned before 1.0 to reserve its
-    # name; implemented, it becomes a builtin compiling to BRK.
-    "planned_function": ("function debug_break() end", 1, 10,
-                         r"^function debug_break: debug_break is reserved: it names a planned "
-                         r"engine function, which a later engine version may make a builtin$"),
-    "planned_global": ("debug_break = 0", 1, 1, r"^global debug_break: debug_break is reserved"),
-    "planned_object": ("debug_break = object {}", 1, 1,
-                       r"^object debug_break: debug_break is reserved"),
-    "planned_top_local": ("local debug_break = 0", 1, 7,
-                          r"^local debug_break: debug_break is reserved"),
-    "planned_called": (OBJ + "function A:step() debug_break() end", 3, 19,
-                       r"^debug_break is planned, not implemented in this engine version \(script "
-                       r"breakpoints, docs/debug-link\.md#script-breakpoints\): scripts can't use "
-                       r"it yet$"),
-    "planned_read": (OBJ + "function A:step() local b = debug_break end", 3, 29,
-                     r"^debug_break is planned, not implemented in this engine version"),
+    # Top-level names of the engine's planned functions, and their uses:
+    # PlannedNames tests the rules with a planned function of its own (this
+    # version declares none). debug link: debug_break(), planned before 1.0 to
+    # reserve its name, is a builtin compiling to BRK now (it was a
+    # planned_* row): the builtins' rules
+    "builtin_debug_break": ("function debug_break() end", 1, 10,
+                            r"^debug_break is an engine function; a script can't redefine it$"),
+    "builtin_debug_break_global": ("debug_break = 0", 1, 1, r"^debug_break is an engine function"),
+    "builtin_debug_break_object": ("debug_break = object {}", 1, 1,
+                                   r"^debug_break is an engine function"),
+    "builtin_debug_break_top_local": ("local debug_break = 0", 1, 7,
+                                      r"^debug_break is an engine function"),
+    "debug_break_arguments": (OBJ + "function A:step() debug_break(1) end", 3, 19,
+                              r"^debug_break takes 0 arguments, not 1$"),
+    "debug_break_value": (OBJ + "function A:step() local b = debug_break() end", 3, 29,
+                          r"^debug_break\(\) returns no value$"),
+    "debug_break_uncalled": (OBJ + "function A:step() local b = debug_break end", 3, 29,
+                             r"^debug_break is an engine function: call it$"),
     # Top-level names of the engine's other C functions (implemented, no
     # builtin), and their uses
     "c_function": ("function sprite_draw() end", 1, 10,
@@ -1226,11 +1225,12 @@ class PlannedNames(unittest.TestCase):
         names, errors = check_planned.planned_names(os.path.join(ROOT, "include"))
         self.assertEqual(errors, [])
         self.assertLessEqual(set(svlua.planned_functions()), set(names))
-        # debug link: debug_break() is planned (declared before 1.0 to reserve
-        # its name); the tests' own names are planned too.
-        self.assertIn("debug_break", names)
-        self.assertEqual(svlua.planned_functions().get("debug_break"),
-                         "script breakpoints, docs/debug-link.md#script-breakpoints")
+        # debug link: debug_break() was planned (declared before 1.0 to
+        # reserve its name) until the debug link's VM part implemented it: a
+        # builtin now. The tests' own names are planned in every version.
+        self.assertNotIn("debug_break", names)
+        self.assertNotIn("debug_break", svlua.planned_functions())
+        self.assertIn("debug_break", svlua.ENGINE_NAMES)
         own, errors = check_planned.own_planned_names(os.path.join(ROOT, "tests", "planned"))
         self.assertEqual(errors, [])
         self.assertIn("PLANNED_FAKE_CONSTANT", own)
@@ -2048,6 +2048,18 @@ end"""
         for start, limit in ((1, 4), (4, 1), (INT_MAX - 1, INT_MAX)):
             with self.subTest(start=start, limit=limit, step="none"):
                 self.check_loop("for i = lo, hi do", start, limit, 1, None)
+
+    def test_debug_break_is_brk(self):
+        # debug link: debug_break(), a builtin with no arguments and no
+        # result, compiles to the VM's BRK (no SYS call). With no debugger
+        # attached the VM logs it and goes on (debug builds).
+        source = OBJ + "n = 0\nfunction A:room_start()\n  n = 1\n  debug_break()\n  n = 2\nend"
+        listing = svlua.compile_source(source, "t.lua")
+        self.assertIn("    BRK                                 ; t.lua:6", listing)
+        self.assertNotIn("SYS", listing)
+        vm = run_vm(source, start=["A"])
+        self.assertEqual(vm.globals["N"], 2)
+        self.assertIn("vm: BRK at 0x", vm.log)
 
     def test_a_run_time_step_of_zero_stops_the_script(self):
         vm = run_vm(OBJ + "n = 0\nst = 0\nfunction A:room_start()\n"

@@ -24,13 +24,8 @@ void debug_exit(int code) __attribute__((noreturn));
 // Stops the whole game where it is called (every script, every system, the
 // frame) while a debugger is attached over the debug link, until the
 // debugger resumes it; the debugger is told the game stopped here. With no
-// debugger attached, and in release builds, it does nothing. Scripts get a
-// builtin of the same name, compiling to the VM's BRK opcode, in the version
-// that implements it.
-//
-// Planned (docs/debug-link.md#script-breakpoints): in this engine version it
-// does nothing and the game runs on (warns once, debug builds).
-SERVAL_PLANNED("script breakpoints, docs/debug-link.md#script-breakpoints")
+// debugger attached, and in release builds, it does nothing. Scripts have a
+// builtin of the same name, which compiles to the VM's BRK opcode.
 void debug_break(void);
 
 #endif // SERVAL_DEBUG_H

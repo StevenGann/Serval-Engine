@@ -19,23 +19,39 @@ Commands, run in order (none: read them from standard input, one a line):
   resume                   let it run
   step [N]                 run N frames (1), parking after each
   frames N                 let it run N frames, then park
-  globals [FIRST [COUNT]]  read globals (0, 16)
+  globals [FIRST [COUNT]]  read globals (0, 16), named from the maps
   arrays [FIRST [COUNT]]   read the RAM arrays' pool (0, 16)
   entities                 every live entity: its mask, object and context
   entity N                 an entity's properties and instance fields
   set global N VALUE       write a global; set array N VALUE: a pool cell
   set entity N PROP VALUE  write a property (a number, or a name like x)
+  set local NAME VALUE     write a local of the stopped context's innermost
+                           frame (by its name in the maps)
   stats [EVERY [COUNT]]    print COUNT (1) STATS, one every EVERY frames (60),
                            running the game meanwhile if it is parked
   logs                     the LOG lines received so far
   read ADDRESS LENGTH      read hardware memory (hex dump)
   sleep SECONDS            wait, the game running or not
+  break FILE:LINE          a breakpoint on a line of a script (its statement
+                           starts' pcs, from the maps)
+  clear [FILE:LINE]        clear that line's breakpoint (none: every one)
+  continue [SECONDS]       let the game run until it stops (30 s at most)
+  step over|into|out       a source step of the stopped context, planned
+                           from the maps, then wait for it to stop
+  stack [CONTEXT]          the stopped context's frames (or CONTEXT's)
+  locals [FRAME]           the locals of a frame (0: the innermost)
+  contexts                 every live context: its handler, state and place
+  options stop-on-fault|none  stop on fault, or not
+The source-level commands read the script's maps (docs/debug-link.md#maps:
+<name>.svmap and <name>.svdbg, which serval_add_script() writes beside the
+game's build), found in --maps DIR (default: the page's directory) by the
+blob's size and FNV-1a hash.
 
 Options: --no-browser prints the page's URL instead of opening it (open it
 in a browser yourself, without test mode: click to start the game);
 --port N serves on that port (default: any free one); --frames N stops the
 page's test mode after N frames (default: a billion); --token T uses that
-token (default: random).
+token (default: random); --maps DIR where the maps are.
 
 As a library (tools/svlink_test.py uses it):
 
@@ -45,15 +61,19 @@ As a library (tools/svlink_test.py uses it):
         print(link.globals(0, 8))
 
 Values are numbers as the agent sends them: cells as signed 32-bit, fixed
-point raw (x = 256 is one pixel).
+point raw (x = 256 is one pixel); the source-level commands show locals and
+globals by their types in the maps (fixed point as 1.5).
 """
 
 import argparse
 import base64
+import bisect
 import contextlib
+import glob
 import hashlib
 import http.server
 import importlib.util
+import json
 import os
 import queue
 import re
@@ -91,6 +111,13 @@ ERRORS = {1: "UNSUPPORTED", 2: "BAD_REQUEST", 3: "NO_AGENT", 4: "NOT_PARKED", 5:
           12: "MISMATCH"}
 STOP_REASONS = {0: "pause", 1: "frame", 2: "brk", 3: "breakpoint", 4: "step", 5: "ended", 6: "fault",
                 7: "debug_break"}
+FAULT_KINDS = {1: "stack overflow or underflow", 2: "call depth past VM_CALLS", 3: "pc escaped the blob",
+               4: "unknown opcode", 5: "unknown SYS call", 6: "ENTER that doesn't fit",
+               7: "past the budget", 8: "a wait in a reaction", 9: "a halt"}
+CONTEXT_STATES = {1: "ready", 2: "running", 3: "waiting (frames)", 4: "waiting (animation)",
+                  5: "waiting (path)"}
+EVENTS = ("create", "step", "destroy", "collision", "anim_end", "room_start")
+SITE_BREAKPOINT, SITE_STEP, SITE_STEP_ANY = 0, 1, 2  # BREAK_SET's kinds
 CAPABILITIES = {0: "vm", 1: "breakpoints", 2: "step", 3: "reload", 4: "stats", 5: "entities",
                 6: "stop on fault"}
 ENDPOINT_CAPABILITIES = {0: "raw memory", 1: "machine pause", 2: "logs"}
@@ -256,7 +283,41 @@ def parse_loaded(payload):
     return {"size": r.u32(), "hash": r.u32()}
 
 
-EVENT_PARSERS = {STOPPED: parse_stopped, STATS: parse_stats, LOG: parse_log, LOADED: parse_loaded}
+def parse_fault(payload):
+    r = Reader(payload)
+    return {"kind": r.u8(), "context": r.u8(), "pc": r.u32(), "text": r.str()}
+
+
+def parse_contexts(payload):
+    """CONTEXTS' reply: a dict per live context."""
+    r = Reader(payload)
+    found = []
+    for _ in range(r.u8()):
+        c = {"context": r.u8(), "state": r.u8(), "event": r.u8(), "self": r.u16(), "other": r.u16(),
+             "object": r.s16(), "pc": r.u32(), "wait": r.u16(), "depth": r.u8(),
+             "stacked": bool(r.u8())}
+        below = {"event": r.u8(), "state": r.u8(), "pc": r.u32(), "wait": r.u16(), "depth": r.u8()}
+        c["below"] = below if c["stacked"] else None
+        found.append(c)
+    return found
+
+
+def parse_frames(payload):
+    """FRAMES' reply: the stack's cells and the activations (the running one
+    first), each {base, frames: [{pc, fp}], innermost first}."""
+    r = Reader(payload)
+    sp = r.u8()
+    cells = [r.s32() for _ in range(sp)]
+    activations = []
+    for _ in range(r.u8()):
+        base, count = r.u8(), r.u8()
+        activations.append({"base": base, "frames": [{"pc": r.u32(), "fp": r.u8()}
+                                                     for _ in range(count)]})
+    return {"sp": sp, "cells": cells, "activations": activations}
+
+
+EVENT_PARSERS = {STOPPED: parse_stopped, STATS: parse_stats, LOG: parse_log, LOADED: parse_loaded,
+                 FAULT: parse_fault}
 
 
 # --- WebSocket (RFC 6455), the server's end, as much as a browser needs --------------
@@ -335,6 +396,7 @@ class Session:
         self.wfile = None
         self.agent = None  # AGENT_INFO's answer, once asked
         self.stopped = None  # the latest STOPPED while parked, else None
+        self.blob = None  # (size, hash) of the loaded blob: AGENT_INFO's, then LOADED's
 
     # Called by the server's thread.
     def _deliver(self, type_, flags, seq, payload):
@@ -350,6 +412,10 @@ class Session:
                 if type_ == STOPPED:
                     with contextlib.suppress(ValueError):
                         self.stopped = parse_stopped(payload)
+                elif type_ == LOADED:
+                    with contextlib.suppress(ValueError):
+                        loaded = parse_loaded(payload)
+                        self.blob = (loaded["size"], loaded["hash"])
                 self._cond.notify_all()
 
     def _close(self):
@@ -421,6 +487,7 @@ class Session:
 
     def agent_info(self):
         self.agent = parse_agent_info(self.request(AGENT_INFO))
+        self.blob = (self.agent["blob_size"], self.agent["blob_hash"])
         return self.agent
 
     def pause(self, timeout=10):
@@ -517,6 +584,51 @@ class Session:
 
     def logs(self):
         return self.events(LOG)
+
+    # --- The VM's part (step E6): contexts, frames, breakpoints, steps ------------
+
+    def contexts(self):
+        return parse_contexts(self.request(CONTEXTS))
+
+    def frames(self, context):
+        return parse_frames(self.request(FRAMES, bytes([context])))
+
+    def set_local(self, context, index, value):
+        self.request(SET_LOCAL, struct.pack("<BBi", context, index, value))
+
+    def break_set(self, kind, pcs):
+        pcs = list(pcs)
+        for at in range(0, len(pcs), 253):
+            chunk = pcs[at:at + 253]
+            self.request(BREAK_SET, struct.pack(f"<BH{len(chunk)}I", kind, len(chunk), *chunk))
+
+    def break_clear(self, kind, pcs=()):
+        """Clears these sites of a kind; none given: every one of it."""
+        pcs = list(pcs)
+        if not pcs:
+            self.request(BREAK_CLEAR, struct.pack("<BH", kind, 0))
+        for at in range(0, len(pcs), 253):
+            chunk = pcs[at:at + 253]
+            self.request(BREAK_CLEAR, struct.pack(f"<BH{len(chunk)}I", kind, len(chunk), *chunk))
+
+    def wait_stop(self, before, timeout=30):
+        """The first STOPPED after the before-th."""
+        stop = self.wait_event(STOPPED, timeout, after=before)
+        self.stopped = stop
+        return stop
+
+    def go(self, timeout=30):
+        """RESUME, then the next STOPPED (a breakpoint, a BRK, a fault...)."""
+        before = self.count(STOPPED)
+        self.resume(0)
+        return self.wait_stop(before, timeout)
+
+    def step(self, context, depth, timeout=30):
+        """STEP (its sites set before), then the STOPPED it ends with."""
+        before = self.count(STOPPED)
+        self.request(STEP, bytes([context, depth]))
+        self.stopped = None
+        return self.wait_stop(before, timeout)
 
 
 class Server:
@@ -754,6 +866,203 @@ def open_page(page, frames=10**9, browser=True, port=0, token=None, timeout=60, 
         server.close()
 
 
+# --- The maps, and the debugger's planning ----------------------------------------------
+#
+# What a debugger computes from a script's maps (docs/debug-link.md#maps and
+# #stepping; the files' format: docs/lua.md#debug-information): a line's
+# breakpoint sites, a pc's place in the script, the function it is in, a
+# step's sites, a frame's locals. tools/check-debug-maps.py joins the two
+# files; this adds the planning.
+
+
+def _check_debug_maps():
+    spec = importlib.util.spec_from_file_location("check_debug_maps",
+                                                  os.path.join(TOOLS, "check-debug-maps.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class DebugMaps:
+    """A script's .svmap and .svdbg (and its listing, for the calls step
+    into follows), joined as a debugger joins them."""
+
+    def __init__(self, svmap_path):
+        with open(svmap_path, encoding="utf-8") as f:
+            self.svmap = json.load(f)
+        base = os.path.splitext(svmap_path)[0]
+        with open(base + ".svdbg", encoding="utf-8") as f:
+            self.svdbg = json.load(f)
+        self.maps = _check_debug_maps().Maps(self.svmap, self.svdbg)
+        listing = base + ".svm" if os.path.exists(base + ".svm") else self.svmap["listing"]
+        with open(listing, encoding="utf-8") as f:
+            self.listing = f.read().splitlines()
+        self.blob = (self.svmap["blob"]["size"], self.svmap["blob"]["fnv1a32"])
+        # Statement starts, in pc order: (pc, source, line).
+        self.starts = []
+        for listing_line, (source, line, _, start) in sorted(self.maps.place.items()):
+            if start and listing_line in self.maps.pc_of_line:
+                self.starts.append((self.maps.pc_of_line[listing_line], source, line))
+        self.starts.sort()
+
+    @staticmethod
+    def find(directory, blob):
+        """The maps in a directory whose blob is (size, hash), or None."""
+        for path in sorted(glob.glob(os.path.join(directory, "*.svmap"))):
+            if not os.path.exists(os.path.splitext(path)[0] + ".svdbg"):
+                continue
+            with contextlib.suppress(OSError, ValueError, KeyError):
+                with open(path, encoding="utf-8") as f:
+                    svmap = json.load(f)
+                if (svmap["blob"]["size"], svmap["blob"]["fnv1a32"]) == tuple(blob):
+                    return DebugMaps(path)
+        return None
+
+    def source_name(self, index):
+        return os.path.basename(self.svdbg["sources"][index])
+
+    def _source_index(self, name):
+        for index, path in enumerate(self.svdbg["sources"]):
+            if path == name or os.path.basename(path) == os.path.basename(name) \
+                    or path.endswith("/" + name):
+                return index
+        raise ValueError(f"no script {name!r} in the maps (they have "
+                         f"{', '.join(map(os.path.basename, self.svdbg['sources']))})")
+
+    def first_of_runs(self, starts):
+        """The first of each run of statement starts on one line: a line is
+        stopped at once a pass (if a then b() else c() end stops once)."""
+        picked, last = [], None
+        for pc, source, line in starts:
+            if (source, line) != last:
+                picked.append(pc)
+            last = (source, line)
+        return picked
+
+    def line_sites(self, where):
+        """A breakpoint on FILE:LINE: its statement starts' pcs."""
+        name, _, number = where.rpartition(":")
+        if not name or not number.isdigit():
+            raise ValueError(f"{where!r}: give FILE:LINE")
+        source, line = self._source_index(name), int(number)
+        pcs = self.first_of_runs([s for s in self.starts if s[1:] == (source, line)])
+        if not pcs:
+            raise ValueError(f"{where}: no statement starts on that line")
+        return pcs
+
+    def place(self, pc):
+        """'file.lua:LINE' of a pc, or None."""
+        found = self.maps.source_line(pc)
+        return f"{os.path.basename(found[0])}:{found[1]}" if found else None
+
+    def function(self, pc):
+        return self.maps.function(pc)
+
+    def statements(self, function):
+        """A function's statement starts, the first of each run of a line."""
+        return self.first_of_runs([s for s in self.starts
+                                   if self.maps.function(s[0]) is function])
+
+    def statement_of(self, pc):
+        """The statement start at or before pc."""
+        i = bisect.bisect_right([s[0] for s in self.starts], pc) - 1
+        return self.starts[i][0] if i >= 0 else None
+
+    def callees(self, pc):
+        """The first statements of the functions the statement at pc calls
+        (its CALLs, in the listing)."""
+        first = self.statement_of(pc)
+        if first is None:
+            return []
+        later = [s[0] for s in self.starts if s[0] > first]
+        end = later[0] if later else None
+        top = self.maps.listing_line(first)
+        bottom = self.maps.listing_line(end - 1) if end else len(self.listing)
+        labels = {}
+        for number, text in enumerate(self.listing, 1):
+            m = re.match(r"^([A-Za-z_]\w*):", text)
+            if m:
+                labels[m.group(1)] = number
+        found = []
+        for number in range(top, bottom + 1):
+            m = re.match(r"^\s+CALL\s+([A-Za-z_]\w*)", self.listing[number - 1])
+            if not m or m.group(1) not in labels:
+                continue
+            for entry in self.svdbg["functions"]:
+                if entry["first"] == labels[m.group(1)]:
+                    starts = self.statements(entry)
+                    if starts and starts[0] not in found:
+                        found.append(starts[0])
+        return found
+
+    def locals_at(self, pc, outer=False):
+        """The named locals in scope at pc ({name: (slot, type)}); for a
+        return point (an outer frame) at pc - 1, inside the CALL."""
+        line = self.maps.listing_line(pc - 1 if outer else pc)
+        function = self.maps.function(pc - 1 if outer else pc)
+        if line is None or function is None:
+            return {}
+        index = self.svdbg["functions"].index(function)
+        found = {}
+        for local in sorted(self.svdbg["locals"], key=lambda l: l["scope"][0]):
+            first, last = local["scope"]
+            if local["function"] == index and first <= line <= last:
+                found[local["name"]] = (local["slot"], local["type"])  # the later scope shadows
+        return found
+
+    def global_names(self):
+        return {g["number"]: (g["name"], g["type"]) for g in self.svdbg["globals"]}
+
+    def describe(self, pc, outer=False):
+        """'Firefly:create at fireflies.lua:181' for a pc."""
+        at = pc - 1 if outer else pc
+        function = self.maps.function(at)
+        place = self.place(at)
+        name = function["name"] if function else "?"
+        return f"{name} at {place}" if place else f"{name} at pc 0x{pc:X}"
+
+
+def show_value(value, type_):
+    """A cell as its type shows it."""
+    if type_ == "fixed":
+        return f"{value / 256:g}"
+    if type_ == "boolean":
+        return "true" if value else "false"
+    if type_ == "entity":
+        return f"entity {value}" if value else "none"
+    return str(value)
+
+
+def plan_step(link, maps, how):
+    """A source step of the stopped context (docs/debug-link.md#stepping):
+    over, kind 1 sites at every statement start of the current function and
+    at the frame's return point, STEP at the context's depth; into, those and
+    kind 2 at the first statement of each function the current statement
+    calls; out, kind 1 at the return point only, STEP a depth less (at the
+    top, no site: it stops where the handler ends). Returns the STOPPED."""
+    stop = link.stopped
+    if not stop or stop["context"] == 0xFF:
+        raise ValueError("no stopped context to step (stop at a breakpoint first)")
+    k = stop["context"]
+    frames = link.frames(k)["activations"][0]["frames"]
+    depth, pc = len(frames) - 1, frames[0]["pc"]
+    step_sites = []
+    if how in ("over", "into"):
+        function = maps.function(pc)
+        if function is None:
+            raise ValueError(f"pc 0x{pc:X} is in no function of the maps")
+        step_sites += maps.statements(function)
+    if depth:
+        step_sites.append(frames[1]["pc"])
+    if step_sites:
+        link.break_set(SITE_STEP, step_sites)
+    if how == "into":
+        callees = maps.callees(pc)
+        if callees:
+            link.break_set(SITE_STEP_ANY, callees)
+    return link.step(k, depth - 1 if how == "out" and depth else depth)
+
+
 # --- The command line --------------------------------------------------------------
 
 
@@ -765,13 +1074,48 @@ def _flags(value, names):
     return ", ".join(name for bit, name in names.items() if value >> bit & 1) or "none"
 
 
-def _print_stopped(stop):
+def _print_stopped(stop, maps=None):
     ctx = "none" if stop["context"] == 0xFF else stop["context"]
+    where = f", {maps.describe(stop['pc'])}" if maps and stop["pc"] else ""
+    fault = f", {FAULT_KINDS.get(stop['fault'], stop['fault'])}" if stop["reason"] == 6 else ""
     print(f"stopped: {STOP_REASONS.get(stop['reason'], stop['reason'])} at frame {stop['frame']}"
-          f" (context {ctx}, pc 0x{stop['pc']:X})")
+          f" (context {ctx}, pc 0x{stop['pc']:X}{where}{fault})")
 
 
-def run_command(link, words, props):
+def maps_for(link, directory, timeout=60):
+    """The maps of the blob the game runs (waiting for it to be loaded)."""
+    if link.blob is None or link.blob == (0, 0):
+        link.wait_event(LOADED, timeout, test=lambda e: e["size"] != 0)
+    cached = getattr(link, "debug_maps", None)
+    if cached and cached.blob == link.blob:
+        return cached
+    maps = DebugMaps.find(directory, link.blob)
+    if maps is None:
+        raise ValueError(f"no maps for the blob ({link.blob[0]} bytes, FNV-1a 0x{link.blob[1]:08X}) "
+                         f"in {directory}")
+    link.debug_maps = maps
+    return maps
+
+
+def _maps_or_none(link, directory):
+    with contextlib.suppress(ValueError, TimeoutError, OSError):
+        if link.blob and link.blob != (0, 0):
+            return maps_for(link, directory)
+    return None
+
+
+def _print_stack(link, maps, context):
+    frames = link.frames(context)
+    for n, activation in enumerate(frames["activations"]):
+        if n:
+            print("  beneath it, the behaviour:")
+        for depth, frame in enumerate(activation["frames"]):
+            print(f"  #{depth} {maps.describe(frame['pc'], outer=depth > 0)} "
+                  f"(pc 0x{frame['pc']:X}, fp {frame['fp']})")
+    return frames
+
+
+def run_command(link, words, props, maps_dir="."):
     cmd, args = words[0], words[1:]
     if cmd == "hello":
         h = link.hello
@@ -791,9 +1135,64 @@ def run_command(link, words, props):
     elif cmd == "resume":
         link.resume(0)
         print("running")
+    elif cmd == "step" and args and args[0] in ("over", "into", "out"):
+        maps = maps_for(link, maps_dir)
+        _print_stopped(plan_step(link, maps, args[0]), maps)
     elif cmd == "step":
         for _ in range(_number(args[0]) if args else 1):
             _print_stopped(link.step_frame())
+    elif cmd == "break":
+        maps = maps_for(link, maps_dir)
+        pcs = maps.line_sites(args[0])
+        link.break_set(SITE_BREAKPOINT, pcs)
+        print(f"breakpoint at {args[0]}: " + ", ".join(f"pc 0x{pc:X}" for pc in pcs))
+    elif cmd == "clear":
+        if args:
+            link.break_clear(SITE_BREAKPOINT, maps_for(link, maps_dir).line_sites(args[0]))
+        else:
+            link.break_clear(SITE_BREAKPOINT)
+        print("cleared")
+    elif cmd == "continue":
+        stop = link.go(float(args[0]) if args else 30)
+        _print_stopped(stop, _maps_or_none(link, maps_dir))
+    elif cmd == "stack":
+        maps = maps_for(link, maps_dir)
+        context = _number(args[0]) if args else (link.stopped or {}).get("context", 0xFF)
+        if context == 0xFF:
+            raise ValueError("no stopped context: give one (contexts lists them)")
+        print(f"context {context}:")
+        _print_stack(link, maps, context)
+    elif cmd == "locals":
+        maps = maps_for(link, maps_dir)
+        stop = link.stopped or {}
+        if stop.get("context", 0xFF) == 0xFF:
+            raise ValueError("no stopped context")
+        frames = link.frames(stop["context"])
+        number = _number(args[0]) if args else 0
+        # Every activation's frames, innermost first: its first is where it
+        # is, the others return points.
+        listed = [(f, depth > 0) for a in frames["activations"] for depth, f in enumerate(a["frames"])]
+        frame, outer = listed[number]
+        found = maps.locals_at(frame["pc"], outer=outer)
+        print(f"#{number} {maps.describe(frame['pc'], outer=outer)}:")
+        if not found:
+            print("  (no locals)")
+        for name, (slot, type_) in sorted(found.items(), key=lambda item: item[1][0]):
+            cell = frame["fp"] + slot
+            value = show_value(frames["cells"][cell], type_) if cell < frames["sp"] else "?"
+            print(f"  {name} = {value}")
+    elif cmd == "contexts":
+        maps = _maps_or_none(link, maps_dir)
+        for c in link.contexts():
+            where = f", {maps.describe(c['pc'])}" if maps else ""
+            entity = f"entity {c['self']}" if c["self"] else "a thread"
+            print(f"  context {c['context']}: {EVENTS[c['event']] if c['event'] < 6 else c['event']} of "
+                  f"{entity}, {CONTEXT_STATES.get(c['state'], c['state'])}, depth {c['depth']}, "
+                  f"pc 0x{c['pc']:X}{where}" + (", on top of its behaviour" if c["stacked"] else ""))
+    elif cmd == "options":
+        flags = {"stop-on-fault": 1, "none": 0}[args[0]] if args else 0
+        link.options(flags)
+        print("ok")
     elif cmd == "frames":
         before = link.count(STOPPED)
         link.resume(0)
@@ -807,8 +1206,12 @@ def run_command(link, words, props):
         first = _number(args[0]) if args else 0
         count = _number(args[1]) if len(args) > 1 else 16
         values = link.globals(first, count) if cmd == "globals" else link.array_cells(first, count)
+        maps = _maps_or_none(link, maps_dir) if cmd == "globals" else None
+        names = maps.global_names() if maps else {}
         for i, v in enumerate(values):
-            print(f"  {cmd[:-1] if cmd == 'globals' else 'cell'} {first + i}: {v}")
+            name, type_ = names.get(first + i, (None, None))
+            shown = f"{name} = {show_value(v, type_)}" if name else str(v)
+            print(f"  {cmd[:-1] if cmd == 'globals' else 'cell'} {first + i}: {shown}")
     elif cmd == "entities":
         for e in link.entities():
             ctx = "-" if e["context"] is None else e["context"]
@@ -831,8 +1234,21 @@ def run_command(link, words, props):
             by_name = {v: k for k, v in props.items()}
             prop = by_name[args[2]] if args[2] in by_name else _number(args[2])
             link.set_property(_number(args[1]), prop, _number(args[3]))
+        elif what == "local":
+            maps = maps_for(link, maps_dir)
+            stop = link.stopped or {}
+            if stop.get("context", 0xFF) == 0xFF:
+                raise ValueError("no stopped context")
+            frame = link.frames(stop["context"])["activations"][0]["frames"][0]
+            found = maps.locals_at(frame["pc"])
+            if args[1] not in found:
+                raise ValueError(f"no local {args[1]!r} here (in scope: {', '.join(found) or 'none'})")
+            slot, type_ = found[args[1]]
+            value = round(float(args[2]) * 256) if type_ == "fixed" else _number(args[2])
+            link.set_local(stop["context"], frame["fp"] + slot, value)
         else:
-            raise ValueError("set global N VALUE, set array N VALUE or set entity N PROP VALUE")
+            raise ValueError("set global N VALUE, set array N VALUE, set entity N PROP VALUE or "
+                             "set local NAME VALUE")
         print("ok")
     elif cmd == "stats":
         every = _number(args[0]) if args else 60
@@ -877,12 +1293,16 @@ def main():
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--frames", type=int, default=10**9, help="the page's test mode's frames")
     parser.add_argument("--token")
+    parser.add_argument("--maps", help="where the script's .svmap and .svdbg are (default: the "
+                        "page's directory)")
     args = parser.parse_args()
     if not os.path.exists(args.page):
         sys.exit(f"svlink: {args.page}: no such file")
     # Commands given as separate words: a new one starts at each command name.
     names = {"hello", "pause", "resume", "step", "frames", "globals", "arrays", "entities", "entity",
-             "set", "stats", "logs", "read", "sleep"}
+             "set", "stats", "logs", "read", "sleep", "break", "clear", "continue", "stack", "locals",
+             "contexts", "options"}
+    maps_dir = args.maps or os.path.dirname(os.path.abspath(args.page))
     commands = []
     for word in args.commands:
         parts = word.split()
@@ -905,7 +1325,7 @@ def main():
                 if not interactive:
                     print("> " + " ".join(words))
                 try:
-                    run_command(link, words, props)
+                    run_command(link, words, props, maps_dir)
                 except (LinkError, ValueError, IndexError, KeyError, TimeoutError) as e:
                     print(f"svlink: {' '.join(words)}: {e}", file=sys.stderr)
                     if not interactive:

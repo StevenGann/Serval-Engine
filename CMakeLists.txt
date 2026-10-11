@@ -59,7 +59,7 @@ include(cmake/Serval.cmake)
 set(SERVAL_PORTABLE_SOURCES
     src/core/color.c
     src/core/input.c
-    src/core/link.c # debug link: the agent's file; today debug_break()'s planned stub
+    src/core/link.c # debug link: the agent's core, and debug_break()
     src/core/lz77.c # lz77: the loaders' check of LZ77 data
     src/core/map.c
     src/core/path.c

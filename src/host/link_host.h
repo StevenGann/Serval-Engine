@@ -16,6 +16,7 @@ typedef struct {
     const char* title;                        // the ROM's title and game code
     const char* game_code;                    //
     ServalLinkFrameStats stats;               // what frame_end() would report
+    u32 cycles, cycles_step;                  // the cycle counter, and what each read adds
 } ServalHostLink;
 extern ServalHostLink serval_host_link;
 #endif

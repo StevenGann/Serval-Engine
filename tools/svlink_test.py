@@ -23,6 +23,10 @@ setting the round's time to 1 ends the round: the serval sits down); an
 entity's properties read and set (the serval moved, a read-only property
 refused); STATS arriving; the endpoint's own READ_MEM and MACHINE_PAUSE; and
 that the release build of the same page has no agent and never connects.
+And source-level debugging (step E6), with the script's maps beside the page:
+a breakpoint on a Lua line hit, the stack and its locals read, steps over,
+into and out planned from the maps, continuing; then the game's state at a
+later breakpoint matches, cell for cell, a run with that breakpoint alone.
 Exits 77 (skipped) without Chrome.
 """
 
@@ -292,11 +296,12 @@ class EndToEnd(unittest.TestCase):
             info = link.agent
             self.assertEqual(info["proto"], (1, 0))
             self.assertEqual(info["engine"], ARGS.version)
-            self.assertEqual(info["capabilities"], 1 << 0 | 1 << 4 | 1 << 5)  # vm, stats, entities
+            # vm, breakpoints, step, stats, entities, stop on fault
+            self.assertEqual(info["capabilities"], 0x77)
             self.assertEqual((info["contexts"], info["stack"], info["calls"], info["globals"],
                               info["fields"], info["array_cells"], info["entities"],
                               info["properties"], info["sites"], info["scratch"]),
-                             (32, 64, 16, 256, 16, 1024, 128, 21, 0, 32768))
+                             (32, 64, 16, 256, 16, 1024, 128, 21, 256, 32768))
             self.assertEqual((info["title"], info["game_code"]), ("FIREFLIES", "SVFF"))
             # The blob: loaded after the splash, which may still be showing.
             # Its hash, as svlink.py computes it and as the build's pc map
@@ -415,6 +420,101 @@ class EndToEnd(unittest.TestCase):
             self.assertIn(g["OBJ_RESTING"], objects)
             self.assertNotIn(g["OBJ_PLAYER"], objects)
             link.resume(0)
+
+    # --- Source-level debugging (E6) -------------------------------------------------
+
+    SYNC_TIME = 50  # the round's seconds left when the runs are compared
+
+    def state_at_sync(self, link, maps):
+        """Lets the game run to the breakpoint on `time = time - 1` (the
+        Room's once a second) with SYNC_TIME seconds left, and returns what
+        the game is then: the stop, the globals, every entity's properties
+        and fields, every context."""
+        g = self.names
+        link.break_set(svlink.SITE_BREAKPOINT, maps.line_sites("fireflies.lua:122"))
+        while True:
+            stop = link.go(60)
+            self.assertEqual((stop["reason"], maps.place(stop["pc"])), (3, "fireflies.lua:122"))
+            left = link.globals(g["G_TIME"], 1)[0]
+            self.assertGreaterEqual(left, self.SYNC_TIME, "the session ran past the sync point")
+            if left == self.SYNC_TIME:
+                break
+        entities = [(e, link.entity(e["entity"])) for e in link.entities()]
+        state = {"stop": (stop["frame"], stop["pc"], stop["context"]),
+                 "globals": link.globals(0, g["G_COUNT"]), "entities": entities,
+                 "contexts": link.contexts()}
+        link.break_clear(svlink.SITE_BREAKPOINT)
+        return state
+
+    def test_breakpoints_and_steps(self):
+        maps_dir = os.path.dirname(os.path.abspath(ARGS.page))
+        # A run with the sync breakpoint alone.
+        with svlink.open_page(ARGS.page) as link:
+            undisturbed = self.state_at_sync(link, svlink.maps_for(link, maps_dir))
+            link.resume(0)
+        with svlink.open_page(ARGS.page) as link:
+            maps = svlink.maps_for(link, maps_dir)
+            self.assertEqual(maps.blob, link.blob)
+            # A breakpoint in Firefly:create's flights, hit by the first
+            # firefly: its stack, its locals.
+            pcs = maps.line_sites("fireflies.lua:230")  # path_start(self, ...)
+            link.break_set(svlink.SITE_BREAKPOINT, pcs)
+            stop = link.go(60)
+            self.assertEqual((stop["reason"], stop["pc"]), (3, pcs[0]))
+            k = stop["context"]
+            frames = link.frames(k)
+            self.assertEqual(len(frames["activations"]), 1)
+            frame = frames["activations"][0]["frames"][0]
+            self.assertEqual(frame["pc"], pcs[0])
+            self.assertEqual(maps.function(frame["pc"])["name"], "Firefly:create")
+            found = maps.locals_at(frame["pc"])
+            self.assertIn("flight", found)
+            self.assertEqual(frames["cells"][frame["fp"] + found["flight"][0]], 1)
+            context = [c for c in link.contexts() if c["context"] == k][0]
+            self.assertEqual((context["state"], context["event"], context["pc"]), (2, 0, pcs[0]))
+            entity = link.entity(context["self"])
+            self.assertEqual(entity["object"], self.names["OBJ_FIREFLY"])
+            # Step over: the next line, in this firefly (the others run the
+            # same code past the step sites without stopping); over again,
+            # past wait_move(): the game runs until its path ends (or the
+            # serval catches it: then its create ends).
+            link.break_clear(svlink.SITE_BREAKPOINT)
+            stop = svlink.plan_step(link, maps, "over")
+            self.assertEqual((stop["reason"], stop["context"]), (4, k))
+            self.assertEqual(maps.place(stop["pc"]), "fireflies.lua:232")  # wait_move()
+            before = stop["frame"]
+            stop = svlink.plan_step(link, maps, "over")
+            self.assertIn(stop["reason"], (4, 5))
+            self.assertEqual(stop["context"], k)
+            if stop["reason"] == 4:
+                self.assertEqual(maps.place(stop["pc"]), "fireflies.lua:233")  # wait(...)
+                self.assertGreater(stop["frame"], before)  # it waited for its path
+            # Into print_time() from the Room's loop, over a line, out again.
+            room = maps.line_sites("fireflies.lua:123")  # print_time()
+            link.break_set(svlink.SITE_BREAKPOINT, room)
+            stop = link.go(60)
+            self.assertEqual((stop["reason"], stop["pc"]), (3, room[0]))
+            link.break_clear(svlink.SITE_BREAKPOINT)
+            stop = svlink.plan_step(link, maps, "into")
+            self.assertEqual((stop["reason"], maps.place(stop["pc"])), (4, "fireflies.lua:298"))
+            frames = link.frames(stop["context"])["activations"][0]["frames"]
+            self.assertEqual([maps.function(f["pc"] - (n > 0))["name"] for n, f in enumerate(frames)],
+                             ["print_time", "Room:room_start"])
+            self.assertEqual(maps.place(frames[1]["pc"] - 1), "fireflies.lua:123")
+            stop = svlink.plan_step(link, maps, "over")
+            self.assertEqual((stop["reason"], maps.place(stop["pc"])), (4, "fireflies.lua:299"))
+            stop = svlink.plan_step(link, maps, "out")
+            self.assertEqual(stop["reason"], 4)
+            self.assertEqual(maps.function(stop["pc"])["name"], "Room:room_start")
+            self.assertEqual(len(link.frames(stop["context"])["activations"][0]["frames"]), 1)
+            # The breakpoints and steps changed nothing: at the sync point
+            # the game is exactly as in the run without them.
+            disturbed = self.state_at_sync(link, maps)
+            link.resume(0)
+        self.assertEqual(disturbed["stop"], undisturbed["stop"])
+        self.assertEqual(disturbed["globals"], undisturbed["globals"])
+        self.assertEqual(disturbed["contexts"], undisturbed["contexts"])
+        self.assertEqual(disturbed["entities"], undisturbed["entities"])
 
     def test_release_page(self):
         # No agent in the page: none of the link's script, no export.

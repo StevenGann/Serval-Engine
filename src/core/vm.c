@@ -222,6 +222,49 @@ static const char* const event_names[VM_EV_COUNT] = {"Create",    "Step",       
 static void reset_warnings(void) {}
 #endif
 
+// --- Debug link hooks --------------------------------------------------------
+
+// debug link: where the debug link's agent (its VM part, src/core/vm_link.c;
+// docs/debug-link.md) reaches into the VM, in debug builds with the agent
+// (SERVAL_LINK_AGENT): a BRK and the faults in execute(), a context halting or
+// a reaction ending (a step's end), the phases (STATS' vm_cycles), the queue
+// (its peak) and loading (LOADED). In every other build each hook is nothing,
+// so release builds compile exactly as before. The functions are in the debug
+// link block at the end of this file.
+#ifdef SERVAL_LINK_AGENT
+#include "link_internal.h"
+static u32 link_brk(Context* c, u32 at, u32 sp, u32 fp);
+static void link_fault(Context* c, u32 kind, u32 problem, u32 at, u32 sp, u32 fp);
+static void link_halted(Context* c, bool reaction);
+static void link_settle(void);
+static void link_queued(u32 count);
+static void link_loaded(void);
+// The stepped context ended where the game can't park yet: inside another
+// script's run, or a reaction's end before react() has given the behaviour
+// beneath its return points back. It parks at the next settle point: the end
+// of a behaviour's run (run()), or of react().
+SERVAL_EWRAM_BSS static bool link_ended;
+#define LINK_FAULT(kind, problem) link_fault(c, LINK_FAULT_##kind, problem, at, sp, fp)
+#define LINK_HALTED(c, reaction)                                                                   \
+    do {                                                                                           \
+        if (serval_vm_link_stepping == context_index(c) + 1)                                       \
+            link_halted(c, reaction);                                                              \
+    } while (0)
+#define LINK_SETTLE() (link_ended ? link_settle() : (void)0)
+#define LINK_RAN(reaction) ((reaction) ? (void)0 : LINK_SETTLE())
+#define LINK_QUEUED(count) link_queued(count)
+#define LINK_PHASE(begin) (serval_vm_link_attached ? serval_vm_link_phase(begin) : (void)0)
+#define LINK_LOADED() link_loaded()
+#else
+#define LINK_FAULT(kind, problem) ((void)0)
+#define LINK_HALTED(c, reaction) ((void)0)
+#define LINK_RAN(reaction) ((void)0)
+#define LINK_SETTLE() ((void)0)
+#define LINK_QUEUED(count) ((void)0)
+#define LINK_PHASE(begin) ((void)0)
+#define LINK_LOADED() ((void)0)
+#endif
+
 // --- Blob access -------------------------------------------------------------
 
 static u32 le16(const u8* p) {
@@ -327,6 +370,7 @@ static void halt(Context* c) {
     c->r.state = CTX_FREE;
     c->stacked = false;
     clear_bit(live_contexts, context_index(c));
+    LINK_HALTED(c, false); // debug link: a stepped context ended
 }
 
 // The running handler has ended (or faulted): a reaction on top of a
@@ -336,6 +380,7 @@ static void finish(Context* c) {
     if (c->stacked) {
         c->r = c->below;
         c->stacked = false;
+        LINK_HALTED(c, true); // debug link: a stepped reaction ended
     } else {
         halt(c);
     }
@@ -418,6 +463,7 @@ static bool enqueue(Entity e, Entity other, u32 event) {
     q->other = other;
     q->event = (u8)event;
     queue_count++;
+    LINK_QUEUED(queue_count); // debug link: STATS' queue peak
     if (event == VM_EV_CREATE && entity_index(e) < MAX_ENT)
         creates_queued[entity_index(e)]++;
     return true;
@@ -970,8 +1016,13 @@ static s32 floored(u32 op, s32 a, s32 b) {
 // or running past the budget, warns and ends it). Returns the number of ops
 // run.
 static u32 execute(Context* c, bool reaction) {
+#ifdef SERVAL_LINK_AGENT
+    const u8* code = blob; // debug link: read again after a park (the agent's copy)
+    u32 size = blob_size;
+#else
     const u8* const code = blob;
     const u32 size = blob_size;
+#endif
     s32* const st = c->stack;
     const u32 base = c->r.base;
     u32 pc = c->r.pc;
@@ -1009,6 +1060,9 @@ static u32 execute(Context* c, bool reaction) {
             goto budget;
         left--;
         u32 op = code[pc++];
+#ifdef SERVAL_LINK_AGENT
+    dispatch: // debug link: a breakpoint's displaced opcode runs from here
+#endif
         switch (op) {
         case VM_OP_NOP:
             break;
@@ -1400,6 +1454,7 @@ static u32 execute(Context* c, bool reaction) {
             if (fn >= VM_SYS_COUNT) {
                 WARN_ONCE(WARN_SYS, "vm: SYS at 0x%x: no engine call %u (0 to %d); halted", at, fn,
                           VM_SYS_COUNT - 1);
+                LINK_FAULT(SYS, WARN_SYS); // debug link: FAULT, stop on fault
                 goto ended;
             }
             u32 n = sys_arity[fn];
@@ -1420,7 +1475,18 @@ static u32 execute(Context* c, bool reaction) {
         }
 
         case VM_OP_BRK:
-#ifdef SERVAL_DEBUG
+#ifdef SERVAL_LINK_AGENT
+            // debug link: with a debugger attached the game parks here (the
+            // registers saved); a breakpoint the agent patched gives back the
+            // opcode it replaced, run in BRK's place (displaced execution:
+            // one op counted), and a script's own BRK goes on after itself.
+            // With no debugger the agent logs, as below.
+            op = link_brk(c, at, sp, fp);
+            code = blob; // a copy made while parked runs at once
+            size = blob_size;
+            if (op != VM_OP_BRK)
+                goto dispatch;
+#elif defined(SERVAL_DEBUG)
             debug_log(text_format("vm: BRK at 0x%x", at));
 #endif
             break;
@@ -1440,6 +1506,7 @@ static u32 execute(Context* c, bool reaction) {
 
         default:
             WARN_ONCE(WARN_UNKNOWN_OP, "vm: unknown opcode 0x%x at 0x%x; halted", op, at);
+            LINK_FAULT(OPCODE, WARN_UNKNOWN_OP); // debug link
             goto ended;
         }
     }
@@ -1454,18 +1521,22 @@ escaped:
               "vm: a script ran out of the blob at 0x%x (%u bytes): a bad jump or call, or a "
               "handler without HALT at its end; halted",
               at, size);
+    LINK_FAULT(ESCAPED, WARN_ESCAPED); // debug link: FAULT, and stop on fault, before the halt
     goto ended;
 overflow:
     WARN_ONCE(WARN_OVERFLOW, "vm: stack overflow at 0x%x (more than %d cells); halted", at,
               VM_STACK);
+    LINK_FAULT(STACK, WARN_OVERFLOW); // debug link
     goto ended;
 underflow:
     WARN_ONCE(WARN_UNDERFLOW, "vm: stack underflow at 0x%x (opcode 0x%x needs more cells); halted",
               at, (u32)code[at]);
+    LINK_FAULT(STACK, WARN_UNDERFLOW); // debug link
     goto ended;
 call_depth:
     WARN_ONCE(WARN_CALL_DEPTH, "vm: CALL at 0x%x is nested more than %d deep; halted", at,
               VM_CALLS);
+    LINK_FAULT(CALLS, WARN_CALL_DEPTH); // debug link
     goto ended;
 reaction_wait:
 #ifdef SERVAL_DEBUG
@@ -1474,6 +1545,7 @@ reaction_wait:
               "halted",
               event_names[c->r.event], at);
 #endif
+    LINK_FAULT(WAIT, WARN_REACTION_WAIT); // debug link
     goto ended;
 budget: // the op at `at` is not run
 #ifdef SERVAL_DEBUG
@@ -1482,6 +1554,7 @@ budget: // the op at `at` is not run
                     event_names[c->r.event], reaction ? "reaction" : "behaviour", VM_OPS_PER_SLICE,
                     reaction ? "is halted (reactions can't wait)" : "waits a frame", at);
 #endif
+    LINK_FAULT(BUDGET, reaction ? WARN_REACTION_BUDGET : WARN_BUDGET); // debug link
     if (reaction)
         goto ended;
     c->r.wait_frames = 1;
@@ -1499,6 +1572,7 @@ ended:
 
 static void run(Context* c, bool reaction) {
     ops_frame += execute(c, reaction);
+    LINK_RAN(reaction); // debug link: a stepped context that ended meanwhile parks now
 }
 
 // --- Scheduler ---------------------------------------------------------------
@@ -1518,6 +1592,7 @@ static void react(u32 slot, u32 handler, Entity other, u32 event) {
         Context* c = start_context(handler, bound[slot], other, event, CTX_RUNNING);
         if (c)
             run(c, true);
+        LINK_SETTLE(); // debug link: a stepped reaction that ended parks here
         return;
     }
     Context* c = &contexts[live - 1];
@@ -1530,12 +1605,15 @@ static void react(u32 slot, u32 handler, Entity other, u32 event) {
     c->stacked = true;
     start_registers(&c->r, handler, other, CTX_RUNNING, event, c->r.sp);
     run(c, true);
-    if (c->r.state < CTX_WAIT_FRAMES)
-        return; // the behaviour was halted meanwhile (cannot happen today)
+    if (c->r.state < CTX_WAIT_FRAMES) {
+        LINK_SETTLE(); // debug link
+        return;        // the behaviour was halted meanwhile (cannot happen today)
+    }
     for (u32 k = 0; k < depth; k++) {
         c->call_pc[k] = below_call_pc[k];
         c->call_fp[k] = below_call_fp[k];
     }
+    LINK_SETTLE(); // debug link: with the behaviour whole again
 }
 
 // Slots whose entity destroy() destroyed since the collision pass listed the
@@ -1638,6 +1716,7 @@ static bool nested_phase(const char* who) {
 void vm_step(void) {
     if (nested_phase("vm_step"))
         return;
+    LINK_PHASE(true); // debug link: STATS' vm_cycles
     ops_frame = 0;
     in_phase = true;
     // Resume pass: each context in use once, in pool order.
@@ -1697,6 +1776,7 @@ void vm_step(void) {
     }
     drain(); // events the Step reactions queued, e.g. the Create of an entity they spawned
     in_phase = false;
+    LINK_PHASE(false); // debug link
 }
 
 // --- Collisions --------------------------------------------------------------
@@ -1819,6 +1899,7 @@ void vm_collide_clear(void) {
 void vm_events(void) {
     if (nested_phase("vm_events"))
         return;
+    LINK_PHASE(true); // debug link: STATS' vm_cycles
     in_phase = true;
     drain(); // what game code queued since vm_step
     // No blob, no attached entity: nothing could react to a collision (and
@@ -1828,6 +1909,7 @@ void vm_events(void) {
             collide_pair(collide_a[p], collide_b[p]);
     }
     in_phase = false;
+    LINK_PHASE(false); // debug link
 }
 
 // --- Entities and events -----------------------------------------------------
@@ -2080,6 +2162,7 @@ static void install(const u8* b, u32 size, bool keep) {
         if (bound[slot] != ENTITY_NONE)
             note_binding(slot);
     }
+    LINK_LOADED(); // debug link: LOADED; every breakpoint site is gone
 }
 
 // True (warning) if a phase (or vm_kill's Destroy logic) is running: vm_load,
@@ -2272,5 +2355,126 @@ void serval_vm_link_set_field(Entity e, u32 n, s32 value) {
 void serval_vm_link_set_array_cell(u32 n, s32 value) {
     if (n < VM_ARRAY_CELLS)
         array_cells[n] = value;
+}
+
+// debug link (E6): the VM's part of breakpoints, stepping, contexts and
+// frames, and faults (vm_link.c), and the hooks above (Debug link hooks).
+
+// The fault warnings FAULT has carried since the load (a bit per WARN_*):
+// FAULT carries the VM's warning once per kind per loaded blob, as the log has
+// it. The most events queued since the agent last asked.
+SERVAL_EWRAM_BSS static u32 link_faults;
+SERVAL_EWRAM_BSS static u32 link_queue_peak;
+SERVAL_EWRAM_BSS static bool link_ended; // the stepped context ended during a run: park after it
+_Static_assert(WARN_ESCAPED < 32 && WARN_UNKNOWN_OP < 32 && WARN_OVERFLOW < 32 &&
+                   WARN_UNDERFLOW < 32 && WARN_CALL_DEPTH < 32 && WARN_BUDGET < 32 &&
+                   WARN_REACTION_BUDGET < 32 && WARN_REACTION_WAIT < 32 && WARN_SYS < 32,
+               "link_faults has a bit for each fault's warning");
+
+void serval_vm_link_use_copy(const u8* copy) {
+    blob = copy; // byte for byte the blob: blob_size, the tables' offsets and every pc hold
+}
+
+u32 serval_vm_link_queue_peak(void) {
+    u32 peak = link_queue_peak;
+    link_queue_peak = 0;
+    return peak;
+}
+
+bool serval_vm_link_context(u32 k, ServalVmLinkContext* out) {
+    if (k >= VM_CONTEXTS || contexts[k].r.state == CTX_FREE)
+        return false;
+    Context* c = &contexts[k];
+    const Registers* r = &c->r;
+    u32 slot = entity_index(c->self);
+    *out = (ServalVmLinkContext){
+        .pc = r->pc,
+        .self = c->self,
+        .other = r->other,
+        .object = c->self != ENTITY_NONE && slot < MAX_ENT && bound[slot] == c->self
+                      ? bound_object[slot]
+                      : -1,
+        .wait = r->state == CTX_WAIT_FRAMES ? r->wait_frames : 0,
+        .state = r->state,
+        .event = r->event,
+        .sp = r->sp,
+        .fp = r->fp,
+        .base = r->base,
+        .cp = r->cp,
+        .stacked = c->stacked,
+        .stack = c->stack,
+        .call_pc = c->call_pc,
+        .call_fp = c->call_fp,
+    };
+    if (c->stacked) {
+        const Registers* b = &c->below;
+        out->below.pc = b->pc;
+        out->below.wait = b->state == CTX_WAIT_FRAMES ? b->wait_frames : 0;
+        out->below.state = b->state;
+        out->below.event = b->event;
+        out->below.sp = b->sp;
+        out->below.fp = b->fp;
+        out->below.base = b->base;
+        out->below.cp = b->cp;
+        out->below.call_pc = below_call_pc; // set aside by react() while the reaction runs
+        out->below.call_fp = below_call_fp;
+    }
+    return true;
+}
+
+// A BRK in execute(): the registers saved where it is, for FRAMES and
+// SET_LOCAL while parked; the agent returns the opcode to run in its place.
+__attribute__((noinline)) static u32 link_brk(Context* c, u32 at, u32 sp, u32 fp) {
+    c->r.pc = at;
+    c->r.sp = (u8)sp;
+    c->r.fp = (u8)fp;
+    return serval_vm_link_brk(context_index(c), at);
+}
+
+// A fault in execute(), its warning just given (or not: once per kind per
+// load): the registers saved as they were when it faulted.
+__attribute__((noinline)) static void link_fault(Context* c, u32 kind, u32 problem, u32 at, u32 sp,
+                                                 u32 fp) {
+    c->r.pc = at;
+    c->r.sp = (u8)sp;
+    c->r.fp = (u8)fp;
+    bool fresh = warned[problem] && !(link_faults >> problem & 1u);
+    link_faults |= 1u << problem;
+    serval_vm_link_fault(context_index(c), kind, at, fresh ? serval_warn_text() : NULL);
+}
+
+// The stepped context halted (reaction false) or a reaction on it ended
+// (true). It parks at once where nothing is left half done: its own end, or
+// a halt outside any script's run. A reaction's end waits for react() to give
+// the behaviour beneath its return points back, and a halt during another
+// context's run (a stale binding that run found) for that run's end, after
+// which its blob is read again.
+static void link_halted(Context* c, bool reaction) {
+    if (!serval_vm_link_ends(context_index(c), reaction))
+        return;
+    bool other_running = false;
+    for (u32 k = next_bit(live_contexts, VM_CONTEXTS, 0); k < VM_CONTEXTS;
+         k = next_bit(live_contexts, VM_CONTEXTS, k + 1))
+        other_running |= &contexts[k] != c && contexts[k].r.state == CTX_RUNNING;
+    if (reaction || other_running)
+        link_ended = true;
+    else
+        serval_vm_link_ended();
+}
+
+static void link_settle(void) {
+    link_ended = false;
+    serval_vm_link_ended();
+}
+
+static void link_queued(u32 count) {
+    if (count > link_queue_peak)
+        link_queue_peak = count;
+}
+
+static void link_loaded(void) {
+    link_faults = 0;
+    link_ended = false;
+    serval_vm_link_loaded();
 }
 #endif // debug link

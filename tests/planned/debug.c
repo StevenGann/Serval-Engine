@@ -6,9 +6,12 @@
 // SERVAL_PLANNED goes, its line goes too. This file is in no build target: it
 // warns on purpose. See docs/development.md#planned-api.
 
+//
+// debug.h has no planned names in this version: debug_break(), the debug
+// link's script breakpoint, is implemented (docs/debug-link.md#script-
+// breakpoints). A planned name added later gets its line here.
+
 #include "serval/debug.h"
 
 void planned_debug(void);
-void planned_debug(void) {
-    debug_break(); // planned
-}
+void planned_debug(void) {}
