@@ -2,7 +2,7 @@
 
 The debug link connects a debugger (Studio Advance's) to a game running in an emulator or a browser: pause and step, breakpoints in scripts, the call stack and variables, an entity inspector, memory viewers, a profiler, logs and hot reload of scripts. It is a contract between three parties, the engine, the endpoint the game runs in (the debugger's mGBA fork, or the game's web page) and the debugger, so it is specified here, in the open repository. The debugger's own work (maps from bytecode to source, planning breakpoints, steps and reloads, the event editor's blocks) is the editor's.
 
-**Status:** specified, not implemented: **protocol 1.0, mailbox v1** (decided 2026-10-10; [open-questions.md](open-questions.md)). No part of the agent or the endpoints is built yet (the [maps](#maps) are); [Implementation](#implementation) lists the steps that build them, each an addition in a 1.x minor version ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). What exists today: the `BRK` opcode, which logs in debug builds ([vm.md](vm.md#debug)); `vm_reload()` ([vm.md](vm.md#hot-reload)); `debug_log()` and the engine's warnings, which reach mGBA's log or the browser's console ([api-reference.md](api-reference.md#debugh)); `debug_break()`, declared as planned API ([below](#script-breakpoints)); and the reserved registers 0x04FFF800-0x04FFF80F ([core-api.md](core-api.md#hardware-the-engine-uses)). Release builds will never contain any of it.
+**Status:** **protocol 1.0, mailbox v1** (decided 2026-10-10; [open-questions.md](open-questions.md)), being implemented step by step ([Implementation](#implementation)), each step an addition in a 1.x minor version ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). **Implemented** (2026-10-10): the [maps](#maps) (E3, E4); the agent's core (E5: `src/core/link.c`, its VM part `src/core/vm_link.c`: the mailbox, framing, `AGENT_INFO`, `PAUSE`, `RESUME` and a frame step, `GLOBALS`, `SET_GLOBAL`, `ARRAY_CELLS`, `SET_ARRAY_CELL`, `ENTITIES`, `ENTITY`, `SET_PROPERTY`, `STATS_SUBSCRIBE` and `STATS`, `OPTIONS`, `LOADED`, the error codes); the platforms' ends (E7: the GBA's registers, `src/gba/link_gba.c`, tested only as far as dormancy and the host tests reach, since no fork exists yet; the web page's, `src/web/link.js` and `link_web.c`, tested end to end); and `tools/svlink.py`, the reference client (E8; CTest `svlink_e2e`). **Still to come:** the VM's part (E6: `BRK` parking and displaced execution, breakpoints, stepping, `CONTEXTS`, `FRAMES`, `SET_LOCAL`, faults and stop on fault, `debug_break()`, still planned API), hot reload (E9) and the mGBA fork (F1); until E6 the agent answers those requests `UNSUPPORTED` ([what it does meanwhile](#the-agent-before-the-vms-part)). Release builds contain none of it.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ flowchart LR
 
 | Part | What it is | What it does | Ships with |
 | --- | --- | --- | --- |
-| **Agent** | Engine code in debug builds: `src/core/link.c` (portable, host-tested), the VM's part in `vm.c` behind a hook | Answers in the VM's and the ECS's vocabulary (contexts, frames, cells, globals, arrays, entities, `VM_P_*` properties), parks the game, patches breakpoints, applies reload plans, sends stats | The engine (MIT) |
+| **Agent** | Engine code in debug builds: `src/core/link.c` (portable, host-tested), the VM's part in `src/core/vm_link.c`, reached through a table `vm.c` defines (so a game without scripts doesn't link it), the platform's end in `src/gba/link_gba.c`, `src/web/link_web.c` | Answers in the VM's and the ECS's vocabulary (contexts, frames, cells, globals, arrays, entities, `VM_P_*` properties), parks the game, patches breakpoints, applies reload plans, sends stats | The engine (MIT) |
 | **Endpoint** | The transport at the game's end: the mGBA fork's process, or the web page's script | Carries frames between the debugger and the mailbox; answers raw memory, machine pause and logs itself | The fork with the debugger (MPL 2.0); the page with the engine (`src/web/shell.html`, MIT) |
 | **Debugger** | The host | Everything source-level: the maps, breakpoint and step planning, reload planning, the UI | Studio Advance (closed) |
 
@@ -52,7 +52,7 @@ flowchart LR
 | Transport | Endpoint | Who dials | When |
 | --- | --- | --- | --- |
 | **mGBA fork** | The fork's process (`serval-emu`): a socket, the mailbox through mGBA's memory API, a hook for the two [registers](#finding-the-endpoint), mGBA's log forwarded as `LOG` | The fork dials the debugger, which listens on 127.0.0.1 only: `serval-emu --link 127.0.0.1:PORT --link-token TOKEN game.gba` | 1.x, after the web |
-| **Web page** | The page's script (`src/web/shell.html`), only in builds with the agent and only when the page's URL fragment holds `serval-link=TOKEN` (beside the test mode's `frames=...`) | The page dials `ws://<the host and port that served it>/serval-link` | 1.x, first: it needs no fork |
+| **Web page** | The page's script (`src/web/link.js`, which `cmake/ServalWeb.cmake` adds to the pages built with the agent beside `src/web/shell.html`'s own), only in builds with the agent and only when the page's URL fragment holds `serval-link=TOKEN` (beside the test mode's `frames=...`) | The page dials `ws://<the host and port that served it>/serval-link` | 1.x, first: it needs no fork |
 | **Real hardware** | Out of scope. Later it could be the same agent with a serial driver (the link port in UART mode to a USB adapter, about 11 KB/s) and the debugger as the host | — | Not planned. It would claim the serial port and its interrupt, so it would be a build option a game opts into, and needs no reservation now |
 
 Both ends of the TCP connection disable Nagle's algorithm (`TCP_NODELAY`): requests and replies are small, and a round trip took 41 ms with Nagle against delayed ACKs, under 0.1 ms without.
@@ -69,13 +69,15 @@ Debug builds are those with `SERVAL_DEBUG`: Debug and RelWithDebInfo, the builds
 
 | Piece | Where | Cost with no debugger attached |
 | --- | --- | --- |
-| The agent: framing, the queries, parking, breakpoints, reload, stats | `src/core/link.c`; the VM's part in `vm.c` behind a hook, so a game without scripts doesn't link it | ROM only: an estimated 3-5 KB of Thumb |
-| The [mailbox](#mailbox-v1) | EWRAM | 3,092 bytes |
-| The scratch: the agent's copy of the blob, which breakpoints patch and reloads land in | EWRAM, `SERVAL_LINK_SCRATCH` bytes (a CMake cache variable; default 32,768; 0: no breakpoints, stepping or reload), in games that link the VM | That much |
-| The breakpoint sites | EWRAM: each site's pc, original opcode and kinds | 8 bytes a site, at least 256 sites |
-| A poll at the end of `frame_end()`, after `frames++` | `if (serval_link_hook) serval_link_hook();`, the pattern of the map, raster and mixer hooks | A load and a compare a frame; the hook is set only when an endpoint answered |
-| `BRK` restructured for [displaced execution](#setting-breakpoints-patching-with-displaced-execution) | `vm.c` | About 1% of VM time, from code layout ([vm.md](vm.md#what-breakpoints-cost)) |
-| IWRAM | — | **None** |
+| The agent: framing, the queries, parking, breakpoints, reload, stats | `src/core/link.c`; the VM's part in `src/core/vm_link.c`, reached only through `serval_link_vm`, a table `vm.c` defines and `link.c` refers to weakly, so a game without scripts doesn't link it; the entity properties' part only once `entity_create()` ran, so a game without entities keeps no pool through it | ROM only. Measured (E5, E7; RelWithDebInfo, Thumb): 5.4 KB in `hello`, 7.5 KB in `fireflies` and `jukebox`; at -O0 (Debug) 6.0 and 9.0 KB |
+| The [mailbox](#mailbox-v1) | EWRAM | 3,092 bytes, and 44 of the agent's own |
+| The scratch: the agent's copy of the blob, which breakpoints patch and reloads land in | EWRAM, `SERVAL_LINK_SCRATCH` bytes (a CMake cache variable; default 32,768; 0: no breakpoints, stepping or reload), in games that link the VM. Reserved since E5, used from E6 | That much |
+| The breakpoint sites (E6) | EWRAM: each site's pc, original opcode and kinds | 8 bytes a site, at least 256 sites |
+| A poll at the end of `frame_end()`, after `frames++` | `if (serval_link_hook) serval_link_hook();`, the pattern of the map, raster and mixer hooks | A load and a compare a frame; the hook is set only when an endpoint answered. Measured: about 30 cycles a frame (the hook is in EWRAM), 0.01% of the frame (`gba_link_tests`) |
+| `BRK` restructured for [displaced execution](#setting-breakpoints-patching-with-displaced-execution) (E6) | `vm.c` | About 1% of VM time, from code layout ([vm.md](vm.md#what-breakpoints-cost)) |
+| IWRAM | — | **None** (CTests `link_map_hello` and `link_map_fireflies` check the maps) |
+
+On the web, a debug page grows by 8 KB of WebAssembly (`hello`) to 14 KB (`fireflies`, `jukebox`): the agent, and Asyncify's instrumentation of the path to its park, which makes calls through pointers; with the page's script, `link.js`, the page grows by 16 to 22 KB. A release page is unchanged, byte for byte.
 
 **Release builds add nothing:** no agent, no mailbox, no hook, no register written. `BRK` stays a no-op and `TRACE` skips its operand, as today, and `debug_break()` does nothing. `debug_log()` still writes mGBA's debug registers in every build, which the fork forwards as `LOG`, so logs work in release builds too.
 
@@ -96,7 +98,7 @@ On the GBA, two registers in a range real hardware ignores, next to mGBA's debug
 
 A read of open bus that happens to give `0x1A5E` can't park a game on hardware: the agent parks only while the mailbox holds `'SVLE'`, which only an endpoint writes, and only once a debugger has attached ([Handshake](#handshake)).
 
-**On the web** there are no registers. When the fragment asks and the build has the agent, the page's script opens its WebSocket and then calls the module's exported `serval_link_attach()`; the agent rings through the doorbell import the page provides, `serval_link_ring(address)`, and the page reads and writes the mailbox in the module's memory.
+**On the web** there are no registers. When the fragment asks and the build has the agent, the page's script (`src/web/link.js`) calls the module's exported `serval_link_attach()` before the game starts (it returns the engine's version, for `HELLO`) and opens its WebSocket; `serval_init()` then starts the agent as on the GBA (a page that attaches later starts it at once). The agent rings through the doorbell import the page provides (`Module.servalLinkRing(address)`), and the page reads and writes the mailbox in the module's memory. A release page has none of this script, and a page opened without the fragment never attaches: its agent stays dormant.
 
 ### Mailbox v1
 
@@ -115,11 +117,13 @@ In EWRAM, 4-byte aligned, little-endian like the blob:
 | 20 | 1,024 | in | Endpoint | Whole frames for the agent |
 | 1,044 | 2,048 | out | Agent | Whole frames from the agent |
 
-The agent rings after appending to `out` and before a frame that wouldn't fit. A later mailbox version only appends fields, after `out`, which an endpoint finds by `size` and ignores if it doesn't know them; a change to an existing field is a new major of the mailbox, which comes only with an engine major ([Versioning](#versioning-and-capabilities)).
+The agent rings after appending to `out` and before a frame that might not fit (it keeps room for a whole frame, 1,024 bytes). When it starts (`serval_init()`), the agent zeroes the whole mailbox, `endpoint` included, before writing its header: an endpoint that finds its `SVLE` gone at a ring while its debugger is connected knows the agent started again, sends `GAME_RESET` (if it had sent `AGENT_FOUND`), then `AGENT_FOUND`, and writes `SVLE` again. A later mailbox version only appends fields, after `out`, which an endpoint finds by `size` and ignores if it doesn't know them; a change to an existing field is a new major of the mailbox, which comes only with an engine major ([Versioning](#versioning-and-capabilities)).
 
 ### The doorbell
 
 A ring is synchronous. During the write (in the fork's register hook, or the web's import call) the endpoint sends `out`'s frames, zeroes `out_len`, and reads `state`:
+
+`state` says what the agent does after the ring. A ring that only makes room in `out` while the agent still reads `in` says running, even with the game parked, so an endpoint that pauses the machine for a parked agent never pauses it before the agent has emptied its inbox; the parked agent's ring before it waits says parked.
 
 - **Running:** the write returns, and the game runs on.
 - **Parked:** the fork pauses the emulated machine after the write. When a frame for the agent arrives, it writes `in` and runs the machine until the agent's next ring, so a parked game uses no host CPU, plays no sound and answers at once. The web page returns at once; the agent then [waits](#parking) for its inbox.
@@ -191,7 +195,9 @@ Before parking inside the interpreter, `execute()` stores `pc`, `sp` and `fp` in
 1. The endpoint connects and sends `HELLO`.
 2. The debugger checks it ([on the web](#security-of-the-web-transport), the `Host` and `Origin` headers first) and answers `HELLO`, or closes the connection. Neither side sends anything else first.
 3. Once the endpoint knows the agent's mailbox (its first ring since the game started, which may come before the handshake or after it, and again after each `GAME_RESET`), it sends `AGENT_FOUND`, and the debugger sends `AGENT_INFO`. Until then, and in a build without an agent, the endpoint answers agent messages with `NO_AGENT`.
-4. The agent's reply to `AGENT_INFO` attaches it: from then until it [detaches](#parking), it may park the game.
+4. The agent's reply to `AGENT_INFO` attaches it: from then until it [detaches](#parking), it may park the game. Before it, the agent answers the other requests it knows with `BAD_REQUEST` ("not attached: send AGENT_INFO first"), and those it doesn't with `UNSUPPORTED`.
+
+Both `HELLO`s are sent with flags 0 and seq 0 (seqs are the debugger's: the endpoint's `HELLO` is no request), and each side recognizes the other's by its type. A frame from the debugger with the reply flag, or with seq 0 (an event: the debugger sends none in 1.0), gets no reply.
 
 **`HELLO`** (both ways): `proto_major u8, proto_minor u8, kind u8` (the sender: 0 the debugger, 1 the mGBA fork, 2 a web page, 3 hardware), `version str` (the sender's own: the fork's, the engine's for a page, the debugger's), `token str` (the endpoint's; empty from the debugger), `capabilities u32` (the endpoint's; 0 from the debugger). The debugger answers in the endpoint's major, with the lower of the two minors.
 
@@ -261,11 +267,11 @@ D is the debugger, E the endpoint, A the agent. "→" separates a request's payl
 | 0x45 | `BREAK_CLEAR` | D→A | `kind u8, count u16` (0: every site of that kind), `count` × pc → nothing |
 | 0x46 | `CONTEXTS` | D→A | → `count u8`, then for each live context, 26 bytes: `context`, `state u8` (1 ready, 2 running: the one stopped, 3 waiting for frames, 4 for its animation, 5 for its path), `event u8` (`VM_EV_*`), `self` and `other` entities, `object`, `pc`, `wait u16` (frames left), `depth u8` (calls deep), `stacked u8` (1: a reaction runs on top of a waiting behaviour), then the behaviour beneath (zeros if not stacked): `event u8, state u8, pc, wait u16, depth u8` |
 | 0x47 | `FRAMES` | D→A | `context` → `sp u8`, the stack's cells 0 to `sp` − 1, then `activations u8` (1, or 2 when stacked: the reaction's, then the behaviour's beneath), each `base u8, count u8` and `count` × `{pc, fp u8}`, innermost first: the first pc is where it is, the others are return points. The debugger names the locals from the `.svdbg` map |
-| 0x48 | `GLOBALS` | D→A | `first u16, count u16` (at most 253) → `first u16, count u16`, the cells |
+| 0x48 | `GLOBALS` | D→A | `first u16, count u16` (at most 253) → `first u16, count u16`, the cells. A count reaching past `VM_GLOBALS` is cut there (the reply's `count` says how many); a `first` past it is `NO_SUCH`, a `count` over 253 `BAD_REQUEST`; no blob loaded: `NO_VM` (the same for the other three below) |
 | 0x49 | `SET_GLOBAL` | D→A | `index u16`, cell → nothing |
-| 0x4A | `ARRAY_CELLS` | D→A | `first u16, count u16` (at most 253) → `first u16, count u16`, the cells of the RAM arrays' pool (ROM arrays are in the blob the debugger has) |
+| 0x4A | `ARRAY_CELLS` | D→A | `first u16, count u16` (at most 253) → `first u16, count u16`, the cells of the RAM arrays' pool (ROM arrays are in the blob the debugger has), cut at `VM_ARRAY_CELLS` as `GLOBALS` is at `VM_GLOBALS` |
 | 0x4B | `SET_ARRAY_CELL` | D→A | `index u16`, cell → nothing |
-| 0x4C | `ENTITIES` | D→A | `first u8` (an entity slot) → `next u8` (the first slot not reported; `MAX_ENT` when done), then for each live entity from `first` in slot order, as many as fit: entity, `mask u32` (`ent_mask`), `object` (−1: not attached), `context` (its behaviour's, or none). From the ECS's pools, so C games too |
+| 0x4C | `ENTITIES` | D→A | `first u8` (an entity slot) → `next u8` (the first slot not reported; `MAX_ENT` when done), then for each live entity from `first` in slot order, as many as fit: entity, `mask u32` (`ent_mask`), `object` (−1: not attached), `context` (its behaviour's, or none). From the ECS's pools, so C games too A `first` past `MAX_ENT` is `BAD_REQUEST`; at most 113 entities a reply |
 | 0x4D | `ENTITY` | D→A | entity → entity, `object`, `count u8` (`VM_P_COUNT`) and every engine property 0 to `count` − 1 as `GETP` reads it (without its warnings), `fields u8` (`VM_FIELDS` if attached, else 0) and the instance fields |
 | 0x4E | `SET_PROPERTY` | D→A | entity, `property u8` (an engine property, or an instance field from `VM_P_FIELD0`), cell → nothing. `SETP`'s rules, without its warnings: truncated to the pool's type; a read-only property is `READ_ONLY` |
 | 0x4F | `SET_LOCAL` | D→A | `context, index u8` (a stack cell below `sp`), cell → nothing; parked |
@@ -277,9 +283,9 @@ D is the debugger, E the endpoint, A the agent. "→" separates a request's payl
 | 0x55 | `OPTIONS` | D→A | `flags u32`: bit 0 stop on fault (off when attaching) → nothing |
 | 0x60 | `STOPPED` | A→D | `reason u8` (below), `context` (none for pause, frame and `debug_break()` in C), `pc`, `frame u32` (`frame_count()`), `fault u8` (`FAULT`'s kind; 0 unless the reason is fault) |
 | 0x61 | `FAULT` | A→D | `kind u8` (below), `context`, `pc`, `text str` (the VM's warning). Sent when the VM warns of a fault (once per kind per loaded blob, as the log is), and with stop on fault at every fault: the agent then parks before the context is halted or throttled, so the debugger sees the state that faulted |
-| 0x62 | `STATS` | A→D | Every `every` frames, at the frame boundary: `frame u32`, `cycles u32` (`frame_cpu_cycles()`), `vm_cycles u32` (the cycle counter read around the two phases; an estimated 40 cycles a frame to read; on the web both counts come from the browser's clock, as `frame_cpu_cycles()` does there, and say nothing about the GBA), `ops u32` (`vm_ops_this_frame()`), `contexts u8` (live), `queue u16` (its peak since the last `STATS`), `entities u8` (live), `drawn u8, matrices u8, dropped u16` (`sprite_stats()`), `mixer_cycles u32` (0 without a sound bank), `warnings u32` (`debug_warning_count()`) |
+| 0x62 | `STATS` | A→D | Every `every` frames, at the frame boundary: `frame u32`, `cycles u32` (`frame_cpu_cycles()`), `vm_cycles u32` (the cycle counter read around the two phases; an estimated 40 cycles a frame to read; on the web both counts come from the browser's clock, as `frame_cpu_cycles()` does there, and say nothing about the GBA), `ops u32` (`vm_ops_this_frame()`), `contexts u8` (live), `queue u16` (its peak since the last `STATS`), `entities u8` (live), `drawn u8, matrices u8, dropped u16` (`sprite_stats()`), `mixer_cycles u32` (0 without a sound bank), `warnings u32` (`debug_warning_count()`). Until the VM's part (E6), `vm_cycles` is 0 and `queue` the most events queued at frame boundaries |
 | 0x63 | `RELOADED` | A→D | `result u8` (0 done, else an error code), `count u8`, then for each context that was live: `context, outcome u8` (0 kept, 1 restarted, 2 halted) |
-| 0x64 | `LOADED` | A→D | `size u32, hash u32` (0, 0: unloaded). The game itself loaded, reloaded or unloaded a blob (`vm_load`, `vm_reload`, `vm_unload`) while attached: every breakpoint site is gone, and the debugger picks the maps again |
+| 0x64 | `LOADED` | A→D | `size u32, hash u32` (0, 0: unloaded). The game itself loaded, reloaded or unloaded a blob (`vm_load`, `vm_reload`, `vm_unload`) while attached: every breakpoint site is gone, and the debugger picks the maps again. Until the VM's part (E6) hooks the loader, the agent notices a load at the next frame boundary by the blob's address and size, so a reload of the same blob at the same address (`fireflies`' restart) isn't reported: the same bytes, the same maps |
 
 | `STOPPED` reason | |
 | --- | --- |
@@ -429,12 +435,38 @@ Steps are numbered E for the engine and F for the fork. Before 1.0: E0, the rese
 | 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark). **Done**: `tests/bench/scriptmark` (`scriptmark_bench`, and `fireflies_bench` for the light end; a benchmark rather than an example), [development.md](development.md#script-benchmark) | — |
 | 1 | E3 | `svm.py --map` (`.svmap`), with `svm_test.py` cases. **Done** ([Maps](#maps)) | — |
 | 1 | E4 | `svlua.py --debug-info` (`.svdbg`), then `--keep-layout`, with `svlua_test.py` cases; `serval_add_script()` writes both. **Done**, with `tools/check-debug-maps.py`, which joins them as a debugger does (CTest `debug_maps`) | — |
-| 2 | E5 | The agent's core: the mailbox, framing, `AGENT_INFO`, pause, resume, a frame step, globals, arrays, entities, properties, stats; host tests with a fake endpoint | E1 |
+| 2 | E5 | The agent's core: the mailbox, framing, `AGENT_INFO`, pause, resume, a frame step, globals, arrays, entities, properties, stats; host tests with a fake endpoint. **Done** (`src/core/link.c`, `vm_link.c`; `tests/link_tests.c`, `gba_link_tests`, CTests `link_map_*`) | E1 |
 | 2 | E6 | The VM's part: `BRK` parking and displaced execution, the copy, breakpoints, `STEP`'s filtering, contexts and frames, faults; `debug_break()` implemented in C and as a builtin; host and ROM tests (the test ROM has no endpoint: the agent must stay dormant) | E5 |
-| 2 | E7 | Platforms: the GBA's presence register and doorbell, parking with the sound muted; the web endpoint in `shell.html`, the doorbell import, Asyncify for the park | E5 |
-| 2 | E8 | `tools/svlink.py`: a reference client in Python's standard library (as `svm.py` is the blob format's), driving the web build headless in CI | E7 |
+| 2 | E7 | Platforms: the GBA's presence register and doorbell, parking with the sound muted; the web endpoint (planned in `shell.html`, built as `link.js`), the doorbell import, Asyncify for the park. **Done**: the GBA's end in `src/gba/link_gba.c` (dormant without an endpoint, which the test ROM shows; the rest waits for the fork), the web's in `src/web/link.js` and `link_web.c` | E5 |
+| 2 | E8 | `tools/svlink.py`: a reference client in Python's standard library (as `svm.py` is the blob format's), driving the web build headless in CI. **Done**: a command line and a library; CTest `svlink_e2e` (web preset, in CI's web job) drives `fireflies`' debug page, and checks that its release page never connects | E7 |
 | 3 | F1 | The mGBA fork: the endpoint, the registers, `serval-emu`, builds for three platforms (outside this repository) | E1; E5 to test against |
 | 4 | E9 | The agent's hot reload with plans: relocate, restart, the name maps | E6 |
 | any | E10 | The VM's fixed cost ([vm.md](vm.md#implementation-notes)), measured with `scriptmark`. **Done**: 7,010 cycles a frame with nothing to run, now about 620; `fireflies`' VM 30% faster, `scriptmark`'s 8% | E2 |
 
 The debugger's side (its link server, the map readers, the step and reload planners, the UI) is built in Studio Advance alongside.
+
+### The agent before the VM's part
+
+Until E6 the agent answers what this document specifies for E5, and nothing it can't:
+
+- **Capabilities** `0x31` (the VM, stats, entities) in a game that links the VM, `0x30` without it. The VM's bit covers `GLOBALS` to `SET_ARRAY_CELL` now; `CONTEXTS`, `FRAMES` and `SET_LOCAL` come with E6, and `STEP`, `BREAK_*` and `RELOAD_*` with their own bits, all answered `UNSUPPORTED` meanwhile. `AGENT_INFO` reports 0 sites; its scratch is reserved already (`SERVAL_LINK_SCRATCH`), so a debug build's memory is what it will be.
+- **`OPTIONS`** keeps stop on fault for the VM's part; nothing faults into the debugger yet (no capability bit 6).
+- **`STATS`:** `vm_cycles` 0, and `queue` the peak of the events queued at frame boundaries, until the VM's part reads the cycle counter around the two phases and counts the queue's peak inside them.
+- **`LOADED`** is noticed at frame boundaries, by the blob's address and size (above, in the table).
+
+The VM's part keeps the seams for it: `vm.c`'s debug link block (the accessors `vm_link.c` reads the VM through, and `serval_link_vm`), the park loop in `link.c` (parking inside a frame is `state` 2 and a reason other than pause or frame), and the scratch in `vm_link.c`.
+
+### Decisions taken while implementing
+
+Where this document left a choice, or said something the implementation does differently, the protocol now says what the 1.0 agent and the web page do (2026-10-10, steps E5, E7, E8):
+
+- **Both `HELLO`s have flags 0 and seq 0**, and are recognized by their type ([Handshake](#handshake)); requests before `AGENT_INFO` get `BAD_REQUEST`; frames from the debugger flagged as replies, or with seq 0, get no reply.
+- **The mailbox's `state` is what the agent does after the ring**: a ring that only makes room in `out` while the agent still reads `in` says running ([The doorbell](#the-doorbell)). Without that rule, an endpoint that pauses the machine for a parked agent would pause it with the inbox half read.
+- **The agent zeroes the mailbox when it starts**, `endpoint` included, which is how an endpoint without a reset of its own (the web page) knows to send `GAME_RESET` ([Mailbox v1](#mailbox-v1)).
+- **The agent keeps room for a whole frame in `out`**, ringing before a frame that might not fit rather than one that doesn't (it writes its replies in place).
+- **`GLOBALS` and `ARRAY_CELLS` cut a count at the pool's end**, and every request on the VM's state answers `NO_VM` while no blob is loaded ([Messages](#messages-protocol-10)).
+- **The web page's end is `src/web/link.js`**, not `src/web/shell.html`: added only to pages built with the agent, so a release page is byte for byte the page it was. It calls `serval_link_attach()` before `main()`, and `serval_init()` starts the agent ([Finding the endpoint](#finding-the-endpoint)). It keeps the `LOG` lines from before the handshake (the last 256) and sends them after it; `LOG`'s frame is the frames the page has shown. `READ_MEM` and `WRITE_MEM` reach the I/O registers (0x04000000-0x040003FF), palette RAM (0x05000000-0x050003FF), VRAM (0x06000000-0x06017FFF) and OAM (0x07000000-0x070003FF), each request within one of them. While the machine is paused, frames for the agent wait in the page.
+
+### The reference client
+
+`tools/svlink.py` is a debugger in Python's standard library, as `tools/svm.py` is the blob format's reference: it serves a debug web page over HTTP on 127.0.0.1 with the link's WebSocket at `/serval-link` (checking `Host`, `Origin` and the token, [above](#security-of-the-web-transport)), opens it in headless Chrome with `#serval-link=TOKEN` (in the page's test mode, so the game starts without a click), and drives the agent: a command line for people (`tools/svlink.py PAGE.html hello pause "step 2" "globals 0 8" entities "entity 256" "set entity 256 x 10240" stats logs`, or commands on standard input; `--no-browser` prints the URL to open in a browser instead) and a library its tests use. CTest `svlink_e2e` (web preset; [development.md](development.md#debug-link)) drives `fireflies`' debug page through every message the agent and the page implement, and checks that the release build of the same page has none of the link and never dials.
