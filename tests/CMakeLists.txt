@@ -71,6 +71,7 @@ target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
 target_sources(serval_test_harness PRIVATE lz77_tests.c) # lz77: the loaders' check
+target_sources(serval_test_harness PRIVATE planned_debug_tests.c) # debug link: debug_break()
 # ladders and slopes: a script climbing a ladder by MAP_CONTACT_LADDER (map_slope_tests.c)
 serval_add_script(serval_test_harness ladder_climber.lua
                   HEADERS serval/map.h serval/ecs.h serval/physics.h)

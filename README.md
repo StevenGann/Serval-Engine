@@ -33,7 +33,7 @@ Implemented in 1.0:
 - Bytecode VM for GameMaker-style objects and events (Create, Step, Destroy, Collision, Animation End, Room Start): cooperative scripts with waits, entity properties (bodies' tuning and contacts, an entity's object among them) and fields, arrays and engine calls, collisions tested by the VM itself for the pairs a game names (`vm_collide()`), no allocation, hot reload. Game logic in a Lua 5.4 subset, compiled ahead of time by `tools/svlua.py` (tested against real Lua) and assembled by `tools/svm.py`, the blob format's reference assembler and disassembler; `serval_add_script()` runs both at build time.
 - Debug builds report API misuse in the emulator log. Tests run natively and on emulated hardware; a benchmark tracks performance. No C library or `malloc` in the ROM.
 
-Planned API: none. No name is planned in this version: everything 1.0.0-rc.1 declared planned is implemented ([the list](docs/api-freeze.md#planned-in-1x-declared-now)).
+Planned API: one name, `debug_break()` (`debug.h`), a script breakpoint for the [debug link](docs/debug-link.md#script-breakpoints), declared so that its name is reserved in scripts from 1.0; it does nothing until the debug link is implemented. Everything 1.0.0-rc.1 declared planned is implemented ([the list](docs/api-freeze.md#planned-in-1x-declared-now)).
 
 Later, with no API yet (each can be added without breaking games): palette sharing, tileset groups and 8bpp tilesets, windows and mosaic, dialogue text and larger fonts, tweens, a collision broad phase, the editor debug link, GB/GBC and DS targets.
 

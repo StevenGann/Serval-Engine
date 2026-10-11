@@ -77,6 +77,8 @@ int main(void) {
         &gba_vm_sound_tests, // vm sound: scripts' sound calls without a bank
         &lz77_tests,         // lz77: the loaders' check
         &gba_lz77_tests,     // lz77: the loaders, against plain tiles
+        // debug link: debug_break()
+        &planned_debug_tests,
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

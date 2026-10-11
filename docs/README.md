@@ -1,6 +1,6 @@
 # Serval Engine documentation
 
-Design documents and reference for the runtime. They are the source of truth for design and should be updated as decisions are made. Each document opens with a **Status** line saying what is implemented, what is declared as *planned* API ([releases.md](releases.md#planned-api); no name is planned in this version: everything 1.0.0-rc.1 declared so is implemented) and what comes later.
+Design documents and reference for the runtime. They are the source of truth for design and should be updated as decisions are made. Each document opens with a **Status** line saying what is implemented, what is declared as *planned* API ([releases.md](releases.md#planned-api); one name is planned in this version, `debug_break()`, the debug link's script breakpoint; everything 1.0.0-rc.1 declared so is implemented) and what comes later.
 
 - **Taking over the engine:** start with [handoff.md](handoff.md), then [api-freeze.md](api-freeze.md).
 - **Writing a game:** start with [getting-started.md](getting-started.md), then [api-reference.md](api-reference.md).
@@ -11,7 +11,7 @@ Design documents and reference for the runtime. They are the source of truth for
 | [handoff.md](handoff.md) | Start here if you are taking over the engine: where things are, their state, what is promised, what to do next | Written for 1.0.0-rc.1 |
 | [api-freeze.md](api-freeze.md) | What 1.0 promises, what is planned and why: the freeze, every planned name, what can come later without breaking games, the decisions | Frozen in 1.0.0-rc.1 |
 | [getting-started.md](getting-started.md) | Build the examples (with a reading order), create a game, scripting, sprites, entities, sound, text, web builds | Implemented features only |
-| [api-reference.md](api-reference.md) | Every public function and type, by header: units, limits, misuse behaviour | Implemented; no name planned |
+| [api-reference.md](api-reference.md) | Every public function and type, by header: units, limits, misuse behaviour | Implemented; one name planned (`debug_break`) |
 | [examples-roadmap.md](examples-roadmap.md) | Implemented and candidate examples, what each exposed or would expose, and the open gaps | Eleven examples, six write-ups of what they exposed; the rest candidates; gaps the freeze closed or declared marked |
 | [development.md](development.md) | Building, testing, source layout, benchmark, memory use, code style, planned API, the documentation site, CI/CD and releases | Current |
 | [overview.md](overview.md) | Goals, layers, what 1.0 means, relationship to Studio Advance | Design; core API, ECS and the VM implemented; 1.0.0-rc.1's planned API all implemented |

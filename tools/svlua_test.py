@@ -511,10 +511,25 @@ REJECTED = {
                         r"^sfx_play is an engine function; a script can't redefine it$"),
     "sound_top_local": ("local music_set_volume = 0", 1, 7,
                         r"^music_set_volume is an engine function; a script can't redefine it$"),
-    # Top-level names of the engine's planned functions, and their uses: none
-    # is left in this version (PlannedNames tests the rules with a planned
-    # function of its own; implementing one moved its cases to the C
-    # functions' below, or the builtins')
+    # Top-level names of the engine's planned functions, and their uses
+    # (PlannedNames tests the rules with a planned function of its own;
+    # implementing one moves its cases to the C functions' below, or the
+    # builtins'). debug link: debug_break(), planned before 1.0 to reserve its
+    # name; implemented, it becomes a builtin compiling to BRK.
+    "planned_function": ("function debug_break() end", 1, 10,
+                         r"^function debug_break: debug_break is reserved: it names a planned "
+                         r"engine function, which a later engine version may make a builtin$"),
+    "planned_global": ("debug_break = 0", 1, 1, r"^global debug_break: debug_break is reserved"),
+    "planned_object": ("debug_break = object {}", 1, 1,
+                       r"^object debug_break: debug_break is reserved"),
+    "planned_top_local": ("local debug_break = 0", 1, 7,
+                          r"^local debug_break: debug_break is reserved"),
+    "planned_called": (OBJ + "function A:step() debug_break() end", 3, 19,
+                       r"^debug_break is planned, not implemented in this engine version \(script "
+                       r"breakpoints, docs/debug-link\.md#script-breakpoints\): scripts can't use "
+                       r"it yet$"),
+    "planned_read": (OBJ + "function A:step() local b = debug_break end", 3, 29,
+                     r"^debug_break is planned, not implemented in this engine version"),
     # Top-level names of the engine's other C functions (implemented, no
     # builtin), and their uses
     "c_function": ("function sprite_draw() end", 1, 10,
@@ -1209,7 +1224,11 @@ class PlannedNames(unittest.TestCase):
         names, errors = check_planned.planned_names(os.path.join(ROOT, "include"))
         self.assertEqual(errors, [])
         self.assertLessEqual(set(svlua.planned_functions()), set(names))
-        # ladders and slopes: no public name is planned now; the tests' own are.
+        # debug link: debug_break() is planned (declared before 1.0 to reserve
+        # its name); the tests' own names are planned too.
+        self.assertIn("debug_break", names)
+        self.assertEqual(svlua.planned_functions().get("debug_break"),
+                         "script breakpoints, docs/debug-link.md#script-breakpoints")
         own, errors = check_planned.own_planned_names(os.path.join(ROOT, "tests", "planned"))
         self.assertEqual(errors, [])
         self.assertIn("PLANNED_FAKE_CONSTANT", own)

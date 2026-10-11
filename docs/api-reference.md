@@ -1,10 +1,10 @@
 # API reference
 
-**Status:** every public name in `include/serval/` as of 1.0.0-rc.1, grouped by header: the implemented API. No name is *planned* in this version: the 37 declared planned at the freeze (with `SERVAL_PLANNED`; [releases.md](releases.md#planned-api)) are all implemented. Behaviour described here is what the code does today.
+**Status:** every public name in `include/serval/` as of 1.0.0-rc.1, grouped by header: the implemented API, and one *planned* name, `debug_break()` ([debug.h](#debugh), declared with `SERVAL_PLANNED`; [releases.md](releases.md#planned-api)), marked *planned* with a link to its design and what it does in this version. The 37 declared planned at the freeze are all implemented. Behaviour described here is what the code does today.
 
 Include `serval/serval.h` for everything except `gba.h`, which must be included explicitly. For a guided introduction, see [getting-started.md](getting-started.md); for the design behind the API, the hardware the engine uses and the data-format bits it reserves, [core-api.md](core-api.md).
 
-**Planned API.** A *planned* name is declared, so that the API is complete, but not implemented in this version: every use compiles with a warning (`'MAP_LADDER' is deprecated: Serval: planned, not implemented in this version: ...`, as `MAP_LADDER` did in 1.0.0-rc.1), and at run time it does nothing harmful (returns 0 or `false` and changes nothing; loaders refuse data that needs it; the planned collision types of 1.0.0-rc.1 loaded and collided as empty or solid) and *warns* once. No name is planned in this version; a later one may declare some. Its signature and meaning are frozen like the rest of the API, so code written against it starts working in the version that implements it ([releases.md](releases.md#planned-api), which also says how to silence the warning on purpose; the planned features: [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)).
+**Planned API.** A *planned* name is declared, so that the API is complete, but not implemented in this version: every use compiles with a warning (`'MAP_LADDER' is deprecated: Serval: planned, not implemented in this version: ...`, as `MAP_LADDER` did in 1.0.0-rc.1), and at run time it does nothing harmful (returns 0 or `false` and changes nothing; loaders refuse data that needs it; the planned collision types of 1.0.0-rc.1 loaded and collided as empty or solid) and *warns* once. One name is planned in this version, `debug_break()`. Its signature and meaning are frozen like the rest of the API, so code written against it starts working in the version that implements it ([releases.md](releases.md#planned-api), which also says how to silence the warning on purpose; the planned features: [api-freeze.md](api-freeze.md#planned-in-1x-declared-now)).
 
 **Conventions**
 
@@ -543,6 +543,7 @@ for (;;) {
 | `void debug_log(const char* message)` | Writes a line to mGBA's debug log (*Tools > View Logs*, or `mgba-rom-test`'s console), truncated to 255 characters. Does nothing on hardware and other emulators; on the web it writes to the browser's console. Combine with `text_format()` for numbers. |
 | `u32 debug_warning_count(void)` | Number of `serval:` warnings reported so far; always 0 in release builds. Useful in tests. |
 | `void debug_exit(int code)` | Does not return. Under `mgba-rom-test -S 3 -R r0`, ends the run with exit code `code`; elsewhere, stops the program. |
+| `void debug_break(void)` | *Planned* ([debug-link.md](debug-link.md#script-breakpoints)): a script breakpoint. While a debugger is attached over the debug link, stops the whole game where it is called until the debugger resumes it; with none attached, and in release builds, does nothing. Scripts will get a builtin of the same name (compiling to `BRK`). **Today** it does nothing and the game runs on (*warns* once). |
 
 `SERVAL_DEBUG` is defined for Debug and RelWithDebInfo builds of the engine and of games linking it, so games can key their own debug code off it.
 

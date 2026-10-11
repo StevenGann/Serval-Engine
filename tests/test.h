@@ -62,6 +62,7 @@ extern const TestSuite planned_audio_tests;
 extern const TestSuite planned_sprites_tests;
 extern const TestSuite planned_map_tests;
 extern const TestSuite planned_screen_tests;
+extern const TestSuite planned_debug_tests; // debug link: debug_break()
 
 // Host-only suites for the web backend's renderer and sound (src/web/).
 extern const TestSuite web_ppu_tests;

@@ -20,4 +20,17 @@ u32 debug_warning_count(void);
 // "-S 3 -R r0", exits with `code`. Elsewhere, stops the program.
 void debug_exit(int code) __attribute__((noreturn));
 
+// debug link: a script breakpoint (docs/debug-link.md#script-breakpoints).
+// Stops the whole game where it is called (every script, every system, the
+// frame) while a debugger is attached over the debug link, until the
+// debugger resumes it; the debugger is told the game stopped here. With no
+// debugger attached, and in release builds, it does nothing. Scripts get a
+// builtin of the same name, compiling to the VM's BRK opcode, in the version
+// that implements it.
+//
+// Planned (docs/debug-link.md#script-breakpoints): in this engine version it
+// does nothing and the game runs on (warns once, debug builds).
+SERVAL_PLANNED("script breakpoints, docs/debug-link.md#script-breakpoints")
+void debug_break(void);
+
 #endif // SERVAL_DEBUG_H

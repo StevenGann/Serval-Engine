@@ -659,8 +659,8 @@ class Headers(unittest.TestCase):
         self.assertEqual(h.lookup("SPRITE_GROUP_STREAMED"), 1 << 0)  # planned until implemented
         self.assertEqual(h.lookup("SPRITE_ASSET_LZ77"), 1 << 3)  # lz77: planned until implemented
         self.assertEqual(h.lookup("TILESET_LZ77"), 1 << 0)  # lz77: planned until implemented
-        # ladders and slopes: planned until implemented, so no public name is
-        # planned now (the tests' own fake.h has some: test above).
+        # ladders and slopes: planned until implemented, so no public constant
+        # is planned now (the tests' own fake.h has one: test above).
         self.assertEqual((h.lookup("MAP_LADDER"), h.lookup("MAP_SLOPE_L_LOW")), (3, 9))
         self.assertEqual(h.lookup("MAP_CONTACT_LADDER"), 1 << 6)
         self.assertFalse(h.planned)

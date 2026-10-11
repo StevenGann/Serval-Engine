@@ -2,7 +2,7 @@
 
 The lowest engine layer is a raylib-style flat C API over libtonc. It is also the abstraction boundary for future platforms: each call means the same thing on every target (see [platforms.md](platforms.md)).
 
-**Status:** implemented: input, the frame loop, sprites, map backgrounds and the camera, map collision, the ECS and its systems, PSG sound effects and music (the wave channel included), tracker music, sampled sound effects and the sound bank (played by Maxmod, [audio.md](audio.md)), brightness fades, color mixing, alpha blending, palette writes and raster effects, LZ77-compressed sprites and tilesets ([sprites.md](sprites.md#lz77-compression)), text, math, random, paths, save data, the bytecode VM, debug output, ladders and floor slopes ([tilemaps.md](tilemaps.md#collision-types)). No name is planned in this version: everything 1.0.0-rc.1 declared as *planned* API ([releases.md](releases.md#planned-api)) is implemented. After 1.0, with no API yet: tileset groups, palette sharing, windows and mosaic, among others ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). The full list of names with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design, the [hardware the engine uses](#hardware-the-engine-uses) and the [bits and values it reserves](#reserved-bits-and-values).
+**Status:** implemented: input, the frame loop, sprites, map backgrounds and the camera, map collision, the ECS and its systems, PSG sound effects and music (the wave channel included), tracker music, sampled sound effects and the sound bank (played by Maxmod, [audio.md](audio.md)), brightness fades, color mixing, alpha blending, palette writes and raster effects, LZ77-compressed sprites and tilesets ([sprites.md](sprites.md#lz77-compression)), text, math, random, paths, save data, the bytecode VM, debug output, ladders and floor slopes ([tilemaps.md](tilemaps.md#collision-types)). One name is *planned* API in this version ([releases.md](releases.md#planned-api)): `debug_break()`, the [debug link](debug-link.md#script-breakpoints)'s script breakpoint; everything 1.0.0-rc.1 declared as planned is implemented. After 1.0, with no API yet: tileset groups, palette sharing, windows and mosaic, among others ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). The full list of names with units, limits and misuse behaviour is in [api-reference.md](api-reference.md); this page covers the design, the [hardware the engine uses](#hardware-the-engine-uses) and the [bits and values it reserves](#reserved-bits-and-values).
 
 ```c
 void serval_init(void);               // once at startup: wait states, interrupts, display, ECS, sound
@@ -31,7 +31,7 @@ void sprite_draw_ex(u16 sprite_id, u8 frame, int x, int y, u16 angle, FIXED scal
 
 `serval/serval.h` includes every public header except `gba.h`. Sprite loading is described in [sprites.md](sprites.md#api).
 
-Modules, all in `include/serval/` (details in [api-reference.md](api-reference.md)). No name is planned in this version, so the last column is empty; a name planned later is listed there:
+Modules, all in `include/serval/` (details in [api-reference.md](api-reference.md)). One name is planned in this version, in `debug.h`:
 
 | Header | Implemented | Planned (declared) |
 | --- | --- | --- |
@@ -42,14 +42,14 @@ Modules, all in `include/serval/` (details in [api-reference.md](api-reference.m
 | `ecs.h` | Entities, engine components, `ECS_FOR_EACH`, `ecs_count`, `ecs_gather`, `sys_movement`, `sys_animate`, `sys_render`, `sys_render_by_depth` ([ecs.md](ecs.md)) | |
 | `path.h` | Movement patterns as `PathStep` tables: `path_start()`, `sys_path()` ([runtime-systems.md](runtime-systems.md#paths)) | |
 | `physics.h` | Bouncing bodies (`C_BODY`): gravity (global and per body), maximum fall speed, bounces up to a perfect one, bounds, open edges, wrap-around, contacts, `sys_physics()`, `body_overlap()`, `body_hit_side()`. For balls, particles and debris; platformer characters are map bodies | |
-| `audio.h` | PSG sound effects (`psg_table_set()`, `psg_play()`, `psg_stop_all()`) and PSG music (`psg_music_play()`, pause, tempo, volume) on square 1, square 2, the [wave channel](audio.md#wave-channel) (`PSG_WAVE`, `psg_waves_set()`) and noise ([audio.md](audio.md)) | The [sound bank](audio.md#sound-bank) (`audio_bank_set`), [tracker music](audio.md#tracker-music) (`music_*`), [sampled sound effects](audio.md#sampled-sound-effects) (`sfx_*`; their `Sfx` handle and `SFX_NONE` are implemented) |
+| `audio.h` | PSG sound effects (`psg_table_set()`, `psg_play()`, `psg_stop_all()`) and PSG music (`psg_music_play()`, pause, tempo, volume) on square 1, square 2, the [wave channel](audio.md#wave-channel) (`PSG_WAVE`, `psg_waves_set()`) and noise; the [sound bank](audio.md#sound-bank) (`audio_bank_set`), [tracker music](audio.md#tracker-music) (`music_*`) and [sampled sound effects](audio.md#sampled-sound-effects) (`sfx_*`, the `Sfx` handle, `SFX_NONE`) ([audio.md](audio.md)) | |
 | `save.h` | Save slots with checksums and versions on SRAM, Flash or EEPROM (`localStorage` on the web) ([runtime-systems.md](runtime-systems.md#save-data)) | |
 | `text.h` | HUD/debug text on BG0 (8x8 font, 30x20 cells, up to four color styles such as a highlight, centering within columns) and `text_format()` (printf-style without a C library) | |
 | `vm.h` | The bytecode VM: script blobs, objects and their instances, events, behaviours and reactions, collision pairs (`vm_collide`), the two phases (`vm_step`, `vm_events`), and every number of the blob format ([vm.md](vm.md)) | |
 | `fixed.h` | 24.8 fixed point: `FX(n)`, `fx_to_int()`, `FX_ONE` | |
 | `math.h` | `int_min`, `int_max`, `int_abs`, `int_clamp`, `fx_mul`, `fx_div` (prefixed to avoid libtonc's `clamp`/`min`/`max`); u16 angles (`ANGLE_DEG(d)`, clockwise on screen) with `fx_sin`/`fx_cos`, `angle_of` (atan2) and `fx_length` | |
 | `random.h` | Deterministic xorshift32: `random_seed()`, `random_u32()`, `random_range(lo, hi)`, and `random_entropy()`, a seed from the player's input timing (the same input gives the same value on every platform) | |
-| `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, `debug_exit()` | |
+| `debug.h` | `debug_log()` (mGBA debug log), `debug_warning_count()`, `debug_exit()` | [Script breakpoints](debug-link.md#script-breakpoints) (`debug_break`) |
 | `platform.h` | Integer types, `FIXED`, `NULL`, IWRAM/EWRAM placement macros, the planned-API marker (`SERVAL_PLANNED`) | |
 | `gba.h` | GBA-only escape hatches (`gba_oam_submit()`); not included by `serval.h` | |
 
