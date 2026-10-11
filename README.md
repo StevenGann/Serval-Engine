@@ -35,7 +35,7 @@ Implemented in 1.0:
 
 Planned API: one name, `debug_break()` (`debug.h`), a script breakpoint for the [debug link](docs/debug-link.md#script-breakpoints), declared so that its name is reserved in scripts from 1.0; it does nothing until the debug link is implemented. Everything 1.0.0-rc.1 declared planned is implemented ([the list](docs/api-freeze.md#planned-in-1x-declared-now)).
 
-Later, with no API yet (each can be added without breaking games): palette sharing, tileset groups and 8bpp tilesets, windows and mosaic, dialogue text and larger fonts, tweens, a collision broad phase, the editor debug link, GB/GBC and DS targets.
+Later, with no API yet (each can be added without breaking games): palette sharing, tileset groups and 8bpp tilesets, windows and mosaic, dialogue text and larger fonts, tweens, a collision broad phase, the editor debug link (specified: [docs/debug-link.md](docs/debug-link.md)), GB/GBC and DS targets.
 
 ## Documentation
 

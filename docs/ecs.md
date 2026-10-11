@@ -33,7 +33,7 @@ The ARM7TDMI has no data cache, so the usual cache-locality argument does not ap
 - Fixed, predictable memory use.
 - Hot arrays in zero-wait 32-bit IWRAM.
 - Tight ARM-mode system loops.
-- Flat data at known addresses that the planned debugger can inspect and edit live ([debug-link.md](debug-link.md)).
+- Flat data the debugger can inspect and edit live, through the debug link's agent, which reads the pools for C games too ([debug-link.md](debug-link.md#messages-protocol-10): `ENTITIES`, `ENTITY`, `SET_PROPERTY`).
 
 ## Entity handles
 

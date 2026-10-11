@@ -74,7 +74,7 @@ Debug builds are those with `SERVAL_DEBUG`: Debug and RelWithDebInfo, the builds
 | The scratch: the agent's copy of the blob, which breakpoints patch and reloads land in | EWRAM, `SERVAL_LINK_SCRATCH` bytes (a CMake cache variable; default 32,768; 0: no breakpoints, stepping or reload), in games that link the VM | That much |
 | The breakpoint sites | EWRAM: each site's pc, original opcode and kinds | 8 bytes a site, at least 256 sites |
 | A poll at the end of `frame_end()`, after `frames++` | `if (serval_link_hook) serval_link_hook();`, the pattern of the map, raster and mixer hooks | A load and a compare a frame; the hook is set only when an endpoint answered |
-| `BRK` restructured for [displaced execution](#setting-breakpoints-patching-with-displaced-execution) | `vm.c` | About 1% of VM time, from code layout ([vm.md](vm.md#implementation-notes)) |
+| `BRK` restructured for [displaced execution](#setting-breakpoints-patching-with-displaced-execution) | `vm.c` | About 1% of VM time, from code layout ([vm.md](vm.md#what-breakpoints-cost)) |
 | IWRAM | — | **None** |
 
 **Release builds add nothing:** no agent, no mailbox, no hook, no register written. `BRK` stays a no-op and `TRACE` skips its operand, as today, and `debug_break()` does nothing. `debug_log()` still writes mGBA's debug registers in every build, which the fork forwards as `LOG`, so logs work in release builds too.
@@ -330,14 +330,14 @@ D is the debugger, E the endpoint, A the agent. "→" separates a request's payl
 
 ### Setting breakpoints: patching with displaced execution
 
-- **The copy.** The blob is in ROM, which the CPU can't write (an emulator could, hardware can't), so the agent patches its copy in the scratch: at the first `BREAK_SET` it copies the blob there and points the VM at the copy. Contexts hold blob offsets, never addresses, and the copy is byte for byte the blob, so the switch is invisible, mid-phase too: `execute()` reads the blob's address again after every park. A blob larger than the scratch gets `NO_SCRATCH`. Under the debugger the VM then runs from EWRAM, a little faster than from ROM ([vm.md](vm.md#implementation-notes)): worth knowing when comparing timings.
+- **The copy.** The blob is in ROM, which the CPU can't write (an emulator could, hardware can't), so the agent patches its copy in the scratch: at the first `BREAK_SET` it copies the blob there and points the VM at the copy. Contexts hold blob offsets, never addresses, and the copy is byte for byte the blob, so the switch is invisible, mid-phase too: `execute()` reads the blob's address again after every park. A blob larger than the scratch gets `NO_SCRATCH`. Under the debugger the VM then runs from EWRAM, about 7% faster than from ROM ([vm.md](vm.md#where-the-interpreter-runs)): worth knowing when comparing timings.
 - **Patching.** The agent writes `BRK` (0x50) over the opcode at each site (a statement's first op; the debugger picks the pcs) and keeps the byte it replaced. A site can carry several kinds at once (a breakpoint and a step site).
 - **Displaced execution.** When a patched `BRK` is hit, the agent gives the interpreter the opcode it replaced, which runs in the `BRK`'s place, its operands following in the blob as before. No unpatching, no single step, no re-arming: a breakpoint in a loop hits every time, and one op is counted, as without it, so the budget is unchanged.
-- **Hits.** A hit that stops nothing (a step site of another context, or deeper than the step's depth) runs on at once, about 150 cycles. No per-op check is added: the cost with no breakpoint set is code layout, about 1% of VM time in debug builds ([vm.md](vm.md#implementation-notes)).
+- **Hits.** A hit that stops nothing (a step site of another context, or deeper than the step's depth) runs on at once, about 150 cycles. No per-op check is added: the cost with no breakpoint set is code layout, about 1% of VM time in debug builds ([vm.md](vm.md#what-breakpoints-cost)).
 
 Prototyped: a `BRK` patched over a Step handler was hit 7,920 times (12 instances, 660 frames), and the run ended in exactly the state of every unpatched run.
 
-**Why not an interpreter-checked table** (a flag or a bitmap tested before every op): measured, +2.8% to +8% of VM time, paid by every debug build. **Why not ARM breakpoints on the interpreter's `BRK` case** in the emulator: emulator-only, needs symbol addresses, nothing on the web.
+**Why not an interpreter-checked table** (a flag or a bitmap tested before every op): measured, +2.8% to +8% of VM time ([vm.md](vm.md#what-breakpoints-cost)), paid by every debug build. **Why not ARM breakpoints on the interpreter's `BRK` case** in the emulator: emulator-only, needs symbol addresses, nothing on the web.
 
 ### Stepping
 

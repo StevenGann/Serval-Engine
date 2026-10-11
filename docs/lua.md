@@ -310,6 +310,17 @@ Lua's `print` is not one of them: it is Lua's console output, which the subset d
 
 Studio Advance's event editor compiles its event blocks through the same path (blocks → this subset → bytecode), so there is one compiler to make correct.
 
+### Debug information
+
+Decided 2026-10-10 for the debug link, in 1.x ([debug-link.md](debug-link.md#maps)): the maps from pcs to source lines are **side files** the build writes beside the blob, **never in the blob**, one from each tool, since each knows one half:
+
+- `svm.py asm --map OUT.svmap`: each op's pc and the listing line it came from, with the blob's size and FNV-1a hash, so the debugger knows which blob a map is for. It knows nothing about Lua, so it serves hand-written listings too.
+- `svlua.py compile --debug-info OUT.svdbg`: listing lines to `file:line:column` and statement starts, functions and handlers, locals with their slots and scopes, and the globals, fields, arrays, objects and strings by name, number and type. The compiler has all of it already: every listing line ends in `; file:line`, and every function has its `; frame:` line.
+- `svlua.py compile --keep-layout OLD.svdbg`: the globals, fields and arrays an earlier build had keep their numbers, and new ones are appended, so a hot reload never scrambles state when an edit adds a global in the middle.
+- `serval_add_script()` writes both maps beside its outputs.
+
+All are additions: new options, and files no build reads but the debugger's. Neither tool's listing syntax changes.
+
 ## Testing
 
 - **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read, tracker music and sampled effects with their arguments as C gets them): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit; the sound queries meet the same stand-in for a mixer on both sides (music plays from `music_play` until `music_stop`, paused from `music_pause` until `music_resume`; effects' handles count from 1 and play until stopped). It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Seventeen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point, input, palette writes and sound. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
@@ -319,4 +330,4 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 ## Open questions
 
 - Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment, checked wherever `other.field` is used, is the alternative. The prototype gives slots in order of first appearance.
-- Source maps for the debug link (a PC → line table emitted beside the blob) belong with [debug-link.md](debug-link.md). Every statement in the compiler's listing ends in `; file:line`, so `svm.py` could build the table from them.
+- ~~Source maps for the debug link~~: decided 2026-10-10, two side files, never in the blob ([Debug information](#debug-information)).
