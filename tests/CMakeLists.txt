@@ -22,7 +22,9 @@ endfunction()
 
 # Planned API (SERVAL_PLANNED, docs/development.md#planned-api): every planned
 # name in the public headers is used in planned/, and every use warns, with
-# this build's compiler and target flags (tools/check-planned.py). A test on
+# this build's compiler and target flags (tools/check-planned.py); so do the
+# tests' own (planned/fake.h), which keep the check checking when the headers
+# declare nothing planned. A test on
 # the host and the GBA; part of the build (ALL) in web builds, which run no
 # tests.
 separate_arguments(_serval_planned_flags NATIVE_COMMAND "${CMAKE_C_FLAGS}")
@@ -37,7 +39,8 @@ set(_serval_planned_check
     -- "${CMAKE_C_COMPILER}" ${_serval_planned_flags})
 if(SERVAL_TARGET_WEB)
     file(GLOB _serval_planned_inputs CONFIGURE_DEPENDS
-         "${PROJECT_SOURCE_DIR}/include/serval/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/planned/*.c")
+         "${PROJECT_SOURCE_DIR}/include/serval/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/planned/*.c"
+         "${CMAKE_CURRENT_SOURCE_DIR}/planned/*.h")
     set(_serval_planned_stamp "${CMAKE_CURRENT_BINARY_DIR}/planned_api.stamp")
     add_custom_command(OUTPUT "${_serval_planned_stamp}"
         COMMAND ${_serval_planned_check}

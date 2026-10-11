@@ -626,6 +626,23 @@ class Headers(unittest.TestCase):
                                     r"docs/x\.md#new\): listings and scripts can use it"):
             asm(".object X\n.handler X CREATE\nPUSH NEW\nHALT\n", h)
 
+    def test_the_tests_own_planned_constant(self):
+        """tests/planned/fake.h, the tests' own planned API (which
+        tools/check-planned.py checks too): its planned constant is refused by
+        name, its ordinary neighbour assembles, whatever the engine's headers
+        hold, also with no planned constant left in them."""
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        h = svm.HeaderNames(VM.names)
+        h.load(os.path.join(root, "tests", "planned", "fake.h"))
+        h.check()
+        self.assertEqual(h.lookup("PLANNED_FAKE_DONE"), 1)
+        self.assertIsNone(h.lookup("PLANNED_FAKE_CONSTANT"))
+        self.assertIn("PLANNED_FAKE_CONSTANT", h.planned)
+        asm(".object X\n.handler X CREATE\nPUSH PLANNED_FAKE_DONE\nHALT\n", h)
+        with self.assertRaisesRegex(svm.SvmError, r"PLANNED_FAKE_CONSTANT is planned, not "
+                                    r"implemented in this engine version \(fake planned API"):
+            asm(".object X\n.handler X CREATE\nPUSH PLANNED_FAKE_CONSTANT\nHALT\n", h)
+
     def test_real_headers(self):
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         h = svm.HeaderNames(VM.names)

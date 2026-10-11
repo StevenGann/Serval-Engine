@@ -13,8 +13,14 @@ wherever a game uses it. This keeps that true, for one compiler:
    The headers are read by tools/svlua.py's planned_api(), as the script
    compiler reads them to reserve the planned functions' names (docs/lua.md,
    "Planned functions"), so the two can't disagree on what is planned.
+   It reads the headers in tests/planned/ the same way: planned names of the
+   tests' own (fake.h), which no version implements, so that the checks
+   below always have a planned function and a planned constant to check,
+   also in a version whose public headers declare none. It fails without
+   them.
 2. It compiles each tests/planned/*.c (one file per header, using each of its
-   header's planned names on a line that ends "// planned") at -O0 and at -O2,
+   header's planned names on a line that ends "// planned"; fake.c the tests'
+   own) at -O0 and at -O2,
    with the engine's warning flags, and checks that every marked line warns
    with the Serval message, that no other line and no header does, and that
    every planned name warns somewhere. So a planned name added to a header
@@ -23,7 +29,7 @@ wherever a game uses it. This keeps that true, for one compiler:
 3. It compiles each file again with -DSERVAL_NO_PLANNED_WARNINGS -Werror,
    which must print no warning or error.
 
-No planned names and files with no marked lines pass.
+Public headers with no planned name, and files with no marked line, pass.
 
 Usage: tools/check-planned.py [--include DIR] [PLANNED_DIR] [-- COMPILER [FLAGS...]]
 
@@ -71,6 +77,20 @@ def planned_names(include):
     return {name: f"{show(p.header)}:{p.line}" for name, p in names.items()}, errors
 
 
+def own_planned_names(planned_dir):
+    """The tests' own planned names (the headers in planned_dir), as
+    planned_names() returns them, with an error unless there is a planned
+    function and a planned constant among them."""
+    names, errors = planned_api(planned_dir, show)
+    kinds = {p.kind for p in names.values()}
+    for kind, what in (("function", "function"), ("enumerator", "constant")):
+        if kind not in kinds:
+            errors.append(f"{show(planned_dir)} declares no planned {what} of its own (fake.h): "
+                          "the check would have nothing to check where the public headers "
+                          "declare none")
+    return {name: f"{show(p.header)}:{p.line}" for name, p in names.items()}, errors
+
+
 def run(command):
     env = dict(os.environ, LC_ALL="C")  # GCC quotes names with '' instead of curly quotes
     r = subprocess.run(command, capture_output=True, text=True, env=env)
@@ -95,6 +115,13 @@ def main():
         parser.error("no compiler after --")
 
     names, errors = planned_names(args.include)
+    own, own_errors = own_planned_names(args.planned_dir)
+    errors += own_errors
+    for name in sorted(own.keys() & names.keys()):
+        errors.append(f"{own[name]}: {name} is planned in {names[name]} too; give the tests' "
+                      "own planned names names of their own")
+    public = len(names)
+    names = {**own, **names}
     sources = sorted(os.path.abspath(os.path.join(args.planned_dir, f))
                      for f in os.listdir(args.planned_dir) if f.endswith(".c"))
     base = compiler + FLAGS + ["-I", os.path.abspath(args.include)]
@@ -155,8 +182,9 @@ def main():
 
     for error in errors:
         print(f"check-planned: {error}")
-    print(f"check-planned: {len(warned_names & names.keys())} of {len(names)} planned names warn, "
-          f"{len(sources)} files, {'FAIL' if errors else 'ok'}")
+    print(f"check-planned: {len(warned_names & names.keys())} of {len(names)} planned names warn "
+          f"({public} in the public headers, {len(own)} the tests' own), {len(sources)} files, "
+          f"{'FAIL' if errors else 'ok'}")
     return 1 if errors else 0
 
 
