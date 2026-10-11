@@ -312,14 +312,150 @@ Studio Advance's event editor compiles its event blocks through the same path (b
 
 ### Debug information
 
-Decided 2026-10-10 for the debug link, in 1.x ([debug-link.md](debug-link.md#maps)): the maps from pcs to source lines are **side files** the build writes beside the blob, **never in the blob**, one from each tool, since each knows one half:
+The maps from pcs to source lines a debugger needs ([debug-link.md](debug-link.md#maps)), decided 2026-10-10 and **implemented** (1.x: the Implementation table's E3 and E4). They are **side files** the build writes beside the blob, **never in the blob**, one from each tool, since each knows one half:
 
-- `svm.py asm --map OUT.svmap`: each op's pc and the listing line it came from, with the blob's size and FNV-1a hash, so the debugger knows which blob a map is for. It knows nothing about Lua, so it serves hand-written listings too.
-- `svlua.py compile --debug-info OUT.svdbg`: listing lines to `file:line:column` and statement starts, functions and handlers, locals with their slots and scopes, and the globals, fields, arrays, objects and strings by name, number and type. The compiler has all of it already: every listing line ends in `; file:line`, and every function has its `; frame:` line.
-- `svlua.py compile --keep-layout OLD.svdbg`: the globals, fields and arrays an earlier build had keep their numbers, and new ones are appended, so a hot reload never scrambles state when an edit adds a global in the middle.
-- `serval_add_script()` writes both maps beside its outputs.
+- `svm.py asm LISTING --map OUT.svmap`: each op's pc and the listing line it came from, with the blob's size and FNV-1a hash, so the debugger knows which blob a map is for. It knows nothing about Lua, so it serves hand-written listings too.
+- `svlua.py compile SCRIPT.lua --debug-info OUT.svdbg`: listing lines to `file:line:column` and statement starts, functions and handlers, locals with their slots and scopes, and the globals, fields, arrays, objects and strings by name, number and type.
+- `svlua.py compile SCRIPT.lua --keep-layout OLD.svdbg`: the globals, fields and arrays an earlier build's `.svdbg` has keep their numbers, and new ones are appended, so a hot reload never scrambles state (or the numbers C was built with) when an edit adds a global in the middle.
+- `serval_add_script()` writes `<basename>.svmap` and, for a Lua script, `<basename>.svdbg` beside `<basename>.svm` and `<basename>_script.c` in the target's binary directory, rebuilt with the blob ([development.md](development.md#building-a-game)). Its arguments don't change.
 
-All are additions: new options, and files no build reads but the debugger's. Neither tool's listing syntax changes.
+All are additions: new options, and files no build reads but a debugger's. Neither tool's listing syntax changes, and without `--keep-layout` the listing is what it was, but for two comments: a statement's first op names the statement's own line (`local x =` on one line and its value on the next: the first op is the statement's), and a script's text copied into a comment loses the characters Python's `str.splitlines()` ends a line at (a form feed, say), so both tools count the listing's lines alike. `tools/check-debug-maps.py BASE...` joins a build's two files the way a debugger does and checks them against each other, the blob and the listing (CTest `debug_maps`).
+
+#### The files
+
+Both are JSON objects, with `"format"` and `"version"` (1) first, written one key and one list entry a line; the same input gives the same bytes. A reader ignores keys it doesn't know; a change an older reader would misread raises the version. Line numbers start at 1, the listing's counted as `svm.py` counts them; columns start at 1.
+
+**`.svmap`**, from `svm.py`:
+
+| Key | Holds |
+| --- | --- |
+| `format`, `version` | `"svmap"`, 1 |
+| `listing` | The listing's path, as given to `svm.py` (for a hand-written one, what a debugger shows) |
+| `blob` | `{"size", "fnv1a32"}`: the blob's size and FNV-1a 32 hash (a number), as `AGENT_INFO` and `LOADED` report them |
+| `pcs` | `[pc, listing line]` for every op, in pc order. A pc is a blob offset, as the agent reports it. A listing line holds one op, so the line changes at every op; a `.byte` line counts as one (its bytes may be code: `svm.py dis` writes what it can't name so). The tables, and the strings and ROM data the assembler places, have none. The op at a pc is the last pair at or before it |
+
+**`.svdbg`**, from `svlua.py`; lists in the order given, the program's names by number:
+
+| Key | Each entry |
+| --- | --- |
+| `format`, `version` | `"svdbg"`, 1 |
+| `sources` | A script's path, as given to `svlua.py` (one file today) |
+| `lines` | `[listing line, source, line, column, statement start]` (`source` indexes `sources`; the start 0 or 1) for every listing line holding an op: exactly the `.svmap`'s lines |
+| `functions` | `{"name", "object", "event", "other", "first", "last", "params"}` per handler and function, in listing order: `name` as `Firefly:create` or `bounce`; a handler's object, event (`create`, `step`, `destroy`, `collision`, `anim_end`, `room_start`: `VM_EV_*` 0 to 5) and, for a collision, `other`, its parameter's name (the context's other entity); each `null` for a function. `first` is its `.handler` or label line, `last` its last op's line: the ranges are disjoint and every op is in one. `params`: `ENTER`'s p, the frame cells its parameters take (0 for a handler: `self` and `other` come with the context). A function nothing calls isn't compiled, nor listed |
+| `locals` | `{"name", "function", "slot", "type", "scope"}` per named local and parameter: `function` indexes `functions`; `slot` as `LDL` numbers it, so its value is the stack cell at the frame's `fp` plus `slot`; `scope`, `[first, last]`, the listing lines of the first and last ops where it holds its value |
+| `globals`, `fields` | `{"name", "number", "type"}`: a field's number is n in `VM_P_FIELD0 + n` |
+| `arrays` | `{"name", "number", "kind", "type"}`: `kind` is `ram`, or a ROM array's element kind (`s8`, `u8`, `s16`, `u16`, `s32`); `type` the elements'. Its length and its cells or data are in the blob's array table, at its number |
+| `objects` | `{"name", "number"}` |
+| `strings` | `{"name", "number", "text"}`: `name` as the generated header gives it to C (`STR_TIME_UP` is `TIME_UP`) |
+
+A `type` is `integer`, `fixed`, `boolean` or `entity`: the debugger shows a fixed cell as `1.5`, a boolean as `true`, an entity as a handle.
+
+- **Statement starts** are where a breakpoint on a line goes and where a step stops: the first op of each statement, with the statement's own line and column (its first token), even when that op computes something on a later line; an `elseif`'s test and an `until`'s test (lines the code comes back to); and the implicit `HALT` or `RET` at a function's `end`, when the code can reach it. Not: `ENTER`, a loop's per-iteration code, jumps, or statements that make no code (`local K <const> = 4`; a `repeat` starts at its body's first statement). A line can hold several (`if not playing then break end`: the `if`'s and the `break`'s).
+- **Scopes**: a local holds its value from the op after the `STL` that declares it to the last op of its block; a parameter or a loop's variable from the first op of its body; a function's top-level locals and parameters through the `HALT` or `RET` at its `end`; a `repeat`'s body's locals through its `until`. A local no op sees (`do local unused = 5 end`) isn't listed, nor are the compiler's hidden cells (a loop's limit and step). When two locals in scope share a name, the one whose scope starts later shadows the other. To name a frame's locals, a debugger takes the frame's pc, and for a return point (`FRAMES`' later pcs) the pc before it, inside the `CALL`.
+- **Mapping back**: a pc's listing line is the last `pcs` pair at or before it, and its place in the script that line's `lines` entry; a breakpoint on a line of the script is the pcs of its statement starts.
+- **`--keep-layout`**: a global, field or array the old file names keeps its number; a new one takes the next number after every number the old file used, in declaration order (fields: first use); a number an edit freed stays free, held in the blob by an unnamed global or an empty RAM array, until the limit (`VM_GLOBALS`, `VM_FIELDS`) is reached, and then new names take the free numbers, lowest first. Objects keep their declaration order, as always. An old file that isn't a `.svdbg` version 1, or names a number twice or one past the limit, is an error.
+
+An example, `coin.lua`:
+
+```lua
+Coin = object {}
+score = 0
+
+function Coin:collision(hero)
+  local bonus = 2
+  if hero.y < self.y then
+    bonus = bonus * 2
+  end
+  score = score + bonus
+  kill(self)
+end
+```
+
+compiles (`svlua.py compile coin.lua -o coin.svm --debug-info coin.svdbg`) to a listing whose lines 14 to 43 are the handler (line 16 `ENTER 0, 1`, 18 `PUSH 2`, 19 `STL 0`, 21 `OTHER`, ..., 43 `HALT`), and to:
+
+```json
+{
+  "format": "svdbg",
+  "version": 1,
+  "sources": [
+    "coin.lua"
+  ],
+  "lines": [
+    [16, 0, 4, 1, 0],
+    [18, 0, 5, 3, 1],
+    [19, 0, 5, 3, 0],
+    [21, 0, 6, 3, 1],
+    [22, 0, 6, 6, 0],
+    [23, 0, 6, 15, 0],
+    [24, 0, 6, 15, 0],
+    [25, 0, 6, 13, 0],
+    [26, 0, 6, 13, 0],
+    [28, 0, 7, 5, 1],
+    [29, 0, 7, 21, 0],
+    [30, 0, 7, 19, 0],
+    [31, 0, 7, 5, 0],
+    [35, 0, 9, 3, 1],
+    [36, 0, 9, 19, 0],
+    [37, 0, 9, 17, 0],
+    [38, 0, 9, 3, 0],
+    [40, 0, 10, 3, 1],
+    [41, 0, 10, 3, 0],
+    [43, 0, 11, 1, 1]
+  ],
+  "functions": [
+    {"name": "Coin:collision", "object": "Coin", "event": "collision", "other": "hero", "first": 14, "last": 43, "params": 0}
+  ],
+  "locals": [
+    {"name": "bonus", "function": 0, "slot": 0, "type": "integer", "scope": [21, 43]}
+  ],
+  "globals": [
+    {"name": "score", "number": 0, "type": "integer"}
+  ],
+  "fields": [],
+  "arrays": [],
+  "objects": [
+    {"name": "Coin", "number": 0}
+  ],
+  "strings": []
+}
+```
+
+and `svm.py asm coin.svm --map coin.svmap` writes (the code starts at 48, after the header, one object and one global):
+
+```json
+{
+  "format": "svmap",
+  "version": 1,
+  "listing": "coin.svm",
+  "blob": {"size": 82, "fnv1a32": 3462200235},
+  "pcs": [
+    [48, 16],
+    [51, 18],
+    [53, 19],
+    [55, 21],
+    [56, 22],
+    [58, 23],
+    [59, 24],
+    [61, 25],
+    [62, 26],
+    [65, 28],
+    [67, 29],
+    [69, 30],
+    [70, 31],
+    [72, 35],
+    [74, 36],
+    [76, 37],
+    [77, 38],
+    [79, 40],
+    [80, 41],
+    [81, 43]
+  ]
+}
+```
+
+A breakpoint on line 7 is pc 65; a context stopped at pc 70 is on listing line 31, `coin.lua:7`, with `bonus` (in scope from 21 to 43) in its frame's cell `fp + 0`; the `if` on line 6 starts at pc 55.
+
+For a sense of size: fireflies' `.svmap` is 7.5 KB and its `.svdbg` 15 KB (a 1,201-byte blob of 451 ops); the jukebox's `pads.lua`, 2.1 KB and 4.3 KB (359 bytes, 125 ops).
 
 ## Testing
 
@@ -330,4 +466,4 @@ All are additions: new options, and files no build reads but the debugger's. Nei
 ## Open questions
 
 - Instance fields shared by name across all objects: simple and predictable, but 16 names for a whole program may be tight; a per-object assignment, checked wherever `other.field` is used, is the alternative. The prototype gives slots in order of first appearance.
-- ~~Source maps for the debug link~~: decided 2026-10-10, two side files, never in the blob ([Debug information](#debug-information)).
+- ~~Source maps for the debug link~~: decided 2026-10-10, two side files, never in the blob; implemented ([Debug information](#debug-information)).

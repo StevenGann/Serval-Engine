@@ -9,10 +9,20 @@ floats are 24.8 fixed point. Anything outside the subset is a compile error
 that names the construct and gives a hint.
 
 Usage:
-  svlua.py compile SCRIPT.lua [-o OUT.svm] [--check]
+  svlua.py compile SCRIPT.lua [-o OUT.svm] [--check] [--debug-info OUT.svdbg]
+                              [--keep-layout OLD.svdbg]
 
-  -o OUT.svm   write the listing there (default: standard output)
-  --check      parse and check the script (names, types, waits) only
+  -o OUT.svm               write the listing there (default: standard output)
+  --check                  parse and check the script (names, types, waits) only
+  --debug-info OUT.svdbg   write the debug link's map from the listing to the
+                           script (docs/lua.md#debug-information): each listing
+                           line's file, line and column and the statement
+                           starts; functions and handlers; locals with their
+                           slots and scopes; globals, fields, arrays, objects
+                           and strings by name, number and type (JSON)
+  --keep-layout OLD.svdbg  number the globals, instance fields and arrays an
+                           earlier build's map has as it did, and append the
+                           new ones, so a hot reload doesn't move them
 
 The listing keeps the script's names: objects, globals and arrays upper-cased
 (Firefly is OBJ_FIREFLY to C, score is G_SCORE), functions as labels, top-level
@@ -40,6 +50,7 @@ exit status 1 and nothing written. Python 3.11+, standard library only.
 
 import argparse
 import difflib
+import json
 import math
 import os
 import re
@@ -1351,6 +1362,8 @@ MACROS = {
 }
 VM_FIELDS = 16  # instance fields, VM_P_FIELD0 to VM_P_FIELD0 + 15
 VM_ARRAY_CELLS = 1024
+VM_GLOBALS = 256
+MAX_ARRAYS = 0xFFFF  # the blob's 16-bit count
 
 # The six events: (the VM_EV_* name, whether it is a behaviour, which may wait).
 EVENTS = {
@@ -1475,6 +1488,7 @@ class GlobalSym(Sym):
         self.init_const = None
         self.is_local = is_local
         self.listing = name.upper()
+        self.number = None  # its VM global, set by number_layout()
 
 
 class ConstSym(Sym):
@@ -1519,6 +1533,7 @@ class ArraySym(Sym):
         self.elem = None  # the elements' type (ty is ARRAY)
         self.elem_origin = None
         self.listing = name.upper()
+        self.number = None  # its array number, set by number_layout()
 
 
 class FunctionSym(Sym):
@@ -3637,6 +3652,70 @@ def check(text, file="script.lua", functions=None):
 
 COMMENT_COLUMN = 40  # where a line's "; file:line" comment starts
 SIGN_BIT = -0x80000000  # XOR with it turns an unsigned comparison into a signed one
+# What str.splitlines() ends a line at: svm.py counts the listing's lines so,
+# and the debug maps join on those numbers, so a script's text copied into a
+# comment must not hold one (a form feed in a Lua comment, say).
+_LINE_BREAKS = re.compile("[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
+
+
+class _At:
+    """A position that is no node's: a block's closing token."""
+
+    __slots__ = ("line", "column")
+
+    def __init__(self, line, column):
+        self.line = line
+        self.column = column
+
+
+def _end(block):
+    """Where a block's closing token is (end, else, elseif, until)."""
+    return _At(block.end_line, block.end_column)
+
+
+def _leftmost(e):
+    """The node an expression's text starts at (a binary operation is placed
+    at its operator, and a method call at its name, as Lua's messages place
+    them)."""
+    while isinstance(e, (Binary, Method)):
+        e = e.left if isinstance(e, Binary) else e.obj
+    return e
+
+
+class _Op(str):
+    """A listing line holding an op, with what --debug-info says of it: the
+    script's line and column it came from, and whether a statement starts
+    there."""
+
+    def __new__(cls, text, line, column, start, gen):
+        self = super().__new__(cls, text)
+        self.line, self.column, self.start, self.gen = line, column, start, gen
+        self.number = None  # its line in the listing
+        return self
+
+
+class _Head(str):
+    """A handler's .handler line or a function's label: where its range of
+    listing lines starts."""
+
+    def __new__(cls, text, gen):
+        self = super().__new__(cls, text)
+        self.gen = gen
+        self.number = None
+        return self
+
+
+DEBUG_FORMAT, DEBUG_VERSION = "svdbg", 1
+KEPT_FREE = "a number kept free by --keep-layout"
+
+
+def _by_number(syms, attr="number"):
+    """The symbols in their numbers' order, None where a number is free (left
+    by --keep-layout for one an edit removed)."""
+    slots = [None] * (max((getattr(s, attr) for s in syms), default=-1) + 1)
+    for sym in syms:
+        slots[getattr(sym, attr)] = sym
+    return slots
 
 
 def _escape(data):
@@ -3668,8 +3747,10 @@ class CodeGen:
 
     def __init__(self, program, source):
         self.p = program
-        self.base = os.path.basename(program.file)
+        self.base = _LINE_BREAKS.sub(" ", os.path.basename(program.file))
         self.source = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        self.gens = []  # each generated body's FuncGen, in listing order
+        self.lines = []  # the listing's lines
         self.strings = {}  # bytes -> (listing name, line of first use)
         self.string_names = set()
         self.labels = set()
@@ -3680,7 +3761,7 @@ class CodeGen:
 
     def source_line(self, line):
         if line is not None and 1 <= line <= len(self.source):
-            return self.source[line - 1].strip()
+            return _LINE_BREAKS.sub(" ", self.source[line - 1]).strip()
         return ""
 
     def located(self, text, line, note=None):
@@ -3740,8 +3821,56 @@ class CodeGen:
         for body in p.bodies:
             if body.kind == "function" and not body.fn.used:
                 continue
-            code += FuncGen(self, body).generate()
-        return "\n".join(self.tables() + code) + "\n"
+            gen = FuncGen(self, body)
+            code += gen.generate()
+            self.gens.append(gen)
+        self.lines = self.tables() + code
+        for number, line in enumerate(self.lines, 1):
+            if isinstance(line, (_Op, _Head)):
+                line.number = number
+        return "\n".join(self.lines) + "\n"
+
+    def debug_info(self):
+        """The .svdbg (docs/lua.md#debug-information) as a dict."""
+        p = self.p
+        lines = []
+        for line in self.lines:
+            if isinstance(line, _Head):
+                line.gen.first = line.number
+            elif isinstance(line, _Op):
+                line.gen.last = line.number
+                lines.append([line.number, 0, line.line, line.column, int(line.start)])
+        functions, locals_ = [], []
+        for index, gen in enumerate(self.gens):
+            body = gen.body
+            handler = body.kind == "handler"
+            other = body.other_sym.name if body.other_sym is not None else None
+            functions.append({"name": body.name, "object": body.obj.name if handler else None,
+                              "event": body.event if handler else None, "other": other,
+                              "first": gen.first, "last": gen.last,
+                              "params": len(body.params)})
+            for sym, first, last in sorted(gen.locals,
+                                           key=lambda v: (v[1].number, v[0].slot, v[2].number)):
+                locals_.append({"name": sym.name, "function": index, "slot": sym.slot,
+                                "type": sym.ty, "scope": [first.number, last.number]})
+        return {
+            "format": DEBUG_FORMAT, "version": DEBUG_VERSION,
+            "sources": [p.file],
+            "lines": lines,
+            "functions": functions,
+            "locals": locals_,
+            "globals": [{"name": g.name, "number": g.number, "type": g.ty}
+                        for g in _by_number(p.globals) if g is not None],
+            "fields": [{"name": f.name, "number": f.slot, "type": f.ty}
+                       for f in _by_number(list(p.fields.values()), "slot") if f is not None],
+            "arrays": [{"name": a.name, "number": a.number,
+                        "kind": a.rom_kind if a.rom else "ram", "type": a.elem}
+                       for a in _by_number(p.arrays) if a is not None],
+            "objects": [{"name": o.name, "number": o.index} for o in p.objects],
+            "strings": [{"name": name, "number": number,
+                         "text": data.decode("ascii", "replace")}
+                        for number, (data, (name, _)) in enumerate(self.strings.items())],
+        }
 
     def tables(self):
         p = self.p
@@ -3785,7 +3914,10 @@ class CodeGen:
                 out.append(self.located(f'.string {name} "{_escape(data)}"', line))
         if p.globals:
             out += ["", "; --- Globals (vm_load starts them at their initial values) ---", ""]
-            for g in p.globals:
+            for number, g in enumerate(_by_number(p.globals)):
+                if g is None:
+                    out.append(self.located(f".globals {number}", None, KEPT_FREE))
+                    continue
                 c = g.init_const
                 text = g.listing
                 if not c.is_zero:  # an initial value: the blob carries it
@@ -3795,8 +3927,10 @@ class CodeGen:
                                         f"{g.name}: {g.ty} = {Checker.show(c)}"))
         if p.arrays:
             out += ["", "; --- Arrays ---", ""]
-            for arr in p.arrays:
-                if arr.rom:
+            for number, arr in enumerate(_by_number(p.arrays)):
+                if arr is None:
+                    out.append(self.located(f".array {number} 0", None, KEPT_FREE))
+                elif arr.rom:
                     items = ", ".join(c.asm() for c in arr.items)
                     out.append(self.located(f".rom {arr.listing} {arr.rom_kind} {items}",
                                             arr.node.line, f"{arr.name}: {arr.elem}"))
@@ -3822,6 +3956,10 @@ class FuncGen:
         self.user_labels = {}
         self.shown = None
         self.last_op = None
+        self.pending = None  # a statement (or a test) whose first op is next: it starts there
+        self.scopes = []  # per open block: (LocalSym, the item its scope starts at)
+        self.locals = []  # (LocalSym, first op, last op): each named local an op sees
+        self.first = self.last = None  # its listing range, for --debug-info
         if body.kind == "handler":
             self.prefix = f"{body.obj.listing.lower()}_{body.event}"
         else:
@@ -3838,9 +3976,15 @@ class FuncGen:
                 self.items.append(f"    ; {line}: {text}")
 
     def op(self, text, node, note=None):
+        start = self.pending
+        if start is not None:  # a statement's first op: where a breakpoint on it goes
+            self.pending = None
+            node = start
         line = node if isinstance(node, int) else node.line
+        column = None if isinstance(node, int) else node.column
         self.show(line)
-        self.items.append(self.cg.located("    " + text, line, note))
+        self.items.append(_Op(self.cg.located("    " + text, line, note), line, column,
+                              start is not None, self))
         self.last_op = text.split()[0]
 
     def label(self, name, node):
@@ -3871,13 +4015,17 @@ class FuncGen:
             param.slot = index
             self.slot_names[index] = [param.name]
         self.next_slot = self.max_slot = len(body.params)
-        self.block(func.body)
-        end = func.body.end_line
+        end = _end(func.body)
         last = "HALT" if body.kind == "handler" else "RET"
-        if can_fall(func.body):
-            self.op(last, end)
-        elif self.last_op not in ("HALT", "RET", "RETV"):
-            self.op(last, end, "not reached: every handler and function ends in HALT or RET")
+
+        def finish():  # in the body's scope: its locals are seen at its end
+            if can_fall(func.body):
+                self.pending = end  # the end, where a breakpoint can stop before it returns
+                self.op(last, end)
+            elif self.last_op not in ("HALT", "RET", "RETV"):
+                self.op(last, end, "not reached: every handler and function ends in HALT or RET")
+
+        self.block(func.body, finish, body.params)
         if self.max_slot > 60:
             self.cg.error(func, f"{body.name} needs {self.max_slot} frame cells; a context's "
                           "stack has 64 for every frame and operand", "use fewer locals")
@@ -3887,25 +4035,39 @@ class FuncGen:
             what = ("a behaviour: it may wait" if body.behaviour
                     else "a reaction: it runs to completion")
             head[1] = f"; --- {body.name}, {what} ---"
-            head.append(self.cg.located(f".handler {body.obj.listing} {EVENTS[body.event][0]}",
-                                        line))
+            head.append(_Head(self.cg.located(
+                f".handler {body.obj.listing} {EVENTS[body.event][0]}", line), self))
         else:
-            head.append(self.cg.located(f"{body.fn.label}:", line))
+            head.append(_Head(self.cg.located(f"{body.fn.label}:", line), self))
         params = len(body.params)
         extra = self.max_slot - params
         if params or extra:
             frame = ", ".join(f"{slot} {'/'.join(names)}"
                               for slot, names in sorted(self.slot_names.items()))
             head.append(f"    ; frame: {frame}")
-            head.append(self.cg.located(f"    ENTER {params}, {extra}", line))
+            head.append(_Op(self.cg.located(f"    ENTER {params}, {extra}", line), line,
+                            body.stat.column, False, self))
         return head + self.items
 
-    def block(self, block, after=None):
+    def block(self, block, after=None, declared=()):
+        """A block's statements, then `after` (a repeat's until) in its scope.
+        `declared`: locals in scope from its start (parameters, a loop's
+        variable)."""
         mark = self.next_slot
+        scope = [(sym, len(self.items)) for sym in declared]
+        self.scopes.append(scope)
         for stat in block.stats:
+            self.pending = stat  # its first op starts it
             getattr(self, "s_" + type(stat).__name__)(stat)
+        self.pending = None
         if after is not None:
             after()
+            self.pending = None
+        self.scopes.pop()
+        for sym, first in scope:  # each local is seen from its declaration to the block's end
+            ops = [item for item in self.items[first:] if isinstance(item, _Op)]
+            if ops:
+                self.locals.append((sym, ops[0], ops[-1]))
         self.next_slot = mark
 
     # --- Statements ---
@@ -3922,6 +4084,7 @@ class FuncGen:
             sym.slot = self.alloc(sym.name)
         for sym in reversed(syms):
             self.op(f"STL {sym.slot}", s)
+        self.scopes[-1] += [(sym, len(self.items)) for sym in syms]  # seen once stored
 
     def s_Assign(self, s):
         if len(s.targets) == 1:
@@ -4028,10 +4191,12 @@ class FuncGen:
                 target = self.cg.unique_label(f"{self.prefix}_if{number}_else")
             else:
                 target = end
+            if index > 0:
+                self.pending = _leftmost(test)  # an elseif's test: a line the code stops at
             self.jump_if(test, False, target)
             self.block(block)
             if (not last or s.orelse is not None) and can_fall(block):
-                self.op(f"JMP {end}", block.end_line)
+                self.op(f"JMP {end}", _end(block))
                 jumped_to_end = True
             if target != end:
                 next_line = clauses[index + 1][0].line if not last else s.orelse.line
@@ -4042,10 +4207,10 @@ class FuncGen:
         if jumped_to_end or any(_const_truth(t) is None for t in s.tests):
             self.label(end, s.blocks[-1].end_line if s.orelse is None else s.orelse.end_line)
 
-    def loop_body(self, body, end, after=None):
+    def loop_body(self, body, end, after=None, declared=()):
         """A loop's body; whether a break jumped to its end."""
         self.breaks.append([end, False])
-        self.block(body, after)
+        self.block(body, after, declared)
         return self.breaks.pop()[1]
 
     def s_While(self, s):
@@ -4057,7 +4222,7 @@ class FuncGen:
         if truth is None:
             self.jump_if(s.cond, False, end)
         broke = self.loop_body(s.body, end)
-        self.op(f"JMP {top}", s.body.end_line)
+        self.op(f"JMP {top}", _end(s.body))
         if truth is None or broke:
             self.label(end, s.body.end_line)
 
@@ -4067,6 +4232,7 @@ class FuncGen:
 
         def until():  # inside the body's scope: until sees its locals
             truth = _const_truth(s.cond)
+            self.pending = _leftmost(s.cond)  # the until's test: a line the code stops at
             if truth is None:
                 self.jump_if(s.cond, False, top)
             elif truth is False:
@@ -4121,8 +4287,8 @@ class FuncGen:
             self.op(f"STL {var.slot}", s)
         else:
             var.slot = cursor
-        self.loop_body(s.body, end)
-        self.op(f"JMP {top}", s.body.end_line)
+        self.loop_body(s.body, end, declared=(var,))
+        self.op(f"JMP {top}", _end(s.body))
         self.label(end, s.body.end_line)
         self.next_slot = mark
 
@@ -4157,7 +4323,7 @@ class FuncGen:
             self.op(f"STL {var.slot}", s)
         else:
             var.slot = idx  # the loop's own counter: the body never assigns it
-        self.loop_body(s.body, end)
+        self.loop_body(s.body, end, declared=(var,))
         if s.integer:
             self.integer_next(s, idx, limit, step, sign, top, end)
         else:
@@ -4638,25 +4804,137 @@ class FuncGen:
         self.next_slot = mark
 
 
+# --- Layout: the numbers of globals, fields and arrays -------------------------
+
+
+def _kept_numbers(names, old, limit):
+    """{name: number}: the names `old` has keep their numbers; the others
+    take the numbers after every number `old` used, in order, then (past
+    `limit`) the free ones, lowest first."""
+    numbers = {name: old[name] for name in names if name in old}
+    taken = set(numbers.values())
+    following = max(old.values(), default=-1) + 1
+    for name in names:
+        if name in numbers:
+            continue
+        number = following
+        if following >= limit:
+            number = next((k for k in range(limit) if k not in taken), following)
+        if number == following:
+            following += 1
+        numbers[name] = number
+        taken.add(number)
+    return numbers
+
+
+def number_layout(program, old=None):
+    """Numbers the globals and arrays in declaration order and the instance
+    fields in order of first use; or, with `old` (read_layout()'s, from an
+    earlier build's .svdbg: --keep-layout), gives the names it has their old
+    numbers and appends the new ones, so a hot reload finds every global,
+    field and array where it was. A number an edit freed stays free (the
+    listing declares an unnamed global or an empty array there) until the
+    limit is reached; then new names take the free numbers, lowest first."""
+    fields = list(program.fields.values())
+    if old is None:
+        for number, sym in enumerate(program.globals):
+            sym.number = number
+        for number, sym in enumerate(program.arrays):
+            sym.number = number
+        return
+    for syms, key, limit, attr in ((program.globals, "globals", VM_GLOBALS, "number"),
+                                   (fields, "fields", VM_FIELDS, "slot"),
+                                   (program.arrays, "arrays", MAX_ARRAYS, "number")):
+        numbers = _kept_numbers([sym.name for sym in syms], old[key], limit)
+        for sym in syms:
+            setattr(sym, attr, numbers[sym.name])
+
+
+def read_layout(path):
+    """The numbers of the globals, fields and arrays in an earlier build's
+    .svdbg: {"globals": {name: number}, "fields": ..., "arrays": ...}.
+    Raises CompileError."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise CompileError(f"--keep-layout: can't read it: {e}", path) from None
+    if not isinstance(data, dict) or data.get("format") != DEBUG_FORMAT:
+        raise CompileError(f"--keep-layout: not a .svdbg file (no \"format\": "
+                           f"\"{DEBUG_FORMAT}\")", path)
+    if data.get("version") != DEBUG_VERSION:
+        raise CompileError(f"--keep-layout: .svdbg version {data.get('version')!r}; this "
+                           f"compiler reads version {DEBUG_VERSION}", path)
+    layout = {}
+    for key, limit in (("globals", VM_GLOBALS), ("fields", VM_FIELDS), ("arrays", MAX_ARRAYS)):
+        entries = data.get(key)
+        if not isinstance(entries, list):
+            raise CompileError(f"--keep-layout: no {key} list", path)
+        numbers = {}
+        for entry in entries:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            number = entry.get("number") if isinstance(entry, dict) else None
+            if not isinstance(name, str) or type(number) is not int or not 0 <= number < limit:
+                raise CompileError(f"--keep-layout: {key}: {entry!r} isn't a name and a number "
+                                   f"from 0 to {limit - 1}", path)
+            if name in numbers or number in numbers.values():
+                raise CompileError(f"--keep-layout: {key}: {name} or its number {number} "
+                                   "is there twice", path)
+            numbers[name] = number
+        layout[key] = numbers
+    return layout
+
+
+def json_document(document):
+    """A JSON object as the debug maps are written: one key per line, and a
+    list's entries one per line, each compact (as svm.py writes its map).
+    Deterministic: the same dict gives the same text."""
+    def value(v):
+        return json.dumps(v, ensure_ascii=True, separators=(", ", ": "))
+
+    lines = ["{"]
+    keys = list(document)
+    for i, key in enumerate(keys):
+        comma = "," if i < len(keys) - 1 else ""
+        item = document[key]
+        if isinstance(item, list) and item:
+            lines.append(f"  {value(key)}: [")
+            lines += [f"    {value(entry)}," for entry in item[:-1]]
+            lines.append(f"    {value(item[-1])}")
+            lines.append(f"  ]{comma}")
+        else:
+            lines.append(f"  {value(key)}: {value(item)}{comma}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 # --- The tool ----------------------------------------------------------------
 
 
 class Compiled:
     """What compile_program() returns: the listing and the warnings, each
-    (file, line, column, message)."""
+    (file, line, column, message); debug_info() is the .svdbg."""
 
-    def __init__(self, listing, warnings, program):
+    def __init__(self, listing, warnings, program, codegen=None):
         self.listing = listing
         self.warnings = warnings
         self.program = program
+        self.codegen = codegen
+
+    def debug_info(self):
+        """The .svdbg as a dict (docs/lua.md#debug-information)."""
+        return self.codegen.debug_info()
 
 
-def compile_program(text, filename="script.lua", functions=None):
-    """Compiles a script. Returns a Compiled; raises CompileError."""
+def compile_program(text, filename="script.lua", functions=None, layout=None):
+    """Compiles a script. Returns a Compiled; raises CompileError. layout:
+    an earlier build's numbers (read_layout()) to keep (--keep-layout)."""
     program = check(text, filename, functions)
-    listing = CodeGen(program, text).generate()
+    number_layout(program, layout)
+    codegen = CodeGen(program, text)
+    listing = codegen.generate()
     warnings = [(filename, line, column, message) for line, column, message in program.warnings]
-    return Compiled(listing, warnings, program)
+    return Compiled(listing, warnings, program, codegen)
 
 
 def compile_source(text, filename="script.lua", functions=None):
@@ -4687,20 +4965,32 @@ def main(argv=None):
                       help="write the listing (default: standard output)")
     comp.add_argument("--check", action="store_true",
                       help="check the script (names, types, waits) without writing a listing")
+    comp.add_argument("--debug-info", metavar="OUT.svdbg",
+                      help="write the debug link's map from the listing to the script (JSON)")
+    comp.add_argument("--keep-layout", metavar="OLD.svdbg",
+                      help="keep the numbers an earlier build gave the globals, instance fields "
+                           "and arrays, appending new ones")
     args = parser.parse_args(argv)
+    if args.check and (args.debug_info or args.keep_layout):
+        parser.error("--check writes nothing: it takes neither --debug-info nor --keep-layout")
     try:
         with open(args.script, encoding="utf-8") as f:
             text = f.read()
         if args.check:
             _print_warnings(check_source(text, args.script))
             return 0
-        compiled = compile_program(text, args.script)
+        layout = read_layout(args.keep_layout) if args.keep_layout else None
+        compiled = compile_program(text, args.script, layout=layout)
+        debug = json_document(compiled.debug_info()) if args.debug_info else None
         _print_warnings(compiled.warnings)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
                 f.write(compiled.listing)
         else:
             sys.stdout.write(compiled.listing)
+        if debug is not None:
+            with open(args.debug_info, "w", encoding="utf-8", newline="\n") as f:
+                f.write(debug)
         return 0
     except CompileError as e:
         print(e, file=sys.stderr)

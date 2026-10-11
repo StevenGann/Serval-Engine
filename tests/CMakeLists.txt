@@ -320,6 +320,14 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
                 "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_difftest.py")
     set_tests_properties(svlua_difftest PROPERTIES SKIP_RETURN_CODE 77)
+    # debug link: the maps serval_add_script() wrote beside the scripts this
+    # build compiles (.svmap, and .svdbg for Lua), joined as a debugger joins
+    # them and checked against the blobs and listings (docs/lua.md#debug-information).
+    set(_serval_debug_maps consumer fireflies ladder_climber pads soundbank_names svm/fireflies)
+    list(TRANSFORM _serval_debug_maps PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+    add_test(NAME debug_maps
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-debug-maps.py"
+                ${_serval_debug_maps})
     # The logo PNGs in docs/images are the splash's own drawing, made by
     # tools/logo-png.py; this fails when splash_art.c changes until they are
     # regenerated.

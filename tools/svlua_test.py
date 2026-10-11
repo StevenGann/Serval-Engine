@@ -18,8 +18,10 @@ tests that run programs are skipped). SVLUA_UPDATE_GOLDEN=1 rewrites the
 golden listings from the compiler.
 """
 
+import glob
 import importlib.util
 import io
+import json
 import os
 import re
 import shutil
@@ -2486,6 +2488,683 @@ class Tool(unittest.TestCase):
             svlua.compile_source("x = ...", "a.lua")
         self.assertEqual((caught.exception.file, caught.exception.line, caught.exception.column),
                          ("a.lua", 1, 5))
+
+
+# --- Debug information (--debug-info, --keep-layout) ----------------------------
+
+_spec = importlib.util.spec_from_file_location(
+    "check_debug_maps", os.path.join(ROOT, "tools", "check-debug-maps.py"))
+CHECKER = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(CHECKER)
+
+ENGINE_HEADERS = [os.path.join(ROOT, "include", "serval", name) for name in
+                  ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h", "screen.h")]
+
+
+def script_headers(compiled, files=()):
+    """The engine's headers and `files`, and a stand-in value (1) for any
+    other constant the script names (a sound bank's, say): the maps don't
+    depend on the values."""
+    paths = ENGINE_HEADERS + [f for f in files if f not in ENGINE_HEADERS]
+    known = header_names(files=paths)
+    missing = {n: 1 for n in compiled.program.headers if known.lookup(n) is None}
+    return header_names(missing, paths) if missing else known
+
+
+class Maps:
+    """A script compiled and assembled, with both maps as the files hold
+    them (written, then read back)."""
+
+    def __init__(self, source, name="t.lua", files=(), layout=None):
+        self.compiled = svlua.compile_program(source, name, layout=layout)
+        self.listing = self.compiled.listing.splitlines()
+        self.assembled = assemble(self.compiled.listing, script_headers(self.compiled, files),
+                                  name[:-4] + ".svm")
+        self.svmap = json.loads(svm.json_document(svm.debug_map(self.assembled, "t.svm")))
+        self.svdbg = json.loads(svlua.json_document(self.compiled.debug_info()))
+        self.joined = CHECKER.Maps(self.svmap, self.svdbg)
+        self.place = {entry[0]: entry[1:] for entry in self.svdbg["lines"]}
+
+    def problems(self):
+        return CHECKER.check(self.svmap, self.svdbg, self.assembled.blob, self.listing)
+
+    def starts(self):
+        """(line, column) of every statement start, in listing order."""
+        return [(line, column) for _, _, line, column, start in self.svdbg["lines"] if start]
+
+    def lua_line(self, listing_line):
+        return self.place[listing_line][1]
+
+    def local(self, name, function=None):
+        """A local's entry; its scope as the script's lines of its first and
+        last ops."""
+        (entry,) = [e for e in self.svdbg["locals"] if e["name"] == name and (
+            function is None or self.svdbg["functions"][e["function"]]["name"] == function)]
+        return entry, tuple(self.lua_line(n) for n in entry["scope"])
+
+
+def every_script():
+    """Every Lua script in the repository that compiles (tests/svlua/stub.lua
+    is the engine's API for real Lua), with the headers it is built with."""
+    scripts = []
+    for pattern in ("examples/*/*.lua", "tests/*.lua", "tests/*/*.lua", "tests/svlua/diff/*.lua"):
+        for path in sorted(glob.glob(os.path.join(ROOT, pattern))):
+            if os.path.basename(path) != "stub.lua":
+                files = FIREFLIES_HEADERS if path.endswith("fireflies.lua") else ()
+                scripts.append((path, files))
+    return scripts
+
+
+SCOPES = """\
+A = object {}
+function sum(n, k)
+  local total = 0
+  for i = 1, n do
+    local sq = i * i
+    if sq > k then
+      return total
+    end
+    total = total + sq
+  end
+  local j = 0
+  while j < n do
+    local step = 2
+    j = j + step
+  end
+  repeat
+    local left = n - j
+    j = j - 1
+  until left <= 0
+  do local unused = 5 end
+  return total
+end
+function A:step()
+  local s = sum(3, 10)
+  for e in instances(A) do
+    local x = e.x
+    e.x = x
+  end
+  for i = 1, 3 do
+    i = i + s
+  end
+  local s = 2
+  self.x = s
+end
+"""
+
+
+class DebugInfo(unittest.TestCase):
+    """--debug-info (docs/lua.md#debug-information): the listing's lines to
+    the script's, statement starts, functions, locals, the program's names;
+    joined with svm.py's --map as a debugger joins them."""
+
+    def test_statement_starts(self):
+        """Each statement's first op, at the statement's own line and column
+        (a multi-line one whose first op comes from its second line too);
+        two on a line; an elseif's and an until's test; the end of a
+        function that falls off it. Not: a repeat (its body's first
+        statement starts it), a constant, the ENTER, the jumps."""
+        maps = Maps("""\
+A = object {}
+total = 0
+function A:step()
+  local a =
+    self.x
+  local b = 1; total = total + b
+  if b > 1 then
+    total = 0
+  elseif b < 0 then
+    total = 1
+  else
+    total = 2
+  end
+  repeat
+    b = b + 1
+  until b > 3
+  while b > 0 do b = b - 1 end
+  local K <const> = 4
+  self.x = a + K
+end
+""")
+        self.assertEqual(maps.starts(), [(4, 3), (6, 3), (6, 16), (7, 3), (8, 5), (9, 10),
+                                         (10, 5), (12, 5), (15, 5), (16, 9), (17, 3), (17, 18),
+                                         (19, 3), (20, 1)])
+        # The first op of `local a =` comes from line 5 (self), but the
+        # listing says line 4 there too: the svdbg and the listing agree.
+        first = maps.svdbg["lines"][1]
+        self.assertEqual(first[2:], [4, 3, 1])
+        self.assertIn("SELF", maps.listing[first[0] - 1])
+        self.assertTrue(maps.listing[first[0] - 1].endswith("; t.lua:4"))
+        self.assertEqual(maps.problems(), [])
+
+    def test_returns_breaks_and_ends(self):
+        """A return, a break and a goto start statements; a function whose
+        last statement returns has no end to stop at; a handler that can
+        fall off its end has (HALT at end)."""
+        maps = Maps("""\
+A = object {}
+function f(n)
+  for i = 1, n do
+    if i == 3 then break end
+    if i == 4 then goto done end
+  end
+  ::done::
+  return n
+end
+function A:create()
+  self.x = f(5)
+end
+""")
+        self.assertEqual(maps.starts(), [(3, 3), (4, 5), (4, 20), (5, 5), (5, 20), (8, 3),
+                                         (11, 3), (12, 1)])
+        self.assertEqual(maps.problems(), [])
+
+    def test_every_statement_has_its_start(self):
+        """In every script of the repository: each statement that always
+        makes code (a local with a value, an assignment, a call, a return,
+        a break, a goto) starts at an op at its line and column, and every
+        start is a statement's, an elseif's or until's test, or an end."""
+        for path, files in every_script():
+            with self.subTest(script=os.path.relpath(path, ROOT)):
+                with open(path, encoding="utf-8") as f:
+                    maps = Maps(f.read(), os.path.basename(path), files)
+                starts = set(maps.starts())
+                allowed = set()
+                for body in maps.compiled.program.bodies:
+                    if body.kind == "function" and not body.fn.used:
+                        continue
+                    allowed.add((body.func.body.end_line, body.func.body.end_column))
+                    for stat in _statements(body.func.body):
+                        allowed.add((stat.line, stat.column))
+                        if isinstance(stat, svlua.If):
+                            allowed.update((svlua._leftmost(t).line, svlua._leftmost(t).column)
+                                           for t in stat.tests[1:])
+                        elif isinstance(stat, svlua.Repeat):
+                            allowed.add((svlua._leftmost(stat.cond).line,
+                                         svlua._leftmost(stat.cond).column))
+                        if _makes_code(stat):
+                            self.assertIn((stat.line, stat.column), starts)
+                self.assertLessEqual(starts, allowed)
+
+    def test_round_trip_on_every_script(self):
+        """The join a debugger makes, on every script: each statement start
+        is an op whose pc maps back to its line; every op has a place and
+        lies in one function; locals are scoped inside theirs; the hash is
+        the blob's; each op's pc holds the opcode its listing line names."""
+        for path, files in every_script():
+            with self.subTest(script=os.path.relpath(path, ROOT)):
+                with open(path, encoding="utf-8") as f:
+                    maps = Maps(f.read(), os.path.basename(path), files)
+                self.assertEqual(maps.problems(), [])
+                self.assertEqual(maps.svmap["blob"]["fnv1a32"],
+                                 _fnv1a32_reference(maps.assembled.blob))
+                sites = CHECKER.breakpoints(maps.joined)
+                for (source, line), pcs in sites.items():
+                    for pc in pcs:
+                        self.assertEqual(maps.joined.source_line(pc), (source, line))
+
+    def test_the_checker_catches_broken_maps(self):
+        """check-debug-maps.py, the join the round trip relies on, finds
+        each kind of disagreement."""
+        with open(os.path.join(ROOT, "examples", "fireflies", "fireflies.lua"),
+                  encoding="utf-8") as f:
+            maps = Maps(f.read(), "fireflies.lua", FIREFLIES_HEADERS)
+        self.assertEqual(maps.problems(), [])
+
+        def broken(change):
+            svmap, svdbg = json.loads(json.dumps(maps.svmap)), json.loads(json.dumps(maps.svdbg))
+            blob = change(svmap, svdbg)
+            return CHECKER.check(svmap, svdbg, blob or maps.assembled.blob, maps.listing)
+
+        def set_(doc, path, value):
+            for key in path[:-1]:
+                doc = doc[key]
+            doc[path[-1]] = value
+
+        start = next(k for k, e in enumerate(maps.svdbg["lines"]) if e[4] and k > 10)
+        cases = {
+            "a pc moved": lambda m, d: set_(m, ("pcs", 40, 0), m["pcs"][40][0] + 1),
+            "an op on the wrong line": lambda m, d: set_(m, ("pcs", 40, 1), m["pcs"][41][1]),
+            "an op missing": lambda m, d: m["pcs"].pop(40),
+            "the wrong script line": lambda m, d: set_(d, ("lines", start, 2),
+                                                       d["lines"][start][2] + 1),
+            "a statement start without its op": lambda m, d: m["pcs"].remove(
+                [maps.joined.pc_of_line[d["lines"][start][0]], d["lines"][start][0]]),
+            "a function overlapping the next": lambda m, d: set_(
+                d, ("functions", 0, "last"), d["functions"][1]["first"]),
+            "a scope outside its function": lambda m, d: set_(
+                d, ("locals", 0, "scope", 1), d["functions"][1]["last"]),
+            "another blob": lambda m, d: maps.assembled.blob[:-1] + b"\1",
+            "a name twice": lambda m, d: d["globals"].append(dict(d["globals"][0])),
+        }
+        for name, change in cases.items():
+            with self.subTest(break_=name):
+                self.assertNotEqual(broken(change), [])
+
+    def test_reads_of_a_local_are_in_its_scope(self):
+        """Every LDL of a named local (the listing notes its name) lies in
+        the scope of a listed local of that name and slot, and two locals
+        with one slot never share a line: on every script."""
+        for path, files in every_script() + [("SCOPES", ())]:
+            with self.subTest(script=os.path.basename(path)):
+                if path == "SCOPES":
+                    maps = Maps(SCOPES)
+                else:
+                    with open(path, encoding="utf-8") as f:
+                        maps = Maps(f.read(), os.path.basename(path), files)
+                locals_ = maps.svdbg["locals"]
+                for number, text in enumerate(maps.listing, 1):
+                    m = re.match(r"\s+LDL (\d+)\s+; \S+:\d+ (\w+)$", text)
+                    if not m:
+                        continue
+                    fn = maps.joined.function(maps.joined.pc_of_line[number])
+                    index = maps.svdbg["functions"].index(fn)
+                    self.assertTrue(any(
+                        e["name"] == m.group(2) and e["slot"] == int(m.group(1)) and
+                        e["function"] == index and e["scope"][0] <= number <= e["scope"][1]
+                        for e in locals_), f"listing line {number}: {text.strip()}")
+                for a in locals_:
+                    for b in locals_:
+                        if a is not b and (a["function"], a["slot"]) == (b["function"], b["slot"]):
+                            self.assertTrue(a["scope"][1] < b["scope"][0] or
+                                            b["scope"][1] < a["scope"][0], (a, b))
+
+    def test_scopes(self):
+        """From the op after a local's declaration to its block's last op:
+        across nested blocks, loops and an early return; a parameter's and a
+        loop variable's from their body's first op; a function's top-level
+        locals through the return at its end; a repeat's into its until;
+        shadowed by a later local of the same name; one no op sees isn't
+        listed."""
+        maps = Maps(SCOPES)
+        expected = {("n", "sum"): (3, 21), ("k", "sum"): (3, 21), ("total", "sum"): (4, 21),
+                    ("i", "sum"): (5, 9), ("sq", "sum"): (6, 9), ("j", "sum"): (12, 21),
+                    ("step", "sum"): (14, 14), ("left", "sum"): (18, 19),
+                    ("e", "A:step"): (26, 27), ("x", "A:step"): (27, 27),
+                    ("i", "A:step"): (30, 30)}
+        for (name, function), lines in expected.items():
+            with self.subTest(local=name, function=function):
+                self.assertEqual(maps.local(name, function)[1], lines)
+        firsts = [e for e in maps.svdbg["locals"] if e["name"] == "s"]
+        self.assertEqual([tuple(maps.lua_line(n) for n in e["scope"]) for e in firsts],
+                         [(25, 34), (33, 34)])  # the second s shadows the first from line 33
+        self.assertNotIn("unused", [e["name"] for e in maps.svdbg["locals"]])
+        # Exactly from the op after the declaring STL, and parameters from
+        # the op after ENTER: the ops just before the scopes.
+        ops = maps.joined.listing_lines
+        for name, before in (("total", "STL 2"), ("n", "ENTER 2,"), ("j", "STL 3")):
+            entry, _ = maps.local(name, "sum")
+            previous = maps.listing[ops[ops.index(entry["scope"][0]) - 1] - 1]
+            self.assertIn(before, previous)
+        self.assertEqual([(e["name"], e["slot"], e["type"]) for e in maps.svdbg["locals"]
+                          if e["function"] == 0],
+                         [("n", 0, "integer"), ("k", 1, "integer"), ("total", 2, "integer"),
+                          ("i", 3, "integer"), ("sq", 5, "integer"), ("j", 3, "integer"),
+                          ("step", 4, "integer"), ("left", 4, "integer")])
+        self.assertEqual(maps.problems(), [])
+
+    def test_functions_and_handlers(self):
+        """Handlers by object and event (a collision's parameter named), then
+        functions, in listing order: first is the .handler or label line,
+        last the last op; params the frame's parameters. An unused function
+        isn't compiled, so isn't listed."""
+        maps = Maps("""\
+Ship = object {}
+Rock = object {}
+function Ship:create()
+  self.x = twice(3)
+end
+function Rock:collision(ship)
+  ship.x = 0
+end
+function twice(v)
+  return v + v
+end
+function never(a, b, c)
+  return a
+end
+""")
+        functions = maps.svdbg["functions"]
+        self.assertEqual([(f["name"], f["object"], f["event"], f["other"], f["params"])
+                          for f in functions],
+                         [("Ship:create", "Ship", "create", None, 0),
+                          ("Rock:collision", "Rock", "collision", "ship", 0),
+                          ("twice", None, None, None, 1)])
+        for f, head in zip(functions, (".handler SHIP CREATE", ".handler ROCK COLLISION",
+                                       "twice:")):
+            self.assertTrue(maps.listing[f["first"] - 1].startswith(head))
+            self.assertEqual(maps.lua_line(f["last"]),
+                             {"Ship:create": 5, "Rock:collision": 8, "twice": 10}[f["name"]])
+        # A CALL's target is the first op of the function it names.
+        call = next(n for n, t in enumerate(maps.listing, 1) if t.strip().startswith("CALL"))
+        pc = maps.joined.pc_of_line[call]
+        target = int.from_bytes(maps.assembled.blob[pc + 1:pc + 5], "little")
+        self.assertEqual(maps.joined.function(target)["name"], "twice")
+        self.assertEqual(maps.joined.listing_line(target), functions[2]["first"] + 2)  # ENTER
+        self.assertEqual(maps.problems(), [])
+
+    def test_names_numbers_and_types(self):
+        """Globals, fields, arrays (and their kinds), objects and strings as
+        the blob numbers them, with the types the debugger shows."""
+        maps = Maps("""\
+Hero = object {}
+Coin = object {}
+lives = 3
+speed = 1.5
+alive = true
+target = none
+scores = array(4)
+local steps = { 1.5, 2.0 }
+small = { -1, 2 }
+big = { 70000 }
+function Hero:create()
+  self.hp = 10
+  self.drag = 0.5
+  self.boss = false
+  self.friend = self
+  scores[1] = lives
+  target = self
+  speed = steps[1]
+  alive = self.hp > small[1] + big[1]
+  text_print(0, 0, "HI THERE")
+  text_print(0, 1, "BYE")
+end
+""")
+        d = maps.svdbg
+        self.assertEqual(d["globals"], [
+            {"name": "lives", "number": 0, "type": "integer"},
+            {"name": "speed", "number": 1, "type": "fixed"},
+            {"name": "alive", "number": 2, "type": "boolean"},
+            {"name": "target", "number": 3, "type": "entity"}])
+        self.assertEqual(d["fields"], [
+            {"name": "hp", "number": 0, "type": "integer"},
+            {"name": "drag", "number": 1, "type": "fixed"},
+            {"name": "boss", "number": 2, "type": "boolean"},
+            {"name": "friend", "number": 3, "type": "entity"}])
+        self.assertEqual(d["arrays"], [
+            {"name": "scores", "number": 0, "kind": "ram", "type": "integer"},
+            {"name": "steps", "number": 1, "kind": "s16", "type": "fixed"},
+            {"name": "small", "number": 2, "kind": "s8", "type": "integer"},
+            {"name": "big", "number": 3, "kind": "s32", "type": "integer"}])
+        self.assertEqual(d["objects"], [{"name": "Hero", "number": 0},
+                                        {"name": "Coin", "number": 1}])
+        self.assertEqual(d["strings"], [{"name": "HI_THERE", "number": 0, "text": "HI THERE"},
+                                        {"name": "BYE", "number": 1, "text": "BYE"}])
+        # The blob's own numbering agrees (svm.py's tables, by listing name).
+        self.assertEqual(maps.assembled.globals, ["LIVES", "SPEED", "ALIVE", "TARGET"])
+        self.assertEqual(maps.assembled.arrays, ["SCORES", "STEPS", "SMALL", "BIG"])
+        self.assertEqual(maps.assembled.strings, ["HI_THERE", "BYE"])
+        self.assertEqual(maps.problems(), [])
+
+    def test_the_listing_line_numbers_are_svm_s(self):
+        """A form feed or a Unicode line separator in a comment would end a
+        line for svm.py (str.splitlines()): the listing's copy of the
+        script's text drops them, so both tools count the same lines."""
+        maps = Maps("A = object {}\nfunction A:step()\n  local x = 1 -- a\x0cb c\x85d\n"
+                    "  self.x = x\nend\n", "f\x0bf.lua")
+        listing = maps.compiled.listing
+        self.assertEqual(len(listing.splitlines()), listing.count("\n"))
+        self.assertEqual(maps.problems(), [])
+
+    def test_the_file(self):
+        """svlua.py compile --debug-info writes the same bytes every time,
+        beside the listing; an error writes neither."""
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "game.lua")
+            out, debug = os.path.join(tmp, "game.svm"), os.path.join(tmp, "game.svdbg")
+            with open(src, "w") as f:
+                f.write(SCOPES)
+            texts = []
+            for _ in range(2):
+                self.assertEqual(svlua.main(["compile", src, "-o", out, "--debug-info", debug]), 0)
+                with open(debug, "rb") as f:
+                    texts.append(f.read())
+            self.assertEqual(texts[0], texts[1])
+            document = json.loads(texts[0])
+            self.assertEqual(list(document), ["format", "version", "sources", "lines",
+                                              "functions", "locals", "globals", "fields",
+                                              "arrays", "objects", "strings"])
+            self.assertEqual((document["format"], document["version"], document["sources"]),
+                             ("svdbg", 1, [src]))
+            self.assertEqual(document, svlua.compile_program(SCOPES, src).debug_info())
+            self.assertIn(b'\n  "lines": [\n    [', texts[0])  # an entry a line
+            os.remove(out)
+            os.remove(debug)
+            with open(src, "w") as f:
+                f.write(SCOPES + "x = nil\n")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(svlua.main(["compile", src, "-o", out, "--debug-info", debug]), 1)
+            self.assertFalse(os.path.exists(out) or os.path.exists(debug))
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                svlua.main(["compile", src, "--check", "--debug-info", debug])
+
+
+def _fnv1a32_reference(data):
+    h = 2166136261
+    for b in data:
+        h = ((h ^ b) * 16777619) % 2 ** 32
+    return h
+
+
+def _statements(block):
+    """Every statement in a block, nested ones too."""
+    for stat in block.stats:
+        yield stat
+        for name in ("body", "orelse"):
+            inner = getattr(stat, name, None)
+            if isinstance(inner, svlua.Block):
+                yield from _statements(inner)
+        for inner in getattr(stat, "blocks", None) or ():
+            yield from _statements(inner)
+
+
+def _makes_code(stat):
+    """A statement that always makes an op of its own."""
+    if isinstance(stat, svlua.Local):
+        return any(not (name.sym.readonly and name.sym.const is not None) for name in stat.names)
+    if isinstance(stat, svlua.CallStat):
+        func = stat.call.func
+        return not (isinstance(func, svlua.Name) and func.sym.kind == "header")
+    return isinstance(stat, (svlua.Assign, svlua.Return, svlua.Break, svlua.Goto))
+
+
+class KeepLayout(unittest.TestCase):
+    """--keep-layout OLD.svdbg: the globals, fields and arrays an earlier
+    build had keep their numbers, new ones are appended, so a hot reload
+    finds each where it was."""
+
+    OLD = """\
+A = object {}
+a = 1
+b = 2
+c = 3
+xs = array(2)
+ys = { 5, 6 }
+zs = array(3)
+function A:create()
+  self.hp = a
+  self.mp = b + c + xs[1] + ys[1] + zs[1]
+  self.sp = 0
+end
+"""
+
+    def build(self, source, old=None):
+        layout = None
+        if old is not None:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, "old.svdbg")
+                with open(path, "w") as f:
+                    f.write(svlua.json_document(old.svdbg))
+                layout = svlua.read_layout(path)
+        maps = Maps(source, layout=layout)
+        self.assertEqual(maps.problems(), [])
+        return maps
+
+    @staticmethod
+    def numbers(maps, key):
+        return {e["name"]: e["number"] for e in maps.svdbg[key]}
+
+    def test_reordered(self):
+        """Declared in another order, used in another order: the same
+        numbers, and the blob's tables say so too."""
+        old = self.build(self.OLD)
+        new = self.build("""\
+A = object {}
+zs = array(3)
+c = 3
+ys = { 5, 6 }
+b = 2
+xs = array(2)
+a = 1
+function A:create()
+  self.sp = 0
+  self.mp = b + c + xs[1] + ys[1] + zs[1]
+  self.hp = a
+end
+""", old)
+        for key in ("globals", "fields", "arrays"):
+            self.assertEqual(self.numbers(new, key), self.numbers(old, key))
+        self.assertEqual(new.assembled.globals, ["A", "B", "C"])
+        self.assertEqual(new.assembled.arrays, ["XS", "YS", "ZS"])
+        self.assertIn(".const FIELD_HP VM_P_FIELD0 + 0", new.compiled.listing)
+        self.assertIn(".const FIELD_SP VM_P_FIELD0 + 2", new.compiled.listing)
+
+    def test_removed_and_added(self):
+        """A name an edit removed leaves its number free (an unnamed global
+        or an empty RAM array holds it in the blob); new names come after
+        every old number, even a removed last one."""
+        old = self.build(self.OLD)
+        new = self.build("""\
+A = object {}
+d = 4
+a = 1
+c = 3
+ws = array(1)
+ys = { 5, 6 }
+xs = array(2)
+function A:create()
+  self.hp = a
+  self.ep = c + d + xs[1] + ys[1] + ws[1]
+end
+""", old)
+        self.assertEqual(self.numbers(new, "globals"), {"a": 0, "c": 2, "d": 3})
+        self.assertEqual(self.numbers(new, "fields"), {"hp": 0, "ep": 3})
+        self.assertEqual(self.numbers(new, "arrays"), {"xs": 0, "ys": 1, "ws": 3})
+        self.assertEqual(new.assembled.globals, ["A", None, "C", "D"])
+        self.assertEqual(new.assembled.arrays, ["XS", "YS", None, "WS"])
+        self.assertIn(".globals 1", new.compiled.listing)
+        self.assertIn(".array 2 0", new.compiled.listing)  # no cells: the pool is unchanged
+        # And a third build keeps all of that.
+        again = self.build("""\
+A = object {}
+d = 4
+a = 1
+c = 3
+ws = array(1)
+ys = { 5, 6 }
+xs = array(2)
+function A:create()
+  self.hp = a
+  self.ep = c + d + xs[1] + ys[1] + ws[1]
+end
+""", new)
+        for key in ("globals", "fields", "arrays"):
+            self.assertEqual(self.numbers(again, key), self.numbers(new, key))
+        self.assertEqual(again.assembled.blob, new.assembled.blob)
+
+    def test_without_it_numbers_follow_the_script(self):
+        """The default (no --keep-layout) numbers by declaration and first
+        use, as before: holes close."""
+        new = self.build("A = object {}\nc = 3\na = 1\nfunction A:create()\n  self.mp = a + c\n"
+                         "end\n")
+        self.assertEqual(self.numbers(new, "globals"), {"c": 0, "a": 1})
+        self.assertEqual(self.numbers(new, "fields"), {"mp": 0})
+
+    def test_full_fields_take_the_free_numbers(self):
+        """All 16 fields used: a new one takes the number a removed one
+        freed, lowest first, rather than not fit."""
+        names = [f"f{k}" for k in range(16)]
+        source = "A = object {}\nfunction A:create()\n" + "".join(
+            f"  self.{n} = 1\n" for n in names) + "end\n"
+        old = self.build(source)
+        kept = [n for n in names if n not in ("f3", "f9")]
+        new = self.build("A = object {}\nfunction A:create()\n" + "".join(
+            f"  self.{n} = 1\n" for n in ["g", "h"] + kept) + "end\n", old)
+        numbers = self.numbers(new, "fields")
+        self.assertEqual((numbers["g"], numbers["h"]), (3, 9))
+        self.assertEqual({n: numbers[n] for n in kept}, {n: int(n[1:]) for n in kept})
+
+    @needs_runner
+    def test_the_program_runs_the_same(self):
+        """Renumbered globals, fields and arrays compute what they did."""
+        source = """\
+A = object {}
+b = 0
+a = 0
+zs = array(2)
+function A:create()
+  self.mp = 7
+  self.hp = self.mp + 1
+  zs[2] = self.hp
+  a = zs[2] * 2
+  b = a + 1
+end
+"""
+        old = self.build(self.OLD)
+        new = self.build(source, old)
+        self.assertEqual(self.numbers(new, "globals"), {"a": 0, "b": 1})
+        self.assertEqual(self.numbers(new, "arrays"), {"zs": 2})
+        self.assertEqual(self.numbers(new, "fields"), {"hp": 0, "mp": 1})
+        layout = {key: self.numbers(old, key) for key in ("globals", "fields", "arrays")}
+        for compiled_layout in (None, layout):
+            compiled = svlua.compile_program(source, "t.lua", layout=compiled_layout)
+            assembled = assemble(compiled.listing, header_names())
+            with tempfile.TemporaryDirectory() as tmp:
+                blob = os.path.join(tmp, "t.bin")
+                with open(blob, "wb") as f:
+                    f.write(assembled.blob)
+                done = subprocess.run([RUNNER, blob, "--frames", "1", "--attach", "0:0:0"],
+                                      capture_output=True, text=True, timeout=60)
+            run = VmRun(compiled, assembled, done.stdout, done.stderr)
+            self.assertEqual((run.globals["A"], run.globals["B"], run.arrays["ZS"]),
+                             (16, 17, [0, 8]))
+            (entity,) = run.entities.values()
+            self.assertEqual((entity["hp"], entity["mp"]), (8, 7))
+
+    def test_bad_files(self):
+        """What isn't an earlier build's .svdbg is an error naming the file;
+        the CLI then writes nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.path.join(tmp, "old.svdbg")
+            cases = {"not json": "can't read it",
+                     '{"format": "svmap", "version": 1}': "not a .svdbg file",
+                     '{"format": "svdbg", "version": 2}': "version 2",
+                     '{"format": "svdbg", "version": 1, "globals": [], "fields": []}':
+                         "no arrays list",
+                     '{"format": "svdbg", "version": 1, "globals": [{"name": "a", "number": 1},'
+                     ' {"name": "b", "number": 1}], "fields": [], "arrays": []}': "twice",
+                     '{"format": "svdbg", "version": 1, "globals": [], "fields": '
+                     '[{"name": "a", "number": 16}], "arrays": []}': "from 0 to 15"}
+            for text, message in cases.items():
+                with self.subTest(text=text):
+                    with open(old, "w") as f:
+                        f.write(text)
+                    with self.assertRaisesRegex(svlua.CompileError, message) as caught:
+                        svlua.read_layout(old)
+                    self.assertEqual(caught.exception.file, old)
+            src, out = os.path.join(tmp, "game.lua"), os.path.join(tmp, "game.svm")
+            with open(src, "w") as f:
+                f.write(self.OLD)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(svlua.main(["compile", src, "-o", out, "--keep-layout", old]), 1)
+            self.assertIn("from 0 to 15", err.getvalue())
+            self.assertFalse(os.path.exists(out))
+            # A real one through the CLI, written over itself.
+            debug = os.path.join(tmp, "game.svdbg")
+            self.assertEqual(svlua.main(["compile", src, "-o", out, "--debug-info", debug]), 0)
+            self.assertEqual(svlua.main(["compile", src, "-o", out, "--debug-info", debug,
+                                         "--keep-layout", debug]), 0)
 
 
 # --- fireflies in Lua --------------------------------------------------------

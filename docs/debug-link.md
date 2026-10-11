@@ -2,7 +2,7 @@
 
 The debug link connects a debugger (Studio Advance's) to a game running in an emulator or a browser: pause and step, breakpoints in scripts, the call stack and variables, an entity inspector, memory viewers, a profiler, logs and hot reload of scripts. It is a contract between three parties, the engine, the endpoint the game runs in (the debugger's mGBA fork, or the game's web page) and the debugger, so it is specified here, in the open repository. The debugger's own work (maps from bytecode to source, planning breakpoints, steps and reloads, the event editor's blocks) is the editor's.
 
-**Status:** specified, not implemented: **protocol 1.0, mailbox v1** (decided 2026-10-10; [open-questions.md](open-questions.md)). No part of the agent, the endpoints or the maps is built yet; [Implementation](#implementation) lists the steps that build them, each an addition in a 1.x minor version ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). What exists today: the `BRK` opcode, which logs in debug builds ([vm.md](vm.md#debug)); `vm_reload()` ([vm.md](vm.md#hot-reload)); `debug_log()` and the engine's warnings, which reach mGBA's log or the browser's console ([api-reference.md](api-reference.md#debugh)); `debug_break()`, declared as planned API ([below](#script-breakpoints)); and the reserved registers 0x04FFF800-0x04FFF80F ([core-api.md](core-api.md#hardware-the-engine-uses)). Release builds will never contain any of it.
+**Status:** specified, not implemented: **protocol 1.0, mailbox v1** (decided 2026-10-10; [open-questions.md](open-questions.md)). No part of the agent or the endpoints is built yet (the [maps](#maps) are); [Implementation](#implementation) lists the steps that build them, each an addition in a 1.x minor version ([api-freeze.md](api-freeze.md#later-additively-no-api-now)). What exists today: the `BRK` opcode, which logs in debug builds ([vm.md](vm.md#debug)); `vm_reload()` ([vm.md](vm.md#hot-reload)); `debug_log()` and the engine's warnings, which reach mGBA's log or the browser's console ([api-reference.md](api-reference.md#debugh)); `debug_break()`, declared as planned API ([below](#script-breakpoints)); and the reserved registers 0x04FFF800-0x04FFF80F ([core-api.md](core-api.md#hardware-the-engine-uses)). Release builds will never contain any of it.
 
 ## Architecture
 
@@ -354,23 +354,26 @@ A wait in the stepped line (`wait(30)`) just runs: the game plays on until the c
 
 ## Maps
 
+**Status:** implemented (E3, E4): `svm.py --map`, `svlua.py --debug-info` and `--keep-layout`, written by `serval_add_script()`; the exact format, with an example, is [lua.md](lua.md#debug-information)'s.
+
 From a pc to a source line and back, the debugger reads two side files the build writes beside the blob, **never in the blob** (a debug section would cost ROM in shipped games and a header flag bit):
 
 | Tool | Option (1.x) | Writes | Knows |
 | --- | --- | --- | --- |
 | `tools/svm.py asm` | `--map OUT.svmap` | Each op's pc and the listing line it came from; the blob's size and FNV-1a 32 | Pcs, and nothing about Lua, so it serves hand-written listings too (a debugger then shows the listing) |
 | `tools/svlua.py compile` | `--debug-info OUT.svdbg` | Listing lines to `file:line:column` and statement starts; functions and handlers; locals; globals, fields, arrays, objects and strings by name, number and type | The source (every listing line already ends in `; file:line`, and every function has `; frame:`) |
-| `serval_add_script()` | — | Both, beside `<name>_script.c` | — |
+| `serval_add_script()` | — | Both, beside `<name>_script.c`: `<name>.svmap` and `<name>.svdbg` | — |
 
 Both are JSON (Python's standard library and Qt both read it), with `"format"` and `"version"` keys; they are build outputs, not project files. Their keys:
 
 | File | Key | Holds |
 | --- | --- | --- |
-| `.svmap` | `blob` | `{"size", "fnv1a32"}`: the blob it maps, matched against `AGENT_INFO` and `LOADED` |
-| | `pcs` | `[pc, listing line]` pairs in pc order, one where the line changes: every op from a pair's pc to the next pair's came from that listing line |
+| `.svmap` | `listing` | The listing's path, as `svm.py` was given it |
+| | `blob` | `{"size", "fnv1a32"}`: the blob it maps, matched against `AGENT_INFO` and `LOADED` |
+| | `pcs` | `[pc, listing line]` pairs in pc order, one where the line changes: every op from a pair's pc to the next pair's came from that listing line. A listing line holds one op, so every op has its pair |
 | `.svdbg` | `sources` | The source files, by index |
 | | `lines` | `[listing line, source, line, column, statement start (0/1)]`, for every listing line that has code |
-| | `functions` | Name (`bounce`, or `Firefly:create`), object and event for a handler (else `null`), first and last listing lines, parameter count |
+| | `functions` | Name (`bounce`, or `Firefly:create`), object and event for a handler (else `null`), a collision handler's parameter name (`other`), first and last listing lines, parameter count |
 | | `locals` | Name, function, slot (as `LDL` numbers it), type, and the listing lines where it is in scope |
 | | `globals`, `fields`, `arrays`, `objects`, `strings` | Name, number, type (`integer`, `fixed`, `boolean`, `entity`, `object`; an array's kind), as the blob numbers them |
 
@@ -378,7 +381,7 @@ Types matter: the debugger shows a fixed cell as `1.5`, a boolean as `true`, an 
 
 **Mapping back:** pc → (`.svmap`) listing line → (`.svdbg`) `game.lua:line` → (the debugger) the user's script, or the object file a generated line came from, and later the event block. A breakpoint on a line goes the other way, to its statement starts' pcs. Generated lines (declarations, generated Create handlers) are stepped over.
 
-`svlua.py --keep-layout OLD.svdbg` (1.x) gives the globals, fields and arrays an earlier build had their old numbers and appends new ones, so a [reload](#hot-reload) doesn't scramble state when an edit adds a global in the middle.
+`svlua.py --keep-layout OLD.svdbg` gives the globals, fields and arrays an earlier build had their old numbers and appends new ones, so a [reload](#hot-reload) doesn't scramble state when an edit adds a global in the middle.
 
 **Why two files:** each tool knows one half, and the listing syntax stays as frozen. **Why not** teach `svm.py` to read meaning into listing comments, or add `.loc` directives to the listing syntax: two tools with one concern each is simpler.
 
@@ -424,8 +427,8 @@ Steps are numbered E for the engine and F for the fork. Before 1.0: E0, the rese
 | Wave | Step | What | Depends on |
 | --- | --- | --- | --- |
 | 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark) | — |
-| 1 | E3 | `svm.py --map` (`.svmap`), with `svm_test.py` cases | — |
-| 1 | E4 | `svlua.py --debug-info` (`.svdbg`), then `--keep-layout`, with `svlua_test.py` cases; `serval_add_script()` writes both | — |
+| 1 | E3 | `svm.py --map` (`.svmap`), with `svm_test.py` cases. **Done** ([Maps](#maps)) | — |
+| 1 | E4 | `svlua.py --debug-info` (`.svdbg`), then `--keep-layout`, with `svlua_test.py` cases; `serval_add_script()` writes both. **Done**, with `tools/check-debug-maps.py`, which joins them as a debugger does (CTest `debug_maps`) | — |
 | 2 | E5 | The agent's core: the mailbox, framing, `AGENT_INFO`, pause, resume, a frame step, globals, arrays, entities, properties, stats; host tests with a fake endpoint | E1 |
 | 2 | E6 | The VM's part: `BRK` parking and displaced execution, the copy, breakpoints, `STEP`'s filtering, contexts and frames, faults; `debug_break()` implemented in C and as a builtin; host and ROM tests (the test ROM has no endpoint: the agent must stay dormant) | E5 |
 | 2 | E7 | Platforms: the GBA's presence register and doorbell, parking with the sound muted; the web endpoint in `shell.html`, the doorbell import, Asyncify for the park | E5 |

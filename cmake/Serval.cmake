@@ -264,6 +264,14 @@ endfunction()
 # web it also tells Asyncify that the VM's engine calls never wait for a frame
 # (below). Call it from the directory that defined the target, after
 # serval_add_rom().
+#
+# debug link: it also writes the debug link's maps beside them
+# (docs/debug-link.md#maps, the format in docs/lua.md#debug-information),
+# which no build reads but a debugger's: <basename>.svmap (svm.py --map: each
+# op's pc and its listing line, the blob's size and hash) and, for a Lua
+# script, <basename>.svdbg (svlua.py --debug-info: the listing's lines to the
+# script's, functions, locals, and the globals, fields, arrays, objects and
+# strings by name). They are rebuilt with the blob.
 function(serval_add_script target listing)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
     if(NOT TARGET ${target})
@@ -331,22 +339,26 @@ function(serval_add_script target listing)
     get_target_property(out_dir ${target} BINARY_DIR)
     set(c_file "${out_dir}/${base}_script.c")
     set(h_file "${out_dir}/${base}_script.h")
+    set(map_file "${out_dir}/${base}.svmap") # debug link: the pc map
     if(extension STREQUAL ".lua")
         # The compiler's listing, which the assembler turns into the blob.
         set(script "${listing}")
         set(listing "${out_dir}/${base}.svm")
+        set(debug_file "${out_dir}/${base}.svdbg") # debug link: the listing's map to the script
         file(GLOB engine_headers "${engine_dir}/include/serval/*.h")
         add_custom_command(
-            OUTPUT "${listing}"
+            OUTPUT "${listing}" "${debug_file}"
             COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svlua}" compile "${script}" -o "${listing}"
+                    --debug-info "${debug_file}"
             DEPENDS "${script}" "${svlua}" ${engine_headers}
             COMMENT "Compiling ${base}.lua"
             VERBATIM)
     endif()
     add_custom_command(
-        OUTPUT "${c_file}" "${h_file}"
+        OUTPUT "${c_file}" "${h_file}" "${map_file}"
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svm}" asm "${listing}" ${header_args}
                 --c "${c_file}" --symbol "${ARG_SYMBOL}" --defs "${h_file}" ${prefix_args}
+                --map "${map_file}"
         DEPENDS "${listing}" ${headers} "${svm}" "${vm_h}"
         COMMENT "Assembling ${base}.svm"
         VERBATIM)
