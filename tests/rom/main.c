@@ -15,7 +15,6 @@ extern const TestSuite splash_tests;
 extern const TestSuite gba_map_tests;
 extern const TestSuite gba_present_tests;
 extern const TestSuite gba_blend_tests;
-extern const TestSuite gba_save_tests;
 extern const TestSuite gba_ecs_cost_tests;
 extern const TestSuite gba_vm_tests;
 extern const TestSuite gba_sprite_tiles_tests; // sprite tiles: runtime sprite tiles
@@ -27,6 +26,7 @@ extern const TestSuite gba_wave_tests;   // wave channel: the PSG wave channel
 extern const TestSuite gba_map_movement_cost_tests; // ladders and slopes: their cost
 extern const TestSuite gba_vm_sound_tests; // vm sound: scripts' tracker music and sampled effects
 extern const TestSuite gba_lz77_tests;     // lz77: LZ77-compressed sprites and tilesets
+extern const TestSuite gba_link_tests;     // debug link: the agent, dormant without an endpoint
 
 void test_output(const char* line) {
     debug_log(line);
@@ -57,8 +57,6 @@ int main(void) {
         &psg_sequencer_tests,
         &psg_wave_tests, // wave channel
         &gba_wave_tests, // wave channel
-        &save_tests,
-        &gba_save_tests,
         &input_tests,
         &path_tests,
         &gba_ecs_cost_tests,
@@ -77,8 +75,10 @@ int main(void) {
         &gba_vm_sound_tests, // vm sound: scripts' sound calls without a bank
         &lz77_tests,         // lz77: the loaders' check
         &gba_lz77_tests,     // lz77: the loaders, against plain tiles
-        // debug link: debug_break()
+        // debug link: debug_break(); the agent, dormant without an endpoint (the
+        // save suites run in serval_tests_sram, rom/save_main.c)
         &planned_debug_tests,
+        &gba_link_tests,
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

@@ -265,4 +265,15 @@ u32 serval_web_cycles(void);
 // the hardware's square frequency bits are write-only).
 u16 serval_psg_rate(u32 channel);
 
+// debug link: the agent (src/core/link.c, docs/debug-link.md), in debug builds
+// with it: serval_init() calls serval_link_init(), which sets the hook only
+// when an endpoint answers; frame_end() calls the hook last, after frames++;
+// and records its mixer's cycles for the agent's STATS (link_gba.c). All in
+// EWRAM.
+#ifdef SERVAL_LINK_AGENT
+void serval_link_init(void);
+extern void (*serval_link_hook)(void);
+extern u32 serval_link_mixer_cycles;
+#endif
+
 #endif // SERVAL_GBA_INTERNAL_H

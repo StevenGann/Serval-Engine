@@ -103,6 +103,13 @@ jobs:
       - name: Run the web test page
         run: tools/web-shots.py --require-picture build/web/tests/serval_web_tests.html 10 build/web/tests/serval_web_tests shot=10
 
+      # debug link: the debug link end to end (CTest svlink_e2e,
+      # tools/svlink_test.py): fireflies' debug page driven by tools/svlink.py
+      # in headless Chrome, and the release build of it (which the test
+      # builds first) never connecting.
+      - name: Run the debug link end to end
+        run: ctest --preset web
+
       - name: Build a game for the web against the release archive
         run: |
           tools/package-release.sh dist

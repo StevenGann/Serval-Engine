@@ -58,6 +58,27 @@ if(SERVAL_TARGET_WEB)
     target_link_libraries(serval_web_tests PRIVATE serval_warnings)
     serval_add_lz77(serval_web_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
+    # debug link: the debug link end to end (tools/svlink_test.py, run by
+    # tools/svlink.py in headless Chrome): fireflies' debug page against its
+    # blob and pc map, and the same page built for release (a build of its
+    # own, svlink-release.cmake, set up first), which has no agent. Exits 77,
+    # skipped, without Chrome. Only in builds with the agent.
+    if(SERVAL_BUILD_EXAMPLES AND SERVAL_LINK AND CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+        set(svlink_release "${CMAKE_CURRENT_BINARY_DIR}/svlink-release")
+        add_test(NAME svlink_release_page
+            COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DBUILD=${svlink_release}"
+                    "-DGENERATOR=${CMAKE_GENERATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/web/svlink-release.cmake")
+        set_tests_properties(svlink_release_page PROPERTIES FIXTURES_SETUP svlink_release TIMEOUT 900)
+        set(examples "${PROJECT_BINARY_DIR}/examples")
+        add_test(NAME svlink_e2e
+            COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlink_test.py"
+                    --page "${examples}/fireflies.html"
+                    --release-page "${svlink_release}/examples/fireflies.html"
+                    --script-c "${examples}/fireflies_script.c" --script-h "${examples}/fireflies_script.h"
+                    --svmap "${examples}/fireflies.svmap" --version "${SERVAL_VERSION_STRING}")
+        set_tests_properties(svlink_e2e PROPERTIES FIXTURES_REQUIRED svlink_release
+                             SKIP_RETURN_CODE 77 TIMEOUT 600)
+    endif()
     return()
 endif()
 add_test(NAME planned_api COMMAND ${_serval_planned_check})
@@ -78,7 +99,7 @@ serval_add_script(serval_test_harness ladder_climber.lua
 
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
-        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c rom/gba_text_tests.c rom/audio_tests.c rom/splash_tests.c rom/map_tests.c rom/present_tests.c rom/save_tests.c rom/ecs_cost_tests.c
+        SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c rom/gba_text_tests.c rom/audio_tests.c rom/splash_tests.c rom/map_tests.c rom/present_tests.c rom/ecs_cost_tests.c
                 rom/vm_platform_tests.c
                 rom/map_movement_cost_tests.c # ladders and slopes
                 rom/sprite_tiles_tests.c
@@ -97,6 +118,23 @@ if(SERVAL_TARGET_GBA)
     target_sources(serval_tests PRIVATE rom/lz77_tests.c)
     serval_add_lz77(serval_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
+    # debug link: the agent stays dormant without an endpoint (rom/link_tests.c);
+    # and what the examples' maps show of it: in debug builds its core and no
+    # IWRAM, its VM part only with the VM (fireflies, not hello); in release
+    # builds, or with SERVAL_LINK off, none of it (rom/check_link_map.py).
+    set(link_agent "$<AND:$<BOOL:${SERVAL_LINK}>,$<CONFIG:Debug,RelWithDebInfo>>")
+    target_sources(serval_tests PRIVATE rom/link_tests.c)
+    target_compile_definitions(serval_tests PRIVATE "$<${link_agent}:SERVAL_LINK_AGENT>")
+    if(SERVAL_BUILD_EXAMPLES)
+        set(link_roms hello fireflies)
+        set(link_vms off on)
+        foreach(rom vm IN ZIP_LISTS link_roms link_vms)
+            add_test(NAME link_map_${rom}
+                COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/rom/check_link_map.py"
+                        "$<TARGET_FILE_DIR:${rom}>/${rom}.map" --agent "$<IF:${link_agent},on,off>"
+                        --vm ${vm} --scratch ${SERVAL_LINK_SCRATCH})
+        endforeach()
+    endif()
 
     # maxmod: tracker music and sampled sound effects, in a test ROM of their
     # own (tests/rom/sampled_audio_main.c: Maxmod's IWRAM doesn't fit beside
@@ -135,10 +173,12 @@ if(SERVAL_TARGET_GBA)
     serval_add_script(serval_tests_sampled_audio rom/sampled_audio_vm.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/test_bank.h" serval/core.h)
 
-    # One more test ROM per save type other than SRAM: the save suites, on
-    # the ROM's Flash or EEPROM (tests/rom/save_main.c).
-    set(save_test_types FLASH64K FLASH128K EEPROM8K EEPROM512)
-    set(save_test_codes SVF6 SVF1 SVE8 SVE5)
+    # One more test ROM per save type: the save suites, on the ROM's SRAM,
+    # Flash or EEPROM (tests/rom/save_main.c). debug link: SRAM's too, since
+    # the debug link's agent (its mailbox, in every debug build) left no room
+    # for the save suites' 157 KB of EWRAM in serval_tests.
+    set(save_test_types SRAM FLASH64K FLASH128K EEPROM8K EEPROM512)
+    set(save_test_codes SVSR SVF6 SVF1 SVE8 SVE5)
     foreach(type code IN ZIP_LISTS save_test_types save_test_codes)
         string(TOLOWER "${type}" name)
         serval_add_rom(serval_tests_${name}
@@ -161,7 +201,6 @@ if(SERVAL_TARGET_GBA)
         add_test(NAME rom_tests
             COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
                     "-DROM=$<TARGET_FILE_DIR:serval_tests>/serval_tests.gba"
-                    "-DEXPECT=Detected SRAM savegame"
                     "-DREJECT=Detected (Flash|EEPROM)"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
         # About 26 s in a Debug build; under a busy machine's load it has taken
@@ -176,6 +215,8 @@ if(SERVAL_TARGET_GBA)
             COMMAND "${CMAKE_COMMAND}" "-DMGBA_ROM_TEST=${MGBA_ROM_TEST}"
                     "-DROM=$<TARGET_FILE_DIR:serval_sampled_audio_calls>/serval_sampled_audio_calls.gba"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/run-rom-test.cmake")
+        set(expect_SRAM "Detected SRAM savegame")
+        set(reject_SRAM "Detected (Flash|EEPROM)")
         set(expect_FLASH64K "Detected Flash savegame")
         set(reject_FLASH64K "Detected (SRAM|EEPROM)|Updating flash chip")
         set(expect_FLASH128K "Detected Flash savegame@@Updating flash chip from 512kb to 1Mb")
@@ -281,6 +322,19 @@ else()
     target_sources(serval_host_tests PRIVATE web_lz77_tests.c ../src/web/lz77.c)
     serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
+    # debug link: the agent against a fake endpoint (link_tests.c), with a
+    # script that reads every property as GETP does (link_probe.lua)
+    target_sources(serval_host_tests PRIVATE link_tests.c)
+    target_compile_definitions(serval_host_tests PRIVATE
+        "$<$<AND:$<BOOL:${SERVAL_LINK}>,$<CONFIG:Debug,RelWithDebInfo>>:SERVAL_LINK_AGENT>"
+        "SERVAL_LINK_SCRATCH=${SERVAL_LINK_SCRATCH}"
+        "SERVAL_LINK_ENGINE_VERSION=\"${SERVAL_VERSION_STRING}\"")
+    serval_add_script(serval_host_tests link_probe.lua PREFIX PROBE_ HEADERS serval/ecs.h)
+    # debug link: tools/svlink.py, the link's reference client, without a
+    # browser: the codec, the WebSocket server, its checks (svlink_e2e, in web
+    # builds, runs it against a page)
+    add_test(NAME svlink_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlink_test.py")
     add_test(NAME lz77_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/lz77_test.py")
 

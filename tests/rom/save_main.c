@@ -1,5 +1,5 @@
-// Runs the save suites on the GBA for one save type: built once per type
-// other than SRAM (which serval_tests covers) as serval_tests_<type>
+// Runs the save suites on the GBA for one save type: built once per type as
+// serval_tests_<type>
 // (tests/CMakeLists.txt) and run headless with mgba-rom-test, like
 // tests/rom/main.c. The shared suite checks the slot logic on simulated
 // memories; the hardware suite the ROM's real Flash or EEPROM in mGBA.

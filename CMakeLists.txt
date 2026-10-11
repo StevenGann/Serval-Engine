@@ -227,15 +227,32 @@ if(SERVAL_TARGET_GBA)
     target_compile_options(serval_libc PRIVATE -fno-builtin -fno-tree-loop-distribute-patterns)
 endif()
 
-# Web builds run no CTest: the host tests cover src/web/'s renderer, sound,
-# mixer and LZ77 decoder, and the GBA tests the rest. tests/ checks the
-# planned API there, with emcc, as part of the build, and builds the web test
-# page (tests/web/main.c; lz77: the LZ77 loaders on the web's BIOS stand-in),
-# which CI runs with tools/web-shots.py.
+# debug link: the agent (docs/debug-link.md): its core is src/core/link.c (in
+# the portable list), its VM part src/core/vm_link.c, and its platform end
+# link_gba.c (GBA and web), link_web.c with link.js (web) or link_host.c (the
+# tests' fake endpoint). SERVAL_LINK_AGENT, in debug builds unless SERVAL_LINK
+# is OFF (cmake/Serval.cmake), turns them on; without it they are empty.
+target_sources(${serval_engine_target} PRIVATE src/core/vm_link.c)
+if(SERVAL_TARGET_GBA)
+    target_sources(serval PRIVATE src/gba/link_gba.c)
+elseif(SERVAL_TARGET_WEB)
+    target_sources(serval PRIVATE src/gba/link_gba.c src/web/link_web.c)
+else()
+    target_sources(serval_portable PRIVATE src/host/link_host.c)
+endif()
+target_compile_definitions(${serval_engine_target} PRIVATE
+    "$<$<AND:$<BOOL:${SERVAL_LINK}>,$<CONFIG:Debug,RelWithDebInfo>>:SERVAL_LINK_AGENT>"
+    "SERVAL_LINK_SCRATCH=${SERVAL_LINK_SCRATCH}"
+    "SERVAL_LINK_ENGINE_VERSION=\"${SERVAL_VERSION_STRING}\"")
+
+# Web builds run one CTest, the debug link end to end (debug link:
+# tools/svlink_test.py in headless Chrome; tests/CMakeLists.txt): the host
+# tests cover src/web/'s renderer, sound, mixer and LZ77 decoder, and the GBA
+# tests the rest. tests/ checks the planned API there, with emcc, as part of
+# the build, and builds the web test page (tests/web/main.c; lz77: the LZ77
+# loaders on the web's BIOS stand-in), which CI runs with tools/web-shots.py.
 if(SERVAL_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    if(NOT SERVAL_TARGET_WEB)
-        enable_testing()
-    endif()
+    enable_testing()
     if(SERVAL_TARGET_GBA)
         include(cmake/ServalRomChecks.cmake)
     endif()

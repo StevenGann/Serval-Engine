@@ -118,6 +118,9 @@ void serval_init(void) {
     cycle_counter_start();
     frame_start_cycles = cycles_now();
     last_frame_cycles = 0;
+#ifdef SERVAL_LINK_AGENT
+    serval_link_init(); // debug link: dormant unless an endpoint answers (docs/debug-link.md)
+#endif
 }
 
 void frame_begin(void) {
@@ -169,9 +172,17 @@ void frame_end(void) {
     if (serval_mixer_hook) {
         u32 start = cycles_now();
         serval_mixer_hook();
-        last_frame_cycles += cycles_now() - start;
+        u32 mixed = cycles_now() - start;
+        last_frame_cycles += mixed;
+#ifdef SERVAL_LINK_AGENT
+        serval_link_mixer_cycles = mixed; // debug link: STATS' mixer_cycles
+#endif
     }
     frames++;
+#ifdef SERVAL_LINK_AGENT
+    if (serval_link_hook) // debug link: the agent's poll, set once an endpoint answered
+        serval_link_hook();
+#endif
 }
 
 u32 frame_count(void) {

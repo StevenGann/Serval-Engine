@@ -185,6 +185,9 @@ static u32 warnings;
 
 void debug_log(const char* message) {
     emscripten_console_log(message);
+#ifdef SERVAL_LINK_AGENT
+    serval_web_link_log(0, 0, message); // debug link: LOG, info, from the game
+#endif
 }
 
 void serval_warn(const char* message) {
@@ -199,6 +202,9 @@ void serval_warn(const char* message) {
     memcpy(line + 8, message, n);
     line[8 + n] = '\0';
     emscripten_console_warn(line);
+#ifdef SERVAL_LINK_AGENT
+    serval_web_link_log(1, 1, line); // debug link: LOG, a warning, from the engine
+#endif
 }
 
 u32 debug_warning_count(void) {

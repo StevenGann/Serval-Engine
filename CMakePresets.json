@@ -87,6 +87,7 @@
     { "name": "gba-debug", "inherits": "base", "configurePreset": "gba-debug" },
     { "name": "gba-release", "inherits": "base", "configurePreset": "gba-release" },
     { "name": "gba-ci", "inherits": "base", "configurePreset": "gba-ci" },
-    { "name": "host", "inherits": "base", "configurePreset": "host" }
+    { "name": "host", "inherits": "base", "configurePreset": "host" },
+    { "name": "web", "inherits": "base", "configurePreset": "web" }
   ]
 }

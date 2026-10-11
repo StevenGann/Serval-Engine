@@ -105,4 +105,14 @@ function(_serval_add_web_page target title game_code)
         -sFILESYSTEM=0
         -sMALLOC=emmalloc)
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}")
+
+    # debug link: a page built with the agent (debug builds, unless SERVAL_LINK
+    # is OFF) gets the page's end of the debug link, src/web/link.js, which
+    # calls serval_link_attach() when the URL fragment asks for the link
+    # (docs/debug-link.md#finding-the-endpoint). A release page has none of it.
+    set(link "$<AND:$<BOOL:${SERVAL_LINK}>,$<CONFIG:Debug,RelWithDebInfo>>")
+    target_link_options(${target} PRIVATE
+        "$<${link}:--pre-js=${engine_dir}/src/web/link.js>"
+        "$<${link}:-sEXPORTED_FUNCTIONS=_main,_serval_link_attach>")
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${engine_dir}/src/web/link.js")
 endfunction()

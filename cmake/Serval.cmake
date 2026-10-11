@@ -24,6 +24,21 @@ if(SERVAL_WARNINGS_AS_ERRORS)
     target_compile_options(serval_warnings INTERFACE $<$<COMPILE_LANGUAGE:C>:-Werror>)
 endif()
 
+# debug link: the debug link's agent (docs/debug-link.md) is in every debug
+# build (Debug and RelWithDebInfo, which define SERVAL_DEBUG) unless
+# SERVAL_LINK is OFF; release builds never have it. It costs no IWRAM; a
+# game's ROM and EWRAM grow by its code, its 3,092-byte mailbox and, in games
+# that link the VM, SERVAL_LINK_SCRATCH bytes for its copy of the blob (0:
+# none, and no breakpoints, stepping or reload with it). Cached, so the
+# helpers below see them from a game's own directory.
+option(SERVAL_LINK "Build the debug link's agent into debug builds (docs/debug-link.md)" ON)
+set(SERVAL_LINK_SCRATCH 32768 CACHE STRING
+    "Bytes of EWRAM for the debug link agent's copy of the blob, in games that link the VM")
+if(NOT SERVAL_LINK_SCRATCH MATCHES "^[0-9]+$" OR SERVAL_LINK_SCRATCH GREATER 131072)
+    message(FATAL_ERROR "SERVAL_LINK_SCRATCH is '${SERVAL_LINK_SCRATCH}': give a number of bytes "
+                        "from 0 to 131072 (docs/debug-link.md#what-debug-builds-add).")
+endif()
+
 if(SERVAL_TARGET_GBA)
     # Put every function and object in its own section so --gc-sections can
     # drop what a game does not use. This covers the engine and libtonc; game

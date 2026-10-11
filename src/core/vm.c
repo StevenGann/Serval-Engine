@@ -2227,3 +2227,50 @@ u32 vm_ops_this_frame(void) {
 bool vm_idle(void) {
     return !queue_count && next_bit(live_contexts, VM_CONTEXTS, 0) == VM_CONTEXTS;
 }
+
+// --- Debug link --------------------------------------------------------------
+
+// debug link: the VM's state for the agent's VM part (src/core/vm_link.c;
+// docs/debug-link.md), read and written without warnings or side effects, in
+// debug builds with the agent. serval_link_vm is what the agent's core
+// (link.c) refers to weakly: defined here, it exists only in games that link
+// the VM, and so does the part it points at.
+#ifdef SERVAL_LINK_AGENT
+#include "link_internal.h"
+
+const ServalLinkVmPart* const serval_link_vm = &serval_link_vm_part;
+
+const u8* serval_vm_link_blob(u32* size) {
+    *size = blob_size;
+    return blob;
+}
+
+u32 serval_vm_link_contexts(void) {
+    u32 live = 0;
+    for (u32 k = next_bit(live_contexts, VM_CONTEXTS, 0); k < VM_CONTEXTS;
+         k = next_bit(live_contexts, VM_CONTEXTS, k + 1))
+        live++;
+    return live;
+}
+
+u32 serval_vm_link_queued(void) {
+    return queue_count;
+}
+
+int serval_vm_link_context_of(Entity e) {
+    if (serval_vm_attached_object(e) < 0)
+        return -1;
+    u32 live = bound_context[entity_index(e)];
+    return live ? (int)live - 1 : -1;
+}
+
+void serval_vm_link_set_field(Entity e, u32 n, s32 value) {
+    if (n < VM_FIELDS && serval_vm_attached_object(e) >= 0)
+        fields[entity_index(e)][n] = value;
+}
+
+void serval_vm_link_set_array_cell(u32 n, s32 value) {
+    if (n < VM_ARRAY_CELLS)
+        array_cells[n] = value;
+}
+#endif // debug link

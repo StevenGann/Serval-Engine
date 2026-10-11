@@ -6,6 +6,9 @@
 #include "../core/warn.h"
 #include "ecs_internal.h"
 #include "physics_internal.h"
+#ifdef SERVAL_LINK_AGENT
+#include "../core/link_internal.h" // debug link: serval_link_ecs, set in entity_create()
+#endif
 
 u32 ent_mask[MAX_ENT];
 FIXED pos_x[MAX_ENT], pos_y[MAX_ENT];
@@ -141,6 +144,11 @@ Entity entity_create(u32 components) {
     body_bounce[index] = body_friction[index] = body_max_fall[index] = 0;
     body_gravity[index] = 0;
     body_contact[index] = 0;
+#ifdef SERVAL_LINK_AGENT
+    // debug link: the agent reads and writes entity properties only once an
+    // entity exists, so a game without entities keeps no pools through it.
+    serval_link_ecs = &serval_link_ecs_part;
+#endif
     return make_handle(index);
 }
 

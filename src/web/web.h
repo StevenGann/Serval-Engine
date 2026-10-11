@@ -106,4 +106,12 @@ void web_mixer_mix(WebMixerChannel* channels, u32 count, u32 rate_scale, u16* wo
 // included: platform.c's LZ77UnCompVram, which the loaders call.
 void web_lz77_unpack_vram(const void* src, void* dst);
 
+// debug link: hands a debug_log() line (level 0, source 0) or an engine
+// warning (level 1, source 1, "serval: "-prefixed) to the page's end of the
+// debug link, which sends it as LOG while a debugger is connected
+// (link_web.c). Debug builds with the agent only.
+#ifdef SERVAL_LINK_AGENT
+void serval_web_link_log(u32 level, u32 source, const char* text);
+#endif
+
 #endif // SERVAL_WEB_H
