@@ -2,10 +2,10 @@
 
 Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffered screenblocks as the camera scrolls. 1.0 uses regular tiled backgrounds only; affine (Mode 7) is post-1.0.
 
-**Status:** implemented, with planned API declared (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)).
+**Status:** implemented (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)). No name of `map.h` is planned in this version.
 
-- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, LZ77-compressed tilesets (`TILESET_LZ77`, [below](#tilesets)), animated tiles (`tileset_set_tiles()`), background palette writes (`tileset_set_colors()`), raster scrolling (`raster_scroll()` in `screen.h`, [below](#raster-effects)), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
-- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`).
+- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, LZ77-compressed tilesets (`TILESET_LZ77`, [below](#tilesets)), animated tiles (`tileset_set_tiles()`), background palette writes (`tileset_set_colors()`), raster scrolling (`raster_scroll()` in `screen.h`, [below](#raster-effects)), map collision for map bodies (solid and one-way metatiles, [ladders](#ladders) and [floor slopes](#floor-slopes), bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
+- **Planned:** nothing. In 1.0.0-rc.1, LZ77 tilesets (`TILESET_LZ77`), ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`) were planned API ([releases.md](releases.md#planned-api)), declared with the values they have now.
 - **Not in the API yet**, and addable later without breaking existing games or data: 8bpp tilesets (a reserved `Tileset.flags` bit), tileset groups, more changed cells than `MAP_MAX_CHANGES`, ceiling slopes and other collision types (the reserved types 10-15).
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
@@ -94,7 +94,7 @@ Offsets and sizes are the GBA's (and wasm32's: the web build has the same layout
 | Offset | Field | Type | Values |
 | --- | --- | --- | --- |
 | 0 | `se` | `u16[4]` | Screen entries, top-left, top-right, bottom-left, bottom-right: tile index (bits 0-9, into the tileset), H and V flip (bits 10 and 11), palette bank 0-14 (bits 12-15); `MAP_SE(tile, palette, flips)` |
-| 8 | `collision` | `u8` | Collision type in bits 0-3 ([Collision types](#collision-types): 0-2 implemented, 3-9 planned, 10-15 reserved); tags `MAP_TAG(0)` to `MAP_TAG(3)` in bits 4-7, the game's ([Tags](#tags)). Only the playfield's are read |
+| 8 | `collision` | `u8` | Collision type in bits 0-3 ([Collision types](#collision-types): 0-9 implemented, 10-15 reserved); tags `MAP_TAG(0)` to `MAP_TAG(3)` in bits 4-7, the game's ([Tags](#tags)). Only the playfield's are read |
 | 9 | (padding) | 1 byte | |
 
 **`MapLayer`**, 20 bytes:
@@ -180,7 +180,7 @@ The shadow palette is the sprites' one: the banks written since the last frame, 
 
 Read directly from ROM per metatile, separate from graphics: only the playfield's (BG2) collision bytes are read. Dynamic changes (breakable blocks, doors) go in a small RAM overlay checked before ROM and applied during streaming.
 
-**Implemented** (`src/core/map.c`, `src/ecs/map_movement.c`, platform-neutral and unit tested on the host): collision types 0-2, with the planned and reserved ones colliding as the table below says; tags and `map_tags_in()`; map bodies and their contacts; runtime changes.
+**Implemented** (`src/core/map.c`, `src/ecs/map_movement.c`, platform-neutral and unit tested on the host, `tests/map_tests.c` and `tests/map_slope_tests.c`): collision types 0-9, the reserved ones colliding as the table below says; tags and `map_tags_in()`; map bodies and their contacts; runtime changes.
 
 ### Collision types
 
@@ -191,15 +191,17 @@ The low four bits of `Metatile.collision`, read with `MAP_TYPE()`:
 | 0 | `MAP_EMPTY` | Implemented | Nothing |
 | 1 | `MAP_SOLID` | Implemented | Blocks bodies from every side |
 | 2 | `MAP_ONEWAY` | Implemented | Blocks only bodies moving down into it from above |
-| 3 | `MAP_LADDER` | Planned | Empty until implemented |
-| 4-9 | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | Planned | Solid (the whole metatile) until implemented |
+| 3 | `MAP_LADDER` | Implemented | Climbable, not solid; its top is a floor to bodies falling onto it with gravity ([Ladders](#ladders)) |
+| 4-9 | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | Implemented | Solid below a line across the metatile, which bodies walk up and down ([Floor slopes](#floor-slopes)) |
 | 10-15 | | Reserved | Empty |
 
-`map_load()` loads a playfield whose metatiles use the planned or reserved types rather than refusing it: a game or the editor can paint ladders and slopes now, and they start working, with no change to the data, in the version that implements them. Debug builds warn once per kind (ladders, slopes, reserved types) when such a playfield loads; the check runs at load time over the layer's metatile definitions, so it costs nothing per frame. Data must not use the reserved types: a later version will give them a meaning (ceiling slopes, for one), and such data would change behaviour then. `map_collision_at()` returns the collision byte as the metatile has it, whatever its type.
+`map_load()` loads a playfield whose metatiles use the reserved types rather than refusing it. Debug builds warn once when such a playfield loads; the check runs at load time over the layer's metatile definitions, so it costs nothing per frame. Data must not use the reserved types: a later version will give them a meaning (ceiling slopes, for one), and such data would change behaviour then. In 1.0.0-rc.1, where ladders and slopes were planned, they loaded the same way (with a warning, a ladder colliding as empty and a slope as a whole solid metatile), so a playfield painted with them then works unchanged now. `map_collision_at()` returns the collision byte as the metatile has it, whatever its type, and `map_tags_in()` finds the tags of ladders and slopes as of any metatile.
 
-**Ladders** (`MAP_LADDER`, planned): climbable, not solid. A map body overlapping a ladder metatile has `MAP_CONTACT_LADDER` in `body_contact`, so the game can let it climb: it sets the body's velocity itself, usually with `body_gravity` at `BODY_GRAVITY(0)` while it climbs. The top of a ladder (a ladder metatile with none above it) is a floor to bodies with gravity falling onto it, like `MAP_ONEWAY`; a body without gravity is climbing, and passes through it both ways. Until implemented, a ladder is empty and `MAP_CONTACT_LADDER` is never set.
+**Why these values.** The ladder and the six floor slopes take types 3-9 and leave 10-15 for ceiling slopes and whatever comes later: twelve slope shapes (floors and ceilings) would fill the type space. Hazards are not a type: a hazard is a property (spikes may be solid, lava not), which is what tags are for ([below](#tags)).
 
-**Floor slopes** (`MAP_SLOPE_*`, planned): solid below a straight line across the metatile, empty above it. The name says which way the floor rises (`_R` to the right, `_L` to the left). The line's height above the metatile's bottom edge, in pixels:
+### Floor slopes
+
+**Implemented** (`MAP_SLOPE_*`): solid below a straight line across the metatile, empty above it. The name says which way the floor rises (`_R` to the right, `_L` to the left). The line's height above the metatile's bottom edge, in pixels:
 
 | Type | Name | At the left edge | At the right edge | Shape |
 | --- | --- | --- | --- | --- |
@@ -210,9 +212,65 @@ The low four bits of `Metatile.collision`, read with `MAP_TYPE()`:
 | 8 | `MAP_SLOPE_L_HIGH` | 16 | 8 | Left half of a 1:2 slope rising to the left |
 | 9 | `MAP_SLOPE_L_LOW` | 8 | 0 | Its right half, placed right of `_L_HIGH` |
 
-Each rises 16 or 8 pixels across its 16-pixel width, and slopes placed side by side as above meet at the same height. A map body will walk up and down them, standing on the line, with `MAP_CONTACT_FLOOR` as on a flat floor; the exact motion is specified when they are implemented. Until then each collides as `MAP_SOLID`.
+Each rises 16 or 8 pixels across its 16-pixel width, and slopes placed side by side as above meet at the same height. **Every pixel the line passes through is solid**: pixel column c of the metatile (0 at its left) is solid from the bottom up to the line's height at the column's higher edge, rounded up. So a 45° slope is a staircase of one-pixel steps, as it is drawn, and every column has at least one solid pixel:
 
-**Why these values.** The ladder and the six floor slopes take types 3-9 and leave 10-15 for ceiling slopes and whatever comes later: twelve slope shapes (floors and ceilings) would fill the type space. Hazards are not a type: a hazard is a property (spikes may be solid, lava not), which is what tags are for ([below](#tags)).
+| Type | Solid pixels in columns 0, 1, 2, ... 15 |
+| --- | --- |
+| `MAP_SLOPE_R` | 1, 2, 3, ... 16 (c + 1) |
+| `MAP_SLOPE_L` | 16, 15, 14, ... 1 (16 − c) |
+| `MAP_SLOPE_R_LOW` | 1, 1, 2, 2, ... 8, 8 |
+| `MAP_SLOPE_R_HIGH` | 9, 9, 10, 10, ... 16, 16 |
+| `MAP_SLOPE_L_HIGH` | 16, 16, 15, 15, ... 9, 9 |
+| `MAP_SLOPE_L_LOW` | 8, 8, 7, 7, ... 1, 1 |
+
+Draw slope metatiles to match: the art's top pixel in each column is the last solid one. At a join the heights go on a pixel at a time: flat floor (0) to a slope's low end (1); `_R_LOW`'s last column (8) to `_R_HIGH`'s first (9); a slope's high end (16) to a solid metatile beside it (16).
+
+**The foot.** A slope holds a map body up at one point, its *foot*: the pixel column at its horizontal centre, `pos_x + body_w / 2` rounded down (the right one of the two middle columns for an even width). Standing on a slope, the body's bottom edge is on the slope's surface in that column: its uphill corner sinks into the ground and its downhill corner is over it, as in most games with slopes, and as a body standing on a ledge's edge hangs over it. Only the foot stands on slopes: a body whose foot is past a slope's high end falls even if its side is over the slope (so give a slope's high side a solid metatile or the next slope, as terrain does).
+
+```
+            ▒▒▒▒▒▒
+     ░░░░░░▓▒▒▒▒▒▒     ░ the body
+     ░░░░░▓▓▒▒▒▒▒▒     ▓ its uphill corner, in the ground
+     ░░░░▓▓▓▒▒▒▒▒▒     ▒ a slope rising to the right, and the ground under it
+        ▒▒▒▒▒▒▒▒▒▒     ▲ its foot: the bottom edge rests on the surface here
+       ▒▒▒▒▒▒▒▒▒▒▒
+      ▒▒▒▒▒▒▒▒▒▒▒▒
+     ▒▒▒▒▒▒▒▒▒▒▒▒▒
+▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+        ▲
+```
+
+**Walking.** Moving sideways, a body's foot follows the ground:
+
+- **Up:** a slope (or the solid metatile at its top) lifts the foot onto its surface, by up to a pixel per pixel column the foot moves, the steepest any slope rises, so every slope is walked up at any speed, also by a body in the air moving into it (it lands on the slope from the side). A taller rise is a wall: a slope's exposed side, below.
+- **Down:** a *walking* body (one that touched the floor in the last frame, whose own gravity pulls down and that isn't moving up after gravity) follows the ground down by up to a pixel per pixel column, so it sticks to a slope it walks down, at any speed, and over a crest, rather than flying off; a drop of more than that (a ledge, a step down a metatile) it walks off and falls, as before. A body that has jumped (moving up) leaves the slope at once. A body without gravity isn't walking: it slides up a slope it moves into (with `MAP_CONTACT_FLOOR`) but doesn't follow one down.
+- **Speed:** `vel_x` stays the horizontal speed on a slope. A slope doesn't slow a body uphill, speed it up downhill or make it slide when it stands still; a game that wants any of that does it itself (`map_collision_at()` under the body's foot says it is on a slope, and which). Walking up a 45° slope covers the same distance across in the same time as on flat ground, rising a pixel per pixel.
+- A walking body also steps onto a one-way platform (or a ladder top) level with a slope's top, which a fast step can reach a few pixels into.
+- Up or down, the body moves in steps of at most 7 pixels, as everywhere, each followed by its foot, so it never stair-steps or launches: off the top of a ramp with nothing after it, it carries on at its own vertical speed (none) and falls.
+
+**Landing.** Moving down, the foot lands on the slope's surface, with `MAP_CONTACT_FLOOR` and the floor's bounce: a bounce off a slope is a bounce off a floor, straight up (a perfect one back to the height it fell from), `vel_x` kept; friction slows a body sliding on one as on a floor.
+
+**The rest of the body.** Since the uphill corner sinks into the ground, the body's edges must not catch on it, and three rules see to that (without them a body would stop at the top of every slope):
+
+- While the foot is on (or above) a slope, the slope's line, extended across the body, is the ground: solid, one-way and ladder-top metatiles and slope sides at or below it stop nothing. That is the solid metatile behind a slope's top and the one under the next slope up a hill.
+- Moving sideways, the leading edge entering a metatile meets its side: the whole height of a solid metatile, a slope's height in the column it enters. What a slope behind the edge covers (its height in the column the edge leaves) is no wall, so the side of a solid metatile under a slope's high end, or the next slope up a 45° hill, is walked past; a side of at most a pixel (a slope's low end) is a step, as is anything reaching only into the body's lowest pixel row. Every other side is a wall: a slope's **exposed high side** (or the 8- or 9-pixel side of a lone half of a 1:2 slope) stops a body as a solid metatile does, flush against it, on the ground or in the air.
+- Moving down, a solid, one-way or ladder-top metatile under a slope is that slope's foundation, not a floor, except under the foot: a wide body landing beside a hill stands on the floor at its foot, not on the hill's inside.
+
+With these, bodies up to 64 pixels wide walk onto a 45° hill from flat ground (wider ones can meet the solid ground under the hill's third column with their side before their foot reaches the slope, and stop there), and bodies of any width walk on slopes once on them. Tests in `tests/map_slope_tests.c` walk bodies 1 to 64 pixels wide at 1/4 to 9 pixels per frame up and down a 45° hill, a 1:2 hill, peaks and a valley, checking every frame that the body stands on the ground under its foot.
+
+**From below,** a slope is a ceiling across its whole width, as each of its columns is solid at its bottom. A body whose foot ends up inside a slope (a cell changed under it, or placed there) moves freely, as bodies do out of solid metatiles.
+
+**Cost.** `map_load()` notes whether the playfield's metatile definitions include slopes or ladders. On a playfield with neither, `sys_map_movement()` takes the path it always had, which costs no more than before slopes existed (a little less: it reads cells directly while none is changed). On one with either, it takes a general path that looks at the ground under each body's foot: in a Release build in mGBA, a 12×15 body walking at 1.5 pixels per frame costs about 1,480 cycles a frame on a playfield without them (1,554 before), 2,900 on flat ground on a playfield with them, 3,400 on a 45° slope and 3,100 on a 1:2 one, and 1,600 climbing a ladder (each includes about 640 for the loop over the 128 entity slots; `tests/rom/map_movement_cost_tests.c` logs them).
+
+### Ladders
+
+**Implemented** (`MAP_LADDER`, `MAP_CONTACT_LADDER`): climbable, not solid. Ladders stop nothing from the side or from below.
+
+- **`MAP_CONTACT_LADDER`** (bit 6 of `body_contact`) is set while a map body overlaps a ladder metatile, **or stands on one**: the pixel row just below its feet is a ladder's, which is how a body standing on a ladder's top touches it. The game reads it to let the body climb. (1.0.0-rc.1 promised the overlap only; standing on the top was added when ladders were implemented, so a body on a ladder's top, scripts' ones too, can tell that it may climb down.)
+- **The top of a ladder** (a ladder metatile with no ladder above it) is a floor to a body whose own gravity pulls it down, falling onto it, like `MAP_ONEWAY`: it blocks only a body entering its row from above, so a body that is already inside it (a body that stops climbing halfway, say) falls down the ladder. A body without gravity (`body_gravity` at `BODY_GRAVITY(0)`, or no gravity at all) passes through it both ways, as does one whose gravity pulls up. A body standing on a top has `MAP_CONTACT_FLOOR` and `MAP_CONTACT_LADDER`.
+- **Climbing is the game's**, with velocity and gravity, as `platformer` does it: with up (or down) held and `MAP_CONTACT_LADDER`, it takes the body's gravity away (`body_gravity = BODY_GRAVITY(0)`), lines it up with the ladder (`map_collision_at()` finds the ladder's column), and sets `vel_y` each frame (up, down or 0) and `vel_x` to 0. Climbing up past the top, the body stops touching the ladder once it is above the top by a pixel: the game gives it its gravity back, and it lands on the top (a game can also stop it when its feet reach the top). To climb down from the top, a body standing on it with down held loses its gravity and moves down: it passes through the top. Reaching the floor (`MAP_CONTACT_FLOOR` while climbing down) or jumping off, the game gives it its gravity back.
+- **Beside solid metatiles**, walls and ceilings stop a climbing body as any other: a ladder up through a hole in a ceiling lets through a body no wider than the hole.
+- **Scripts** read the bit by its C name, as the other contacts: `self.body_contact & MAP_CONTACT_LADDER ~= 0` (with `HEADERS serval/map.h`); `tests/ladder_climber.lua` climbs a ladder that way. They need no engine function: the contact bits, `vy` and `body_gravity` are enough to climb up and down.
 
 ### Tags
 
@@ -235,21 +293,22 @@ It costs one cell lookup per metatile overlapped, each looking through the runti
 - **Bounces:** `body_bounce` 255 is a perfect bounce (a `u8` can't hold 256, so its largest value means it). Off a wall or a ceiling it keeps the whole speed. Off a floor (the side gravity pulls toward) the body rebounds at the speed that brings it back up to the height it fell from, to within a pixel, every time, so it bounces for ever. Keeping the speed would not: the body stops flush against the floor `past` short of where the frame's movement would have taken it, and would rebound lower than it fell from by up to a frame's fall (13 pixels at 1 pixel per frame per frame), on every bounce alike. This integration (velocity += gravity, then move) keeps `v² + g·v − 2·g·x` the same in free flight (v the velocity it moves at, x the position along gravity, g its acceleration), so the rebound speed is `u + g` with `u² + g·u = v² + g·v − 2·g·past`, v the speed it hit at: the same bisection `sys_physics()` uses for its perfect bounces (`serval_perfect_rebound()`, `src/ecs/physics_internal.h`; [runtime-systems.md](runtime-systems.md#physics)). Measured on 545 drops (2 to 110 pixels, gravity 1/16 to 1 pixel per frame per frame, 20,000 frames each), every peak is between 0.1 pixel above and 0.9 pixel below the drop height, the same every bounce; keeping the speed, peaks were up to 13 pixels low. On a floor, a rebound slower than twice one frame's gravity is a rest, whatever the bounce (a perfect one rebounds that slowly only when the body hit the floor slower than that), so a body standing on a floor stays put; `body_friction` slows a sliding body, as in `sys_physics()`. Unlike `sys_physics()`'s bounds, walls and ceilings use `body_bounce` too, so the default stops a character at a wall. Every metatile along the edge is checked, so bodies of any size up to 255×255 work.
 - Only metatiles the leading edge newly enters block it. A body overlapping a solid metatile (placed there, or a cell changed under it) can move out, and one-way platforms follow naturally: a body moving down enters a `MAP_ONEWAY` row only from above, while one that jumped into it from below is already inside its row and falls through. Sideways movement ignores one-way metatiles.
 - A body standing on a floor touches it every frame while gravity pulls it down (`MAP_CONTACT_FLOOR`); a body stopped by a wall touches it again only when pushed into it again.
+- Slopes hold a body up at its foot, and ladder tops are floors to bodies falling onto them with gravity: [Floor slopes](#floor-slopes), [Ladders](#ladders).
 
 **Contacts** (`body_contact`, one byte per entity, shared with `sys_physics()`, which reports bouncing bodies' contacts there with [`physics_set_contacts()`](runtime-systems.md#physics)):
 
 | Bit | Name | Set by |
 | --- | --- | --- |
-| 0 | `MAP_CONTACT_FLOOR` | `sys_map_movement()`: the body's bottom edge touched the map |
+| 0 | `MAP_CONTACT_FLOOR` | `sys_map_movement()`: the body's bottom edge touched the map (a slope under its foot too) |
 | 1 | `MAP_CONTACT_CEILING` | Its top edge |
 | 2 | `MAP_CONTACT_LEFT` | Its left edge |
 | 3 | `MAP_CONTACT_RIGHT` | Its right edge |
 | 4 | | Reserved for the engine |
 | 5 | `BODY_CONTACT_EXIT` (`physics.h`) | `sys_physics()` only: a body left through an open edge |
-| 6 | `MAP_CONTACT_LADDER` | Planned: `sys_map_movement()`, while the body overlaps a ladder; never set until ladders are implemented |
+| 6 | `MAP_CONTACT_LADDER` | `sys_map_movement()`: the body overlaps a ladder metatile or stands on one ([Ladders](#ladders)) |
 | 7 | | Reserved for the engine |
 
-Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` and `_RIGHT`. Scripts read them as the read-only property `body_contact` (`VM_P_BODY_CONTACT`; [lua.md](lua.md#what-compiles-to-what)): `self.body_contact & MAP_CONTACT_FLOOR ~= 0` while a map body stands on the floor.
+Bits 0-3 are the same bits as `physics.h`'s `BODY_SIDE_BOTTOM`, `_TOP`, `_LEFT` and `_RIGHT`. Scripts read them as the read-only property `body_contact` (`VM_P_BODY_CONTACT`; [lua.md](lua.md#what-compiles-to-what)): `self.body_contact & MAP_CONTACT_FLOOR ~= 0` while a map body stands on the floor, `self.body_contact & MAP_CONTACT_LADDER ~= 0` while it touches a ladder.
 
 ### Runtime changes
 

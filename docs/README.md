@@ -1,6 +1,6 @@
 # Serval Engine documentation
 
-Design documents and reference for the runtime. They are the source of truth for design and should be updated as decisions are made. Each document opens with a **Status** line saying what is implemented, what is declared as *planned* API (in the headers since 1.0.0-rc.1, implemented in a 1.x version; [releases.md](releases.md#planned-api)) and what comes later.
+Design documents and reference for the runtime. They are the source of truth for design and should be updated as decisions are made. Each document opens with a **Status** line saying what is implemented, what is declared as *planned* API ([releases.md](releases.md#planned-api); no name is planned in this version: everything 1.0.0-rc.1 declared so is implemented) and what comes later.
 
 - **Taking over the engine:** start with [handoff.md](handoff.md), then [api-freeze.md](api-freeze.md).
 - **Writing a game:** start with [getting-started.md](getting-started.md), then [api-reference.md](api-reference.md).
@@ -11,14 +11,14 @@ Design documents and reference for the runtime. They are the source of truth for
 | [handoff.md](handoff.md) | Start here if you are taking over the engine: where things are, their state, what is promised, what to do next | Written for 1.0.0-rc.1 |
 | [api-freeze.md](api-freeze.md) | What 1.0 promises, what is planned and why: the freeze, every planned name, what can come later without breaking games, the decisions | Frozen in 1.0.0-rc.1 |
 | [getting-started.md](getting-started.md) | Build the examples (with a reading order), create a game, scripting, sprites, entities, sound, text, web builds | Implemented features only |
-| [api-reference.md](api-reference.md) | Every public function and type, by header: units, limits, misuse behaviour | Implemented; planned names marked |
+| [api-reference.md](api-reference.md) | Every public function and type, by header: units, limits, misuse behaviour | Implemented; no name planned |
 | [examples-roadmap.md](examples-roadmap.md) | Implemented and candidate examples, what each exposed or would expose, and the open gaps | Eleven examples, six write-ups of what they exposed; the rest candidates; gaps the freeze closed or declared marked |
 | [development.md](development.md) | Building, testing, source layout, benchmark, memory use, code style, planned API, the documentation site, CI/CD and releases | Current |
-| [overview.md](overview.md) | Goals, layers, what 1.0 means, relationship to Studio Advance | Design; core API, ECS and the VM implemented; 1.0's planned API declared |
+| [overview.md](overview.md) | Goals, layers, what 1.0 means, relationship to Studio Advance | Design; core API, ECS and the VM implemented; 1.0.0-rc.1's planned API all implemented |
 | [core-api.md](core-api.md) | raylib-style C API by header, debug warnings, hardware the engine uses and reserves, reserved bits and values in the data formats, the sprite submission model | Implemented, palette writes, raster effects, the PSG wave channel, tracker music and sampled sound included |
 | [ecs.md](ecs.md) | Entity storage, components, systems, handles, cheap iteration, bodies | Implemented, collision events to scripts included (`vm_collide`); engine component bits 8-15 reserved; helpers and more components later |
 | [sprites.md](sprites.md) | Sprite groups, VRAM residency, palettes, ROM data, animation | Resident and streamed groups, LZ77-compressed sprites, metasprites, animation, per-draw palettes, marks, runtime tiles, blending and palette writes implemented; palette sharing later |
-| [tilemaps.md](tilemaps.md) | Tilesets, metatile layers, streaming, fixed and self-scrolling layers, map collision and tags | Implemented, palette writes and LZ77 tilesets included; ladders and slopes planned (declared); tileset groups and 8bpp later |
+| [tilemaps.md](tilemaps.md) | Tilesets, metatile layers, streaming, fixed and self-scrolling layers, map collision and tags | Implemented, palette writes, LZ77 tilesets, ladders and floor slopes included; no name planned; tileset groups and 8bpp later |
 | [audio.md](audio.md) | PSG sound effects and music, the wave channel included; the sound bank, tracker music and sampled sound through Maxmod (BlocksDS) | Implemented: the PSG, the wave channel included, and the sound bank, tracker music and sampled sound (Maxmod, on the GBA and the web) |
 | [frame-loop.md](frame-loop.md) | What `frame_begin`/`frame_end` do, the VBlank flush in order, the update order with scripts | Implemented, the whole VBlank flush (Maxmod's mixer included) and the order with scripts |
 | [runtime-systems.md](runtime-systems.md) | Save data, text, effects, math, paths, physics, entity collision, camera | Mostly implemented, per section (blending and raster effects included); dialogue, a broad phase and camera following later |

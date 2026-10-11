@@ -49,7 +49,7 @@ These could not be added later without breaking games, or were small enough to f
 
 ## Planned in 1.x (declared now)
 
-Each of these 8 names (37 at the freeze, less the implemented rows marked below) is in the headers with `SERVAL_PLANNED`; its header comment says what it will do and what it does today. `tests/planned/` uses every one, and the `planned_api` test checks that each warns. Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
+No name is planned in this version: all 37 declared planned at the freeze are implemented (the rows below, each marked so), with the signatures and values they were declared with. While a name was planned it was in the headers with `SERVAL_PLANNED`, its header comment saying what it would do and what it did meanwhile; `tests/planned/` used every one, and the `planned_api` test checked that each warned (it now checks the marker on the tests' own planned names, `tests/planned/fake.h`). Scripts can't declare the functions' names ([lua.md](lua.md#planned-functions), D9).
 
 | Feature | Names | Doc |
 | --- | --- | --- |
@@ -61,12 +61,12 @@ Each of these 8 names (37 at the freeze, less the implemented rows marked below)
 | LZ77 sprites and tilesets: **implemented**, no longer marked planned (no SYS call: they are data flags; unpacked by the BIOS, on the web by `src/web/lz77.c`; `tools/lz77.py` and `serval_add_lz77()` make the data) | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | [sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets) |
 | Runtime sprite tiles: **implemented**, no longer marked planned (no SYS call: scripts can't hold tile data) | `sprite_set_tiles`, `SPRITE_MAX_TILE_UPDATES` | [sprites.md](sprites.md#runtime-tiles) |
 | Palette writes: **implemented**, no longer marked planned | `sprite_set_colors`, `tileset_set_colors` | [sprites.md](sprites.md#palettes), [tilemaps.md](tilemaps.md#palette-writes) |
-| Ladders | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#collision-types) |
-| Floor slopes | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#collision-types) |
+| Ladders: **implemented**, no longer marked planned (no SYS call: scripts read `MAP_CONTACT_LADDER` from `body_contact` and climb with `vy` and `body_gravity`; `MAP_CONTACT_LADDER` is also set on a ladder's top, which 1.0.0-rc.1 didn't promise) | `MAP_LADDER`, `MAP_CONTACT_LADDER` | [tilemaps.md](tilemaps.md#ladders) |
+| Floor slopes: **implemented**, no longer marked planned (no SYS call: they are collision types, in data) | `MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW` | [tilemaps.md](tilemaps.md#floor-slopes) |
 | Alpha blending: **implemented**, no longer marked planned (scripts: SYS call 14, `SCREEN_SET_BLEND`) | `screen_set_blend`, `SPRITE_BLEND` | [runtime-systems.md](runtime-systems.md#alpha-blending), [sprites.md](sprites.md#alpha-blending) |
 | Raster effects: **implemented**, no longer marked planned (no SYS call: they take tables, which scripts can't pass) | `raster_scroll`, `raster_backdrop`, `raster_clear` | [runtime-systems.md](runtime-systems.md#raster-effects) |
 
-**Suggested order**, by value to Studio Advance: palette writes; runtime sprite tiles; blending; ladders and slopes; LZ77; Maxmod on the GBA (with the mixer configuration below); streamed groups; raster effects; the wave channel; the web's sampled-audio player (done: Maxmod's player with a C port of its GBA mixer, [audio.md](audio.md#web)). To implement one, follow [development.md](development.md#planned-api): drop the marker, implement, move its line out of `tests/planned/`, and turn its stub test into a feature test.
+**Suggested order**, by value to Studio Advance: palette writes; runtime sprite tiles; blending; ladders and slopes; LZ77; Maxmod on the GBA (with the mixer configuration below); streamed groups; raster effects; the wave channel; the web's sampled-audio player (done: Maxmod's player with a C port of its GBA mixer, [audio.md](audio.md#web)). All of it is done. A name planned later is implemented the same way ([development.md](development.md#planned-api)): drop the marker, implement, move its line out of `tests/planned/`, and turn its stub test into a feature test.
 
 ## Later, additively (no API now)
 

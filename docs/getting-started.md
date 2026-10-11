@@ -2,7 +2,7 @@
 
 Write a GBA game in C with Serval Engine. This covers building the examples, the shape of a game, and the engine's main pieces. Function details are in [api-reference.md](api-reference.md).
 
-**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, tracker music and sampled sound effects, fades, paths, save data, web builds). Planned names compile with a warning and do nothing yet ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now) lists them; [the README](../README.md#features) lists what is implemented). The scripting VM is implemented, with game logic written in a [Lua subset](lua.md) ([Scripting](#2-create-your-game) below; `fireflies` is a whole game in it); this page's examples are in C.
+**Status:** describes what is implemented today. This page covers sprites, entities, bouncing physics, PSG sound effects and HUD text; the examples and the [Next](#next) links cover the rest that is implemented (sprite animation, tilemaps and the camera, map collision, PSG music, tracker music and sampled sound effects, fades, paths, save data, web builds). No name is planned in this version (planned names compile with a warning and do nothing yet: [api-freeze.md](api-freeze.md#planned-in-1x-declared-now) lists those 1.0.0-rc.1 had, all implemented now; [the README](../README.md#features) lists what is implemented). The scripting VM is implemented, with game logic written in a [Lua subset](lua.md) ([Scripting](#2-create-your-game) below; `fireflies` is a whole game in it); this page's examples are in C.
 
 ## 1. Build the examples
 

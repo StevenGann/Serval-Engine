@@ -55,7 +55,7 @@ Since browsers only play sound after a click or key press, the page waits for on
 
 ### Planned features on the web
 
-The planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) compiles for the web as for the GBA: the same stubs, the same warnings. When each is implemented, the web does this:
+No name is planned in this version: every feature 1.0.0-rc.1 declared as planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) is implemented, and while planned each compiled for the web as for the GBA (the same stubs, the same warnings). What the web does for each:
 
 | Feature | Names | On the web |
 | --- | --- | --- |
@@ -65,11 +65,11 @@ The planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) comp
 | Raster effects (**implemented**) | `raster_scroll()`, `raster_backdrop()`, `raster_clear()` | Drawn as on the GBA: the engine's code is the same, and the renderer does HBlank DMA 0's copies between the lines it draws, from the per-line table `frame_end()` prepared ([above](#what-is-faked-or-missing), [runtime-systems.md](runtime-systems.md#raster-effects)) |
 | LZ77 sprites and tilesets (**implemented**) | `SPRITE_ASSET_LZ77`, `TILESET_LZ77` | Unpacked as on the GBA: the engine's code is the same, and `src/web/lz77.c`, a C decoder for the BIOS's LZ77 format, stands in for the BIOS call among the stand-ins in `src/web/platform.c` (`LZ77UnCompVram`). It unpacks byte for byte as the BIOS does, writing halfwords as VRAM needs, so data that isn't VRAM-safe would look the same as on the GBA too; host-tested, and checked against mGBA's BIOS by the test ROM ([sprites.md](sprites.md#lz77-compression), [tilemaps.md](tilemaps.md#tilesets)) |
 | Streamed sprite groups (implemented) | `SPRITE_GROUP_STREAMED` | Nothing web-specific: VRAM copies in `frame_end()`, which the web build runs unchanged and needed nothing new for ([frame-loop.md](frame-loop.md#vblank-flush)), as runtime sprite tiles (`sprite_set_tiles()`) and palette writes (`sprite_set_colors()`, `tileset_set_colors()`), both implemented, already are |
-| Ladders and floor slopes | `MAP_LADDER`, `MAP_CONTACT_LADDER`, `MAP_SLOPE_*` | Nothing web-specific: map collision is portable code (`src/core/`, `src/ecs/`) |
+| Ladders and floor slopes (**implemented**) | `MAP_LADDER`, `MAP_CONTACT_LADDER`, `MAP_SLOPE_*` | Nothing web-specific: map collision is portable code (`src/core/`, `src/ecs/`), the same on every target and host-tested ([tilemaps.md](tilemaps.md#floor-slopes)) |
 
 Implemented since: palette writes (`sprite_set_colors()`, `tileset_set_colors()`), nothing web-specific: palette RAM copies in `frame_end()`, which the web build runs unchanged, and its renderer reads palette RAM as the GBA's does.
 
-Portable code, the same on every target and host-tested: `vm_collide()` (the VM's collision pass), `map_tags_in()`, `color_mix()`, and the ladders and slopes above when they come.
+Portable code, the same on every target and host-tested: `vm_collide()` (the VM's collision pass), `map_tags_in()`, `color_mix()`, and the ladders and slopes above.
 
 ### Testing
 

@@ -100,7 +100,7 @@ An entity with `C_POS | C_VEL | C_BODY` is a body, moved by `sys_physics()` ([ru
 | 3 | `BODY_SIDE_RIGHT` = `MAP_CONTACT_RIGHT` | Its right side touched the right bound or the map |
 | 4 | reserved | Never set. It is `BODY_SIDE_INSIDE`'s value, which only `body_hit_side()` returns |
 | 5 | `BODY_CONTACT_EXIT` | With the side bit of an open edge (`physics_set_open_edges()`): `sys_physics()` found the body entirely outside past that edge, and it wasn't before this frame's `sys_movement()` (at its position minus its velocity). Set on that one frame; [runtime-systems.md](runtime-systems.md#physics) has the exact tests |
-| 6 | `MAP_CONTACT_LADDER` (`map.h`) | Ladders, for map bodies. Planned: never set in this version |
+| 6 | `MAP_CONTACT_LADDER` (`map.h`) | Ladders, for map bodies: the body overlaps a ladder or stands on one ([tilemaps.md](tilemaps.md#ladders)) |
 | 7 | reserved | Never set |
 
 `sys_physics()` sets a side on the frame the body bounces off that wall and on every frame it rests against it (on a floor, or at a wall with no speed away from it); `sys_map_movement()` sets one when the body moves into the map on that side ([tilemaps.md](tilemaps.md#collision)). A wrapping axis (`physics_set_wrap()`) has no walls and no exits, so it sets none of these.

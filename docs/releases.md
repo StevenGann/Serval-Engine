@@ -35,6 +35,8 @@ main.c:12:30: warning: 'MAP_LADDER' is deprecated: Serval: planned, not implemen
 this version: ladders, docs/tilemaps.md#collision-types [-Wdeprecated-declarations]
 ```
 
+(`MAP_LADDER` was planned in 1.0.0-rc.1; no name is planned in this version.)
+
 "Deprecated" is the compiler's fixed wording: nothing is being removed. The warning means the call is in the API, and this engine version does nothing useful with it yet. Games built with `-Werror` stop at it.
 
 **Silencing it on purpose**, to write code against planned API that starts working in the engine version implementing it:
@@ -47,7 +49,7 @@ this version: ladders, docs/tilemaps.md#collision-types [-Wdeprecated-declaratio
 
 **At run time**, planned API does nothing harmful. A planned function returns 0, `false` or its type's "none" (no function is planned in this version; `sfx_play()` returned `SFX_NONE` until tracker music and sampled effects were implemented) and changes nothing; a loader refuses data that needs a planned feature, as it refuses any data it doesn't understand. Debug builds warn once per problem (1.0.0-rc.1's `tileset_load()` said `serval: tileset_load: TILESET_LZ77 (LZ77-compressed tilesets) is planned, not implemented in this engine version; ...` until LZ77 tilesets were implemented).
 
-**In scripts.** Scripts reach a planned feature only once a version implements it: the VM's SYS page has no calls for planned functions ([vm.md](vm.md#engine-calls)), so the Lua compiler refuses a call of one (`music_play` was refused so until tracker music was implemented: `music_play is planned, not implemented in this engine version (tracker music, ...)`), and keeps its name from being declared, as it keeps every C function's ([lua.md](lua.md#planned-functions)); the script assembler refuses a planned constant by name (`MAP_CONTACT_LADDER is planned, not implemented in this engine version (ladders, ...)`), where C compiles it with the warning. The implementing version makes the name work in scripts with no change to them.
+**In scripts.** Scripts reach a planned feature only once a version implements it: the VM's SYS page has no calls for planned functions ([vm.md](vm.md#engine-calls)), so the Lua compiler refuses a call of one (`music_play` was refused so until tracker music was implemented: `music_play is planned, not implemented in this engine version (tracker music, ...)`), and keeps its name from being declared, as it keeps every C function's ([lua.md](lua.md#planned-functions)); the script assembler refuses a planned constant by name (`MAP_CONTACT_LADDER is planned, not implemented in this engine version (ladders, ...)`, until ladders were implemented), where C compiles it with the warning. The implementing version makes the name work in scripts with no change to them.
 
 **A version may have no planned API**: [api-freeze.md](api-freeze.md#planned-in-1x-declared-now) lists what this one has. The mechanism stays for planned API a later minor version declares: the marker, the warning, the silencing above and the run-time rules, and the engine's own checks of them ([development.md](development.md#planned-api)).
 
