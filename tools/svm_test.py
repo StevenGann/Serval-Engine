@@ -6,6 +6,7 @@ the rel16 rule, the layout rules. Run directly: python3 tools/svm_test.py
 """
 
 import io
+import json
 import os
 import sys
 import tempfile
@@ -869,6 +870,157 @@ class GeneratedFiles(unittest.TestCase):
                          "#define GAME_G_COUNT 1", "extern const unsigned char game_script[];",
                          "extern const unsigned int game_script_size;"):
                 self.assertIn(line, header)
+
+
+# --- The debug link's map (--map) -------------------------------------------
+
+
+def reference_fnv1a32(data):
+    """FNV-1a 32 as its authors publish it: offset basis 2166136261, prime
+    16777619, xor then multiply, per byte."""
+    h = 2166136261
+    for b in data:
+        h ^= b
+        h = (h * 16777619) % 2 ** 32
+    return h
+
+
+def op_lines(listing):
+    """(listing line, size) of each line holding an op or raw bytes, from the
+    text alone: a mnemonic (PUSH by its value; None for a name's) or .byte."""
+    found = []
+    for number, raw in enumerate(listing.splitlines(), 1):
+        text = svm._strip_comment(raw).strip()
+        if ":" in text.split(" ")[0]:
+            text = text.split(":", 1)[1].strip()  # a label before the op
+        if not text:
+            continue
+        word, _, rest = text.partition(" ")
+        if word == ".byte":
+            found.append((number, len(rest.split(","))))
+        elif word == "PUSH":
+            try:
+                value = int(rest, 0)
+            except ValueError:  # a name: its value picks the width
+                found.append((number, None))
+                continue
+            found.append((number, 2 if -128 <= value < 128 else 3 if -32768 <= value < 32768
+                          else 5))
+        elif word in VM.ops:
+            found.append((number, 1 + svm.operand_size(word)))
+    return found
+
+
+def tables_end(blob):
+    """Where the code starts, from the header's counts (vm.md's layout)."""
+    objects, strings, globals_, arrays = (int.from_bytes(blob[k:k + 2], "little")
+                                          for k in (8, 10, 12, 14))
+    values = globals_ * 4 if blob[6] & 1 else 0
+    return 16 + 32 * objects + 4 * strings + 8 * arrays + values
+
+
+class DebugMap(unittest.TestCase):
+    """--map OUT.svmap (docs/debug-link.md#maps): every op's pc and listing
+    line, the blob's size and hash."""
+
+    def test_golden_listing(self):
+        """The golden program by hand: code at 0x34, PUSH8 (2 bytes), PUSH8,
+        ADD, STG (2), HALT; the listing's lines 6 to 10."""
+        assembled = asm(GOLDEN_LISTING)
+        self.assertEqual(svm.debug_map(assembled, "golden.svm"), {
+            "format": "svmap", "version": 1, "listing": "golden.svm",
+            "blob": {"size": 63, "fnv1a32": reference_fnv1a32(assembled.blob)},
+            "pcs": [[0x34, 6], [0x36, 7], [0x38, 8], [0x39, 9], [0x3B, 10]]})
+
+    def test_fnv1a32(self):
+        """The published test vectors, and the reference on real blobs."""
+        for data, value in ((b"", 0x811C9DC5), (b"a", 0xE40C292C), (b"foobar", 0xBF9CF968)):
+            self.assertEqual(svm.fnv1a32(data), value)
+        for listing in (GOLDEN_LISTING, EVERY_OPCODE):
+            blob = asm(listing).blob
+            self.assertEqual(svm.fnv1a32(blob), reference_fnv1a32(blob))
+
+    def check_covers_every_op(self, listing, headers=None):
+        """Each line with an op, in order, has its pc, and the pcs follow
+        each other op by op from the end of the tables."""
+        assembled = svm.assemble(listing, VM, headers, "t.svm")
+        expected, pc = [], tables_end(assembled.blob)
+        for line, size in op_lines(listing):
+            expected.append([pc, line])
+            if size is None:  # PUSH NAME: the width the blob has there, if it is a PUSH
+                name = VM.op_names[assembled.blob[pc]]
+                self.assertIn(name, ("PUSH8", "PUSH16", "PUSH32"))
+                size = 1 + svm.operand_size(name)
+            pc += size
+        self.assertEqual(svm.debug_map(assembled, "t.svm")["pcs"], expected)
+        return assembled
+
+    def test_every_opcode(self):
+        """Every opcode, the .byte lines before and after the code (raw
+        bytes count as an op: dis writes code it can't name so)."""
+        self.check_covers_every_op(EVERY_OPCODE)
+
+    def test_fireflies(self):
+        """The hand-written listing, each op checked against the blob."""
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        headers = svm.HeaderNames(VM.names)
+        headers.load(os.path.join(root, "examples", "fireflies", "game.h"))
+        for name in ("ecs.h", "core.h", "sprites.h", "path.h", "screen.h"):
+            headers.load(os.path.join(root, "include", "serval", name))
+        headers.check()
+        with open(os.path.join(root, "tests", "svm", "fireflies.svm")) as f:
+            listing = f.read()
+        assembled = self.check_covers_every_op(listing, headers)
+        lines = listing.splitlines()
+        for pc, line in svm.debug_map(assembled, "f.svm")["pcs"]:
+            name = VM.op_names[assembled.blob[pc]]
+            word = svm._strip_comment(lines[line - 1]).split()[0]
+            self.assertIn(word, (name, "PUSH" if name.startswith("PUSH") else name))
+
+    def test_data_placed_among_the_ops(self):
+        """.strings and .data put bytes between ops: no pc for them."""
+        listing = (".object X\n.string S \"HI\"\n.rom R u8 1, 2, 3\n.handler X CREATE\n"
+                   "    PUSH 1\n    .strings\n    .data R\n    HALT\n")
+        assembled = asm(listing)
+        code = tables_end(assembled.blob)
+        self.assertEqual(svm.debug_map(assembled, "t.svm")["pcs"],
+                         [[code, 5], [code + 2 + 3 + 3, 8]])  # past "HI\0" and 1, 2, 3
+
+    def test_the_file(self):
+        """The CLI writes it as JSON, the same bytes every time; an error
+        writes nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = os.path.join(tmp, "game.svm")
+            with open(listing, "w") as f:
+                f.write(GOLDEN_LISTING)
+            out, blob = os.path.join(tmp, "game.svmap"), os.path.join(tmp, "game.bin")
+            texts = []
+            for _ in range(2):
+                self.assertEqual(svm.main(["asm", listing, "-o", blob, "--map", out]), 0)
+                with open(out, "rb") as f:
+                    texts.append(f.read())
+            self.assertEqual(texts[0], texts[1])
+            document = json.loads(texts[0])
+            with open(blob, "rb") as f:
+                data = f.read()
+            self.assertEqual(document["blob"], {"size": len(data),
+                                                "fnv1a32": reference_fnv1a32(data)})
+            self.assertEqual(document["listing"], listing)
+            self.assertEqual(list(document), ["format", "version", "listing", "blob", "pcs"])
+            self.assertIn(b'\n  "pcs": [\n    [52, 6],\n', texts[0])  # one pair a line
+            # A longer one: the file holds what debug_map() says, in order.
+            with open(listing, "w") as f:
+                f.write(EVERY_OPCODE)
+            with redirect_stderr(io.StringIO()):  # its two warnings
+                self.assertEqual(svm.main(["asm", listing, "--map", out]), 0)
+            with open(out) as f:
+                self.assertEqual(json.load(f), svm.debug_map(asm(EVERY_OPCODE), listing))
+            os.remove(out)
+            with open(listing, "w") as f:
+                f.write(GOLDEN_LISTING + "    BOGUS\n")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(svm.main(["asm", listing, "--map", out]), 1)
+            self.assertFalse(os.path.exists(out))
 
 
 if __name__ == "__main__":

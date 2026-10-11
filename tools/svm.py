@@ -17,8 +17,13 @@ through it.
 
 Usage:
   svm.py asm LISTING [--header FILE]... [-o OUT.bin] [--c OUT.c --symbol NAME]
-                     [--defs OUT.h] [--prefix P]
+                     [--defs OUT.h] [--prefix P] [--map OUT.svmap]
   svm.py dis BLOB.bin [-o OUT.svm]
+
+--map OUT.svmap writes the debug link's map from pcs to listing lines
+(docs/debug-link.md#maps, the format in docs/lua.md#debug-information):
+JSON with every op's pc (a blob offset) and the listing line it came from,
+and the blob's size and FNV-1a 32 hash. It knows nothing about Lua.
 
 Listing syntax, one statement per line; `;` starts a comment; case matters:
 
@@ -80,6 +85,7 @@ Errors name the listing's file and line; exit status 1 and nothing written.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -724,7 +730,7 @@ class Assembled:
     """What assemble() returns."""
 
     def __init__(self, blob, objects, strings, globals_, arrays, code_size, warnings,
-                 global_values=None):
+                 global_values=None, pcs=None):
         self.blob = blob
         self.objects = objects  # names (None for a numbered one), in order
         self.strings = strings
@@ -733,6 +739,7 @@ class Assembled:
         self.arrays = arrays
         self.code_size = code_size  # bytes between the tables and the end
         self.warnings = warnings  # [(file, line, message)]
+        self.pcs = pcs or []  # [(pc, listing line)] of every op and .byte line, in pc order
 
 
 class _Array:
@@ -772,6 +779,7 @@ class Assembler:
         self.placed_data = {}  # ROM array index -> code offset of its bytes
         self.handlers = []  # _Handler groups in order
         self.handler_lines = {}  # (object, event) -> line
+        self.pcs = []  # (code offset, line) of each op and .byte line, for --map
         self.errors = []
         self.warnings = []
         self.line = 0
@@ -1037,6 +1045,8 @@ class Assembler:
         for value in values:
             if not 0 <= value <= 0xFF:
                 self.error(f".byte: {value} doesn't fit a byte")
+        if values:
+            self.pcs.append((len(self.code), self.line))
         self.code.extend(values)
         self.emitted(".byte")
 
@@ -1149,6 +1159,7 @@ class Assembler:
 
     def emit(self, opcode, fields):
         """The opcode, then each (kind, value) operand field."""
+        self.pcs.append((len(self.code), self.line))
         self.code.append(opcode)
         for kind, value in fields:
             size = OPERAND_SIZE[kind]
@@ -1239,7 +1250,8 @@ class Assembler:
         blob += self.code
         return Assembled(bytes(blob), [o[0] for o in self.objects], [s[0] for s in self.strings],
                          list(self.globals), [a.name for a in self.arrays], len(self.code),
-                         self.warnings, [svalue(v) for v in values])
+                         self.warnings, [svalue(v) for v in values],
+                         [(tables_end + at, line) for at, line in self.pcs])
 
 
 class _LineError(Exception):
@@ -1291,6 +1303,52 @@ def defs_header(assembled, out_name, prefix, symbol, listing_name):
                   f"extern const unsigned int {symbol}_size;", ""]
     lines += [f"#endif // {guard}", ""]
     return "\n".join(lines)
+
+
+def fnv1a32(data):
+    """FNV-1a, 32 bits: how the debug link names a blob (its AGENT_INFO and
+    LOADED messages, docs/debug-link.md)."""
+    h = 0x811C9DC5
+    for b in data:
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+MAP_FORMAT, MAP_VERSION = "svmap", 1
+
+
+def debug_map(assembled, listing_name):
+    """The .svmap (docs/lua.md#debug-information) as a dict: the blob's size
+    and hash, and [pc, listing line] for every op, in pc order. A listing line
+    holds one op, so the line changes at every op; a .byte line counts as one
+    (its bytes may be code: dis writes what it can't name so), and the data
+    the assembler places (strings, ROM arrays) has none."""
+    return {"format": MAP_FORMAT, "version": MAP_VERSION, "listing": listing_name,
+            "blob": {"size": len(assembled.blob), "fnv1a32": fnv1a32(assembled.blob)},
+            "pcs": [[pc, line] for pc, line in assembled.pcs]}
+
+
+def json_document(document):
+    """A JSON object as the debug maps are written: one key per line, and a
+    list's entries one per line, each compact. Deterministic: the same dict
+    gives the same text."""
+    def value(v):
+        return json.dumps(v, ensure_ascii=True, separators=(", ", ": "))
+
+    lines = ["{"]
+    keys = list(document)
+    for i, key in enumerate(keys):
+        comma = "," if i < len(keys) - 1 else ""
+        item = document[key]
+        if isinstance(item, list) and item:
+            lines.append(f"  {value(key)}: [")
+            lines += [f"    {value(entry)}," for entry in item[:-1]]
+            lines.append(f"    {value(item[-1])}")
+            lines.append(f"  ]{comma}")
+        else:
+            lines.append(f"  {value(key)}: {value(item)}{comma}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
 
 
 # --- Disassembler ------------------------------------------------------------
@@ -1623,6 +1681,9 @@ def cmd_asm(args, vm):
     if args.defs:
         with open(args.defs, "w", encoding="utf-8") as f:
             f.write(defs_header(assembled, args.defs, args.prefix, args.symbol, listing_name))
+    if args.map:
+        with open(args.map, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json_document(debug_map(assembled, args.listing)))
     return 0
 
 
@@ -1655,6 +1716,9 @@ def main(argv=None):
     asm.add_argument("--defs", metavar="OUT.h",
                      help="write a header with OBJ_*, STR_*, G_* and ARR_* defines and the counts")
     asm.add_argument("--prefix", default="", metavar="P", help="prefix for the --defs names")
+    asm.add_argument("--map", metavar="OUT.svmap",
+                     help="write the debug link's map: each op's pc and listing line, the "
+                          "blob's size and hash (JSON)")
     dis = commands.add_parser("dis", help="disassemble a blob into a listing")
     dis.add_argument("blob", help="the blob (.bin)")
     dis.add_argument("-o", "--output", metavar="OUT.svm", help="write the listing (default: stdout)")
