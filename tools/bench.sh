@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Runs the bunnymark benchmark headless in mGBA and prints its result: the
-# average and peak CPU cycles per frame with 128 bunnies. Lower is better.
+# Runs the benchmarks headless in mGBA and prints their results. Lower is
+# better.
+#   - bunnymark (bunnymark_bench): the average and peak CPU cycles per frame
+#     with 128 bunnies.
+#   - script benchmark: scriptmark (scriptmark_bench), a busy scripted scene,
+#     and fireflies (fireflies_bench), a whole game in a script: the VM's
+#     cycles a frame and its ops, a fit of the one against the other (the
+#     cycles every frame pays + the cycles per op), the whole frame, and a
+#     checksum of the run (it changes only when the scene runs differently);
+#     scriptmark also gives the VM's fixed cost, with nothing to run.
+#     docs/development.md#script-benchmark.
 #
 # Usage: tools/bench.sh [preset]     (default: gba-release)
 #
@@ -21,9 +30,10 @@ fi
 
 mkdir -p "build/$preset"
 log="build/$preset/bench-build.log"
-if ! { cmake --preset "$preset" && cmake --build --preset "$preset" --target bunnymark_bench; } > "$log" 2>&1; then
+benches=(bunnymark_bench scriptmark_bench fireflies_bench)
+if ! { cmake --preset "$preset" && cmake --build --preset "$preset" --target "${benches[@]}"; } > "$log" 2>&1; then
     cat "$log" >&2
-    echo "error: building bunnymark_bench failed." >&2
+    echo "error: building the benchmarks failed." >&2
     exit 1
 fi
 
@@ -34,19 +44,34 @@ if command -v timeout > /dev/null; then
 elif command -v gtimeout > /dev/null; then
     limit=(gtimeout 300)
 fi
-output="$(${limit[@]+"${limit[@]}"} "$runner" -S 3 -R r0 -l 15 "build/$preset/examples/bunnymark_bench.gba" 2>&1)" || {
-    echo "$output" >&2
-    echo "error: the benchmark ROM failed or timed out." >&2
-    exit 1
+# run <target> <name>: runs the ROM and keeps the lines it logs that start
+# with "<name>:".
+results=()
+run() {
+    local output result
+    output="$(${limit[@]+"${limit[@]}"} "$runner" -S 3 -R r0 -l 15 "build/$preset/examples/$1.gba" 2>&1)" || {
+        echo "$output" >&2
+        echo "error: the benchmark ROM $1 failed or timed out." >&2
+        exit 1
+    }
+    result="$(grep -o "$2:.*" <<< "$output")" || {
+        echo "$output" >&2
+        echo "error: the benchmark ROM $1 did not report a result." >&2
+        exit 1
+    }
+    results+=("$result")
 }
-result="$(grep -o 'bunnymark:.*' <<< "$output")" || {
-    echo "$output" >&2
-    echo "error: the benchmark ROM did not report a result." >&2
-    exit 1
-}
+run bunnymark_bench bunnymark
+results[0]="${results[0]} ($preset)"
+run scriptmark_bench scriptmark
+run fireflies_bench fireflies
 
-echo "$result ($preset)"
+printf '%s\n' "${results[@]}"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     sha="${GITHUB_SHA:-unknown}"
-    printf '### Benchmark\n\n`%s` (%s, commit %s)\n' "$result" "$preset" "${sha:0:7}" >> "$GITHUB_STEP_SUMMARY"
+    {
+        printf '### Benchmark\n\n%s, commit %s\n\n```text\n' "$preset" "${sha:0:7}"
+        printf '%s\n' "${results[@]}"
+        printf '```\n'
+    } >> "$GITHUB_STEP_SUMMARY"
 fi
