@@ -57,11 +57,11 @@ Since browsers only play sound after a click or key press, the page waits for on
 
 ### Planned features on the web
 
-One name is planned in this version, `debug_break()`; every feature 1.0.0-rc.1 declared as planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) is implemented, and while planned each compiled for the web as for the GBA (the same stubs, the same warnings). What the web does for each:
+No name is planned in this version: every feature declared as planned API ([api-freeze.md](api-freeze.md#planned-in-1x-declared-now)) is implemented, and while planned each compiled for the web as for the GBA (the same stubs, the same warnings). What the web does for each:
 
 | Feature | Names | On the web |
 | --- | --- | --- |
-| Script breakpoints (**planned**) | `debug_break()` | Today the same stub as everywhere (portable: `src/core/link.c`), doing nothing. Implemented (with the VM's part of the agent), it stops the game through the web page's end of the debug link, which exists now ([above](#web)), as it does in the debugger's emulator ([debug-link.md](debug-link.md#script-breakpoints)) |
+| Script breakpoints | `debug_break()` | As everywhere (portable: `src/core/link.c`, and `BRK` in the VM): it stops the game through the web page's end of the debug link while a debugger is attached ([above](#web)), as it will in the debugger's emulator; a park inside the interpreter unwinds to the browser with Asyncify, which instruments the interpreter in debug pages ([debug-link.md](debug-link.md#parking)) |
 | Tracker music, sampled sound effects, the sound bank (**implemented**) | `music_*()`, `sfx_*()`, `audio_bank_set()` | Play as on the GBA, from the same bank: Maxmod's player and the engine's front end compiled unchanged, the GBA mixer (ARM assembly) replaced by a C port that mixes the same samples (`src/web/mixer.c`, `src/web/maxmod_mixer.c`), played by Direct Sound beside the PSG; compared with mGBA, the waveforms correlate at 0.99. No API change ([audio.md](audio.md#web)) |
 | The PSG wave channel (**implemented**) | `PSG_WAVE`, `psg_waves_set()` | Plays as on the GBA: `apu.c` emulated the channel with both banks already, and needed nothing new; rendered side by side with mGBA, the pitch, the four levels, the fades and the harmonics agree ([audio.md](audio.md#wave-channel)) |
 | Alpha blending (implemented) | `screen_set_blend()`, `SPRITE_BLEND` | Drawn as on the GBA: `ppu.c` has the hardware's blending and semi-transparent sprites, and needed nothing new ([runtime-systems.md](runtime-systems.md#alpha-blending)) |
