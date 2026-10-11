@@ -426,7 +426,7 @@ Steps are numbered E for the engine and F for the fork. Before 1.0: E0, the rese
 
 | Wave | Step | What | Depends on |
 | --- | --- | --- | --- |
-| 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark). **Done**: `examples/scriptmark` (`scriptmark_bench`, and `fireflies_bench` for the light end), [development.md](development.md#script-benchmark) | — |
+| 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark). **Done**: `tests/bench/scriptmark` (`scriptmark_bench`, and `fireflies_bench` for the light end; a benchmark rather than an example), [development.md](development.md#script-benchmark) | — |
 | 1 | E3 | `svm.py --map` (`.svmap`), with `svm_test.py` cases. **Done** ([Maps](#maps)) | — |
 | 1 | E4 | `svlua.py --debug-info` (`.svdbg`), then `--keep-layout`, with `svlua_test.py` cases; `serval_add_script()` writes both. **Done**, with `tools/check-debug-maps.py`, which joins them as a debugger does (CTest `debug_maps`) | — |
 | 2 | E5 | The agent's core: the mailbox, framing, `AGENT_INFO`, pause, resume, a frame step, globals, arrays, entities, properties, stats; host tests with a fake endpoint | E1 |

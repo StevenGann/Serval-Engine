@@ -2,15 +2,15 @@
 // headless by tools/bench.sh: the light end of the script benchmark (a whole
 // game's logic in a script, about 40 ops a frame).
 //
-// fireflies' main.c, without the splash and with the VM timed: one round of
+// examples/fireflies/main.c, without the splash and with the VM timed: one round of
 // the game from boot with no input (the serval stands still, fireflies come
 // and go, the round ends after 60 seconds and waits for START), 30 frames of
 // warm-up then 3,670 measured. Logs the same numbers as scriptmark (bench.c)
 // and exits; the result is deterministic for a given build
 // (docs/development.md#script-benchmark). Keep the setup and the frame loop
-// in step with ../fireflies/main.c.
+// in step with examples/fireflies/main.c, whose art.c and sound.c it links.
 
-#include "../fireflies/game.h"
+#include "../../../examples/fireflies/game.h"
 #include "vmbench.h"
 
 #define WARMUP_FRAMES 30

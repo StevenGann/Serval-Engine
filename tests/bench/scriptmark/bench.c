@@ -21,7 +21,8 @@
 // and two numbers at the top left, the food eaten and the discs resting,
 // updated twice a second. No sound.
 //
-// Uses only Serval Engine's API, and reads the engine's cycle counter
+// A benchmark, not an example (tests/bench/CMakeLists.txt): besides Serval
+// Engine's API it reads the engine's cycle counter by its timer registers
 // (vmbench.c).
 
 #include "game.h"

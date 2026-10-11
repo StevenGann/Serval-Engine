@@ -3,13 +3,13 @@
 # better.
 #   - bunnymark (bunnymark_bench): the average and peak CPU cycles per frame
 #     with 128 bunnies.
-#   - script benchmark: scriptmark (scriptmark_bench), a busy scripted scene,
-#     and fireflies (fireflies_bench), a whole game in a script: the VM's
-#     cycles a frame and its ops, a fit of the one against the other (the
-#     cycles every frame pays + the cycles per op), the whole frame, and a
-#     checksum of the run (it changes only when the scene runs differently);
-#     scriptmark also gives the VM's fixed cost, with nothing to run.
-#     docs/development.md#script-benchmark.
+#   - script benchmark (tests/bench): scriptmark (scriptmark_bench), a busy
+#     scripted scene, and fireflies (fireflies_bench), a whole game in a
+#     script: the VM's cycles a frame and its ops, a fit of the one against
+#     the other (the cycles every frame pays + the cycles per op), the whole
+#     frame, and a checksum of the run (it changes only when the scene runs
+#     differently); scriptmark also gives the VM's fixed cost, with nothing
+#     to run. docs/development.md#script-benchmark.
 #
 # Usage: tools/bench.sh [preset]     (default: gba-release)
 #
@@ -44,12 +44,12 @@ if command -v timeout > /dev/null; then
 elif command -v gtimeout > /dev/null; then
     limit=(gtimeout 300)
 fi
-# run <target> <name>: runs the ROM and keeps the lines it logs that start
-# with "<name>:".
+# run <ROM, under build/<preset>/> <name>: runs the ROM and keeps the lines it
+# logs that start with "<name>:".
 results=()
 run() {
     local output result
-    output="$(${limit[@]+"${limit[@]}"} "$runner" -S 3 -R r0 -l 15 "build/$preset/examples/$1.gba" 2>&1)" || {
+    output="$(${limit[@]+"${limit[@]}"} "$runner" -S 3 -R r0 -l 15 "build/$preset/$1.gba" 2>&1)" || {
         echo "$output" >&2
         echo "error: the benchmark ROM $1 failed or timed out." >&2
         exit 1
@@ -61,10 +61,10 @@ run() {
     }
     results+=("$result")
 }
-run bunnymark_bench bunnymark
+run examples/bunnymark_bench bunnymark
 results[0]="${results[0]} ($preset)"
-run scriptmark_bench scriptmark
-run fireflies_bench fireflies
+run tests/bench/scriptmark_bench scriptmark
+run tests/bench/fireflies_bench fireflies
 
 printf '%s\n' "${results[@]}"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

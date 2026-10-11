@@ -210,6 +210,9 @@ if(SERVAL_TARGET_GBA)
     # images: white screen in mGBA 0.8), no libc.a in the map, no BLX.
     serval_add_rom_checks(serval_tests)
 
+    # script benchmark: scriptmark_bench and fireflies_bench (tools/bench.sh)
+    add_subdirectory(bench)
+
     # serval_add_rom()'s TITLE and GAME_CODE with every printable ASCII
     # character, spaces at either end, and text that means something to
     # CMake or a shell ("$<1:X>", "${A}", "@A@", ";", "[;]", "\;", a leading
@@ -368,9 +371,6 @@ else()
     # vm sound: the jukebox's main.c includes its script's header
     serval_add_script(serval_api_only_check ../examples/jukebox/pads.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
-    # script benchmark: scriptmark's bench.c includes its script's header
-    serval_add_script(serval_api_only_check ../examples/scriptmark/scriptmark.lua
-                      HEADERS ../examples/scriptmark/game.h serval/ecs.h serval/core.h)
     # lz77: the platformer's castle and consumer include their LZ77 data's
     # headers (examples/CMakeLists.txt, consumer/CMakeLists.txt).
     serval_add_lz77(serval_api_only_check castle_lz77 ../examples/platformer/castle_tiles.inc
