@@ -154,42 +154,6 @@ static void slopes_load_and_collide_as_solid(void) {
     reset();
 }
 
-#ifdef SERVAL_GBA
-// Charblock 1, where tileset_load() puts tiles, read directly: this suite is
-// shared with the host, so it has no libtonc.
-#define TILE_VRAM ((const volatile u32*)0x06004000)
-
-static const u32 plain_tiles[2 * 8] = {[8] = 0x11111111, [15] = 0x22222222};
-static const u32 packed_tiles[2 * 8] = {0x00004010, 0x33333333, [15] = 0x44444444};
-static const u16 plain_palette[16] = {[1] = 0x0123, [15] = 0x7654};
-
-// tileset_load() refuses a tileset needing LZ77 and loads nothing.
-static void tileset_load_refuses_lz77(void) {
-    const Tileset plain = {
-        .tiles = plain_tiles, .tile_count = 2, .palettes = plain_palette, .palette_count = 1};
-    CHECK(tileset_load(&plain));
-    const Tileset packed = {.tiles = packed_tiles,
-                            .tile_count = 2,
-                            .palettes = plain_palette,
-                            .palette_count = 1,
-                            .flags = TILESET_LZ77};
-    u32 before = debug_warning_count();
-    CHECK(!tileset_load(&packed));
-    CHECK(debug_warning_count() == before + WARNINGS_ON);
-    CHECK(!tileset_load(&packed));
-    CHECK(debug_warning_count() == before + WARNINGS_ON);
-    CHECK(TILE_VRAM[0] == 0 && TILE_VRAM[8] == 0x11111111 && TILE_VRAM[15] == 0x22222222);
-    // Together with an unknown bit, still refused.
-    const Tileset both = {.tiles = packed_tiles, .tile_count = 2, .flags = TILESET_LZ77 | 0x80};
-    CHECK(!tileset_load(&both));
-    CHECK(TILE_VRAM[1] == 0);
-}
-#endif
-
 TEST_SUITE(planned_map_tests, "planned_map",
            {"ladders load and collide as empty", ladders_load_and_collide_as_empty},
-           {"slopes load and collide as solid", slopes_load_and_collide_as_solid},
-#ifdef SERVAL_GBA
-           {"tileset_load refuses LZ77", tileset_load_refuses_lz77},
-#endif
-);
+           {"slopes load and collide as solid", slopes_load_and_collide_as_solid});

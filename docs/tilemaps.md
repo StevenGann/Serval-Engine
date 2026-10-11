@@ -4,8 +4,8 @@ Levels are stored as 16×16 metatiles in ROM and streamed into 32×32 ring-buffe
 
 **Status:** implemented, with planned API declared (`include/serval/map.h`; function reference in [api-reference.md](api-reference.md#maph)).
 
-- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, animated tiles (`tileset_set_tiles()`), background palette writes (`tileset_set_colors()`), raster scrolling (`raster_scroll()` in `screen.h`, [below](#raster-effects)), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
-- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): LZ77-compressed tilesets (`TILESET_LZ77`), ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`).
+- **Implemented:** one tileset per room, up to three map layers on BG1-BG3 streamed around the camera (any map size), parallax, wrapping and fixed layers, per-layer scroll offsets (layers that scroll by themselves), the camera ([runtime-systems.md](runtime-systems.md#camera)), runtime cell changes, LZ77-compressed tilesets (`TILESET_LZ77`, [below](#tilesets)), animated tiles (`tileset_set_tiles()`), background palette writes (`tileset_set_colors()`), raster scrolling (`raster_scroll()` in `screen.h`, [below](#raster-effects)), map collision for map bodies (solid and one-way metatiles, bounces up to a perfect one), four tag bits per metatile for the game and `map_tags_in()` to find them, and loaders that refuse flags they don't know.
+- **Planned**, declared now and implemented in a later minor version (each use compiles with a warning; [releases.md](releases.md#planned-api)): ladders (`MAP_LADDER`, `MAP_CONTACT_LADDER`) and floor slopes (`MAP_SLOPE_R`, `MAP_SLOPE_L`, `MAP_SLOPE_R_LOW`, `MAP_SLOPE_R_HIGH`, `MAP_SLOPE_L_HIGH`, `MAP_SLOPE_L_LOW`).
 - **Not in the API yet**, and addable later without breaking existing games or data: 8bpp tilesets (a reserved `Tileset.flags` bit), tileset groups, more changed cells than `MAP_MAX_CHANGES`, ceiling slopes and other collision types (the reserved types 10-15).
 
 **Hardware budget:** 64 KB BG VRAM as four 16 KB charblocks overlapping 32 two-kilobyte screenblocks. Regular BG map entries are 16-bit (tile index, H/V flip, palette bank).
@@ -86,7 +86,7 @@ Offsets and sizes are the GBA's (and wasm32's: the web build has the same layout
 | 6 | (padding) | 2 bytes | |
 | 8 | `palettes` | `const u16*` | `palette_count` × 16 colors; color 0 of each is never loaded. May be NULL if `palette_count` is 0 |
 | 12 | `palette_count` | `u8` | 0 to `MAP_MAX_PALETTES` (15) |
-| 13 | `flags` | `u8` | Bit 0 `TILESET_LZ77` (planned: refused until implemented); bit 1 reserved for 8bpp tilesets; bits 2-7 reserved. In this version `tileset_load()` refuses a tileset with any bit set (returns false, warns) |
+| 13 | `flags` | `u8` | Bit 0 `TILESET_LZ77` ([Tilesets](#tilesets)); bit 1 reserved for 8bpp tilesets; bits 2-7 reserved: `tileset_load()` refuses a tileset with any of them (returns false, warns) |
 | 14 | (padding) | 2 bytes | |
 
 **`Metatile`**, 10 bytes:
@@ -151,11 +151,11 @@ A camera moving less than 8 pixels per frame writes at most one row and one colu
 
 ## Tilesets
 
-**Implemented:** `tileset_load()` copies one tileset to charblocks 1-2 and its palettes to BG banks 0-14 immediately (like `sprite_group_load()`), so call it while loading a room, before its layers are shown. It checks the whole tileset first (tiles, counts, palettes, flags) and loads nothing if any of it is wrong.
+**Implemented:** `tileset_load()` copies one tileset to charblocks 1-2 and its palettes to BG banks 0-14 immediately (like `sprite_group_load()`), so call it while loading a room, before its layers are shown. It checks the whole tileset first (tiles, counts, palettes, flags, LZ77 data) and loads nothing if any of it is wrong.
 
-**Flags** (`Tileset.flags`): `tileset_load()` refuses a tileset with a flag it doesn't know or doesn't implement yet, returning false (debug builds warn) and loading nothing.
+**Flags** (`Tileset.flags`): `tileset_load()` refuses a tileset with a flag it doesn't know, returning false (debug builds warn) and loading nothing.
 
-- Bit 0, `TILESET_LZ77`, **planned**: `.tiles` holds the tiles compressed with LZ77 in the GBA BIOS's format, a header word with `0x10` in its low byte and the unpacked size in bytes (which must be `tile_count × 32`) in bits 8-31, then the compressed data. The data must be "VRAM-safe": no match copies from the byte just before it (a distance of 1), so that the BIOS's VRAM decoder, which writes 16 bits at a time, can unpack it straight into VRAM. Until implemented, `tileset_load()` refuses it.
+- Bit 0, `TILESET_LZ77`, implemented: `.tiles` holds the tiles compressed with LZ77 in the GBA BIOS's format, word-aligned: a header word with `0x10` in its low byte and the unpacked size in bytes (which must be `tile_count × 32`) in bits 8-31, then the compressed data (the format, item by item: [sprites.md](sprites.md#lz77-compression)). The data must be "VRAM-safe": no match copies from the byte just before it (a distance of 1), so that the BIOS's VRAM decoder, which writes 16 bits at a time, can unpack it straight into VRAM. `tileset_load()` checks it first (word-aligned, the header's type and size, every match VRAM-safe, inside what is unpacked so far and ending by the size) and refuses data that fails (returns false, *warns* with the problem, loads nothing); then the BIOS's `LZ77UnCompReadNormalWrite16bit` (SWI 0x12) unpacks it into charblocks 1-2 (on the web, `src/web/lz77.c`, which matches it byte for byte). It costs time, not VRAM: in mGBA about 28,600 cycles per KB unpacked against 1,700 for a copy, so the platformer's castle tileset (281 tiles, 8,992 bytes, packed into 2,804 bytes of ROM) loads in about 251,000 cycles (0.9 frames) instead of 15,200, and a full 1,024-tile tileset would take about 3.3 frames: load it while the screen is faded out, as any room load. The numbers, where they come from and how to make the data (`tools/lz77.py`, `serval_add_lz77()`): [sprites.md](sprites.md#lz77-compression). `tileset_set_tiles()` takes plain tiles, as with any tileset. In 1.0.0-rc.1, where it was planned API, `tileset_load()` refused it.
 - Bit 1: reserved for 8bpp tilesets (256-color tiles, a later addition). Refused.
 - Bits 2-7: reserved. Refused.
 

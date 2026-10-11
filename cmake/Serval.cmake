@@ -447,6 +447,66 @@ function(serval_add_soundbank target name)
     target_include_directories(${target} PRIVATE "${out_dir}")
 endfunction()
 
+# lz77: serval_add_lz77(<target> <name> <files...>)
+#
+# Compresses tile data for SPRITE_ASSET_LZ77 sprites and TILESET_LZ77
+# tilesets at build time (docs/sprites.md#lz77-compression): tools/lz77.py
+# packs each file, a path relative to the current source directory, in the
+# GBA BIOS's LZ77 format, VRAM-safe, into <name>.c, which defines one
+# `const u32 <file>_lz77[]` per file (<file>: its name up to the first dot,
+# which must make a C identifier) and joins the target's sources, and <name>.h,
+# which declares them. Both go in the target's binary directory, on its include
+# path. A file is raw bytes (.bin) or, under any other name (.inc), 32-bit
+# words written as C integer literals (hex or decimal, separated by commas; C
+# comments allowed), as a const u32 array's initializer holds them, so the
+# game can #include the same file for the unpacked tiles. Rebuilt when a file
+# or lz77.py changes. Call it from the directory that defined the target,
+# after serval_add_rom().
+function(serval_add_lz77 target name)
+    if(NOT TARGET ${target})
+        message(FATAL_ERROR "serval_add_lz77(${target}): no such target; call it after "
+                            "serval_add_rom(${target} ...).")
+    endif()
+    if(NOT name MATCHES "^[A-Za-z_][A-Za-z0-9_]*$")
+        message(FATAL_ERROR "serval_add_lz77(${target}): the name \"${name}\" is not a C "
+                            "identifier.")
+    endif()
+    if(ARGC LESS 3)
+        message(FATAL_ERROR "serval_add_lz77(${target} ${name}): no files to compress.")
+    endif()
+    set(tool "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/lz77.py")
+    if(NOT EXISTS "${tool}")
+        message(FATAL_ERROR "serval_add_lz77(${target}): ${tool} is missing.")
+    endif()
+    if(NOT SERVAL_PYTHON_EXECUTABLE)
+        message(FATAL_ERROR "serval_add_lz77(${target}): Python 3 is needed to compress the "
+                            "data (SERVAL_PYTHON_EXECUTABLE is empty).")
+    endif()
+    set(files "")
+    foreach(file IN LISTS ARGN)
+        cmake_path(ABSOLUTE_PATH file BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE)
+        get_source_file_property(generated "${file}" GENERATED)
+        if(NOT EXISTS "${file}" AND NOT generated)
+            message(FATAL_ERROR "serval_add_lz77(${target}): ${file} does not exist.")
+        endif()
+        list(APPEND files "${file}")
+    endforeach()
+    get_target_property(out_dir ${target} BINARY_DIR)
+    set(c_file "${out_dir}/${name}.c")
+    set(h_file "${out_dir}/${name}.h")
+    add_custom_command(
+        OUTPUT "${c_file}" "${h_file}"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${tool}" c --name "${name}" --out-dir "${out_dir}"
+                ${files}
+        DEPENDS ${files} "${tool}"
+        COMMENT "Compressing ${name} (LZ77)"
+        VERBATIM)
+    # The header is a source too, so every object of the target is built
+    # after it exists.
+    target_sources(${target} PRIVATE "${c_file}" "${h_file}")
+    target_include_directories(${target} PRIVATE "${out_dir}")
+endfunction()
+
 # _serval_find_mmutil(<out_var> <version> <target>)
 #
 # Sets <out_var> to the mmutil to run: SERVAL_MMUTIL (a cache or environment

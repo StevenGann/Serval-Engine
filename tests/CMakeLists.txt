@@ -47,6 +47,14 @@ if(SERVAL_TARGET_WEB)
         COMMENT "Checking that every planned API warns (tools/check-planned.py)"
         VERBATIM)
     add_custom_target(serval_planned_api_check ALL DEPENDS "${_serval_planned_stamp}")
+    # lz77: the suites that need the web's BIOS stand-ins, in a page of their
+    # own (web/main.c), which CI runs with tools/web-shots.py: the LZ77
+    # loaders' ROM suite and their check.
+    serval_add_rom(serval_web_tests SOURCES web/main.c test.c lz77_tests.c rom/lz77_tests.c
+                   TITLE "SERVAL TESTS" GAME_CODE "SVTW")
+    target_link_libraries(serval_web_tests PRIVATE serval_warnings)
+    serval_add_lz77(serval_web_tests lz77_tiles lz77/padded.inc
+                    ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
     return()
 endif()
 add_test(NAME planned_api COMMAND ${_serval_planned_check})
@@ -58,6 +66,7 @@ add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_fo
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
+target_sources(serval_test_harness PRIVATE lz77_tests.c) # lz77: the loaders' check
 
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
@@ -74,6 +83,11 @@ if(SERVAL_TARGET_GBA)
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")
     target_link_libraries(serval_tests PRIVATE serval_test_harness serval_warnings)
+    # lz77: the loaders against plain tiles: the tests' sprite and the
+    # platformer's castle tileset and dragon, packed at build time
+    target_sources(serval_tests PRIVATE rom/lz77_tests.c)
+    serval_add_lz77(serval_tests lz77_tiles lz77/padded.inc
+                    ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
 
     # maxmod: tracker music and sampled sound effects, in a test ROM of their
     # own (tests/rom/sampled_audio_main.c: Maxmod's IWRAM doesn't fit beside
@@ -250,6 +264,13 @@ else()
                    web_mixer_tests.c ../src/web/ppu.c ../src/web/apu.c ../src/web/mixer.c)
     target_link_libraries(serval_host_tests PRIVATE serval_test_harness serval_warnings)
     add_test(NAME host_tests COMMAND serval_host_tests)
+    # lz77: the web's LZ77 decoder, on BIOS-format vectors and on the
+    # encoder's output (tools/lz77.py, which has its own tests)
+    target_sources(serval_host_tests PRIVATE web_lz77_tests.c ../src/web/lz77.c)
+    serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
+                    ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
+    add_test(NAME lz77_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/lz77_test.py")
 
     # serval_add_rom()'s checks of TITLE, GAME_CODE and SAVE, at configure time
     # (scratch projects configured with bad and good values).
@@ -330,6 +351,10 @@ else()
     # vm sound: the jukebox's main.c includes its script's header
     serval_add_script(serval_api_only_check ../examples/jukebox/pads.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
+    # lz77: the platformer's castle includes its LZ77 data's header
+    # (examples/CMakeLists.txt).
+    serval_add_lz77(serval_api_only_check castle_lz77 ../examples/platformer/castle_tiles.inc
+                    ../examples/platformer/dragon_tiles.inc)
     # A hand-written listing (.svm) through serval_add_script() too.
     add_subdirectory(svm)
     add_dependencies(serval_host_tests serval_svm_listing_check)

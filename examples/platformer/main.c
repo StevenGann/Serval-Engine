@@ -138,6 +138,10 @@
 //     map layers, the serval running between them into its den (behind the
 //     near one), twinkling stars (tileset_set_tiles), a tune played once
 //     (PSG_NO_LOOP)
+//   - LZ77-compressed art: the castle's tileset (TILESET_LZ77) and the
+//     dragon's 50 frames of pieces (SPRITE_ASSET_LZ77), packed at build time
+//     by serval_add_lz77() and unpacked into VRAM by the BIOS as the stage
+//     loads: 15,392 bytes of tiles in 4,852 bytes of ROM, the same pictures
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about

@@ -186,8 +186,8 @@ static void tileset_load_rejects_bad_tilesets(void) {
 }
 
 // Tileset.flags bits 1-7 are reserved: refused (a later version may give them
-// a meaning), loading nothing. Bit 0, TILESET_LZ77, is planned
-// (tests/planned_map_tests.c).
+// a meaning), loading nothing. Bit 0, TILESET_LZ77, is tested in
+// tests/rom/lz77_tests.c.
 static void tileset_load_refuses_unknown_flags(void) {
     static const u32 other_tiles[3 * 8] = {0x55555555, [23] = 0x66666666};
     const Tileset good = {

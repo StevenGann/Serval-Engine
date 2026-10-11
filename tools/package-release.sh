@@ -19,7 +19,8 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
 files=(include src cmake third_party CMakeLists.txt CMakePresets.json serval.json LICENSE
-       tools/gbafix.py tools/svlua.py tools/svm.py tools/soundbank.py tools/build-mmutil.sh)
+       tools/gbafix.py tools/svlua.py tools/svm.py tools/soundbank.py tools/build-mmutil.sh
+       tools/lz77.py)
 copy() {
     mkdir -p "$stage/$name/$(dirname "$1")"
     cp -R "$root/$1" "$stage/$name/$1"

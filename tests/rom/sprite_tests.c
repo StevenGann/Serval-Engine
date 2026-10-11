@@ -179,9 +179,8 @@ static void load_fails_when_out_of_vram_or_palettes(void) {
     CHECK((oam_mem[0].attr2 & ATTR2_ID_MASK) == 0);
 }
 
-// (Streamed groups are tested in tests/rom/sprite_stream_tests.c; groups
-// needing a planned feature, SPRITE_ASSET_LZ77, in
-// tests/planned_sprites_tests.c.)
+// (Streamed groups are tested in tests/rom/sprite_stream_tests.c; LZ77
+// sprites, SPRITE_ASSET_LZ77, in tests/rom/lz77_tests.c.)
 static void load_rejects_unsupported_groups(void) {
     static const SpriteAsset no_size = {.tiles = small_tiles};
     static const SpriteAsset* const no_size_table[] = {&no_size};

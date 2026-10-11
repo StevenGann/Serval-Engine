@@ -2,7 +2,7 @@
 
 Assets stay in memory-mapped ROM; the engine only manages what is resident in VRAM and palette RAM. Sprites are organized into GameMaker-style groups, packed at build time by the tooling.
 
-**Status:** implemented: resident and streamed, uncompressed groups of 4bpp sprites and metasprites, drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`); palette writes through a shadow palette ([Palettes](#palettes)). Reference: [api-reference.md](api-reference.md#spritesh). **Planned**, declared in `sprites.h` with `SERVAL_PLANNED` ([releases.md](releases.md#planned-api)) and implemented in a 1.x version: LZ77-compressed sprites. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
+**Status:** implemented: resident and streamed groups of 4bpp sprites and metasprites, a resident group's tiles plain or [LZ77-compressed](#lz77-compression) (unpacked into VRAM by the BIOS at load), drawn regular, rotated or scaled, with any palette of their group, semi-transparent ([alpha blending](#alpha-blending)), in world or screen coordinates; loading in layers with marks ([VRAM allocation](#vram-allocation)); loaders that refuse values they don't know ([ROM data format](#rom-data-format)); [runtime tiles](#runtime-tiles) (`sprite_set_tiles()`); palette writes through a shadow palette ([Palettes](#palettes)). Reference: [api-reference.md](api-reference.md#spritesh). No name in `sprites.h` is planned API ([releases.md](releases.md#planned-api)) in this version: LZ77 sprites, the last, are implemented. After 1.0, with no API of their own: palette sharing between groups, VRAM defragmentation and loading in forced blank. See [Implemented so far](#implemented-so-far).
 
 **Hardware budget:** OBJ VRAM is 32 KB (1024 4bpp tiles; 16 KB in bitmap modes, which the engine doesn't use) with 16 OBJ palette banks of 16 colors.
 
@@ -12,7 +12,7 @@ Set per group, in `SpriteGroup.flags`; a sprite has no residency of its own (bit
 
 | Mode | Flag | Status | How it works | Best for | Compression |
 | --- | --- | --- | --- | --- | --- |
-| Resident | `SPRITE_GROUP_RESIDENT` (0, the default) | Implemented | `sprite_group_load()` copies all frames to VRAM | Small enemies, pickups, HUD | LZ77 (*planned*, [below](#lz77-compression)) |
+| Resident | `SPRITE_GROUP_RESIDENT` (0, the default) | Implemented | `sprite_group_load()` copies all frames to VRAM | Small enemies, pickups, HUD | Plain or LZ77 ([below](#lz77-compression)) |
 | Streamed | `SPRITE_GROUP_STREAMED` | Implemented | Frames stay in ROM; the group's `.slots` hold the frames on screen, copied in VBlank | Large, heavily animated characters | Uncompressed only |
 
 **Streamed groups.** A streamed group is a frame cache, so drawing needs no instance API and stays immediate-mode:
@@ -71,9 +71,17 @@ How it works: the groups loaded between two marks are always released together, 
 
 ## LZ77 compression
 
-*Planned:* `SPRITE_ASSET_LZ77` (bit 3 of `SpriteAsset.flags`). The sprite's `.tiles` then hold its `frame_count` × `tiles_per_frame` tiles LZ77-compressed, as the GBA BIOS's `LZ77UnCompVram` reads them: type 0x10, a header word with the unpacked size in bytes, which must equal `frame_count` × `tiles_per_frame` × 32, and a stream that function can unpack (compressors call this their VRAM-safe mode). `sprite_group_load()` unpacks them into VRAM, so the sprite takes less ROM and the same VRAM. On the web, a C decoder will stand in for the BIOS call, as `src/web/platform.c` does for the other BIOS functions. Ordinary sprites in resident groups only: a metasprite with the flag, or a streamed group holding such a sprite, will be refused.
+*Implemented.* `SPRITE_ASSET_LZ77` (bit 3 of `SpriteAsset.flags`) keeps a sprite's tiles compressed in ROM; loaded, they take the same VRAM as plain ones and draw the same.
 
-Until it is implemented, `sprite_group_load()` refuses a group holding a sprite with the flag (returns false, *warns*).
+- **The data.** `.tiles` holds the sprite's `frame_count` × `tiles_per_frame` tiles (padding between frames included) LZ77-compressed in the GBA BIOS's format, word-aligned (a `u32` array): a header word with `0x10` in its low byte and the unpacked size in bytes, which must be `frame_count` × `tiles_per_frame` × 32, in bits 8-31; then blocks of a flag byte and up to eight items, one per flag bit from the highest: 0 a literal byte, 1 a match of two bytes (the length less 3 in the first's high nibble, 3-18 bytes; the distance less 1 in its low nibble and the second byte, 1-4,096 bytes back). Unpacking stops at the size.
+- **VRAM-safe.** No match may copy from the byte just before it (a distance of 1). VRAM takes no 8-bit writes, so the BIOS's VRAM decoder keeps each byte at an even address until the next completes its halfword; a match from the byte just before it, while that byte waits, reads VRAM's old byte. Compressors call this their VRAM-safe mode; `tools/lz77.py` writes nothing else (below).
+- **Loading.** `sprite_group_load()` checks the data with the rest of the group, before anything is written: word-aligned, a header of type `0x10`, the size of the sprite's tiles, and every match VRAM-safe, from inside what is unpacked so far and ending by the size (the check walks the items, and reads nothing past the last). Data that fails is refused, the group loads nothing, and debug builds warn with the problem and where (`sprite_group_load: sprite 7: its SPRITE_ASSET_LZ77 data isn't VRAM-safe: the match at byte 34 copies from the byte just before it; not loaded`): the BIOS would unpack it wrong, or past the sprite into the next one's tiles. Then the BIOS's `LZ77UnCompReadNormalWrite16bit` (SWI 0x12, libtonc's `LZ77UnCompVram`) unpacks it straight into the sprite's VRAM, in load order like a copy. The BIOS keeps interrupts as the caller had them, so the VBlank handler (and Maxmod's part of it) runs during a long unpack.
+- **Where it works.** Ordinary sprites in resident groups. Once loaded, an LZ77 sprite is a resident sprite like any other: drawn, rotated, animated, a metasprite's piece, recolored, given new pixels by `sprite_set_tiles()` (which takes plain tiles; the frame is in VRAM). Refused, *warns*: a streamed group holding one (streaming copies frames straight from ROM when they are drawn, so they must be plain) and a metasprite with the flag (it has pieces, no tiles). A sprite's `.tiles` is one stream: another sprite can't point into it for one of its frames, as plain tiles allow (the platformer's flattened salamander is its walker's third frame).
+- **What it costs.** Loading: in mGBA about 28,600 CPU cycles per KB unpacked, 18,300 of them the BIOS's and 10,300 the check's, where a copy takes about 1,700 (`tests/rom/lz77_tests.c` logs them): the platformer's dragon, 6,400 bytes, loads in about 183,000 cycles (0.65 frames) instead of 13,400, and a sprite VRAM full of LZ77 sprites (32 KB) would take about 3.3 frames. So load while changing rooms with the screen faded out, as for any group. mGBA runs its own replacement for the BIOS unless given a BIOS file (high-level emulation of each call, timed by its own estimate), so Nintendo's BIOS on hardware may take longer or less. Nothing else changes: drawing a loaded LZ77 sprite costs what drawing a plain one does, and the loaders' code for it adds about 290 bytes of ROM to a release build that loads sprites (the check, 190 of them; no RAM). ROM saved: tile art is mostly transparent and repetitive, so the dragon's 50 frames of 16x16 (6,400 bytes) pack into 2,048 bytes and the castle's tileset into a third of its size ([tilemaps.md](tilemaps.md#tilesets)); a small sprite saves a few hundred bytes at most, less the 4-byte header.
+- **On the web** `src/web/lz77.c` stands in for the BIOS call (`src/web/platform.c`'s `LZ77UnCompVram`, with the other BIOS stand-ins): it unpacks as the BIOS does, byte for byte, halfword writes included, so even data that isn't VRAM-safe would look the same as on the GBA (tested against mGBA's BIOS in the test ROM; [platforms.md](platforms.md#how-it-works)).
+- **Making the data.** `tools/lz77.py` (MIT, Python's standard library only) packs tiles VRAM-safe: `tools/lz77.py compress IN OUT` for raw bytes, or at build time `serval_add_lz77(<target> <name> <files...>)` ([development.md](development.md#building-a-game)), which writes one `const u32 <file>_lz77[]` per file from tile data written as C words, the same file a game can `#include` for the plain tiles. The platformer packs its castle's tileset and dragon that way (`examples/platformer/castle_tiles.inc`, `dragon_tiles.inc`). Studio Advance packs the tiles it writes itself. The encoder finds each position's longest match (at a distance of 2 to 4,096, among the nearest 256 earlier positions with the same first three bytes) and takes the parse with the fewest bits; any encoder whose matches are VRAM-safe makes data the engine loads.
+
+In 1.0.0-rc.1, where it was planned API, `sprite_group_load()` refused a group holding a sprite with the flag (returned false, *warned*).
 
 ## Palettes
 
@@ -142,7 +150,7 @@ typedef struct {
     u8  order_length;         // frame_order entries (steps); 0: no frame_order
     u8  palette_slot;         // which of its group's palettes it uses
     s8  origin_x, origin_y;   // drawn position = (x, y) - origin
-    u8  flags;                // SPRITE_ASSET_METASPRITE, _ANIM_ONCE; _LZ77 (planned)
+    u8  flags;                // SPRITE_ASSET_METASPRITE, _ANIM_ONCE, _LZ77
     const u8  *frame_times;   // frames each animation frame (or step) shows, or NULL
     const u8  *frame_order;   // steps: frame index | SPRITE_FRAME_FLIP_H/V, or NULL
 } SpriteAsset;                // 20 bytes
@@ -188,7 +196,7 @@ typedef struct {
 | 0 | (reserved) | Refused. It was `SPRITE_ASSET_STREAMED` before 1.0: residency is a group's (`SPRITE_GROUP_STREAMED`) |
 | 1 | `SPRITE_ASSET_METASPRITE` | Made of other sprites: `.pieces` ([API](#api)) |
 | 2 | `SPRITE_ASSET_ANIM_ONCE` | `sys_animate` stops on the last frame or step instead of looping |
-| 3 | `SPRITE_ASSET_LZ77` | *Planned*: `.tiles` LZ77-compressed ([above](#lz77-compression)). Refused until implemented |
+| 3 | `SPRITE_ASSET_LZ77` | `.tiles` LZ77-compressed, VRAM-safe, unpacking to exactly the sprite's tiles ([above](#lz77-compression)); ordinary sprites in resident groups only (refused otherwise) |
 | 4-7 | (reserved) | Refused |
 
 **`SpriteGroup`** (12 bytes):
@@ -247,8 +255,6 @@ void sprite_set_tiles(u16 sprite_id, u8 frame, const u32 *tiles);       // SPRIT
 void sprite_set_colors(u16 sprite_id, u32 index, const Color *colors, u32 count);
 ```
 
-Planned constant: `SPRITE_ASSET_LZ77` (an enumerator, so it warns at every use too).
-
 Sizes: `SPRITE_8x8`, `SPRITE_16x16`, `SPRITE_32x32`, `SPRITE_64x64` (square), `SPRITE_16x8`, `SPRITE_32x8`, `SPRITE_32x16`, `SPRITE_64x32` (wide), `SPRITE_8x16`, `SPRITE_8x32`, `SPRITE_16x32`, `SPRITE_32x64` (tall). `SPRITE_MAX` (512) sprite IDs per table. Tile data is 4 bits per pixel, 8 words per 8x8 tile (low nibble = leftmost pixel); for sprites larger than 8x8, tiles are row by row (1D mapping).
 
 **Rotation:** `sprite_draw_rotated(id, frame, x, y, angle, flags)`, or a non-zero `spr_angle` with `sys_render`, rotates a sprite around its center with the hardware's affine mode (double size, so corners aren't clipped). The 32 rotation matrices are allocated per frame and shared by sprites with the same angle and flips; past 32, sprites are drawn unrotated and debug builds warn. Off-screen sprites take no matrix, and angle 0 draws like `sprite_draw` (no matrix). Unrotated sprites don't pay for rotation support beyond one check per entity (bunnymark: +1,530 cycles for 128 sprites).
@@ -283,8 +289,8 @@ Animation is independent of VRAM residency: all frames of a resident sprite are 
 
 ## Implemented so far
 
-Resident and streamed, uncompressed groups with 4bpp sprites and metasprites, regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order, streamed groups' slots from the top of sprite VRAM down, and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank); palette writes through a shadow palette (`sprite_set_colors()`).
+Resident and streamed groups with 4bpp sprites and metasprites, a resident group's sprites plain or LZ77-compressed (`SPRITE_ASSET_LZ77`, unpacked into VRAM by the BIOS at load), regular, rotated or scaled, animated by `sys_animate()` (in frame order or by a `frame_order` sequence with per-step flips), hideable, drawn with any palette of their group or semi-transparent (`SPRITE_BLEND`), and entities in world or screen coordinates; tiles and palette banks are bump-allocated in load order, streamed groups' slots from the top of sprite VRAM down, and released in layers by marks (`sprite_groups_mark()`, `sprite_groups_release()`) or all at once; `sprite_group_load()` refuses every reserved bit and value of the data formats; a loaded sprite's frames rewritten at run time (`sprite_set_tiles()`, copied in VBlank); palette writes through a shadow palette (`sprite_set_colors()`).
 
-**Planned** (declared, implemented in 1.x; each use warns at compile time, and at run time each does nothing harmful and warns once): LZ77-compressed sprites (`SPRITE_ASSET_LZ77`; refused).
+**Planned:** nothing in this version (LZ77 sprites, the last, are implemented).
 
 **After 1.0, no API:** palette sharing with reference counting, VRAM defragmentation, loading in forced blank, and the draw flags reserved in bits 13-14 (mosaic, the object window).

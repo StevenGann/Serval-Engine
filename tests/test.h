@@ -53,6 +53,7 @@ extern const TestSuite path_tests;
 extern const TestSuite vm_tests;
 extern const TestSuite splash_logic_tests;
 extern const TestSuite color_tests;
+extern const TestSuite lz77_tests; // lz77: the loaders' check of LZ77 data
 
 // Planned API at run time (docs/development.md#planned-api).
 extern const TestSuite planned_audio_tests;
@@ -64,5 +65,6 @@ extern const TestSuite planned_screen_tests;
 extern const TestSuite web_ppu_tests;
 extern const TestSuite web_apu_tests;
 extern const TestSuite web_mixer_tests; // maxmod: the web's mixer
+extern const TestSuite web_lz77_tests;  // lz77: the web's LZ77 decoder
 
 #endif // SERVAL_TEST_H

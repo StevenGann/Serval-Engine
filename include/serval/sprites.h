@@ -8,9 +8,8 @@
 // registered with sprite_table_set(). A sprite can be drawn once a group
 // containing it has been loaded into VRAM.
 //
-// Some names here are planned (SERVAL_PLANNED, docs/releases.md#planned-api):
-// declared so that games and tools can target them, implemented in a later
-// 1.x version. Each one's comment says what it will do and what it does now.
+// No name here is planned (SERVAL_PLANNED, docs/releases.md#planned-api) in
+// this version: LZ77 sprites, the last, are implemented.
 
 #include "serval/fixed.h"
 #include "serval/platform.h"
@@ -40,18 +39,22 @@
     (1 << 2) // sys_animate stops on the last frame (or frame_order
              // step) instead of looping
 enum {
-    // Planned: .tiles holds the sprite's frame_count x tiles_per_frame tiles
-    // LZ77-compressed, as the GBA BIOS's LZ77UnCompVram reads them (type
-    // 0x10: a header word with the unpacked size in bytes, which must be
-    // frame_count x tiles_per_frame x 32; compressors call this their
-    // VRAM-safe mode). They are unpacked into VRAM when the group loads, so
-    // the sprite takes less ROM and the same VRAM. Ordinary sprites in
-    // resident groups only: a metasprite with it, or a streamed group holding
-    // such a sprite (streaming copies frames straight from ROM), will be
-    // refused. Until implemented, sprite_group_load() refuses a group holding
-    // a sprite with this flag (returns false, warning in debug builds).
-    SPRITE_ASSET_LZ77 SERVAL_PLANNED("LZ77-compressed sprites, docs/sprites.md#lz77-compression") =
-        1 << 3,
+    // .tiles holds the sprite's frame_count x tiles_per_frame tiles
+    // LZ77-compressed in the GBA BIOS's format, word-aligned: a header word
+    // with 0x10 in its low byte and the unpacked size in bytes, which must be
+    // frame_count x tiles_per_frame x 32, in bits 8-31, then the compressed
+    // data, "VRAM-safe" (no match copies from the byte just before it; tools
+    // call it their VRAM-safe mode; tools/lz77.py writes it). The BIOS
+    // unpacks it into VRAM when the group loads (on the web, a C decoder that
+    // matches it), so the sprite takes less ROM and the same VRAM; loading
+    // costs more time (docs/sprites.md#lz77-compression). Ordinary sprites
+    // in resident groups only: sprite_group_load() refuses a metasprite with
+    // it and a streamed group holding such a sprite (streaming copies frames
+    // straight from ROM), and data that is not LZ77, doesn't unpack to
+    // exactly the sprite's tiles or isn't VRAM-safe (returns false, warning
+    // in debug builds). Once loaded, it is drawn, animated and given runtime
+    // tiles (sprite_set_tiles) as any resident sprite.
+    SPRITE_ASSET_LZ77 = 1 << 3,
 };
 
 // SpriteAsset.frame_order entries: a frame index (0-63), optionally drawn
@@ -258,8 +261,10 @@ void sprite_table_set(const SpriteAsset* const* table, u16 count);
 // or frame), it has a value this version doesn't know (a .size past 12, a
 // reserved bit in SpriteGroup.flags, SpriteAsset.flags or a piece's flags;
 // nonzero .slots in a resident group), it is a streamed group holding a
-// SPRITE_ASSET_LZ77 sprite, or it needs a planned feature
-// (SPRITE_ASSET_LZ77).
+// SPRITE_ASSET_LZ77 sprite, or a sprite's SPRITE_ASSET_LZ77 data is bad (a
+// metasprite's; not LZ77, not unpacking to exactly its tiles, or not
+// VRAM-safe). SPRITE_ASSET_LZ77 sprites are unpacked into VRAM by the BIOS,
+// which takes longer than a copy (docs/sprites.md#lz77-compression).
 bool sprite_group_load(const SpriteGroup* group);
 
 // Unloads every sprite group, freeing all sprite VRAM and palette banks, and

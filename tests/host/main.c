@@ -22,6 +22,7 @@ int main(void) {
         &splash_logic_tests,  &color_tests,
         &planned_audio_tests, &planned_sprites_tests,
         &planned_map_tests,   &planned_screen_tests,
+        &lz77_tests,          &web_lz77_tests, // lz77:
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

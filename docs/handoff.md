@@ -18,7 +18,7 @@ Serval Engine is the MIT-licensed C runtime for Game Boy Advance games, built on
 ## State at rc.1
 
 - **Implemented:** see the README's feature list and each doc's status line, and what integrating Studio Advance's object system added before the tag: body properties and kinematic bodies for scripts, `vm_object_of`, a larger event queue, field names reserved for later properties, the engine's function names reserved in scripts ([api-freeze.md](api-freeze.md#what-the-freeze-did-100-rc1)). Eleven examples ([examples-roadmap.md](examples-roadmap.md)), each with a header comment saying what correct looks like; the website's gallery runs them in the browser.
-- **Declared, not implemented (planned API):** the table in [api-freeze.md](api-freeze.md#planned-in-1x-declared-now). Each planned name warns at every use and does nothing harmful; `tests/planned/` lists them and the `planned_api` test checks that each warns. Since the tag, some rows of that table have been implemented ahead of 1.0.0 and are marked so there: runtime sprite tiles, palette writes, alpha blending, streamed sprite groups, raster effects, the PSG wave channel ([audio.md](audio.md#wave-channel)), and the sound bank, tracker music and sampled sound effects ([audio.md](audio.md#maxmod-blocksds)).
+- **Declared, not implemented (planned API):** the table in [api-freeze.md](api-freeze.md#planned-in-1x-declared-now). Each planned name warns at every use and does nothing harmful; `tests/planned/` lists them and the `planned_api` test checks that each warns. Since the tag, some rows of that table have been implemented ahead of 1.0.0 and are marked so there: runtime sprite tiles, palette writes, alpha blending, streamed sprite groups, raster effects, the PSG wave channel ([audio.md](audio.md#wave-channel)), the sound bank, tracker music and sampled sound effects ([audio.md](audio.md#maxmod-blocksds)), and LZ77-compressed sprites and tilesets ([sprites.md](sprites.md#lz77-compression)).
 - **Open:** [open-questions.md](open-questions.md)'s unchecked items, notably the VM's milestone 8 (the debug link and `BRK`, a script benchmark, the IWRAM decision; [vm.md](vm.md#milestones)), the debug link protocol ([debug-link.md](debug-link.md)), real-cartridge save testing, and the capture tool for screenshot tests.
 
 ## From rc.1 to 1.0.0
@@ -38,7 +38,7 @@ These are the shared contracts. Changing any of them is a cross-repository chang
 - the Lua subset and `tools/svlua.py`'s command line ([lua.md](lua.md)); `tools/svm.py`'s command line and listing syntax ([vm.md](vm.md#tools));
 - `serval.json` ([releases.md](releases.md#manifest)), whose `toolchain.mmutil` names the `mmutil` that builds sound banks for the engine's Maxmod, and the release zip's layout ([releases.md](releases.md#release-contents));
 - the sound bank: opaque, built by that `mmutil` from the project's modules and WAVs, its header's `MOD_*` and `SFX_*` numbers the IDs `music_play()` and `sfx_play()` take ([audio.md](audio.md#sound-bank));
-- the CMake functions `serval_add_rom()`, `serval_add_script()` and `serval_add_soundbank()` (`cmake/Serval.cmake`), the first two checked from outside the tree by `tests/consumer/` and `tools/check-consumer.sh`;
+- the CMake functions `serval_add_rom()`, `serval_add_script()`, `serval_add_soundbank()` and `serval_add_lz77()` (`cmake/Serval.cmake`), the first two checked from outside the tree by `tests/consumer/` and `tools/check-consumer.sh`;
 - the debug link, once defined ([debug-link.md](debug-link.md)).
 
 ## Things that are easy to get wrong

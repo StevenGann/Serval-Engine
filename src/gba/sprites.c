@@ -6,6 +6,7 @@
 
 #include <tonc.h>
 
+#include "../core/lz77_internal.h" // lz77:
 #include "../core/map_internal.h"
 #include "../core/sprite_internal.h"
 #include "../core/warn.h"
@@ -15,8 +16,9 @@
 // VRAM and palettes in OBJ palette banks, in load order;
 // sprite_groups_release() rolls both back to a mark, sprite_groups_reset() to
 // the start. Streamed groups load and draw here too, from slots at the top of
-// OBJ VRAM that sprite_stream.c keeps. Planned (declared in sprites.h, stubs
-// or refusals here): LZ77 sprites. Palette sharing comes after 1.0.
+// OBJ VRAM that sprite_stream.c keeps. LZ77 sprites (SPRITE_ASSET_LZ77) are
+// unpacked into VRAM by the BIOS as their resident group loads. Palette
+// sharing comes after 1.0.
 // Runtime tiles (sprite_set_tiles) are in sprite_tiles.c.
 // palettes: palette writes, sprite_set_colors(), are in palette.c.
 
@@ -342,16 +344,18 @@ static int group_tiles(const SpriteGroup* group) {
                         id);
             return -1;
         }
-        if (sprite->flags & SPRITE_ASSET_LZ77) {
-            SERVAL_WARN("sprite_group_load: sprite %u: SPRITE_ASSET_LZ77 is planned, not "
-                        "implemented in this engine version",
-                        id);
-            return -1;
-        }
         // Bit 0 (SPRITE_ASSET_STREAMED before 1.0) and bits 4-7 are reserved.
-        if (sprite->flags & ~(SPRITE_ASSET_METASPRITE | SPRITE_ASSET_ANIM_ONCE)) {
+        if (sprite->flags &
+            ~(SPRITE_ASSET_METASPRITE | SPRITE_ASSET_ANIM_ONCE | SPRITE_ASSET_LZ77)) {
             SERVAL_WARN("sprite_group_load: sprite %u has flags 0x%x, with reserved bits", id,
                         sprite->flags);
+            return -1;
+        }
+        // lz77: a metasprite has pieces, no tiles to unpack
+        if ((sprite->flags & SPRITE_ASSET_METASPRITE) && (sprite->flags & SPRITE_ASSET_LZ77)) {
+            SERVAL_WARN("sprite_group_load: metasprite %u has SPRITE_ASSET_LZ77, but no tiles to "
+                        "unpack; not loaded",
+                        id);
             return -1;
         }
         if (sprite->flags & SPRITE_ASSET_METASPRITE) {
@@ -384,6 +388,18 @@ static int group_tiles(const SpriteGroup* group) {
                         "palettes",
                         id, sprite->palette_slot, group->palette_count);
             return -1;
+        }
+        // lz77: the data must unpack to exactly the sprite's frames, VRAM-safe
+        if (sprite->flags & SPRITE_ASSET_LZ77) {
+            u32 bytes = frames_of(sprite) * tiles_per_frame_of(sprite) * (u32)sizeof(TILE);
+            u32 at;
+            u32 problem = serval_lz77_check(sprite->tiles, bytes, &at);
+            if (problem) {
+                SERVAL_WARN("sprite_group_load: sprite %u: its SPRITE_ASSET_LZ77 data %s; not "
+                            "loaded",
+                            id, serval_lz77_problem(problem, bytes, at));
+                return -1;
+            }
         }
         tiles += frames_of(sprite) * tiles_per_frame_of(sprite);
         largest = hardware_tiles > largest ? hardware_tiles : largest; // streaming
@@ -470,7 +486,11 @@ bool sprite_group_load(const SpriteGroup* group) {
         const HardwareSize* hw = &hardware_sizes[sprite->size - 1];
         u32 frames = frames_of(sprite);
         u32 per_frame = tiles_per_frame_of(sprite);
-        memcpy32(obj_tiles + tile, sprite->tiles, frames * per_frame * (sizeof(TILE) / 4));
+        // lz77: unpacked straight into VRAM by the BIOS (the web: its stand-in)
+        if (sprite->flags & SPRITE_ASSET_LZ77)
+            LZ77UnCompVram(sprite->tiles, obj_tiles + tile);
+        else
+            memcpy32(obj_tiles + tile, sprite->tiles, frames * per_frame * (sizeof(TILE) / 4));
 
         d->attr0 = (u16)(ATTR0_REG | ATTR0_4BPP | (hw->shape << 14));
         d->attr1 = (u16)(hw->size << 14);

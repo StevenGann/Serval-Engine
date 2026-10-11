@@ -22,6 +22,9 @@ serval_add_rom(platformer SOURCES platformer/main.c platformer/game.c platformer
                platformer/sound_castle.c platformer/boss.c
                TITLE "SERVAL DASH" GAME_CODE "SVPF" SAVE FLASH64K)
 target_link_libraries(platformer PRIVATE serval_warnings)
+# lz77: the castle's tileset and the dragon's tiles, LZ77-compressed at build
+# time (tools/lz77.py) into castle_lz77.c and castle_lz77.h.
+serval_add_lz77(platformer castle_lz77 platformer/castle_tiles.inc platformer/dragon_tiles.inc)
 
 serval_add_rom(breakout SOURCES breakout/main.c breakout/game.c breakout/play.c
                breakout/levels.c breakout/scores.c breakout/art.c breakout/sound.c

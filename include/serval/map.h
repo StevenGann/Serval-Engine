@@ -34,18 +34,22 @@ typedef struct {
 } Tileset;
 
 // Tileset.flags. tileset_load() refuses a tileset with a flag it doesn't know
-// or doesn't implement yet (returns false, warning in debug builds; nothing is
-// loaded). Bit 1 is reserved for 8bpp tilesets, bits 2-7 for later use.
+// (returns false, warning in debug builds; nothing is loaded). Bit 1 is
+// reserved for 8bpp tilesets, bits 2-7 for later use.
 enum {
     // .tiles holds the tile_count tiles compressed with LZ77 in the GBA
-    // BIOS's format: a header word with 0x10 in its low byte and the unpacked
-    // size in bytes, which must be tile_count * 32, in bits 8-31, then the
-    // compressed data. It must be "VRAM-safe": no match copies from the byte
-    // just before it (distance 1), so the BIOS's VRAM decoder, which writes
-    // 16 bits at a time, can unpack it. tileset_load() will unpack it into
-    // VRAM. Planned: until implemented, tileset_load() refuses a tileset with
-    // this flag (returns false, warns), loading nothing.
-    TILESET_LZ77 SERVAL_PLANNED("LZ77-compressed tilesets, docs/tilemaps.md#tilesets") = 1 << 0,
+    // BIOS's format, word-aligned: a header word with 0x10 in its low byte
+    // and the unpacked size in bytes, which must be tile_count * 32, in bits
+    // 8-31, then the compressed data. It must be "VRAM-safe": no match copies
+    // from the byte just before it (distance 1), so the BIOS's VRAM decoder,
+    // which writes 16 bits at a time, can unpack it (tools/lz77.py writes
+    // such data). tileset_load() unpacks it into VRAM with the BIOS (on the
+    // web, a C decoder that matches it), which takes longer than a copy
+    // (docs/tilemaps.md#tilesets), and refuses data that is not LZ77, doesn't
+    // unpack to exactly tile_count tiles or isn't VRAM-safe (returns false,
+    // warns), loading nothing. tileset_set_tiles() takes plain tiles, as
+    // with any tileset.
+    TILESET_LZ77 = 1 << 0,
 };
 
 #define MAP_MAX_TILES 1024
@@ -144,8 +148,9 @@ typedef struct {
 // Copies immediately, like sprite_group_load(): call it while loading a room,
 // before the layers using it are shown (on a layer already on screen, the
 // change may tear for a frame). Returns false (warning in debug builds) if the
-// tileset is incomplete or too big, or has a flag this version doesn't know
-// or implement (TILESET_LZ77, a reserved bit); nothing is loaded then.
+// tileset is incomplete or too big, has a flag this version doesn't know (a
+// reserved bit), or has TILESET_LZ77 with data that doesn't unpack to its
+// tiles (not LZ77, the wrong size, not VRAM-safe); nothing is loaded then.
 bool tileset_load(const Tileset* tileset);
 
 // Replaces `count` tiles of the loaded tileset, from tile `first` on, with

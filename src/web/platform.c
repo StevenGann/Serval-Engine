@@ -1,7 +1,8 @@
 // The web backend's stand-ins for what the GBA backend gets from the hardware,
 // the BIOS and libtonc's assembly: waiting for VBlank (which is where a frame
 // is shown, sound is generated and the browser gets control back), BIOS bit
-// unpacking, libtonc's fast copies, the debug output and the CPU cycle counter.
+// unpacking and LZ77 unpacking, libtonc's fast copies, the debug output and
+// the CPU cycle counter.
 //
 // The GBA code runs on virtual hardware: its I/O registers, palette RAM, VRAM
 // and OAM sit at their GBA addresses in WebAssembly memory (the build makes
@@ -139,6 +140,13 @@ void BitUnPack(const void* src, void* dst, const BitUnPackParams* bup) {
             }
         }
     }
+}
+
+// lz77: tonc_bios.h: BIOS call 12h, LZ77UnCompReadNormalWrite16bit, which
+// unpacks SPRITE_ASSET_LZ77 sprites and TILESET_LZ77 tilesets (lz77.c).
+void LZ77UnCompVram(const void* src, void* dst);
+void LZ77UnCompVram(const void* src, void* dst) {
+    web_lz77_unpack_vram(src, dst);
 }
 
 // tonc_core.h's copies and fills (assembly on the GBA). Counts are in units

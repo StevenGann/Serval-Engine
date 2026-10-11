@@ -5,11 +5,12 @@
 // headers is used in one of these files. When a name is implemented and its
 // SERVAL_PLANNED goes, its line goes too. This file is in no build target: it
 // warns on purpose. See docs/development.md#planned-api.
+//
+// sprites.h has no planned names in this version (streamed groups, runtime
+// tiles, blending, palette writes and LZ77 sprites are implemented); a planned
+// name added later gets its line here.
 
 #include "serval/sprites.h"
 
 void planned_sprites(void);
-void planned_sprites(void) {
-    static const u8 packed = SPRITE_ASSET_LZ77; // planned
-    (void)packed;
-}
+void planned_sprites(void) {}

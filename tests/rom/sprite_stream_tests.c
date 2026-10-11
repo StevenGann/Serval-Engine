@@ -4,10 +4,6 @@
 // them, frames still in a slot reused, the least recently drawn slot taking a
 // new frame, frames past the slots not drawn, marks, and the costs.
 
-// Uses SPRITE_ASSET_LZ77 (planned) on purpose, to check that streamed groups
-// refuse it.
-#define SERVAL_NO_PLANNED_WARNINGS
-
 #include "../test.h"
 #include "serval/core.h"
 #include "serval/debug.h"
@@ -53,6 +49,8 @@ static const u32* const rom_bytes = (const u32*)0x08000000;
 // Set by each test that uses it: tiles_per_frame and frame_count give it any
 // number of tiles.
 static SpriteAsset filler SERVAL_EWRAM_DATA = {.size = SPRITE_8x8};
+// Refused in a streamed group before its data is looked at (lz77:
+// tests/rom/lz77_tests.c loads real LZ77 data).
 static const SpriteAsset packed = {
     .size = SPRITE_8x8, .tiles = dot_tiles, .flags = SPRITE_ASSET_LZ77};
 // For the costs: 16 frames of 64x64 (64 tiles each), straight from ROM.
@@ -505,8 +503,8 @@ static void streamed_groups_refuse_what_they_cannot_hold(void) {
     u32 before = debug_warning_count();
     CHECK(!sprite_group_load(&g));
 #ifdef SERVAL_DEBUG
-    // Refused as streamed, not only as planned: LZ77 sprites will load in
-    // resident groups, never in streamed ones.
+    // Refused as streamed: LZ77 sprites load in resident groups, never in
+    // streamed ones.
     CHECK(contains(serval_warn_text(), "streamed group"));
 #endif
     g.sprite_ids = spark_ids;

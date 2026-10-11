@@ -59,6 +59,7 @@ include(cmake/Serval.cmake)
 set(SERVAL_PORTABLE_SOURCES
     src/core/color.c
     src/core/input.c
+    src/core/lz77.c # lz77: the loaders' check of LZ77 data
     src/core/map.c
     src/core/path.c
     src/core/psg_sequencer.c
@@ -149,6 +150,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/vm_platform.c
         src/gba/wave.c
         src/web/apu.c
+        src/web/lz77.c # lz77: the BIOS's LZ77 decoder
         src/web/maxmod_mixer.c
         src/web/mixer.c
         src/web/platform.c
@@ -224,9 +226,11 @@ if(SERVAL_TARGET_GBA)
     target_compile_options(serval_libc PRIVATE -fno-builtin -fno-tree-loop-distribute-patterns)
 endif()
 
-# Web builds have no test suites of their own: the host tests cover src/web/'s
-# renderer and sound, and the GBA tests the rest. tests/ only checks the
-# planned API there, with emcc, as part of the build.
+# Web builds run no CTest: the host tests cover src/web/'s renderer, sound,
+# mixer and LZ77 decoder, and the GBA tests the rest. tests/ checks the
+# planned API there, with emcc, as part of the build, and builds the web test
+# page (tests/web/main.c; lz77: the LZ77 loaders on the web's BIOS stand-in),
+# which CI runs with tools/web-shots.py.
 if(SERVAL_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     if(NOT SERVAL_TARGET_WEB)
         enable_testing()

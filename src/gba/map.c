@@ -30,6 +30,7 @@
 #include <stddef.h>
 #include <tonc.h>
 
+#include "../core/lz77_internal.h" // lz77:
 #include "../core/map_internal.h"
 #include "../core/warn.h"
 #include "internal.h"
@@ -115,15 +116,9 @@ bool tileset_load(const Tileset* tileset) {
         WARN_ONCE(W_POINTER, "tileset_load: the tileset pointer is NULL or not valid");
         return false;
     }
-    // Refused rather than ignored: copying LZ77 data as tiles would show
-    // garbage, and a reserved bit may get a meaning later, which would change
-    // what such a tileset does (docs/releases.md).
-    if (tileset->flags & TILESET_LZ77) {
-        WARN_ONCE(W_LZ77, "tileset_load: TILESET_LZ77 (LZ77-compressed tilesets) is planned, not "
-                          "implemented in this engine version; nothing is loaded");
-        return false;
-    }
-    if (tileset->flags) {
+    // Refused rather than ignored: a reserved bit may get a meaning later,
+    // which would change what such a tileset does (docs/releases.md).
+    if (tileset->flags & ~TILESET_LZ77) {
         WARN_ONCE(W_FLAGS,
                   "tileset_load: unknown .flags 0x%x (bit 1 is reserved for 8bpp tilesets, bits "
                   "2-7 for later use); nothing is loaded",
@@ -148,7 +143,20 @@ bool tileset_load(const Tileset* tileset) {
                   tileset->palette_count);
         return false;
     }
-    memcpy32(&tile_mem[MAP_CHARBLOCK][0], tileset->tiles, tileset->tile_count * 8u);
+    // lz77: LZ77 data must unpack to exactly the tiles, VRAM-safe; the BIOS
+    // (the web: its stand-in) unpacks it straight into VRAM
+    if (tileset->flags & TILESET_LZ77) {
+        u32 bytes = tileset->tile_count * 32u, at;
+        u32 problem = serval_lz77_check(tileset->tiles, bytes, &at);
+        if (problem) {
+            WARN_ONCE(W_LZ77, "tileset_load: its TILESET_LZ77 data %s; nothing is loaded",
+                      serval_lz77_problem(problem, bytes, at));
+            return false;
+        }
+        LZ77UnCompVram(tileset->tiles, &tile_mem[MAP_CHARBLOCK][0]);
+    } else {
+        memcpy32(&tile_mem[MAP_CHARBLOCK][0], tileset->tiles, tileset->tile_count * 8u);
+    }
     tileset_tiles = tileset->tile_count;
     tile_update_count = 0;
     // Color 0 is transparent, and bank 0's is the backdrop: leave them be.

@@ -1102,7 +1102,8 @@ class PlannedNames(unittest.TestCase):
         for name in sorted(names):
             with self.subTest(name=name):
                 svlua.check(f"function {name}() end", "t.lua")
-        # The planned constants are constants: a script may name its own.
+        # Constants, planned or implemented (TILESET_LZ77 and SPRITE_ASSET_LZ77
+        # were planned in 1.0.0-rc.1): a script may name its own.
         p = svlua.check("TILESET_LZ77 = 1\nlocal MAP_LADDER <const> = 2\n"
                         "SPRITE_ASSET_LZ77 = object {}", "t.lua")
         self.assertEqual([s.name for s in p.top_order],

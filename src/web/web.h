@@ -100,4 +100,10 @@ typedef struct {
 void web_mixer_mix(WebMixerChannel* channels, u32 count, u32 rate_scale, u16* work, s8* left,
                    s8* right, u32 samples);
 
+// lz77: LZ77-compressed sprites and tilesets (lz77.c). Unpacks LZ77 data in
+// the BIOS's format from src to dst (halfword-aligned) as the BIOS's
+// LZ77UnCompReadNormalWrite16bit (SWI 0x12) does, byte for byte, bad data
+// included: platform.c's LZ77UnCompVram, which the loaders call.
+void web_lz77_unpack_vram(const void* src, void* dst);
+
 #endif // SERVAL_WEB_H
