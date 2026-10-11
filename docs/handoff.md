@@ -38,7 +38,7 @@ These are the shared contracts. Changing any of them is a cross-repository chang
 - the Lua subset and `tools/svlua.py`'s command line ([lua.md](lua.md)); `tools/svm.py`'s command line and listing syntax ([vm.md](vm.md#tools));
 - `serval.json` ([releases.md](releases.md#manifest)), whose `toolchain.mmutil` names the `mmutil` that builds sound banks for the engine's Maxmod, and the release zip's layout ([releases.md](releases.md#release-contents));
 - the sound bank: opaque, built by that `mmutil` from the project's modules and WAVs, its header's `MOD_*` and `SFX_*` numbers the IDs `music_play()` and `sfx_play()` take ([audio.md](audio.md#sound-bank));
-- the CMake functions `serval_add_rom()`, `serval_add_script()`, `serval_add_soundbank()` and `serval_add_lz77()` (`cmake/Serval.cmake`), the first two checked from outside the tree by `tests/consumer/` and `tools/check-consumer.sh`;
+- the CMake functions `serval_add_rom()`, `serval_add_script()`, `serval_add_soundbank()` and `serval_add_lz77()` (`cmake/Serval.cmake`), all but the sound bank's checked from outside the tree by `tests/consumer/` and `tools/check-consumer.sh`;
 - the debug link, once defined ([debug-link.md](debug-link.md)).
 
 ## Things that are easy to get wrong

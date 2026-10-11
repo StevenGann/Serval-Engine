@@ -351,10 +351,11 @@ else()
     # vm sound: the jukebox's main.c includes its script's header
     serval_add_script(serval_api_only_check ../examples/jukebox/pads.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
-    # lz77: the platformer's castle includes its LZ77 data's header
-    # (examples/CMakeLists.txt).
+    # lz77: the platformer's castle and consumer include their LZ77 data's
+    # headers (examples/CMakeLists.txt, consumer/CMakeLists.txt).
     serval_add_lz77(serval_api_only_check castle_lz77 ../examples/platformer/castle_tiles.inc
                     ../examples/platformer/dragon_tiles.inc)
+    serval_add_lz77(serval_api_only_check consumer_lz77 consumer/consumer_tiles.inc)
     # A hand-written listing (.svm) through serval_add_script() too.
     add_subdirectory(svm)
     add_dependencies(serval_host_tests serval_svm_listing_check)

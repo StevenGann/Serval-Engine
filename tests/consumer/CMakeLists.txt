@@ -20,6 +20,9 @@ serval_add_rom(consumer SOURCES main.c TITLE "CONSUMER" GAME_CODE "SVCO")
 # A script in the Lua subset, compiled and assembled at build time into
 # consumer_script.c and .h.
 serval_add_script(consumer consumer.lua)
+# lz77: tiles packed at build time into consumer_lz77.c and .h, for an LZ77
+# tileset.
+serval_add_lz77(consumer consumer_lz77 consumer_tiles.inc)
 # A game that saves, with a save type other than the default SRAM.
 serval_add_rom(consumer_save SOURCES save.c TITLE "CONSUMER SV" GAME_CODE "SVCS" SAVE EEPROM8K)
 

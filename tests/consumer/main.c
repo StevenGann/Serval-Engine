@@ -4,14 +4,20 @@
 // Runs a few frames, prints text, does integer division (which needs libgcc),
 // runs a script built at build time by serval_add_script() (consumer.lua, in
 // the Lua subset: a global that starts at 40, to which its Create handler
-// adds 2) and exits through debug_exit with
-// the number of failed checks, so mgba-rom-test reports whether the ROM
-// booted and ran correctly.
+// adds 2), loads a tileset packed by serval_add_lz77() (consumer_tiles.inc,
+// TILESET_LZ77) and checks the tiles it unpacked, and exits through
+// debug_exit with the number of failed checks, so mgba-rom-test reports
+// whether the ROM booted and ran correctly.
 //
 // Uses only Serval Engine's API; no third-party headers.
 
+#include "consumer_lz77.h"
 #include "consumer_script.h"
 #include "serval/serval.h"
+
+static const u32 plain_tiles[] = {
+#include "consumer_tiles.inc"
+};
 
 // Never called: the link must drop it (check-gc-sections.cmake).
 int consumer_unused(int x);
@@ -39,6 +45,17 @@ int main(void) {
     }
     if (vm_global(G_ANSWER) != 42) {
         debug_log("consumer: the script did not run");
+        failures++;
+    }
+    // lz77: the BIOS (or the web's stand-in) unpacks the tiles to background
+    // VRAM's charblock 1, where tileset_load() puts them.
+    const Tileset packed = {.tiles = consumer_tiles_lz77, .tile_count = 2, .flags = TILESET_LZ77};
+    const volatile u32* vram = (const volatile u32*)0x06004000;
+    bool same = tileset_load(&packed);
+    for (u32 k = 0; k < sizeof(plain_tiles) / 4; k++)
+        same = same && vram[k] == plain_tiles[k];
+    if (!same) {
+        debug_log("consumer: the LZ77 tileset did not unpack to its tiles");
         failures++;
     }
     if (dividend / divisor != 142 || dividend % divisor != 6) {
