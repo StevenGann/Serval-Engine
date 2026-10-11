@@ -39,6 +39,14 @@ extern MapChange serval_map_redraw[MAP_MAX_CHANGES];
 extern u32 serval_map_redraw_count;
 extern bool serval_map_redraw_all;
 
+// ladders and slopes: which kinds of metatile the playfield's definitions
+// include (SERVAL_MAP_HAS_*), found by map_load() of background 2 and cleared
+// by map_unload(2). sys_map_movement() takes its general path, which knows
+// slopes and ladders, only on a playfield that has some (src/ecs/map_movement.c).
+#define SERVAL_MAP_HAS_SLOPES (1u << 0)
+#define SERVAL_MAP_HAS_LADDERS (1u << 1)
+extern u8 serval_map_kinds;
+
 // Called by map_load(): the platform starts drawing map layers (GBA: hooks
 // the VBlank flush into frame_end()). Host builds do nothing.
 void serval_map_attach(void);

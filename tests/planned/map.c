@@ -5,20 +5,12 @@
 // headers is used in one of these files. When a name is implemented and its
 // SERVAL_PLANNED goes, its line goes too. This file is in no build target: it
 // warns on purpose. See docs/development.md#planned-api.
+//
+// map.h has no planned names in this version (LZ77-compressed tilesets,
+// ladders and floor slopes are implemented); a planned name added later gets
+// its line here.
 
 #include "serval/map.h"
 
 void planned_map(void);
-void planned_map(void) {
-    static const u8 ladder = MAP_LADDER;          // planned
-    static const u8 slopes[] = {MAP_SLOPE_R,      // planned
-                                MAP_SLOPE_L,      // planned
-                                MAP_SLOPE_R_LOW,  // planned
-                                MAP_SLOPE_R_HIGH, // planned
-                                MAP_SLOPE_L_HIGH, // planned
-                                MAP_SLOPE_L_LOW}; // planned
-    static const u8 contact = MAP_CONTACT_LADDER; // planned
-    (void)ladder;
-    (void)slopes;
-    (void)contact;
-}
+void planned_map(void) {}

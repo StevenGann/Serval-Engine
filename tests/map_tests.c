@@ -1,8 +1,8 @@
 // Tests for map.h's platform-neutral part: map layers as data, the camera,
 // runtime cell changes, collision and tag queries and sys_map_movement. Run
 // natively and in the test ROM (which also draws the layers; see
-// tests/rom/map_tests.c for that). The planned collision types are tested in
-// planned_map_tests.c.
+// tests/rom/map_tests.c for that). Slopes and ladders are tested in
+// map_slope_tests.c.
 
 #include "serval/debug.h"
 #include "serval/map.h"
@@ -26,7 +26,15 @@ static const Metatile metatiles[] = {
     [SOLID] = {{1, 2, 3, 4}, MAP_SOLID},
     [ONEWAY] = {{5, 5, 5, 5}, MAP_ONEWAY},
     [TAGGED] = {{6, 6, 6, 6}, MAP_SOLID | MAP_TAG(2)},
+    // ladders and slopes: in the set but in no cell, they make
+    // sys_map_movement() take its general path (general_path, below).
+    {{7, 7, 7, 7}, MAP_SLOPE_R},
+    {{8, 8, 8, 8}, MAP_LADDER},
 };
+// ladders and slopes: when set, load_rows() gives the playfield all six
+// metatiles, so the body tests run on sys_map_movement()'s general path
+// ("bodies move the same on a playfield with slopes and ladders").
+static bool general_path;
 
 #define MAX_CELLS (40 * 16)
 // 1.3 KB: in EWRAM, to keep the test ROM's IWRAM for the engine's code.
@@ -49,7 +57,7 @@ static void load_rows(const char* const* rows, u16 height) {
                            .height = height,
                            .cells = cells,
                            .metatiles = metatiles,
-                           .metatile_count = 4,
+                           .metatile_count = general_path ? 6 : 4,
                            .bg = 2};
     CHECK(map_load(&playfield));
 }
@@ -1072,6 +1080,42 @@ static void physics_contacts_leave_map_bodies_alone(void) {
     reset();
 }
 
+// ladders and slopes: every body test above again on a playfield whose
+// metatiles include a slope and a ladder (in no cell), so bodies take
+// sys_map_movement()'s general path: away from slopes and ladders it must
+// move them as the path for other playfields does, to the subpixel.
+static void bodies_move_the_same_on_a_playfield_with_slopes_and_ladders(void) {
+    static void (*const tests[])(void) = {
+        bodies_land_flush_on_the_floor,
+        bodies_land_from_any_fraction,
+        bodies_walk_off_ledges,
+        walls_stop_bodies_on_both_sides,
+        ceilings_stop_jumps,
+        one_way_platforms_block_only_from_above,
+        fast_bodies_do_not_tunnel,
+        big_bodies_check_their_whole_edge,
+        the_map_edges_are_walls_but_open_above_and_below,
+        changed_cells_affect_collision,
+        map_bodies_bounce_and_come_to_rest,
+        map_bodies_bounce_perfectly_at_255,
+        map_bodies_bounce_off_walls_and_ceilings,
+        map_bodies_slide_with_friction,
+        map_bodies_fall_no_faster_than_max_fall,
+        map_bodies_use_their_gravity_scale,
+        physics_contacts_leave_map_bodies_alone,
+    };
+    general_path = true;
+    for (u32 k = 0; k < sizeof(tests) / sizeof(tests[0]); k++) {
+        tests[k]();
+        CHECK(serval_map_kinds == 0); // reset() unloaded the playfield...
+        LOAD(room);
+        CHECK(serval_map_kinds ==
+              (SERVAL_MAP_HAS_SLOPES | SERVAL_MAP_HAS_LADDERS)); // ...this one has both
+        map_unload(2);
+    }
+    general_path = false;
+}
+
 TEST_SUITE(map_tests, "map",
            {"collision reads metatiles and the edges", collision_reads_metatiles_and_the_edges},
            {"tags come with the collision byte", tags_come_with_the_collision_byte},
@@ -1112,4 +1156,6 @@ TEST_SUITE(map_tests, "map",
            {"map bodies slide with friction", map_bodies_slide_with_friction},
            {"map bodies fall no faster than max fall", map_bodies_fall_no_faster_than_max_fall},
            {"map bodies use their gravity scale", map_bodies_use_their_gravity_scale},
-           {"physics contacts leave map bodies alone", physics_contacts_leave_map_bodies_alone}, );
+           {"physics contacts leave map bodies alone", physics_contacts_leave_map_bodies_alone},
+           {"bodies move the same on a playfield with slopes and ladders",
+            bodies_move_the_same_on_a_playfield_with_slopes_and_ladders}, );

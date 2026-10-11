@@ -24,6 +24,7 @@ extern const TestSuite gba_stream_tests;
 extern const TestSuite gba_raster_tests; // raster: raster effects
 extern const TestSuite gba_wave_tests;   // wave channel: the PSG wave channel
 
+extern const TestSuite gba_map_movement_cost_tests; // ladders and slopes: their cost
 extern const TestSuite gba_vm_sound_tests; // vm sound: scripts' tracker music and sampled effects
 extern const TestSuite gba_lz77_tests;     // lz77: LZ77-compressed sprites and tilesets
 
@@ -39,6 +40,7 @@ int main(void) {
         &math_tests,
         &physics_tests,
         &map_tests,
+        &map_slope_tests, // ladders and slopes
         &random_tests,
         &text_format_tests,
         &core_tests,
@@ -60,6 +62,7 @@ int main(void) {
         &input_tests,
         &path_tests,
         &gba_ecs_cost_tests,
+        &gba_map_movement_cost_tests, // ladders and slopes: their cost
         &vm_tests,
         &gba_vm_tests,
         &gba_raster_tests,       // raster:

@@ -74,23 +74,22 @@ enum {
 #define MAP_TYPE(collision) ((collision) & 0x0F)
 #define MAP_TAG(n) (1u << (4 + (n)))
 
-// The other collision types. 3-9 are planned: until they are implemented,
-// sys_map_movement() treats the ladder as MAP_EMPTY and the slopes as
-// MAP_SOLID (a whole metatile), and map_load() of the playfield warns once
-// for ladders and once for slopes among its metatiles. 10-15 are reserved
-// for later types (ceiling slopes, for one): they collide as MAP_EMPTY, and
+// ladders and slopes: the other collision types, 3-9 (sys_map_movement;
+// docs/tilemaps.md#ladders and #floor-slopes in full). 10-15 are reserved for
+// later types (ceiling slopes, for one): they collide as MAP_EMPTY, and
 // map_load() of the playfield warns once if one of its metatiles has one.
 // Data must not use them, as a later version will give them a meaning.
 enum {
-    // Climbable, not solid. A map body overlapping a ladder metatile has
+    // Climbable, not solid. A map body overlapping a ladder metatile, or
+    // standing on one (the pixel row below its feet is a ladder's), has
     // MAP_CONTACT_LADDER in body_contact, so the game can let it climb: it
-    // sets the body's velocity itself, usually with body_gravity at
-    // BODY_GRAVITY(0) (physics.h) while it climbs. The top of a ladder (a ladder metatile
-    // with none above it) is a floor to bodies with gravity falling onto it,
-    // like MAP_ONEWAY; a body without gravity is climbing, and passes through
-    // it both ways. Planned: until implemented it collides as MAP_EMPTY and
-    // MAP_CONTACT_LADDER is never set.
-    MAP_LADDER SERVAL_PLANNED("ladders, docs/tilemaps.md#collision-types") = 3,
+    // sets the body's velocity itself, with body_gravity at BODY_GRAVITY(0)
+    // (physics.h) while it climbs. The top of a ladder (a ladder metatile
+    // with none above it) is a floor to bodies whose gravity pulls them down,
+    // falling onto it, like MAP_ONEWAY; a body without gravity is climbing,
+    // and passes through it both ways (to climb down from the top, the game
+    // takes the body's gravity away and moves it down).
+    MAP_LADDER = 3,
     // Floor slopes: solid below a straight line across the metatile, empty
     // above it. The name says which way the floor rises: _R to the right, _L
     // to the left. The line's height above the metatile's bottom edge, in
@@ -102,16 +101,19 @@ enum {
     //   MAP_SLOPE_L_HIGH 16 to 8    a 1:2 slope rising to the left: _HIGH,
     //   MAP_SLOPE_L_LOW   8 to 0    then _LOW to its right
     // So each rises 16 or 8 pixels across its 16-pixel width, and slopes
-    // placed side by side as above meet at the same height. A map body will
-    // walk up and down them, standing on the line, with MAP_CONTACT_FLOOR as
-    // on a flat floor; the exact motion is specified when they are
-    // implemented. Planned: until then each collides as MAP_SOLID.
-    MAP_SLOPE_R SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 4,
-    MAP_SLOPE_L SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 5,
-    MAP_SLOPE_R_LOW SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 6,
-    MAP_SLOPE_R_HIGH SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 7,
-    MAP_SLOPE_L_HIGH SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 8,
-    MAP_SLOPE_L_LOW SERVAL_PLANNED("floor slopes, docs/tilemaps.md#collision-types") = 9,
+    // placed side by side as above meet at the same height. Every pixel the
+    // line passes through is solid: a 45-degree slope's columns are 1 to 16
+    // pixels high, a 1:2 slope's 1, 1, 2, 2, ... 8, 8 (_LOW) and 9, 9, ...
+    // 16, 16 (_HIGH). A slope holds a map body up at its foot, the pixel
+    // column at its horizontal centre: the body walks up and down it, its
+    // bottom edge on the line there, with MAP_CONTACT_FLOOR as on a flat
+    // floor (sys_map_movement() below).
+    MAP_SLOPE_R = 4,
+    MAP_SLOPE_L = 5,
+    MAP_SLOPE_R_LOW = 6,
+    MAP_SLOPE_R_HIGH = 7,
+    MAP_SLOPE_L_HIGH = 8,
+    MAP_SLOPE_L_LOW = 9,
 };
 
 typedef struct {
@@ -196,10 +198,9 @@ void tileset_set_colors(u32 index, const Color* colors, u32 count);
 // naming a metatile the layer doesn't have show and collide as empty (a
 // warning at load in debug builds). Loading the playfield (background 2)
 // clears map_set_cell's changes and clamps the camera to it; debug builds
-// also warn (once per kind) if its metatiles use a planned or reserved
-// collision type (MAP_LADDER, the slopes, 10-15), which loads anyway. The
-// data must stay valid while the layer is shown (normally it is const data
-// in ROM).
+// also warn (once) if its metatiles use a reserved collision type (10-15),
+// which loads anyway. The data must stay valid while the layer is shown
+// (normally it is const data in ROM).
 bool map_load(const MapLayer* layer);
 
 // Hides the map layer on background bg (1-3) and forgets it, and its
@@ -296,21 +297,20 @@ extern u8 body_contact[MAX_ENT];
 #define MAP_CONTACT_LEFT (1 << 2)
 #define MAP_CONTACT_RIGHT (1 << 3)
 // The other bits of body_contact: 5 is BODY_CONTACT_EXIT (sys_physics(),
-// physics.h), 6 MAP_CONTACT_LADDER (planned); 4 and 7 are reserved for the
-// engine.
+// physics.h), 6 MAP_CONTACT_LADDER; 4 and 7 are reserved for the engine.
 enum {
-    // Set by sys_map_movement() while the body overlaps a MAP_LADDER
-    // metatile, beside any other contact. Planned: never set until ladders
-    // are implemented.
-    MAP_CONTACT_LADDER SERVAL_PLANNED("ladders, docs/tilemaps.md#collision-types") = 1 << 6,
+    // ladders: set by sys_map_movement() while the body overlaps a MAP_LADDER
+    // metatile or stands on one (the pixel row below its feet is a ladder's:
+    // on a ladder's top), beside any other contact.
+    MAP_CONTACT_LADDER = 1 << 6,
 };
 
 // Moves map bodies: adds gravity (physics_set_gravity) to their velocity and
 // limits their fall speed (body_max_fall, physics.h), then moves them by it one
 // axis at a time (x, then y), stopping flush against MAP_SOLID metatiles (and
-// MAP_ONEWAY ones when falling onto them from above). In this version the
-// slopes (planned) stop bodies as MAP_SOLID does, and ladders (planned) and
-// the reserved types 10-15 are MAP_EMPTY. The velocity into each side they
+// MAP_ONEWAY ones and ladder tops when falling onto them from above), and on
+// slopes (below); the reserved types 10-15 are MAP_EMPTY. The velocity into
+// each side they
 // touch becomes -velocity * body_bounce / 256: 0 (the default) stops them, as
 // for a player character; a gem, power-up or knocked-out enemy can bounce
 // instead. 255 (a u8 can't hold 256) is a perfect bounce: off a wall or a
@@ -332,6 +332,25 @@ enum {
 // once per frame, where sys_movement() runs.
 // Each body's gravity is scaled by its body_gravity (physics.h), and floors
 // are the sides its own gravity pulls toward.
+// ladders and slopes: a slope holds a body up at its foot, the pixel column
+// at its horizontal centre (pos_x + body_w / 2, rounded down): standing on
+// it, the body's bottom edge is on the slope's surface in that column, its
+// uphill corner sunk into the ground and its downhill one in the air, as in
+// most games. Moving sideways, the foot climbs a slope (and steps onto the
+// solid metatile at its top) by up to a pixel per pixel it moves, so 45
+// degrees and gentler; and a body walking on the ground (it touched the
+// floor last frame, its gravity pulls down and it isn't moving up) also
+// follows the ground down by up to a pixel per pixel, so it sticks to a
+// slope it walks down rather than flying off its top, and still walks off
+// ledges. vel_x stays the body's horizontal speed: a slope neither slows it
+// uphill nor speeds it downhill, and doesn't make it slide. A body without
+// gravity moving into a slope slides up it (MAP_CONTACT_FLOOR), but doesn't
+// follow it down. While the foot is on a slope, what lies under the slope's
+// line, extended across the body, doesn't stop it (the solid metatile behind
+// a slope's top, under the next slope up), nor does a slope's low end (a
+// pixel high); a slope's exposed high side is a wall, and from below a slope
+// is a ceiling across its width. A bounce off a slope is a bounce off a floor:
+// straight up. Ladders block nothing but their tops (above).
 void sys_map_movement(void);
 
 #endif // SERVAL_MAP_H

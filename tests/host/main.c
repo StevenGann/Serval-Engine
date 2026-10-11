@@ -13,6 +13,7 @@ int main(void) {
         &ecs_tests,           &random_tests,
         &text_format_tests,   &math_tests,
         &physics_tests,       &map_tests,
+        &map_slope_tests, // ladders and slopes
         &web_ppu_tests,       &web_apu_tests,
         &web_mixer_tests, // maxmod: the web's mixer
         &anim_tests,          &psg_sequencer_tests,

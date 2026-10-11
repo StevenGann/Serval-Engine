@@ -54,6 +54,8 @@ extern const TestSuite vm_tests;
 extern const TestSuite splash_logic_tests;
 extern const TestSuite color_tests;
 extern const TestSuite lz77_tests; // lz77: the loaders' check of LZ77 data
+// ladders and slopes
+extern const TestSuite map_slope_tests;
 
 // Planned API at run time (docs/development.md#planned-api).
 extern const TestSuite planned_audio_tests;

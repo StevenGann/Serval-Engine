@@ -22,6 +22,8 @@ u32 serval_map_change_count;
 SERVAL_EWRAM_BSS MapChange serval_map_redraw[MAP_MAX_CHANGES];
 u32 serval_map_redraw_count;
 bool serval_map_redraw_all;
+// ladders and slopes: what the playfield's metatiles include (map_internal.h).
+u8 serval_map_kinds;
 
 #ifdef SERVAL_DEBUG
 // Each kind of problem is reported once, not on every call.
@@ -32,8 +34,6 @@ enum {
     W_LAYER_DATA,
     W_LAYER_FLAGS,
     W_LAYER_CELL,
-    W_TYPE_LADDER,
-    W_TYPE_SLOPE,
     W_TYPE_RESERVED,
     W_UNLOAD_BG,
     W_SCROLL_BG,
@@ -161,28 +161,18 @@ static void check_cells(const MapLayer* layer) {
     }
 }
 
-// The playfield's collision types that this version doesn't implement:
-// ladders (planned) collide as MAP_EMPTY and slopes (planned) as MAP_SOLID
-// (src/ecs/map_movement.c), and the reserved types 10-15 as MAP_EMPTY. They
-// load, since a game may be written against planned API; debug builds say so
-// once per kind, here rather than in sys_map_movement, which would find them
-// every frame. Every metatile definition is checked, not only those the
-// cells use, as map_set_cell() can bring in any of them.
+// The playfield's collision types that this version doesn't know: the
+// reserved types 10-15, which collide as MAP_EMPTY (src/ecs/map_movement.c).
+// They load, as a later version will give them a meaning; debug builds say so
+// once, here rather than in sys_map_movement, which would find them every
+// frame. Every metatile definition is checked, not only those the cells use,
+// as map_set_cell() can bring in any of them. (ladders and slopes: in
+// 1.0.0-rc.1, where types 3-9 were planned, they warned here too.)
 static void check_collision_types(const MapLayer* layer) {
     for (u32 k = 0; k < layer->metatile_count; k++) {
         u32 type = MAP_TYPE(layer->metatiles[k].collision);
-        // Each must stay within 247 characters (SERVAL_WARN_MAX - 1, warn.h), or it is cut off.
-        if (type == MAP_LADDER)
-            WARN_ONCE(W_TYPE_LADDER,
-                      "map_load: playfield metatile %u is a ladder: ladders are planned, not "
-                      "implemented in this engine version; acts as MAP_EMPTY",
-                      k);
-        else if (type >= MAP_SLOPE_R && type <= MAP_SLOPE_L_LOW)
-            WARN_ONCE(W_TYPE_SLOPE,
-                      "map_load: playfield metatile %u is a slope: slopes are planned, not "
-                      "implemented in this engine version; acts as MAP_SOLID",
-                      k);
-        else if (type > MAP_SLOPE_L_LOW)
+        // Must stay within 247 characters (SERVAL_WARN_MAX - 1, warn.h), or it is cut off.
+        if (type > MAP_SLOPE_L_LOW)
             WARN_ONCE(W_TYPE_RESERVED,
                       "map_load: playfield metatile %u has collision type %u, reserved for later "
                       "engine versions; it collides as MAP_EMPTY",
@@ -190,6 +180,22 @@ static void check_collision_types(const MapLayer* layer) {
     }
 }
 #endif
+
+// ladders and slopes: whether the playfield's metatile definitions include
+// slopes or ladders (serval_map_kinds), every definition, as map_set_cell()
+// can bring in any of them. Once per load, so sys_map_movement() knows
+// without looking.
+static u8 playfield_kinds(const MapLayer* layer) {
+    u32 kinds = 0;
+    for (u32 k = 0; k < layer->metatile_count; k++) {
+        u32 type = MAP_TYPE(layer->metatiles[k].collision);
+        if (type == MAP_LADDER)
+            kinds |= SERVAL_MAP_HAS_LADDERS;
+        else if (type >= MAP_SLOPE_R && type <= MAP_SLOPE_L_LOW)
+            kinds |= SERVAL_MAP_HAS_SLOPES;
+    }
+    return (u8)kinds;
+}
 
 bool map_load(const MapLayer* layer) {
     if (!serval_plausible_pointer(layer)) {
@@ -237,6 +243,7 @@ bool map_load(const MapLayer* layer) {
     if (layer->bg == 2) {
         forget_changes();
         clamp_camera();
+        serval_map_kinds = playfield_kinds(layer); // ladders and slopes
     }
     serval_map_attach();
     return true;
@@ -252,8 +259,10 @@ void map_unload(u32 bg) {
         return;
     serval_map_layers[bg] = NULL;
     serval_map_reload |= (u8)(1u << bg);
-    if (bg == 2)
+    if (bg == 2) {
         forget_changes();
+        serval_map_kinds = 0; // ladders and slopes
+    }
 }
 
 u32 serval_map_cell_in(const MapLayer* layer, u32 mx, u32 my) {

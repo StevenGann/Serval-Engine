@@ -1102,8 +1102,8 @@ class PlannedNames(unittest.TestCase):
         for name in sorted(names):
             with self.subTest(name=name):
                 svlua.check(f"function {name}() end", "t.lua")
-        # Constants, planned or implemented (TILESET_LZ77 and SPRITE_ASSET_LZ77
-        # were planned in 1.0.0-rc.1): a script may name its own.
+        # Constants, planned or implemented (TILESET_LZ77, SPRITE_ASSET_LZ77 and
+        # MAP_LADDER were planned in 1.0.0-rc.1): a script may name its own.
         p = svlua.check("TILESET_LZ77 = 1\nlocal MAP_LADDER <const> = 2\n"
                         "SPRITE_ASSET_LZ77 = object {}", "t.lua")
         self.assertEqual([s.name for s in p.top_order],
@@ -1113,13 +1113,15 @@ class PlannedNames(unittest.TestCase):
         """A script's own name hides a header's constant, implemented or
         planned alike, so implementing a planned constant changes no
         script."""
-        for name in ("MAP_CONTACT_FLOOR", "MAP_CONTACT_LADDER"):
+        # ladders and slopes: MAP_CONTACT_LADDER was planned until 1.0; the
+        # tests' own planned constant stands in for a planned one now.
+        for name in ("MAP_CONTACT_FLOOR", "MAP_CONTACT_LADDER", "PLANNED_FAKE_CONSTANT"):
             with self.subTest(name=name):
                 listing = svlua.compile_source(
                     OBJ + f"local {name} <const> = 3\nn = 0\nfunction A:step() n = {name} end",
                     "t.lua")
                 self.assertIn(f".const {name} 3", listing)
-                assembled = assemble(listing, header_names(files=[MAP_H]))
+                assembled = assemble(listing, header_names(files=[MAP_H, FAKE_H]))
                 self.assertTrue(assembled.blob.startswith(svm.MAGIC))
 
     def write_engine(self, root, header=PLANNED_HEADER, tool=False):
@@ -1207,7 +1209,10 @@ class PlannedNames(unittest.TestCase):
         names, errors = check_planned.planned_names(os.path.join(ROOT, "include"))
         self.assertEqual(errors, [])
         self.assertLessEqual(set(svlua.planned_functions()), set(names))
-        self.assertIn("MAP_LADDER", names)
+        # ladders and slopes: no public name is planned now; the tests' own are.
+        own, errors = check_planned.own_planned_names(os.path.join(ROOT, "tests", "planned"))
+        self.assertEqual(errors, [])
+        self.assertIn("PLANNED_FAKE_CONSTANT", own)
         with tempfile.TemporaryDirectory() as tmp:
             bad = 'typedef struct { int x SERVAL_PLANNED("f, docs/x.md#x"); } Bad;\n'
             include = self.write_engine(tmp, PLANNED_HEADER + bad)
@@ -1503,6 +1508,7 @@ def header_names(defines=None, files=()):
 
 ECS_H = os.path.join(ROOT, "include", "serval", "ecs.h")
 MAP_H = os.path.join(ROOT, "include", "serval", "map.h")
+FAKE_H = os.path.join(ROOT, "tests", "planned", "fake.h")  # the tests' own planned API
 PHYSICS_H = os.path.join(ROOT, "include", "serval", "physics.h")
 SCREEN_H = os.path.join(ROOT, "include", "serval", "screen.h")
 FIREFLIES_HEADERS = [os.path.join(ROOT, "examples", "fireflies", "game.h")] + [
@@ -1819,13 +1825,20 @@ class Listing(unittest.TestCase):
         self.assertIn("PUSH 0", code[start + 6:])  # A ~= A: false
 
     def test_planned_constants_are_refused_by_name(self):
-        """A planned constant (MAP_CONTACT_LADDER) passes through the
-        compiler, and the assembler says it is planned."""
+        """A planned constant (the tests' own, tests/planned/fake.h) passes
+        through the compiler, and the assembler says it is planned; once
+        implemented, the same script assembles (MAP_CONTACT_LADDER, planned
+        until ladders were implemented)."""
+        listing = self.compile(OBJ + "on = false\nfunction A:step() "
+                               "on = self.body_contact & PLANNED_FAKE_CONSTANT ~= 0 end")
+        with self.assertRaisesRegex(svm.SvmError, r"PLANNED_FAKE_CONSTANT is planned, not "
+                                    r"implemented in this engine version \(fake planned"):
+            assemble(listing, header_names(files=[MAP_H, FAKE_H]))
         listing = self.compile(OBJ + "on = false\nfunction A:step() "
                                "on = self.body_contact & MAP_CONTACT_LADDER ~= 0 end")
-        with self.assertRaisesRegex(svm.SvmError, r"MAP_CONTACT_LADDER is planned, not "
-                                    r"implemented in this engine version \(ladders"):
-            assemble(listing, header_names(files=[MAP_H]))
+        self.assertIn("PUSH MAP_CONTACT_LADDER", listing)
+        result = assemble(listing, header_names(files=[MAP_H]))
+        self.assertTrue(result.blob.startswith(svm.MAGIC))
 
     def test_initial_values_in_the_blob(self):
         """.globals NAME=value: the blob carries the initial values (header

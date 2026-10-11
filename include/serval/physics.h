@@ -209,8 +209,8 @@ u32 body_hit_side(u32 a, u32 b);
 //        which only body_hit_side() returns)
 //   5    BODY_CONTACT_EXIT (below), with the side bit of the open edge the
 //        body left through
-//   6    MAP_CONTACT_LADDER (map.h): ladders, for map bodies only. Planned:
-//        never set in this version, and sys_physics() never sets it
+//   6    MAP_CONTACT_LADDER (map.h): ladders, for map bodies only: the body
+//        overlaps a ladder or stands on one (sys_physics() never sets it)
 //   7    reserved for the engine, never set
 // Test the bits you want (body_contact[i] & BODY_SIDE_BOTTOM) rather than the
 // whole byte, which later versions may fill with more of them.

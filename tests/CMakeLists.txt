@@ -65,16 +65,21 @@ add_test(NAME planned_api COMMAND ${_serval_planned_check})
 add_library(serval_test_harness STATIC test.c ecs_tests.c random_tests.c text_format_tests.c math_tests.c
     physics_tests.c map_tests.c anim_tests.c psg_sequencer_tests.c psg_wave_tests.c save_tests.c input_tests.c path_tests.c splash_logic_tests.c
     vm_tests.c color_tests.c planned_audio_tests.c planned_sprites_tests.c planned_map_tests.c
-    planned_screen_tests.c)
+    planned_screen_tests.c
+    map_slope_tests.c) # ladders and slopes
 target_link_libraries(serval_test_harness
     PUBLIC serval_portable
     PRIVATE serval_warnings)
 target_sources(serval_test_harness PRIVATE lz77_tests.c) # lz77: the loaders' check
+# ladders and slopes: a script climbing a ladder by MAP_CONTACT_LADDER (map_slope_tests.c)
+serval_add_script(serval_test_harness ladder_climber.lua
+                  HEADERS serval/map.h serval/ecs.h serval/physics.h)
 
 if(SERVAL_TARGET_GBA)
     serval_add_rom(serval_tests
         SOURCES rom/main.c rom/core_tests.c rom/libc_tests.c rom/sprite_tests.c rom/gba_text_tests.c rom/audio_tests.c rom/splash_tests.c rom/map_tests.c rom/present_tests.c rom/save_tests.c rom/ecs_cost_tests.c
                 rom/vm_platform_tests.c
+                rom/map_movement_cost_tests.c # ladders and slopes
                 rom/sprite_tiles_tests.c
                 rom/blend_tests.c
                 rom/palette_tests.c
