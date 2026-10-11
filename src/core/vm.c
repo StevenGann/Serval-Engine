@@ -26,6 +26,7 @@
 
 #include "serval/vm.h"
 
+#include "../ecs/ecs_internal.h"
 #include "serval/debug.h"
 #include "serval/map.h"
 #include "serval/physics.h"
@@ -98,7 +99,20 @@ SERVAL_EWRAM_BSS static s32 fields[MAX_ENT][VM_FIELDS];
 enum {
     BIND_CREATE_PENDING = 1, // its Create is queued: no Step reaction yet
     BIND_ANIM_DONE = 2,      // anim_finished() at the latest Animation End check
+    BIND_STEP = 4,           // its object has a Step handler (note_binding)
 };
+
+// What the scheduler's passes visit, kept as it changes so that a pass costs
+// what is live, not every slot (bit n of word n / 32): the contexts in use
+// (state not CTX_FREE: start_context sets the bit, halt and install clear
+// it), the bound entity slots (bound[slot] not ENTITY_NONE: note_binding,
+// unbind and install) and those of them whose object has an Animation End
+// handler. With nothing running and nothing attached, vm_step() reads a few
+// words instead of 32 contexts and twice 128 slots.
+#define BIT_WORDS(n) (((n) + 31) / 32)
+SERVAL_EWRAM_BSS static u32 live_contexts[BIT_WORDS(VM_CONTEXTS)];
+SERVAL_EWRAM_BSS static u32 bound_slots[BIT_WORDS(MAX_ENT)];
+SERVAL_EWRAM_BSS static u32 anim_end_slots[BIT_WORDS(MAX_ENT)];
 
 // Bytes per element of each kind of array (docs/vm.md "Array table"); RAM
 // arrays are cells of the pool.
@@ -252,8 +266,54 @@ static Entity cell_entity(s32 value) {
 
 // --- Contexts and bindings ---------------------------------------------------
 
+static void set_bit(u32* bits, u32 n) {
+    bits[n / 32] |= 1u << (n % 32);
+}
+
+static void clear_bit(u32* bits, u32 n) {
+    bits[n / 32] &= ~(1u << (n % 32));
+}
+
+// The index of m's lowest set bit; m is not 0. By a de Bruijn sequence: the
+// ARM7TDMI has no instruction that counts zeros.
+static u32 lowest_bit(u32 m) {
+    static const u8 position[32] = {0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
+                                    31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9};
+    return position[((m & (0u - m)) * 0x077CB531u) >> 27];
+}
+
+// The first bit set in `bits` (`count` of them) at or after `from`, or `count`
+// if there is none. A pass asks again at each step, so it sees what the steps
+// before changed, as a scan of every slot would.
+static u32 next_bit(const u32* bits, u32 count, u32 from) {
+    if (from >= count)
+        return count;
+    u32 w = from / 32;
+    u32 m = bits[w] & ~0u << (from % 32);
+    while (!m) {
+        if (++w == BIT_WORDS(count))
+            return count;
+        m = bits[w];
+    }
+    return w * 32 + lowest_bit(m);
+}
+
 static u32 context_index(const Context* c) {
     return (u32)(c - contexts);
+}
+
+// Sets the registers a handler starts with: at pc, with `other` as OTHER, an
+// empty frame at `top` (0, or the stack top of the behaviour beneath), no
+// wait. Field by field: assigning a whole Registers costs a memset of it
+// first (its padding), a call, at every reaction.
+static void start_registers(Registers* r, u32 pc, Entity other, u32 state, u32 event, u32 top) {
+    r->pc = pc;
+    r->other = other;
+    r->wait_frames = 0;
+    r->state = (u8)state;
+    r->event = (u8)event;
+    r->sp = r->fp = r->base = (u8)top;
+    r->cp = 0;
 }
 
 // Frees the context, a behaviour beneath a reaction included, and clears its
@@ -266,6 +326,7 @@ static void halt(Context* c) {
     }
     c->r.state = CTX_FREE;
     c->stacked = false;
+    clear_bit(live_contexts, context_index(c));
 }
 
 // The running handler has ended (or faulted): a reaction on top of a
@@ -291,6 +352,8 @@ static void unbind(u32 slot) {
     u32 live = bound_context[slot];
     bound_context[slot] = 0;
     bound[slot] = ENTITY_NONE;
+    clear_bit(bound_slots, slot);
+    clear_bit(anim_end_slots, slot);
     clear_fields(slot);
     if (live)
         halt(&contexts[live - 1]);
@@ -303,7 +366,7 @@ static bool attached(u32 slot) {
     Entity e = bound[slot];
     if (e == ENTITY_NONE)
         return false;
-    if (entity_alive(e))
+    if (serval_entity_alive(e))
         return true;
     WARN_ONCE(WARN_STALE,
               "vm: entity %u (object %u) was destroyed while attached; its script is halted. "
@@ -315,13 +378,18 @@ static bool attached(u32 slot) {
 
 // Takes the first free context (pool index order), or warns and returns NULL.
 static Context* start_context(u32 pc, Entity self, Entity other, u32 event, u32 state) {
-    for (u32 k = 0; k < VM_CONTEXTS; k++) {
-        Context* c = &contexts[k];
-        if (c->r.state != CTX_FREE)
+    for (u32 w = 0; w < BIT_WORDS(VM_CONTEXTS); w++) {
+        u32 free = ~live_contexts[w];
+        if (!free)
             continue;
-        c->r = (Registers){.pc = pc, .other = other, .state = (u8)state, .event = (u8)event};
+        u32 k = w * 32 + lowest_bit(free);
+        if (k >= VM_CONTEXTS)
+            break;
+        Context* c = &contexts[k];
+        start_registers(&c->r, pc, other, state, event, 0);
         c->self = self;
         c->stacked = false;
+        set_bit(live_contexts, k);
         if (self != ENTITY_NONE)
             bound_context[entity_index(self)] = (u8)(k + 1);
         return c;
@@ -368,6 +436,25 @@ static bool create_queued(Entity e) {
     return false;
 }
 
+// True if the object record has a handler for the event (a nonzero offset).
+static bool has_handler(const u8* record, u32 event) {
+    const u8* offset = record + 8 + event * 4;
+    return (offset[0] | offset[1] | offset[2] | offset[3]) != 0;
+}
+
+// Tells the scheduler's passes about slot's binding, just made: bound[slot]
+// and bound_object[slot] are set, BIND_STEP is clear and so are the slot's
+// bits (unbind and install clear them). The slot is bound, and its object
+// may have Step and Animation End handlers.
+static void note_binding(u32 slot) {
+    const u8* record = object_record(bound_object[slot]);
+    set_bit(bound_slots, slot);
+    if (has_handler(record, VM_EV_STEP))
+        bound_flags[slot] |= BIND_STEP;
+    if (has_handler(record, VM_EV_ANIM_END))
+        set_bit(anim_end_slots, slot);
+}
+
 // Attaches a live entity to a valid object and queues its Create, unless one
 // is queued already (attaching twice before a drain queues one Create). Its
 // Step reaction waits until that Create is drained; a Create the full queue
@@ -383,6 +470,7 @@ static void bind(Entity e, u32 object) {
     bound_context[slot] = 0;
     bool pending = create_queued(e) || enqueue(e, ENTITY_NONE, VM_EV_CREATE);
     bound_flags[slot] = pending ? BIND_CREATE_PENDING : 0;
+    note_binding(slot);
 }
 
 // --- Entities ----------------------------------------------------------------
@@ -425,7 +513,7 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
         return -1;
     }
     Entity e = cell_entity(cell);
-    if (!entity_alive(e)) {
+    if (!serval_entity_alive(e)) {
         WARN_ONCE(WARN_PROP_ENTITY,
                   "vm: GETP/SETP at 0x%x: entity %d is not alive (stale handle?); reads 0, "
                   "writes nothing",
@@ -621,7 +709,7 @@ static Entity next_instance(u32 object, s32 cell, u32 at) {
 // WAIT_ANIM can wait for e: it has C_SPR | C_ANIM and a one-shot sprite.
 // Checked when WAIT_ANIM runs and on every resume pass while it waits.
 static bool anim_waitable(Entity e) {
-    if (!entity_alive(e))
+    if (!serval_entity_alive(e))
         return false;
     u32 i = entity_index(e);
     if (!ent_has(i, C_SPR | C_ANIM))
@@ -889,7 +977,9 @@ static u32 execute(Context* c, bool reaction) {
     u32 pc = c->r.pc;
     u32 sp = c->r.sp;
     u32 fp = c->r.fp;
-    u32 ops = 0;
+    // The ops this run may still run (it has run VM_OPS_PER_SLICE - left):
+    // counting down tests the budget in fewer instructions than counting up.
+    u32 left = VM_OPS_PER_SLICE;
     u32 at = pc; // the current op's offset, for warnings
     (void)at;    // (release builds have none)
     c->r.state = CTX_RUNNING;
@@ -915,9 +1005,9 @@ static u32 execute(Context* c, bool reaction) {
         at = pc;
         if (pc >= size)
             goto escaped;
-        if (ops == VM_OPS_PER_SLICE)
+        if (!left)
             goto budget;
-        ops++;
+        left--;
         u32 op = code[pc++];
         switch (op) {
         case VM_OP_NOP:
@@ -1273,7 +1363,7 @@ static u32 execute(Context* c, bool reaction) {
             s32 y = st[--sp], x = st[--sp];
             st[sp++] = spawn(object, x, y, at);
             if (c->r.state != CTX_RUNNING)
-                return ops; // halted from outside (cannot happen today)
+                return VM_OPS_PER_SLICE - left; // halted from outside (cannot happen today)
             break;
         }
         case VM_OP_KILL: {
@@ -1299,7 +1389,7 @@ static u32 execute(Context* c, bool reaction) {
             pc += 2;
             st[sp - 1] = next_instance(object, st[sp - 1], at);
             if (c->r.state != CTX_RUNNING)
-                return ops; // halted from outside (cannot happen today)
+                return VM_OPS_PER_SLICE - left; // halted from outside (cannot happen today)
             break;
         }
 
@@ -1323,7 +1413,7 @@ static u32 execute(Context* c, bool reaction) {
                 args[k] = st[sp + k];
             s32 result = sys_call(fn, args);
             if (c->r.state != CTX_RUNNING)
-                return ops; // halted from outside (cannot happen today)
+                return VM_OPS_PER_SLICE - left; // halted from outside (cannot happen today)
             if (SYS_RETURNS & 1u << fn)
                 st[sp++] = result; // room: an argument was popped, or checked above
             break;
@@ -1401,10 +1491,10 @@ suspend:
     c->r.pc = pc;
     c->r.sp = (u8)sp;
     c->r.fp = (u8)fp;
-    return ops;
+    return VM_OPS_PER_SLICE - left;
 ended:
     finish(c);
-    return ops;
+    return VM_OPS_PER_SLICE - left;
 }
 
 static void run(Context* c, bool reaction) {
@@ -1438,14 +1528,7 @@ static void react(u32 slot, u32 handler, Entity other, u32 event) {
     }
     c->below = c->r;
     c->stacked = true;
-    u8 top = c->r.sp;
-    c->r = (Registers){.pc = handler,
-                       .other = other,
-                       .state = CTX_RUNNING,
-                       .event = (u8)event,
-                       .sp = top,
-                       .fp = top,
-                       .base = top};
+    start_registers(&c->r, handler, other, CTX_RUNNING, event, c->r.sp);
     run(c, true);
     if (c->r.state < CTX_WAIT_FRAMES)
         return; // the behaviour was halted meanwhile (cannot happen today)
@@ -1465,7 +1548,7 @@ SERVAL_EWRAM_BSS static u32 destroyed_slots[MAX_ENT / 32];
 // attached (on top of its behaviour if that waits), then halts the behaviour,
 // unbinds e and destroys it.
 static void destroy(Entity e) {
-    if (!entity_alive(e))
+    if (!serval_entity_alive(e))
         return;
     u32 slot = entity_index(e);
     if (attached(slot)) {
@@ -1481,7 +1564,7 @@ static void destroy(Entity e) {
 // Runs a queued event's handler for e (any event but Destroy): a behaviour
 // replaces e's live one, a reaction runs to completion.
 static void dispatch(Entity e, Entity other, u32 event) {
-    if (!entity_alive(e))
+    if (!serval_entity_alive(e))
         return;
     u32 slot = entity_index(e);
     if (!attached(slot))
@@ -1524,10 +1607,10 @@ static void drain(void) {
 // for it and whose animation finished since the previous check (an edge, so
 // an animation the game restarts can raise it again).
 static void queue_anim_ends(void) {
-    for (u32 slot = 0; slot < MAX_ENT; slot++) {
-        // The handler first: most objects have none, and it costs no call.
-        if (bound[slot] == ENTITY_NONE || !handler_of(bound_object[slot], VM_EV_ANIM_END) ||
-            !attached(slot))
+    // Only the slots whose object has the handler: most objects have none.
+    for (u32 slot = next_bit(anim_end_slots, MAX_ENT, 0); slot < MAX_ENT;
+         slot = next_bit(anim_end_slots, MAX_ENT, slot + 1)) {
+        if (!attached(slot))
             continue;
         u32 flags = bound_flags[slot];
         if (anim_finished(bound[slot])) {
@@ -1557,12 +1640,11 @@ void vm_step(void) {
         return;
     ops_frame = 0;
     in_phase = true;
-    // Resume pass: each context once, in pool order.
-    for (u32 k = 0; k < VM_CONTEXTS; k++) {
+    // Resume pass: each context in use once, in pool order.
+    for (u32 k = next_bit(live_contexts, VM_CONTEXTS, 0); k < VM_CONTEXTS;
+         k = next_bit(live_contexts, VM_CONTEXTS, k + 1)) {
         Context* c = &contexts[k];
-        if (c->r.state == CTX_FREE)
-            continue;
-        if (c->self != ENTITY_NONE && !entity_alive(c->self)) {
+        if (c->self != ENTITY_NONE && !serval_entity_alive(c->self)) {
             u32 slot = entity_index(c->self);
             if (slot < MAX_ENT && bound[slot] == c->self)
                 attached(slot); // a stale binding: warns, halts its context
@@ -1591,7 +1673,8 @@ void vm_step(void) {
             }
             break;
         case CTX_WAIT_MOVE:
-            resume = !path_active(c->self);
+            // path_active(c->self), whose aliveness is known (above).
+            resume = !ent_has(entity_index(c->self), C_PATH);
             break;
         default:
             resume = false;
@@ -1603,13 +1686,14 @@ void vm_step(void) {
     queue_anim_ends();
     drain(); // Creates queued since the last phase run before their first Step
     // Step reactions, in entity order, for attached entities whose Create has
-    // been drained: on top of their behaviour if it waits.
-    for (u32 slot = 0; slot < MAX_ENT; slot++) {
-        if (!attached(slot) || (bound_flags[slot] & BIND_CREATE_PENDING))
+    // been drained: on top of their behaviour if it waits. Every bound slot is
+    // looked at, the Step handler or not, so that a stale binding is found
+    // (and warned about) here, as it always was.
+    for (u32 slot = next_bit(bound_slots, MAX_ENT, 0); slot < MAX_ENT;
+         slot = next_bit(bound_slots, MAX_ENT, slot + 1)) {
+        if (!attached(slot) || (bound_flags[slot] & (BIND_CREATE_PENDING | BIND_STEP)) != BIND_STEP)
             continue;
-        u32 handler = handler_of(bound_object[slot], VM_EV_STEP);
-        if (handler)
-            react(slot, handler, ENTITY_NONE, VM_EV_STEP);
+        react(slot, handler_of(bound_object[slot], VM_EV_STEP), ENTITY_NONE, VM_EV_STEP);
     }
     drain(); // events the Step reactions queued, e.g. the Create of an entity they spawned
     in_phase = false;
@@ -1737,9 +1821,12 @@ void vm_events(void) {
         return;
     in_phase = true;
     drain(); // what game code queued since vm_step
-    // No blob, no attached entity: nothing could react to a collision.
-    for (u32 p = 0; blob && p < collide_count; p++)
-        collide_pair(collide_a[p], collide_b[p]);
+    // No blob, no attached entity: nothing could react to a collision (and
+    // with nothing bound, testing the pairs would do nothing at all).
+    if (blob && next_bit(bound_slots, MAX_ENT, 0) < MAX_ENT) {
+        for (u32 p = 0; p < collide_count; p++)
+            collide_pair(collide_a[p], collide_b[p]);
+    }
     in_phase = false;
 }
 
@@ -1755,7 +1842,7 @@ void vm_attach(Entity e, u16 object) {
                   (u32)object, object_count);
         return;
     }
-    if (!entity_alive(e)) {
+    if (!serval_entity_alive(e)) {
         WARN_ONCE(WARN_ATTACH_ENTITY,
                   "vm_attach: entity %u is not alive (stale handle or ENTITY_NONE); ignored",
                   (u32)e);
@@ -1963,6 +2050,8 @@ static void install(const u8* b, u32 size, bool keep) {
         contexts[k].r.state = CTX_FREE;
         contexts[k].stacked = false;
     }
+    for (u32 w = 0; w < BIT_WORDS(VM_CONTEXTS); w++)
+        live_contexts[w] = 0;
     queue_head = queue_count = 0;
     for (u32 slot = 0; slot < MAX_ENT; slot++) {
         creates_queued[slot] = 0;
@@ -1983,6 +2072,14 @@ static void install(const u8* b, u32 size, bool keep) {
     global_count = b ? le16(b + 12) : 0;
     array_count = b ? le16(b + 14) : 0;
     array_table = VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + string_count * 4;
+    // A kept binding's object may have other handlers now.
+    for (u32 w = 0; w < BIT_WORDS(MAX_ENT); w++)
+        bound_slots[w] = anim_end_slots[w] = 0;
+    for (u32 slot = 0; slot < MAX_ENT; slot++) {
+        bound_flags[slot] &= (u8)~BIND_STEP;
+        if (bound[slot] != ENTITY_NONE)
+            note_binding(slot);
+    }
 }
 
 // True (warning) if a phase (or vm_kill's Destroy logic) is running: vm_load,
@@ -2086,7 +2183,7 @@ int vm_object_of(Entity e) {
 
 int serval_vm_attached_object(Entity e) {
     u32 slot = entity_index(e);
-    if (e == ENTITY_NONE || slot >= MAX_ENT || bound[slot] != e || !entity_alive(e))
+    if (e == ENTITY_NONE || slot >= MAX_ENT || bound[slot] != e || !serval_entity_alive(e))
         return -1;
     return bound_object[slot];
 }
@@ -2101,16 +2198,32 @@ s32 serval_vm_array_cell(u32 n) {
     return n < VM_ARRAY_CELLS ? array_cells[n] : 0;
 }
 
+// vm fixed cost: what the scheduler's passes visit (live_contexts,
+// bound_slots, anim_end_slots, BIND_STEP) against what it summarizes: the
+// contexts' states, the bindings and their objects' handlers.
+bool serval_vm_bookkeeping_ok(void) {
+    for (u32 k = 0; k < VM_CONTEXTS; k++) {
+        if ((next_bit(live_contexts, VM_CONTEXTS, k) == k) != (contexts[k].r.state != CTX_FREE))
+            return false;
+    }
+    for (u32 slot = 0; slot < MAX_ENT; slot++) {
+        bool is_bound = bound[slot] != ENTITY_NONE;
+        if ((next_bit(bound_slots, MAX_ENT, slot) == slot) != is_bound)
+            return false;
+        bool anim_end = is_bound && handler_of(bound_object[slot], VM_EV_ANIM_END);
+        if ((next_bit(anim_end_slots, MAX_ENT, slot) == slot) != anim_end)
+            return false;
+        if (is_bound &&
+            !(bound_flags[slot] & BIND_STEP) != !handler_of(bound_object[slot], VM_EV_STEP))
+            return false;
+    }
+    return true;
+}
+
 u32 vm_ops_this_frame(void) {
     return ops_frame;
 }
 
 bool vm_idle(void) {
-    if (queue_count)
-        return false;
-    for (u32 k = 0; k < VM_CONTEXTS; k++) {
-        if (contexts[k].r.state != CTX_FREE)
-            return false;
-    }
-    return true;
+    return !queue_count && next_bit(live_contexts, VM_CONTEXTS, 0) == VM_CONTEXTS;
 }

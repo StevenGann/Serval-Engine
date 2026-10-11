@@ -33,6 +33,12 @@ int serval_vm_attached_object(Entity e);
 s32 serval_vm_field(Entity e, u32 n);
 s32 serval_vm_array_cell(u32 n);
 
+// vm fixed cost: for the tests, true if the scheduler's own bookkeeping (the
+// bitmaps of contexts in use and of bound slots, and which bindings' objects
+// have Step and Animation End handlers, vm.c) matches the contexts and
+// bindings it summarizes. The scheduler's passes visit only what it lists.
+bool serval_vm_bookkeeping_ok(void);
+
 // Host build only (src/host/platform.c): what serval_vm_platform_call saw,
 // for the tests. Not defined in GBA or web builds.
 typedef struct {

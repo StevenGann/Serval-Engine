@@ -222,6 +222,10 @@ static void collide_costs(void) {
     CHECK(vm_load(printer, sizeof printer)); // any blob: no blob, no pass
     for (u32 k = 0; k < 64; k++)
         entity_create(C_POS);
+    // vm fixed cost: one of them attached, in neither set (with nothing
+    // attached, vm_events() skips the pass: no reaction could run).
+    vm_attach(entity_at(0), 0);
+    vm_events(); // its Create
     make_row(C_SHOT, 1, 0);
     make_row(C_ENEMY, 8, 20);
     u32 none = events_cycles();

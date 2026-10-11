@@ -438,10 +438,13 @@ static void start(u16 obj) {
     CHECK(ctx >= 0 && ctx < VM_CONTEXTS);
 }
 
-// One frame of the two-phase loop (vm.md "Scheduling"), without C systems.
+// One frame of the two-phase loop (vm.md "Scheduling"), without C systems;
+// the scheduler's own lists still match what they list afterwards
+// (scheduler_bookkeeping_follows_the_state).
 static void frame(void) {
     vm_step();
     vm_events();
+    CHECK(serval_vm_bookkeeping_ok());
 }
 
 static void frames(u32 n) {
@@ -3023,6 +3026,108 @@ static void stale_binding_counts_as_unbound(void) {
     CHECK(vm_global(0) == 1); // no Step for e, nor for the entity in its slot
     CHECK(vm_idle());
     CHECK_WARNED(before, 1);
+}
+
+// vm fixed cost: the scheduler's passes visit only the contexts in use and
+// the bound slots, which vm.c lists as they change, with which bindings'
+// objects have Step and Animation End handlers; serval_vm_bookkeeping_ok()
+// compares the lists with the contexts and bindings themselves. They stay
+// equal through every way a context or a binding changes (frame() checks
+// them in every other case too), and a reload that gives a kept binding's
+// object a Step handler runs it.
+static void scheduler_bookkeeping_follows_the_state(void) {
+    enum { L_WAIT, L_THREAD };
+    reset();
+    CHECK(serval_vm_bookkeeping_ok());
+    blob_begin(4, 0, GLOBALS);
+    handler(0, VM_EV_STEP); // object 0: Step and Animation End
+    count(0);
+    op(VM_OP_HALT);
+    handler(0, VM_EV_ANIM_END);
+    op(VM_OP_HALT);
+    handler(1, VM_EV_CREATE); // object 1: a behaviour that always waits,
+    label(L_WAIT);            // Destroy (glob[1] counts) and Collision
+    wait_frames(1);
+    jump(VM_OP_JMP, L_WAIT);
+    handler(1, VM_EV_DESTROY);
+    count(1);
+    op(VM_OP_HALT);
+    handler(1, VM_EV_COLLISION);
+    op(VM_OP_HALT);
+    // Object 2 has no handlers. Object 3 is a thread: it spawns an object 1
+    // and an object 0, and kills them a frame later.
+    handler(3, VM_EV_ROOM_START);
+    push8(8);
+    push8(8);
+    spawn(1);
+    stg(2);
+    push8(16);
+    push8(16);
+    spawn(0);
+    stg(3);
+    wait_frames(1);
+    ldg(2);
+    op(VM_OP_KILL);
+    ldg(3);
+    op(VM_OP_KILL);
+    op(VM_OP_HALT);
+    CHECK(load());
+    CHECK(serval_vm_bookkeeping_ok());
+    Entity e[5];
+    for (u32 k = 0; k < 5; k++)
+        e[k] = entity_create(C_POS);
+    vm_attach(e[0], 0);
+    vm_attach(e[1], 1);
+    vm_attach(e[2], 2);
+    vm_attach(e[3], 1);
+    CHECK(serval_vm_bookkeeping_ok());
+    CHECK(vm_start(3, VM_EV_ROOM_START) >= 0);
+    CHECK(serval_vm_bookkeeping_ok());
+    frame(); // the thread's spawns, the Creates (three wait), two Steps
+    CHECK(vm_global(0) == 2 && vm_object_of((Entity)vm_global(2)) == 1);
+    frame(); // the thread kills its two: a Destroy, both unbound
+    CHECK(vm_global(0) == 3 && vm_global(1) == 1);
+    CHECK(serval_vm_bookkeeping_ok());
+    vm_attach(e[0], 1); // rebound: no Step now, a behaviour
+    CHECK(serval_vm_bookkeeping_ok());
+    vm_detach(e[3]); // its behaviour halted
+    CHECK(serval_vm_bookkeeping_ok());
+    vm_kill(e[1]); // outside the phases: its Destroy at once
+    CHECK(vm_global(1) == 2 && serval_vm_bookkeeping_ok());
+    vm_attach(e[4], 0);
+    entity_destroy(e[2]); // behind the VM's back: a stale binding until found
+    CHECK(serval_vm_bookkeeping_ok());
+    u32 before = debug_warning_count();
+    frame(); // found and unbound by the Step pass
+    CHECK_WARNED(before, 1);
+    CHECK(vm_object_of(e[2]) == -1 && vm_global(0) == 4);
+    // Reloaded: object 1 has a Step handler now, object 0 an Animation End
+    // only, and object 3 is a thread that waits for good.
+    blob_begin(4, 0, GLOBALS);
+    handler(0, VM_EV_ANIM_END);
+    op(VM_OP_HALT);
+    handler(1, VM_EV_STEP);
+    count(4);
+    op(VM_OP_HALT);
+    handler(3, VM_EV_ROOM_START);
+    label(L_THREAD);
+    wait_frames(1);
+    jump(VM_OP_JMP, L_THREAD);
+    CHECK(reload());
+    CHECK(serval_vm_bookkeeping_ok());
+    frame(); // e[0], kept on object 1, runs its new Step; e[4], on object 0, none
+    CHECK(vm_global(4) == 1 && vm_global(0) == 4);
+    // Every context taken: one more is refused, and the lists still match.
+    u32 started = 0;
+    before = debug_warning_count();
+    for (u32 k = 0; k <= VM_CONTEXTS; k++)
+        started += vm_start(3, VM_EV_ROOM_START) >= 0;
+    CHECK(started == VM_CONTEXTS);
+    CHECK_WARNED(before, 1);
+    CHECK(serval_vm_bookkeeping_ok());
+    frame();
+    vm_unload();
+    CHECK(serval_vm_bookkeeping_ok());
 }
 
 // --- Entity bridge -----------------------------------------------------------
@@ -6187,6 +6292,7 @@ TEST_SUITE(
     {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
     {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
     {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},
+    {"scheduler_bookkeeping_follows_the_state", scheduler_bookkeeping_follows_the_state},
     {"self_and_other", self_and_other},
     {"properties_read_and_write_the_ecs", properties_read_and_write_the_ecs},
     {"properties_of_dead_entities", properties_of_dead_entities},

@@ -4,6 +4,7 @@
 #include "serval/physics.h"
 
 #include "../core/warn.h"
+#include "ecs_internal.h"
 #include "physics_internal.h"
 
 u32 ent_mask[MAX_ENT];
@@ -21,12 +22,12 @@ SERVAL_EWRAM_BSS s16 spr_scale[MAX_ENT];
 SERVAL_EWRAM_BSS u8 spr_anim_time[MAX_ENT];
 SERVAL_EWRAM_BSS u8 spr_anim_step[MAX_ENT];
 
-static u8 ent_gen[MAX_ENT];
+u8 serval_ent_gen[MAX_ENT];
 
 // Whether each slot holds an entity, kept apart from ent_mask: games write
 // ent_mask, and a slot whose C_ALIVE bit was cleared by hand must neither leak
 // nor be freed twice.
-static bool ent_used[MAX_ENT];
+bool serval_ent_used[MAX_ENT];
 
 // Free slot indices as a FIFO ring: a destroyed slot goes to the back, so
 // reuse is spread over every free slot and a slot's 255 generations last as
@@ -58,7 +59,7 @@ static u8 next_generation(u8 gen) {
 }
 
 static Entity make_handle(u32 index) {
-    return (Entity)((u32)ent_gen[index] << 8 | index);
+    return (Entity)((u32)serval_ent_gen[index] << 8 | index);
 }
 
 void ecs_reset(void) {
@@ -71,11 +72,11 @@ void ecs_reset(void) {
     serval_map_bodies_moved = false; // no map bodies left
     // Slots are handed out in ascending order after a reset.
     for (u32 i = 0; i < MAX_ENT; i++) {
-        if (ent_used[i] || (ent_mask[i] & C_ALIVE))
-            ent_gen[i] = next_generation(ent_gen[i]);
-        else if (ent_gen[i] == 0)
-            ent_gen[i] = 1;
-        ent_used[i] = false;
+        if (serval_ent_used[i] || (ent_mask[i] & C_ALIVE))
+            serval_ent_gen[i] = next_generation(serval_ent_gen[i]);
+        else if (serval_ent_gen[i] == 0)
+            serval_ent_gen[i] = 1;
+        serval_ent_used[i] = false;
         ent_mask[i] = 0;
         free_slots[free_count++] = (u8)i;
     }
@@ -124,7 +125,7 @@ Entity entity_create(u32 components) {
     u32 index = free_slots[free_head];
     free_head = (free_head + 1) % MAX_ENT;
     free_count--;
-    ent_used[index] = true;
+    serval_ent_used[index] = true;
     ent_mask[index] = components | C_ALIVE;
     pos_x[index] = pos_y[index] = 0;
     vel_x[index] = vel_y[index] = 0;
@@ -144,7 +145,7 @@ Entity entity_create(u32 components) {
 }
 
 Entity entity_at(u32 index) {
-    if (index >= MAX_ENT || !ent_used[index] || !(ent_mask[index] & C_ALIVE))
+    if (index >= MAX_ENT || !serval_ent_used[index] || !(ent_mask[index] & C_ALIVE))
         return ENTITY_NONE;
     return make_handle(index);
 }
@@ -212,17 +213,16 @@ u32 ecs_free_count(void) {
 }
 
 bool entity_alive(Entity e) {
-    u32 index = entity_index(e);
-    return index < MAX_ENT && ent_used[index] && (ent_mask[index] & C_ALIVE) &&
-           ent_gen[index] == entity_generation(e);
+    return serval_entity_alive(e);
 }
 
 void entity_destroy(Entity e) {
     u32 index = entity_index(e);
-    // Checks ent_used rather than C_ALIVE: an entity whose C_ALIVE bit the game
+    // Checks serval_ent_used rather than C_ALIVE: an entity whose C_ALIVE bit the game
     // cleared is still destroyed (so it doesn't leak), and a free slot whose
     // bit the game set is not freed a second time.
-    if (index >= MAX_ENT || !ent_used[index] || ent_gen[index] != entity_generation(e))
+    if (index >= MAX_ENT || !serval_ent_used[index] ||
+        serval_ent_gen[index] != entity_generation(e))
         return;
 #ifdef SERVAL_DEBUG
     if (!(ent_mask[index] & C_ALIVE) && !warned_alive_cleared) {
@@ -232,9 +232,9 @@ void entity_destroy(Entity e) {
                     index);
     }
 #endif
-    ent_used[index] = false;
+    serval_ent_used[index] = false;
     ent_mask[index] = 0;
-    ent_gen[index] = next_generation(ent_gen[index]);
+    serval_ent_gen[index] = next_generation(serval_ent_gen[index]);
     if (free_count < MAX_ENT) {
         free_slots[(free_head + free_count) % MAX_ENT] = (u8)index;
         free_count++;
