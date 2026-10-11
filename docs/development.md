@@ -233,19 +233,21 @@ Both read the cycle counter around `vm_step()` and `vm_events()` (`vmbench.c`) a
 
 ```sh
 tools/bench.sh
-# scriptmark: idle VM 7010 cycles a frame; the pair, no entities: 1322
-# scriptmark: 600 frames: VM avg 161830 cycles a frame (57.6%), peak 214929; ops avg 626, peak 814
-# scriptmark: fit 1554 + 255.6 a op (r2 0.919); frame avg 173751; run ec46e30a
-# fireflies: 3670 frames: VM avg 23022 cycles a frame (8.1%), peak 52359; ops avg 37, peak 158
-# fireflies: fit 13620 + 252.3 a op (r2 0.874); frame avg 53238; run f16dd6ee
+# scriptmark: idle VM 616 cycles a frame; the pair, no entities: 241
+# scriptmark: 600 frames: VM avg 148395 cycles a frame (52.8%), peak 198688; ops avg 626, peak 814
+# scriptmark: fit -5632 + 245.6 a op (r2 0.944); frame avg 160317; run ec46e30a
+# fireflies: 3670 frames: VM avg 16205 cycles a frame (5.7%), peak 44913; ops avg 37, peak 158
+# fireflies: fit 7123 + 243.7 a op (r2 0.894); frame avg 46421; run f16dd6ee
 ```
 
-The fit's first number is what a frame costs whatever its ops (the scheduler's passes over contexts and bindings, starting each handler, waits on paths), the second what each op adds. The **run checksum** (FNV-1a over every frame's op count, then the globals and every live entity's components, position and velocity at the end) is the same in every build and preset of the same scene: a change meant only to make the VM faster must leave it alone, and one that changes it changed what the scripts do. When `scriptmark.lua`, `fireflies.lua` or the harness changes, the workload changes: record a new baseline and say so. The VM's cycles in RelWithDebInfo (`tools/bench.sh gba-ci`, debug checks on) matter as much as in Release: Studio Advance's games run with debug checks while they are made.
+The fit's first number is what a frame costs whatever its ops (the scheduler's visits to contexts and bindings, the collision pass's lists, waits on paths), the second what each op adds; in `scriptmark` the number of handlers run grows with the ops, so the slope takes their starts and the first number can be negative. The **run checksum** (FNV-1a over every frame's op count, then the globals and every live entity's components, position and velocity at the end) is the same in every build and preset of the same scene: a change meant only to make the VM faster must leave it alone, and one that changes it changed what the scripts do. When `scriptmark.lua`, `fireflies.lua` or the harness changes, the workload changes: record a new baseline and say so. The VM's cycles in RelWithDebInfo (`tools/bench.sh gba-ci`, debug checks on) matter as much as in Release: Studio Advance's games run with debug checks while they are made.
 
 | Date | Commit | Build | idle VM | `scriptmark`: VM a frame | fit | `fireflies`: VM a frame | fit | Change |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-10-10 | `ec2b849` | Release | 7,010 | 161,830 | 1,554 + 255.6 | 23,022 | 13,620 + 252.3 | Baseline. The idle VM is the scheduler's passes over its 32 contexts and 128 binding slots, empty or not |
 | 2026-10-10 | `ec2b849` | RelWithDebInfo | 12,869 | 188,835 | 10,377 + 284.6 | 29,867 | 19,577 + 276.1 | Baseline |
+| 2026-10-10 | `adb295e` | Release | 616 | 148,395 | −5,632 + 245.6 | 16,205 | 7,123 + 243.7 | The scheduler visits only the contexts in use and the bound slots, from bitmaps kept as they change, and tests liveness inline ([vm.md](vm.md#implementation-notes)); with nothing bound, no collision pass (the pair, no entities: 1,322 → 241); reactions set their registers field by field (assigning them called `memset`); the op budget counts down. Run checksums unchanged, and bunnymark (avg 73,499, peak 77,606). Attaching an entity costs about 200 cycles more (its object's handlers recorded) |
+| 2026-10-10 | `adb295e` | RelWithDebInfo | 608 | 161,334 | −2,597 + 261.4 | 17,486 | 7,771 + 260.7 | The same; debug builds gain most, from the inline liveness test (debug checks now add about 8% to the VM's time, 17-30% before) |
 
 ## Memory use
 

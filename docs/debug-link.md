@@ -426,7 +426,7 @@ Steps are numbered E for the engine and F for the fork. Before 1.0: E0, the rese
 
 | Wave | Step | What | Depends on |
 | --- | --- | --- | --- |
-| 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark) | — |
+| 1 | E2 | `scriptmark`, the script benchmark: an example, a `tools/bench.sh` line, a table in [development.md](development.md#benchmark). **Done**: `examples/scriptmark` (`scriptmark_bench`, and `fireflies_bench` for the light end), [development.md](development.md#script-benchmark) | — |
 | 1 | E3 | `svm.py --map` (`.svmap`), with `svm_test.py` cases. **Done** ([Maps](#maps)) | — |
 | 1 | E4 | `svlua.py --debug-info` (`.svdbg`), then `--keep-layout`, with `svlua_test.py` cases; `serval_add_script()` writes both. **Done**, with `tools/check-debug-maps.py`, which joins them as a debugger does (CTest `debug_maps`) | — |
 | 2 | E5 | The agent's core: the mailbox, framing, `AGENT_INFO`, pause, resume, a frame step, globals, arrays, entities, properties, stats; host tests with a fake endpoint | E1 |
@@ -435,6 +435,6 @@ Steps are numbered E for the engine and F for the fork. Before 1.0: E0, the rese
 | 2 | E8 | `tools/svlink.py`: a reference client in Python's standard library (as `svm.py` is the blob format's), driving the web build headless in CI | E7 |
 | 3 | F1 | The mGBA fork: the endpoint, the registers, `serval-emu`, builds for three platforms (outside this repository) | E1; E5 to test against |
 | 4 | E9 | The agent's hot reload with plans: relocate, restart, the name maps | E6 |
-| any | E10 | The VM's fixed cost ([vm.md](vm.md#implementation-notes)), measured with `scriptmark` | E2 |
+| any | E10 | The VM's fixed cost ([vm.md](vm.md#implementation-notes)), measured with `scriptmark`. **Done**: 7,010 cycles a frame with nothing to run, now about 620; `fireflies`' VM 30% faster, `scriptmark`'s 8% | E2 |
 
 The debugger's side (its link server, the map readers, the step and reload planners, the UI) is built in Studio Advance alongside.
