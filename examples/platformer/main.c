@@ -78,6 +78,17 @@
 //     slot, written only on black screens (a stage card, game over, the
 //     ending)
 //
+// Demonstrates in stage 1-1, the overworld (stage_overworld.c):
+//   - Floor slopes (ladders and slopes: MAP_SLOPE_*): a 45-degree hill and a
+//     hill of 1:2 slopes, grass drawn on the line the engine gives them. The
+//     serval and the beetles walk up and down them at their usual speed,
+//     standing on the slope at the middle of their feet; sys_map_movement
+//     keeps them on it walking down, at a run too
+//   - A ladder (MAP_LADDER) up to a stone ledge: MAP_CONTACT_LADDER says the
+//     serval touches it; the game climbs it with no gravity
+//     (body_gravity BODY_GRAVITY(0)) and the D-pad, and the ladder's top is
+//     a floor the serval stands on once over it
+//
 // Demonstrates in stage 1-2, the underground (stage_underground.c):
 //   - One-way plank ledges over pits, and a dark stage: no sky, a backdrop
 //     that pulses faintly with color_mix (the effects hook), and a
@@ -163,6 +174,7 @@
 //     take over a channel of the tune for a moment.
 //   - Left/Right walk, B held runs faster, A jumps (higher when running;
 //     letting go of A early makes a short hop). Turning around at speed skids.
+//     Up and Down climb ladders.
 //     The far layer scrolls at half speed behind the playfield. The camera
 //     follows to the right only (you can't walk back off the left edge) and
 //     rises a little when you climb high.
@@ -200,10 +212,18 @@
 //     bass and drums) that loops about every 26 seconds, sped up from 150 to
 //     180 beats per minute when time runs low.
 //   - Purple beetles walk and go flat when stomped; red frogs sit a varying
-//     while and hop toward you. Brown tree stumps of rising height block the
-//     way; there are pits to jump, two stone pyramids (the second with a gap
-//     in the middle) and a tall final staircase. Falling into a pit loses a
-//     life.
+//     while and hop toward you. A grassy hill with 45-degree sides (two gems
+//     over its top) and a gentler one of 1:2 slopes, a beetle on its top: the
+//     serval runs up and down both without hopping or leaving the ground, its
+//     feet on the slope (half of its body sunk into the hill on the uphill
+//     side, as in the classic games), and the beetles walk over them. Then a
+//     wooden ladder up to a stone ledge with three gems: Up at the ladder
+//     climbs it (the serval stretched up, turning side to side as it climbs,
+//     Down climbs down, A jumps off); over the top it stands on the ladder's
+//     top and walks onto the ledge, and Down there climbs back down. Brown
+//     tree stumps of rising height block the way; there are pits to jump,
+//     two stone pyramids (the second with a gap in the middle) and a tall
+//     final staircase. Falling into a pit loses a life.
 //   - The goal: a tall pole with a gold knob and a red pennant. Touching it,
 //     the serval slides down with the pennant (a falling whistle; bonus
 //     points for catching it high, shown under the HUD), hops off with the

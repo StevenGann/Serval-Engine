@@ -70,6 +70,13 @@ void level_add_spawn(int kind, int mx, int my) {
     spawns[spawn_count++] = (Spawn){.kind = (u8)kind, .mx = (u16)mx, .my = (u8)my};
 }
 
+// ladders and slopes: whether a metatile of the stage is a floor slope, whose
+// ground goes on under it.
+static bool is_slope(u16 metatile) {
+    u32 type = MAP_TYPE(stage->metatiles[metatile].collision);
+    return type >= MAP_SLOPE_R && type <= MAP_SLOPE_L_LOW;
+}
+
 void level_build(void) {
     level_w = stage->screens * 16;
     level_h = stage->height;
@@ -98,7 +105,12 @@ void level_build(void) {
             case '.':
                 break;
             case '#':
-                cell = level_text_at(mx, my - 1) == '#' ? MT_GROUND : MT_GROUND_TOP;
+                // ladders and slopes: also no grass under a slope (the
+                // cell above, built already: cells go top to bottom).
+                cell = level_text_at(mx, my - 1) == '#' ||
+                               (my > 0 && is_slope(playfield_cells[(my - 1) * level_w + mx]))
+                           ? MT_GROUND
+                           : MT_GROUND_TOP;
                 break;
             case 'X':
                 cell = MT_STONE;

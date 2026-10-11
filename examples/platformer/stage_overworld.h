@@ -24,7 +24,15 @@ enum {
     MT_STUMP_BASE = MT_STUMP + 2,      // 2 x 1
     MT_TALL_GRASS = MT_STUMP_BASE + 2, // 2 x 1
     MT_FLOWERS = MT_TALL_GRASS + 2,    // 2 x 1
-    OW_MT_COUNT = MT_FLOWERS + 2
+    // ladders and slopes (the level's '/', '\\', 'n', 'N', 'M', 'm' and 'H')
+    MT_SLOPE_R = MT_FLOWERS + 2, // 45 degrees, rising to the right
+    MT_SLOPE_L,                  // 45 degrees, rising to the left
+    MT_SLOPE_R_LOW,              // a 1:2 slope rising to the right: its low half,
+    MT_SLOPE_R_HIGH,             // then its high half
+    MT_SLOPE_L_HIGH,             // a 1:2 slope rising to the left: its high half,
+    MT_SLOPE_L_LOW,              // then its low half
+    MT_LADDER,
+    OW_MT_COUNT
 };
 
 // The bonus block's first tile in the tileset.

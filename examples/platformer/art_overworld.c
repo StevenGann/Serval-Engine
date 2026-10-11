@@ -130,9 +130,11 @@ const SpriteGroup overworld_group = {
 // Background palette banks.
 enum { BANK_TERRAIN, BANK_BLOCKS, BANK_GOAL, BANK_FAR, BANK_GEM, BANK_COUNT };
 
-// 265 unique 8x8 tiles: 97 for the playfield and foreground, 168 more for the
-// parallax layer. Tile 0 is empty (transparent).
-static const u32 bg_tiles[2120] = {
+// 275 unique 8x8 tiles: 97 for the playfield and foreground, 168 more for the
+// parallax layer, then 10 (265-274) for the slopes and the ladder (ladders
+// and slopes: drawn by a script from the shapes the engine gives slopes,
+// below). Tile 0 is empty (transparent).
+static const u32 bg_tiles[2200] = {
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00700070, 0x77670767, 0x66667666, 0x66666566, 0x65665565, 0x32552352, 0x33332333, 0x33333343,
     0x07007000, 0x76776700, 0x66666677, 0x66665666, 0x55655556, 0x32552352, 0x33332333, 0x33333334,
@@ -398,6 +400,16 @@ static const u32 bg_tiles[2120] = {
     0x22222333, 0x22222333, 0x22223333, 0x22233333, 0x22333333, 0x22333333, 0x23333333, 0x33333333,
     0x33222333, 0x33223333, 0x33233333, 0x33233333, 0x33333333, 0x33333333, 0x33333333, 0x33333333,
     0x33333333, 0x33333333, 0x33333333, 0x33333333, 0x33333333, 0x33333343, 0x33333323, 0x33333333,
+    0x70000000, 0x67000000, 0x66700000, 0x56677000, 0x25667000, 0x22566700, 0x33256670, 0x33325667,
+    0x77000000, 0x67000000, 0x66700000, 0x56670000, 0x25667000, 0x32566770, 0x43256670, 0x33225667,
+    0x33332566, 0x32333256, 0x33332325, 0x33333332, 0x34333333, 0x33333243, 0x33333333, 0x34333333,
+    0x00000000, 0x00000000, 0x00000000, 0x07000000, 0x77000000, 0x66770000, 0x66667770, 0x55666677,
+    0x77000000, 0x66777000, 0x66667700, 0x55666677, 0x22556666, 0x33225566, 0x33332255, 0x34333322,
+    0x77000000, 0x66777000, 0x66667700, 0x55666677, 0x22556666, 0x23225566, 0x33332255, 0x33332222,
+    0x22556666, 0x33225566, 0x33432255, 0x33433322, 0x33334343, 0x33333233, 0x43343323, 0x33232333,
+    0x33332333, 0x32333333, 0x33332323, 0x33333333, 0x34333333, 0x33333243, 0x33333333, 0x34333333,
+    0x001CE100, 0x001CE100, 0x111CE100, 0xDDDCE100, 0xCCCCE100, 0xBBBCE100, 0x111CE100, 0x001CE100,
+    0x001CE100, 0x001CE100, 0x001CE111, 0x001CEDDD, 0x001CECCC, 0x001CEBBB, 0x001CE111, 0x001CE100,
 };
 
 static const u16 bg_palettes[BANK_COUNT][16] = {
@@ -425,7 +437,7 @@ static const u16 bg_palettes[BANK_COUNT][16] = {
 
 const Tileset overworld_tileset = {
     .tiles = bg_tiles,
-    .tile_count = 265,
+    .tile_count = 275,
     .palettes = &bg_palettes[0][0],
     .palette_count = BANK_COUNT,
 };
@@ -631,6 +643,66 @@ const Tileset overworld_tileset = {
 //   KqqqqqqqqwwwwwwwwqqqqqqZzzzzzzzzzzzzzzzzZQQQQQQvvvvvvvvQQQQQQQQK
 //   KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 //
+// ladders and slopes: floor slopes, every pixel their line passes through
+// solid, as the engine has them (docs/tilemaps.md#floor-slopes): the top
+// pixel of each column is the slope's surface, and its grass and dirt are
+// drawn down from there. MT_SLOPE_L, _L_HIGH and _L_LOW are these mirrored.
+//
+// MAP_SLOPE_R, 45 degrees (MT_SLOPE_R):
+//   ...............H
+//   ..............HG
+//   .............HGG
+//   ...........HHGGg
+//   ...........HGGgd
+//   ..........HGGgdd
+//   .........HGGgdDD
+//   ........HGGgdDDD
+//   ......HHGGgdDDDD
+//   ......HGGgdDDDdD
+//   .....HGGgdDdDDDD
+//   ....HGGgdDDDDDDD
+//   ...HGGgdDDDDDDLD
+//   .HHGGgdDDLdDDDDD
+//   .HGGgdDLDDDDDDDD
+//   HGGgddDDDDDDDDLD
+//
+// MAP_SLOPE_R_LOW, then MAP_SLOPE_R_HIGH: a 1:2 slope, the low half's top
+// half empty (MT_SLOPE_R_LOW, MT_SLOPE_R_HIGH):
+//   ..............HH
+//   ...........HHHGG
+//   ..........HHGGGG
+//   ......H.HHGGGGgg
+//   ......HHGGGGggdd
+//   ....HHGGGGggddDD
+//   .HHHGGGGggddDDDD
+//   HHGGGGggddDDDDLD
+//   ..............HH
+//   ...........HHHGG
+//   ..........HHGGGG
+//   ......H.HHGGGGgg
+//   ......HHGGGGggdd
+//   ....HHGGGGggddDd
+//   .HHHGGGGggddDDDD
+//   HHGGGGggddddDDDD
+//   GGGGggddDDDdDDDD
+//   GGggddDDDDDDDDdD
+//   ggddDLDDDdDdDDDD
+//   ddDDDLDDDDDDDDDD
+//   DLDLDDDDDDDDDDLD
+//   DDdDDDDDDLdDDDDD
+//   DdDDLDDLDDDDDDDD
+//   DDDdDdDDDDDDDDLD
+//
+// A wooden ladder (MT_LADDER, MAP_LADDER) over the sky, this twice:
+//   ..KlWK....KlWK..
+//   ..KlWK....KlWK..
+//   ..KlWKKKKKKlWK..
+//   ..KlWhhhhhhlWK..
+//   ..KlWWWWWWWlWK..
+//   ..KlWwwwwwwlWK..
+//   ..KlWKKKKKKlWK..
+//   ..KlWK....KlWK..
+//
 // Foreground grass (background 1, in front of sprites), 2 metatiles wide.
 //   ................................
 //   ................................
@@ -752,6 +824,30 @@ const Metatile overworld_metatiles[OW_MT_COUNT] = {
     [MT_FLOWERS + 1] = {{0, MAP_SE(94, BANK_TERRAIN, 0), MAP_SE(95, BANK_TERRAIN, 0),
                          MAP_SE(96, BANK_TERRAIN, 0)},
                         MAP_EMPTY},
+    // ladders and slopes
+    [MT_SLOPE_R] = {{0, MAP_SE(265, BANK_TERRAIN, 0), MAP_SE(266, BANK_TERRAIN, 0),
+                     MAP_SE(267, BANK_TERRAIN, 0)},
+                    MAP_SLOPE_R},
+    [MT_SLOPE_L] = {{MAP_SE(265, BANK_TERRAIN, MAP_SE_FLIP_H), 0,
+                     MAP_SE(267, BANK_TERRAIN, MAP_SE_FLIP_H),
+                     MAP_SE(266, BANK_TERRAIN, MAP_SE_FLIP_H)},
+                    MAP_SLOPE_L},
+    [MT_SLOPE_R_LOW] = {{0, 0, MAP_SE(268, BANK_TERRAIN, 0), MAP_SE(269, BANK_TERRAIN, 0)},
+                        MAP_SLOPE_R_LOW},
+    [MT_SLOPE_R_HIGH] = {{MAP_SE(268, BANK_TERRAIN, 0), MAP_SE(270, BANK_TERRAIN, 0),
+                          MAP_SE(271, BANK_TERRAIN, 0), MAP_SE(272, BANK_TERRAIN, 0)},
+                         MAP_SLOPE_R_HIGH},
+    [MT_SLOPE_L_HIGH] = {{MAP_SE(270, BANK_TERRAIN, MAP_SE_FLIP_H),
+                          MAP_SE(268, BANK_TERRAIN, MAP_SE_FLIP_H),
+                          MAP_SE(272, BANK_TERRAIN, MAP_SE_FLIP_H),
+                          MAP_SE(271, BANK_TERRAIN, MAP_SE_FLIP_H)},
+                         MAP_SLOPE_L_HIGH},
+    [MT_SLOPE_L_LOW] = {{0, 0, MAP_SE(269, BANK_TERRAIN, MAP_SE_FLIP_H),
+                         MAP_SE(268, BANK_TERRAIN, MAP_SE_FLIP_H)},
+                        MAP_SLOPE_L_LOW},
+    [MT_LADDER] = {{MAP_SE(273, BANK_BLOCKS, 0), MAP_SE(274, BANK_BLOCKS, 0),
+                    MAP_SE(273, BANK_BLOCKS, 0), MAP_SE(274, BANK_BLOCKS, 0)},
+                   MAP_LADDER},
 };
 
 // The parallax layer: hills and clouds, 85 metatiles cut from a 256x256

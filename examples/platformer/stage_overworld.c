@@ -1,7 +1,9 @@
 // Stage 1-1, the overworld: the first level in the classic side-scroller
 // style, written as text, one screen (16 x 13 metatiles) at a time, and
 // converted into map cells when the stage starts (level.c). Its own pieces:
-// tree stumps, bushes, and tall grass and flowers in front of the sprites.
+// tree stumps, bushes, and tall grass and flowers in front of the sprites,
+// and (ladders and slopes) hills with 45-degree and 1:2 slopes and a ladder
+// up to a ledge.
 
 #include "stage_overworld.h"
 
@@ -9,7 +11,12 @@
 //   T  tree stump (2 wide)  b  bush (2 wide)
 //   w  tall grass (2 wide, in front of sprites)
 //   f  flowers (2 wide, in front of sprites)
-// Row 11 is the ground's surface; the serval stands on it in row 10.
+//   /  slope rising to the right, 45 degrees    \  rising to the left
+//   n  1:2 slope rising to the right, its low half; N  its high half
+//   M  1:2 slope rising to the left, its high half; m  its low half
+//   H  ladder (its top, with no ladder above it, is a floor too)
+// Row 11 is the ground's surface; the serval stands on it in row 10. A
+// slope sits on ground ('#'), which has no grass on top under it.
 static const char level_text[][16 + 1] = {
     // Screen 0: columns 0-15
     "................",
@@ -39,21 +46,22 @@ static const char level_text[][16 + 1] = {
     "...ff......e..bb",
     "################",
     "################",
-    // Screen 2: columns 32-47
+    // Screen 2: columns 32-47, a 45-degree hill
     "................",
     "................",
     "................",
     "................",
-    ".........oo.....",
     "................",
     "................",
+    ".......oo.......",
     "................",
-    "...........TT...",
-    "..TT.......TT...",
-    "..TT...e...TT..w",
+    "....../##\\......",
+    "...../####\\.....",
+    "..../######\\.e.w",
     "################",
     "################",
-    // Screen 3: columns 48-63
+    // Screen 3: columns 48-63, a hill with 1:2 slopes
+    "................",
     "................",
     "................",
     "................",
@@ -61,24 +69,23 @@ static const char level_text[][16 + 1] = {
     "................",
     "................",
     "......ooo.......",
-    "...TT........TT.",
-    "...TT........TT.",
-    "...TT........TT.",
-    "w..TT..e.e...TT.",
+    ".......e......TT",
+    "....nN###Mm...TT",
+    "w.nN#######Mm.TT",
     "################",
     "################",
-    // Screen 4: columns 64-79
+    // Screen 4: columns 64-79, a ladder up to a ledge
     "................",
     "................",
     "................",
     "................",
     "..............BB",
-    "................",
-    "................",
-    "...........BFB..",
-    "................",
-    "................",
-    "bb..............",
+    "...........ooo..",
+    "..........HXXXX.",
+    "..........H.....",
+    "..........H.....",
+    "..........H.....",
+    "bb........H.....",
     "#####..#########",
     "#####..#########",
     // Screen 5: columns 80-95
@@ -229,6 +236,21 @@ static u16 cell(char c, int mx, int my, u16* front) {
     case 'f':
         *front = (u16)(MT_FLOWERS + half);
         return MT_EMPTY;
+    // ladders and slopes
+    case '/':
+        return MT_SLOPE_R;
+    case '\\':
+        return MT_SLOPE_L;
+    case 'n':
+        return MT_SLOPE_R_LOW;
+    case 'N':
+        return MT_SLOPE_R_HIGH;
+    case 'M':
+        return MT_SLOPE_L_HIGH;
+    case 'm':
+        return MT_SLOPE_L_LOW;
+    case 'H':
+        return MT_LADDER;
     default:
         return MT_EMPTY;
     }

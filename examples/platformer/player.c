@@ -1,4 +1,5 @@
-// The serval: running, jumping, growing and shrinking, dying.
+// The serval: running, jumping, climbing ladders, growing and shrinking,
+// dying.
 
 #include "game.h"
 
@@ -20,7 +21,9 @@
 // Releasing A while rising adds this much gravity: tapping A makes short hops.
 #define JUMP_RELEASE_GRAVITY (FX_ONE / 2)
 #define STOMP_BOUNCE FX(4)
-#define STOMP_BOUNCE_HIGH FX(6) // A held while stomping
+#define STOMP_BOUNCE_HIGH FX(6)      // A held while stomping
+#define CLIMB_SPEED (FX_ONE * 3 / 4) // up and down ladders
+#define CLIMB_JUMP_SPEED FX(3)       // jumping off a ladder
 #define INVULNERABLE_FRAMES 120
 #define TRANSFORM_FRAMES 48
 #define DEATH_HOP_DELAY 30
@@ -37,6 +40,8 @@ static int input_dir;  // direction held this frame
 static int run_phase;  // distance run, for the run animation
 static int mode_timer;
 static bool fell;
+static bool climbing;   // on a ladder: no gravity, the D-pad moves it up and down
+static int climb_phase; // distance climbed, for the climbing animation
 
 int player_center_x(void) {
     return fx_to_int(pos_x[player]) + PLAYER_W / 2;
@@ -64,6 +69,7 @@ void player_spawn(int x, int y) {
     player_invulnerable = 0;
     player_hidden = false;
     facing = 1;
+    climbing = false;
 }
 
 // Moves v toward 0 by at most step.
@@ -75,8 +81,63 @@ static FIXED slow_down(FIXED v, FIXED step) {
     return 0;
 }
 
+// --- Ladders ------------------------------------------------------------------
+//
+// The engine says when the serval touches a ladder (MAP_CONTACT_LADDER: its
+// body overlaps one, or it stands on a ladder's top) and makes a ladder's top
+// a floor to it while it has gravity. Climbing is the game's: it takes the
+// serval's gravity away (body_gravity) and moves it with the D-pad.
+
+static bool ladder_at(int x, int y) {
+    return MAP_TYPE(map_collision_at(x, y)) == MAP_LADDER;
+}
+
+static void stop_climbing(u32 i) {
+    climbing = false;
+    body_gravity[i] = BODY_GRAVITY(16);
+}
+
+// The serval on a ladder, or getting on one: up with a ladder at its feet,
+// or down standing on a ladder's top. Lined up with the ladder, it climbs
+// at CLIMB_SPEED while up or down is held, and stops climbing when it no
+// longer touches the ladder (over its top, gravity lands it on the top),
+// reaches the ground climbing down, or jumps off with A. Returns true while
+// it climbs: the D-pad is the ladder's then.
+static bool climb(u32 i) {
+    u8 contact = body_contact[i];
+    int x = player_center_x(), feet = fx_to_int(pos_y[i]) + body_h[i];
+    bool up = button_down(BUTTON_UP), down = button_down(BUTTON_DOWN);
+    if (!climbing) {
+        bool on_top = (contact & MAP_CONTACT_FLOOR) && ladder_at(x, feet);
+        if (!(contact & MAP_CONTACT_LADDER) ||
+            !((up && ladder_at(x, feet - 1)) || (down && on_top)))
+            return false;
+        climbing = true;
+        body_gravity[i] = BODY_GRAVITY(0);
+        pos_x[i] = FX((x & ~(TILE - 1)) + TILE / 2 - PLAYER_W / 2);
+        vel_y[i] = 0;
+    } else if (!(contact & MAP_CONTACT_LADDER) ||
+               (down && (contact & MAP_CONTACT_FLOOR) && !ladder_at(x, feet))) {
+        stop_climbing(i);
+        return false;
+    } else if (button_pressed(BUTTON_A)) {
+        stop_climbing(i);
+        vel_y[i] = -CLIMB_JUMP_SPEED;
+        psg_play(player_big ? SND_JUMP_BIG : SND_JUMP);
+        return false;
+    }
+    vel_x[i] = 0;
+    vel_y[i] = up ? -CLIMB_SPEED : down ? CLIMB_SPEED : 0;
+    climb_phase += int_abs(vel_y[i]);
+    return true;
+}
+
 void player_control(void) {
     u32 i = player;
+    if (climb(i)) {
+        input_dir = 0;
+        return;
+    }
     bool on_floor = body_contact[i] & MAP_CONTACT_FLOOR;
     bool run = button_down(BUTTON_B);
     FIXED max = run ? RUN_MAX : WALK_MAX;
@@ -192,6 +253,7 @@ void player_die(bool fell_in_pit) {
     player_mode = PLAYER_DYING;
     mode_timer = 0;
     fell = fell_in_pit;
+    climbing = false;
     player_big = false;
     set_size(false);
     ent_mask[player] &= ~C_MAPBODY; // no more collisions: it falls off the screen
@@ -247,6 +309,9 @@ void player_update_sprite(bool goal_slide) {
     if (player_mode == PLAYER_DYING) {
         frame = SERVAL_DEAD;
         flags = 0;
+    } else if (climbing) {
+        frame = SERVAL_JUMP; // stretched up, turning from side to side as it climbs
+        flags = (climb_phase / FX(6)) % 2 ? SPRITE_FLIP_H : 0;
     } else if (goal_slide || !on_floor) {
         frame = SERVAL_JUMP;
     } else if (input_dir != 0 && vel_x[i] != 0 && (vel_x[i] > 0) != (input_dir > 0)) {
