@@ -272,14 +272,6 @@ void sfx_set_volume(u8 volume);                    // 0-255, all effects
 serval_add_soundbank(<target> <name> <files...>)   # modules and WAVs -> <name>.c, <name>.h
 ```
 
-Planned (declared, warn when used; [releases.md](releases.md#planned-api)):
-
-```c
-// The wave channel
-PSG_WAVE                                           // PsgSound.channel, PsgTrack.channel: 3
-void psg_waves_set(const u32 *waves, u8 count);    // 32 4-bit steps (4 words) per waveform
-```
-
 ## Post-1.0 (planned)
 
 Each is additive: new functions, CMake keywords or SYS calls.
