@@ -27,6 +27,13 @@ And source-level debugging (step E6), with the script's maps beside the page:
 a breakpoint on a Lua line hit, the stack and its locals read, steps over,
 into and out planned from the maps, continuing; then the game's state at a
 later breakpoint matches, cell for cell, a run with that breakpoint alone.
+And hot reload (step E9, --reload): with the serval walking (the test mode's
+scripted buttons) and fireflies wandering, fireflies.lua rebuilt with the
+serval twice as fast is reloaded into the running page: every behaviour is
+kept at its new offsets (the fireflies where they were, waiting as before),
+the score and the timer carry over, the serval then walks 3 pixels a frame
+instead of 1.5, the timer counts on, and a breakpoint set by the new maps
+stops on the edited line; --shots saves the frames before and after.
 Exits 77 (skipped) without Chrome.
 """
 
@@ -39,6 +46,7 @@ import re
 import socket
 import struct
 import sys
+import tempfile
 import time
 import unittest
 
@@ -84,6 +92,25 @@ class Codec(unittest.TestCase):
         self.assertEqual((info["engine"], info["capabilities"], info["contexts"], info["array_cells"],
                           info["entities"], info["scratch"], info["title"], info["blob_hash"]),
                          ("1.0.0", 0x31, 32, 1024, 128, 32768, "FIREFLIES", 0x74A1E107))
+
+    def test_reloaded(self):  # E9
+        p = bytes([0, 3, 0, 0, 4, 1, 7, 2])
+        self.assertEqual(svlink.parse_reloaded(p), {"result": 0, "contexts": {0: 0, 4: 1, 7: 2}})
+        self.assertEqual(svlink.parse_reloaded(bytes([12, 0])), {"result": 12, "contexts": {}})
+
+    def test_plan_frames(self):  # E9: each section in frames that fit, u8 counts for 2 and 5
+        sections = {1: [(i, i + 1, i + 2) for i in range(200)], 2: [(k, 0) for k in range(32)],
+                    3: [(n, n) for n in range(256)], 5: [(1, 0)], 6: []}
+        frames = svlink.plan_frames(sections)
+        self.assertTrue(all(6 + len(p) <= svlink.FRAME_MAX for p in frames))
+        ones = [p for p in frames if p[0] == 1]
+        self.assertEqual([struct.unpack_from("<H", p, 1)[0] for p in ones], [84, 84, 32])
+        self.assertEqual(struct.unpack_from("<III", ones[1], 3), (84, 85, 86))
+        two = [p for p in frames if p[0] == 2]
+        self.assertEqual((len(two), two[0][1], len(two[0])), (1, 32, 2 + 64))
+        self.assertEqual([struct.unpack_from("<H", p, 1)[0] for p in frames if p[0] == 3], [253, 3])
+        self.assertEqual([p for p in frames if p[0] == 5], [bytes([5, 1, 1, 0])])
+        self.assertFalse([p for p in frames if p[0] == 6])
 
     def test_property_names(self):
         names = svlink.property_names()
@@ -296,8 +323,8 @@ class EndToEnd(unittest.TestCase):
             info = link.agent
             self.assertEqual(info["proto"], (1, 0))
             self.assertEqual(info["engine"], ARGS.version)
-            # vm, breakpoints, step, stats, entities, stop on fault
-            self.assertEqual(info["capabilities"], 0x77)
+            # vm, breakpoints, step, reload (E9), stats, entities, stop on fault
+            self.assertEqual(info["capabilities"], 0x7F)
             self.assertEqual((info["contexts"], info["stack"], info["calls"], info["globals"],
                               info["fields"], info["array_cells"], info["entities"],
                               info["properties"], info["sites"], info["scratch"]),
@@ -516,6 +543,116 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(disturbed["contexts"], undisturbed["contexts"])
         self.assertEqual(disturbed["entities"], undisturbed["entities"])
 
+    # --- Hot reload (E9) -----------------------------------------------------------
+
+    @staticmethod
+    def walking_keys(frames=20000, leg=40):
+        """The serval walking right, then left, 40 frames each (1.5 pixels a
+        frame: 60 pixels either way, never reaching an edge)."""
+        return ",".join(f"{at}:{'r' if (at // leg) % 2 == 0 else 'l'}:{leg}"
+                        for at in range(0, frames, leg))
+
+    def serval_steps(self, link, player, frames):
+        """How far the serval moves in each of the next frames (frame steps)."""
+        steps = []
+        x = link.entity(player)["properties"][0]
+        for _ in range(frames):
+            link.step_frame()
+            now = link.entity(player)["properties"][0]
+            steps.append(abs(now - x))
+            x = now
+        return steps
+
+    def test_hot_reload(self):
+        if not ARGS.reload:
+            self.skipTest("no --reload build")
+        g = self.names
+        maps_dir = os.path.dirname(os.path.abspath(ARGS.page))
+        with svlink.open_page(ARGS.page, keys=self.walking_keys()) as link:
+            old = svlink.running_build(link, maps_dir)
+            new = svlink.Build.load(ARGS.reload, stem=old.stem)
+            # The round on, the serval walking, three fireflies wandering.
+            flies = lambda l: [e for e in l.entities() if e["object"] == g["OBJ_FIREFLY"]]  # noqa: E731
+            self.run_until(link, lambda l: l.globals(g["G_PLAYING"], 1) == [1] and len(flies(l)) >= 3)
+            link.set_global(g["G_SCORE"], 7)  # something to carry over (the HUD shows it at a catch)
+            player = link.globals(g["G_PLAYER"], 1)[0]
+            shots = ARGS.shots or tempfile.mkdtemp(prefix="svlink-reload-")
+            shot = lambda name: link.screenshot(os.path.join(shots, f"svlink-reload-{name}.png"))  # noqa: E731
+            shot("1-before")
+            before_speed = self.serval_steps(link, player, 8)
+            self.assertTrue(set(before_speed) <= {0, 384} and before_speed.count(384) >= 6, before_speed)
+            shot("2-reloading")
+            globals_before = link.globals(0, g["G_COUNT"])
+            positions = {e["entity"]: link.entity(e["entity"])["properties"][:2] for e in flies(link)}
+            contexts = {c["context"]: c for c in link.contexts()}
+            started = time.monotonic()
+            done = svlink.reload(link, old, new)
+            took = time.monotonic() - started
+            print(f"\nreload: {len(new.blob)} bytes, {len(done['contexts'])} contexts, {took * 1000:.0f} ms",
+                  file=sys.stderr)
+            # Every behaviour kept: only Player:step (a reaction) changed.
+            self.assertEqual(done["result"], 0)
+            self.assertEqual(set(done["contexts"]), set(contexts))
+            self.assertEqual(set(done["contexts"].values()), {0}, done["contexts"])
+            changed = {n for n in svlink.function_ranges(old)} - \
+                {n for n, *_ in svlink.unchanged_functions(old, new)}
+            self.assertEqual(changed, {"Player:step"})
+            # The fireflies where they were, their behaviours at their new
+            # offsets, waiting as before; the score and the timer carried
+            # over; the new global at its initial value.
+            for e, xy in positions.items():
+                self.assertEqual(link.entity(e)["properties"][:2], xy)
+            shift = {n: ns - s for n, s, _, ns in svlink.unchanged_functions(old, new)}
+            for c in link.contexts():
+                was = contexts[c["context"]]
+                name = old.maps.function(was["pc"])["name"]
+                self.assertEqual((c["state"], c["wait"], c["self"], c["event"]),
+                                 (was["state"], was["wait"], was["self"], was["event"]))
+                self.assertEqual(c["pc"], was["pc"] + shift[name])
+                self.assertEqual(new.maps.function(c["pc"])["name"], name)
+            self.assertTrue(any(v != 0 for v in shift.values()))  # the code after Player:step moved
+            names = {e["name"]: e["number"] for e in new.maps.svdbg["globals"]}
+            after = link.globals(0, len(names))
+            for entry in old.maps.svdbg["globals"]:
+                self.assertEqual(after[names[entry["name"]]], globals_before[entry["number"]], entry["name"])
+            self.assertEqual(after[names["speed"]], 768)  # 3.0
+            self.assertEqual(after[names["score"]], 7)
+            self.assertEqual(link.agent_info()["blob_hash"], svlink.fnv1a(new.blob))
+            # Nothing on the screen changed with the reload: the same frame.
+            shot("3-reloaded")
+            with open(os.path.join(shots, "svlink-reload-2-reloading.png"), "rb") as a, \
+                    open(os.path.join(shots, "svlink-reload-3-reloaded.png"), "rb") as b:
+                self.assertEqual(a.read(), b.read())
+            # The new speed shows: the serval walks 3 pixels a frame (less
+            # at an edge); the fireflies fly on.
+            after_speed = self.serval_steps(link, player, 8)
+            self.assertTrue(set(after_speed) <= set(range(769)) and 768 in after_speed, after_speed)
+            self.assertNotIn(384, after_speed)
+            moved = [link.entity(e)["properties"][:2] != xy for e, xy in positions.items()
+                     if any(x["entity"] == e for x in link.entities())]
+            self.assertTrue(any(moved))
+            shot("4-after")
+            # The timer goes on: the Room's thread, kept, counts the seconds.
+            time_left = after[names["time"]]
+            self.run_until(link, lambda l: l.globals(names["time"], 1)[0] < time_left, 60)
+            # A breakpoint by the new build's maps: the edited line.
+            pcs = new.maps.line_sites(f"fireflies.lua:{self.line_of(new, 'vx = speed')}")
+            link.break_set(svlink.SITE_BREAKPOINT, pcs)
+            stop = link.go(60)
+            self.assertEqual((stop["reason"], stop["pc"]), (3, pcs[0]))
+            self.assertEqual(new.maps.function(stop["pc"])["name"], "Player:step")
+            link.break_clear(svlink.SITE_BREAKPOINT)
+            link.resume(0)
+
+    @staticmethod
+    def line_of(build, text):
+        """The line of a build's script that holds text."""
+        with open(build.maps.svdbg["sources"][0], encoding="utf-8") as f:
+            for number, line in enumerate(f, 1):
+                if text in line:
+                    return number
+        raise ValueError(text)
+
     def test_release_page(self):
         # No agent in the page: none of the link's script, no export.
         with open(ARGS.release_page, "rb") as f:
@@ -544,6 +681,9 @@ def main():
     parser.add_argument("--script-h")
     parser.add_argument("--svmap")
     parser.add_argument("--version")
+    parser.add_argument("--reload", help="a rebuilt fireflies script's .svmap (its _script.c beside it)")
+    parser.add_argument("--shots", help="where test_hot_reload saves the frames before and after "
+                        "(default: a temporary directory)")
     ARGS, rest = parser.parse_known_args()
     if ARGS.page:
         try:

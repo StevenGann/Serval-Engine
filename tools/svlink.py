@@ -42,6 +42,17 @@ Commands, run in order (none: read them from standard input, one a line):
   locals [FRAME]           the locals of a frame (0: the innermost)
   contexts                 every live context: its handler, state and place
   options stop-on-fault|none  stop on fault, or not
+  shot FILE.png            the frame the page shows, as a PNG (headless
+                           Chrome's: not with --no-browser)
+  reload NEW [halt]        hot reload (docs/debug-link.md#hot-reload): the
+                           script rebuilt in NEW (a page, a .svmap, a
+                           <name>_script.c or a .bin, with its maps beside
+                           it), planned against the running one's build
+                           (its <name>_script.c beside its maps): unchanged
+                           functions keep running, changed ones restart
+                           (halt: are halted), state follows names; prints
+                           RELOADED; the breakpoints `break` set are set
+                           again by the new maps
 The source-level commands read the script's maps (docs/debug-link.md#maps:
 <name>.svmap and <name>.svdbg, which serval_add_script() writes beside the
 game's build), found in --maps DIR (default: the page's directory) by the
@@ -51,7 +62,8 @@ Options: --no-browser prints the page's URL instead of opening it (open it
 in a browser yourself, without test mode: click to start the game);
 --port N serves on that port (default: any free one); --frames N stops the
 page's test mode after N frames (default: a billion); --token T uses that
-token (default: random); --maps DIR where the maps are.
+token (default: random); --maps DIR where the maps are; --keys K the test
+mode's scripted buttons (FRAME:KEYS:LENGTH,..., as tools/web-shots.py's).
 
 As a library (tools/svlink_test.py uses it):
 
@@ -86,6 +98,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 VM_H = os.path.join(TOOLS, "..", "include", "serval", "vm.h")
@@ -316,8 +329,16 @@ def parse_frames(payload):
     return {"sp": sp, "cells": cells, "activations": activations}
 
 
+def parse_reloaded(payload):
+    """RELOADED: the result (0 done, else an error code) and what became of
+    each context that was live (0 kept, 1 restarted, 2 halted)."""
+    r = Reader(payload)
+    result, count = r.u8(), r.u8()
+    return {"result": result, "contexts": {r.u8(): r.u8() for _ in range(count)}}
+
+
 EVENT_PARSERS = {STOPPED: parse_stopped, STATS: parse_stats, LOG: parse_log, LOADED: parse_loaded,
-                 FAULT: parse_fault}
+                 FAULT: parse_fault, RELOADED: parse_reloaded}
 
 
 # --- WebSocket (RFC 6455), the server's end, as much as a browser needs --------------
@@ -356,8 +377,9 @@ def _read_exactly(rfile, n):
     return data
 
 
-def ws_read_frame(rfile):
-    """(fin, opcode, payload) of one frame from a client (which masks)."""
+def ws_read_frame(rfile, masked=True):
+    """(fin, opcode, payload) of one frame from a client (which masks); with
+    masked False, from a server (which doesn't: Chrome's DevTools, any size)."""
     b0, b1 = _read_exactly(rfile, 2)
     if b0 & 0x70:
         raise WsClosed(1002)  # no extension was agreed
@@ -366,6 +388,8 @@ def ws_read_frame(rfile):
         (n,) = struct.unpack(">H", _read_exactly(rfile, 2))
     elif n == 127:
         (n,) = struct.unpack(">Q", _read_exactly(rfile, 8))
+    if not masked:
+        return bool(b0 & 0x80), b0 & 0x0F, _read_exactly(rfile, n)
     if not b1 & 0x80:
         raise WsClosed(1002)  # a client's frames are masked
     if n > FRAME_MAX and (b0 & 0x0F) < 8:
@@ -630,6 +654,15 @@ class Session:
         self.stopped = None
         return self.wait_stop(before, timeout)
 
+    def screenshot(self, path):
+        """Saves the frame the page shows (its 240x160 canvas) as a PNG, from
+        the headless Chrome svlink.py opened (its DevTools protocol)."""
+        if getattr(self, "browser", None) is None:
+            raise ValueError("screenshots need the browser svlink.py opens (not --no-browser)")
+        url = _devtools_evaluate(self.browser, "document.getElementById('screen').toDataURL('image/png')")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(url.split(",", 1)[1]))
+
 
 class Server:
     """Serves a directory over HTTP on 127.0.0.1, and the debug link's
@@ -802,15 +835,74 @@ def find_browser():
 
 
 def open_browser(url):
-    """Headless Chrome on the page, running until terminated."""
+    """Headless Chrome on the page, running until terminated (with its
+    DevTools port open on 127.0.0.1, for screenshot())."""
     profile = tempfile.mkdtemp(prefix="svlink-chrome-")
     process = subprocess.Popen(
         [find_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
          "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+         "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
          f"--user-data-dir={profile}", url],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     process.profile = profile
+    process.devtools = None  # its DevTools port, once Chrome says it ("DevTools listening on")
+
+    def drain():
+        for line in process.stderr:
+            m = re.search(rb"DevTools listening on ws://[^/]*:(\d+)/", line)
+            if m and process.devtools is None:
+                process.devtools = int(m.group(1))
+
+    threading.Thread(target=drain, daemon=True).start()
     return process
+
+
+def _devtools_evaluate(process, expression, timeout=10):
+    """Evaluates a JavaScript expression in the page headless Chrome shows,
+    through its DevTools protocol (a WebSocket client here), and returns its
+    value."""
+    deadline = time.monotonic() + timeout
+    while getattr(process, "devtools", None) is None:
+        if time.monotonic() > deadline:
+            raise TimeoutError("Chrome never said where its DevTools listen")
+        time.sleep(0.05)
+    port = process.devtools
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=timeout) as reply:
+        targets = json.load(reply)
+    page = next(t for t in targets if t.get("type") == "page")
+    path = urllib.parse.urlsplit(page["webSocketDebuggerUrl"]).path
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        key = base64.b64encode(secrets.token_bytes(16)).decode()
+        sock.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
+                      f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                      "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        rfile = sock.makefile("rb")
+        if b" 101 " not in rfile.readline():
+            raise ConnectionError("Chrome's DevTools refused the WebSocket")
+        while rfile.readline() not in (b"\r\n", b""):
+            pass
+        message = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                              "params": {"expression": expression, "returnByValue": True,
+                                         "awaitPromise": True}}).encode()
+        mask = secrets.token_bytes(4)
+        n = len(message)
+        head = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
+                                bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else
+                                bytes([0x80 | 127]) + struct.pack(">Q", n))
+        sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(message)))
+        text = b""
+        while True:
+            fin, op, data = ws_read_frame(rfile, masked=False)
+            text += data
+            if not fin:
+                continue
+            reply = json.loads(text)
+            text = b""
+            if reply.get("id") == 1:
+                result = reply.get("result", {}).get("result", {})
+                if "value" not in result:
+                    raise ValueError(f"the page couldn't evaluate it: {reply}")
+                return result["value"]
 
 
 def close_browser(process):
@@ -837,12 +929,15 @@ def dump_page(url, budget_ms=600000, timeout=600):
 
 
 @contextlib.contextmanager
-def open_page(page, frames=10**9, browser=True, port=0, token=None, timeout=60, attach=True):
+def open_page(page, frames=10**9, browser=True, port=0, token=None, timeout=60, attach=True,
+              keys=""):
     """Serves the page, opens it (headless Chrome, test mode) and yields the
     Session once the agent has rung (AGENT_FOUND) and, with attach, answered
-    AGENT_INFO. browser=False prints the URL for a person to open."""
+    AGENT_INFO. browser=False prints the URL for a person to open. keys:
+    the test mode's scripted buttons (FRAME:KEYS:LENGTH,...)."""
     server = Server(os.path.dirname(os.path.abspath(page)), token=token, port=port)
-    fragment = f"serval-link={server.token}" + (f"&frames={frames}" if frames else "")
+    fragment = f"serval-link={server.token}" + (f"&frames={frames}" if frames else "") \
+        + (f"&keys={keys}" if keys and frames else "")
     url = server.url(page, fragment)
     process = None
     session = None
@@ -853,6 +948,7 @@ def open_page(page, frames=10**9, browser=True, port=0, token=None, timeout=60, 
             print(f"open {url}", file=sys.stderr, flush=True)
         session = server.accept(timeout)
         session.url = url
+        session.browser = process
         session.wait_event(AGENT_FOUND, timeout)
         if attach:
             session.agent_info()
@@ -888,6 +984,7 @@ class DebugMaps:
     into follows), joined as a debugger joins them."""
 
     def __init__(self, svmap_path):
+        self.path = svmap_path
         with open(svmap_path, encoding="utf-8") as f:
             self.svmap = json.load(f)
         base = os.path.splitext(svmap_path)[0]
@@ -1063,6 +1160,223 @@ def plan_step(link, maps, how):
     return link.step(k, depth - 1 if how == "out" and depth else depth)
 
 
+# --- Hot reload (step E9): the plan, as a debugger computes it ------------------------
+#
+# docs/debug-link.md#hot-reload and #the-plan: from both blobs and both
+# .svdbg maps, the unchanged functions (the same name, the same op bytes, a
+# CALL's operand compared as the function it calls), what to do with each
+# live context (CONTEXTS, FRAMES), and the globals, RAM arrays, instance
+# fields and objects mapped old to new by name.
+
+RELOAD_RELOCATE, RELOAD_RESTART, RELOAD_HALT, RELOAD_RELOCATE_OR_HALT = 0, 1, 2, 3
+RELOAD_OUTCOMES = {0: "kept", 1: "restarted", 2: "halted"}
+SECTION_FUNCTIONS, SECTION_CONTEXTS, SECTION_GLOBALS = 1, 2, 3
+SECTION_ARRAYS, SECTION_FIELDS, SECTION_OBJECTS = 4, 5, 6
+
+
+_SVM = []
+
+
+def _svm():
+    """tools/svm.py, and the numbers it read from vm.h: (module, vm)."""
+    if not _SVM:
+        spec = importlib.util.spec_from_file_location("svm", os.path.join(TOOLS, "svm.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _SVM.append((module, module.load_vm()))
+    return _SVM[0]
+
+
+def blob_of_c(path):
+    """The blob a generated <name>_script.c (svm.py --c) defines."""
+    with open(path, encoding="ascii") as f:
+        text = f.read()
+    body = text[text.index("[] = {"):text.index("};")]
+    return bytes(int(h, 16) for h in re.findall(r"0x([0-9A-Fa-f]{2})\b", re.sub(r"/\*.*?\*/", "", body)))
+
+
+class Build:
+    """A script's build, as serval_add_script() leaves it: the blob
+    (<stem>_script.c, or a raw .bin) and its maps (<stem>.svmap, .svdbg)."""
+
+    def __init__(self, blob, maps):
+        self.blob, self.maps = bytes(blob), maps
+        if (len(self.blob), fnv1a(self.blob)) != maps.blob:
+            raise ValueError(f"the blob ({len(self.blob)} bytes, FNV-1a 0x{fnv1a(self.blob):08X}) "
+                             f"isn't the one its maps describe")
+
+    @staticmethod
+    def load(path, stem=None):
+        """A build from a page's directory (its <stem>.svmap: the stem of the
+        script running now), a .svmap, a <stem>_script.c or a .bin."""
+        if path.endswith(".html") or os.path.isdir(path):
+            directory = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
+            if stem is None:
+                raise ValueError("which script? (a page's directory has several)")
+            svmap = os.path.join(directory, stem + ".svmap")
+        elif path.endswith(".svmap"):
+            svmap = path
+        elif path.endswith("_script.c"):
+            svmap = path[:-len("_script.c")] + ".svmap"
+        else:
+            svmap = os.path.splitext(path)[0] + ".svmap"
+        base = os.path.splitext(svmap)[0]
+        if path.endswith(".bin"):
+            with open(path, "rb") as f:
+                blob = f.read()
+        else:
+            blob = blob_of_c(base + "_script.c")
+        return Build(blob, DebugMaps(svmap))
+
+    @property
+    def stem(self):
+        return os.path.splitext(os.path.basename(self.maps.path))[0]
+
+
+def function_ranges(build):
+    """{name: (first op's pc, the end of its last op, entry)} of a build's
+    functions and handlers."""
+    svm, vm = _svm()
+    pairs = build.maps.svmap["pcs"]
+    ranges = {}
+    for entry in build.maps.svdbg["functions"]:
+        pcs = [pc for pc, line in pairs if entry["first"] <= line <= entry["last"]]
+        if not pcs:
+            continue
+        last = pcs[-1]
+        size = 1 + svm.operand_size(vm.op_names[build.blob[last]])
+        ranges[entry["name"]] = (pcs[0], last + size, entry)
+    return ranges
+
+
+def _ops(build, start, end, starts_of):
+    """A function's ops, normalized: (opcode, operand bytes), a CALL's
+    operand as the name of the function it calls."""
+    svm, vm = _svm()
+    call = vm.ops["CALL"]
+    ops, pc = [], start
+    while pc < end:
+        op = build.blob[pc]
+        size = svm.operand_size(vm.op_names.get(op, "NOP"))
+        operand = build.blob[pc + 1:pc + 1 + size]
+        if op == call:
+            operand = starts_of.get(struct.unpack("<I", operand)[0], operand)
+        ops.append((op, operand))
+        pc += 1 + size
+    return ops
+
+
+def unchanged_functions(old, new):
+    """[(name, old_start, old_end, new_start)] of the functions both builds
+    have, with the same op bytes (a CALL's operand compared as the function
+    it calls, since jumps are relative and calls absolute)."""
+    old_ranges, new_ranges = function_ranges(old), function_ranges(new)
+    old_starts = {r[0]: name for name, r in old_ranges.items()}
+    new_starts = {r[0]: name for name, r in new_ranges.items()}
+    found = []
+    for name, (start, end, _) in old_ranges.items():
+        if name not in new_ranges:
+            continue
+        new_start, new_end, _ = new_ranges[name]
+        if _ops(old, start, end, old_starts) == _ops(new, new_start, new_end, new_starts):
+            found.append((name, start, end, new_start))
+    return sorted(found, key=lambda f: f[1])
+
+
+def _by_name(old_list, new_list, same):
+    new_by = {e["name"]: e for e in new_list}
+    return [(e["number"], new_by[e["name"]]["number"]) for e in old_list
+            if e["name"] in new_by and same(e, new_by[e["name"]])]
+
+
+def reload_maps(old, new):
+    """The plan's sections that need no running game: {section: entries}.
+    Globals, fields and arrays follow their names when their type (an
+    array's kind and type) is the same, RAM arrays only; objects their names
+    (0xFFFF: gone)."""
+    o, n = old.maps.svdbg, new.maps.svdbg
+    same_type = lambda a, b: a["type"] == b["type"]  # noqa: E731
+    same_array = lambda a, b: a["kind"] == b["kind"] == "ram" and a["type"] == b["type"]  # noqa: E731
+    new_objects = {e["name"]: e["number"] for e in n["objects"]}
+    return {
+        SECTION_FUNCTIONS: [(s, e, ns) for _, s, e, ns in unchanged_functions(old, new)],
+        SECTION_GLOBALS: _by_name(o["globals"], n["globals"], same_type),
+        SECTION_ARRAYS: _by_name(o["arrays"], n["arrays"], same_array),
+        SECTION_FIELDS: _by_name(o["fields"], n["fields"], same_type),
+        SECTION_OBJECTS: [(e["number"], new_objects.get(e["name"], 0xFFFF)) for e in o["objects"]],
+    }
+
+
+def context_actions(link, functions, halt=False):
+    """Section 2, from CONTEXTS and FRAMES: relocate a live context whose pc
+    and every return point lie in an unchanged function, else restart it
+    (halt: halt it). Returns the entries and the contexts."""
+    actions, contexts = [], link.contexts()
+    for c in contexts:
+        frames = link.frames(c["context"])
+        pcs = [f["pc"] for a in frames["activations"] for f in a["frames"]]
+        kept = all(any(s <= pc < e for s, e, _ in functions) for pc in pcs)
+        actions.append((c["context"], RELOAD_RELOCATE if kept else
+                        RELOAD_HALT if halt else RELOAD_RESTART))
+    return actions, contexts
+
+
+def plan_frames(sections):
+    """The plan as RELOAD_PLAN payloads, each section in as many frames as
+    it needs (u8 counts for contexts and fields)."""
+    layouts = {SECTION_FUNCTIONS: ("H", "III"), SECTION_CONTEXTS: ("B", "BB"),
+               SECTION_GLOBALS: ("H", "HH"), SECTION_ARRAYS: ("H", "HH"),
+               SECTION_FIELDS: ("B", "BB"), SECTION_OBJECTS: ("H", "HH")}
+    payloads = []
+    for section in sorted(sections):
+        count_fmt, entry_fmt = layouts[section]
+        size = struct.calcsize("<" + entry_fmt)
+        most = min((FRAME_MAX - 6 - 1 - struct.calcsize(count_fmt)) // size,
+                   255 if count_fmt == "B" else 65535)
+        entries = list(sections[section])
+        for at in range(0, len(entries), most):
+            chunk = entries[at:at + most]
+            payloads.append(struct.pack("<B" + count_fmt, section, len(chunk))
+                            + b"".join(struct.pack("<" + entry_fmt, *e) for e in chunk))
+    return payloads
+
+
+def reload(link, old, new, halt=False, timeout=30):
+    """Hot reload (docs/debug-link.md#hot-reload): parks the game at a frame
+    boundary (if it runs), plans old -> new, sends RELOAD_BEGIN, the blob in
+    RELOAD_DATA chunks, the plan in RELOAD_PLAN frames and RELOAD_COMMIT,
+    and returns RELOADED with the plan: {result, contexts, plan, before:
+    CONTEXTS before}. The game
+    is left as it was: parked, or running again. Every breakpoint site is
+    gone (set them again); the maps are the new build's from now on."""
+    stop = link.stopped
+    running = stop is None
+    if running or stop["reason"] not in (0, 1):  # not at a frame boundary
+        if not running:
+            raise ValueError("the game is parked inside a frame: reload at a frame boundary "
+                             "(resume, then pause)")
+        link.pause()
+    sections = reload_maps(old, new)
+    sections[SECTION_CONTEXTS], contexts = context_actions(link, sections[SECTION_FUNCTIONS], halt)
+    link.request(RELOAD_BEGIN, struct.pack("<II", len(new.blob), fnv1a(new.blob)))
+    chunk = FRAME_MAX - 6 - 4
+    for at in range(0, len(new.blob), chunk):
+        link.request(RELOAD_DATA, struct.pack("<I", at) + new.blob[at:at + chunk])
+    for payload in plan_frames(sections):
+        link.request(RELOAD_PLAN, payload)
+    before = link.count(RELOADED)
+    link.request(RELOAD_COMMIT, timeout=timeout)
+    reloaded = link.wait_event(RELOADED, timeout, after=before)
+    link.blob = (len(new.blob), fnv1a(new.blob))
+    link.debug_maps = new.maps
+    link.debug_build = new
+    if running:
+        link.resume(0)
+    reloaded["plan"] = sections
+    reloaded["before"] = contexts
+    return reloaded
+
+
 # --- The command line --------------------------------------------------------------
 
 
@@ -1115,6 +1429,45 @@ def _print_stack(link, maps, context):
     return frames
 
 
+def running_build(link, maps_dir):
+    """The build of the blob the game runs: the last reload's, or the one
+    beside its maps (serval_add_script()'s <stem>_script.c)."""
+    build = getattr(link, "debug_build", None)
+    if build and (len(build.blob), fnv1a(build.blob)) == tuple(link.blob):
+        return build
+    maps = maps_for(link, maps_dir)
+    base = os.path.splitext(maps.path)[0]
+    if not os.path.exists(base + "_script.c"):
+        raise ValueError(f"the running blob's build ({os.path.basename(base)}_script.c) isn't "
+                         f"beside its maps")
+    build = Build(blob_of_c(base + "_script.c"), maps)
+    link.debug_build = build
+    return build
+
+
+def _print_reloaded(old, new, done):
+    plan = done["plan"]
+    names = sorted(function_ranges(old))
+    kept = {name for name, *_ in unchanged_functions(old, new)}
+    changed = [n for n in names if n not in kept]
+    print(f"plan: {len(kept)} of {len(names)} functions unchanged"
+          + (f" (changed or gone: {', '.join(changed)})" if changed else "")
+          + f"; by name: {len(plan[SECTION_GLOBALS])} globals, {len(plan[SECTION_ARRAYS])} arrays,"
+          f" {len(plan[SECTION_FIELDS])} fields, "
+          f"{sum(1 for _, n in plan[SECTION_OBJECTS] if n != 0xFFFF)} of "
+          f"{len(plan[SECTION_OBJECTS])} objects")
+    if done["result"]:
+        print(f"reloaded: no, {ERRORS.get(done['result'], done['result'])}")
+        return
+    print(f"reloaded: {len(new.blob)} bytes, FNV-1a 0x{fnv1a(new.blob):08X}")
+    before = {c["context"]: c for c in done["before"]}
+    for k, outcome in sorted(done["contexts"].items()):
+        c = before.get(k)
+        what = (f"{old.maps.describe(c['pc'])}, " + (f"entity {c['self']}" if c["self"] else "a thread")
+                ) if c else "?"
+        print(f"  context {k} ({what}): {RELOAD_OUTCOMES.get(outcome, outcome)}")
+
+
 def run_command(link, words, props, maps_dir="."):
     cmd, args = words[0], words[1:]
     if cmd == "hello":
@@ -1145,12 +1498,15 @@ def run_command(link, words, props, maps_dir="."):
         maps = maps_for(link, maps_dir)
         pcs = maps.line_sites(args[0])
         link.break_set(SITE_BREAKPOINT, pcs)
+        link.breakpoint_lines = getattr(link, "breakpoint_lines", []) + [args[0]]
         print(f"breakpoint at {args[0]}: " + ", ".join(f"pc 0x{pc:X}" for pc in pcs))
     elif cmd == "clear":
         if args:
             link.break_clear(SITE_BREAKPOINT, maps_for(link, maps_dir).line_sites(args[0]))
+            link.breakpoint_lines = [w for w in getattr(link, "breakpoint_lines", []) if w != args[0]]
         else:
             link.break_clear(SITE_BREAKPOINT)
+            link.breakpoint_lines = []
         print("cleared")
     elif cmd == "continue":
         stop = link.go(float(args[0]) if args else 30)
@@ -1278,6 +1634,27 @@ def run_command(link, words, props, maps_dir="."):
             print(f"  {address + at:08X}: " + " ".join(f"{b:02X}" for b in data[at:at + 16]))
     elif cmd == "sleep":
         time.sleep(float(args[0]))
+    elif cmd == "shot":
+        link.screenshot(args[0])
+        print(f"saved {args[0]}")
+    elif cmd == "reload":
+        if not args:
+            raise ValueError("reload NEW_PAGE_OR_BLOB [halt]")
+        old = running_build(link, maps_dir)
+        new = Build.load(args[0], stem=old.stem)
+        done = reload(link, old, new, halt="halt" in args[1:])
+        _print_reloaded(old, new, done)
+        if done["result"]:
+            raise ValueError(f"the reload failed: {ERRORS.get(done['result'], done['result'])}")
+        # The reload cleared every site: the breakpoints again, by the new maps.
+        for where in getattr(link, "breakpoint_lines", []):
+            try:
+                pcs = new.maps.line_sites(where)
+            except ValueError:
+                print(f"breakpoint at {where}: no statement there any more, dropped")
+                continue
+            link.break_set(SITE_BREAKPOINT, pcs)
+            print(f"breakpoint at {where} again: " + ", ".join(f"pc 0x{pc:X}" for pc in pcs))
     else:
         raise ValueError(f"unknown command {cmd!r}")
 
@@ -1295,13 +1672,15 @@ def main():
     parser.add_argument("--token")
     parser.add_argument("--maps", help="where the script's .svmap and .svdbg are (default: the "
                         "page's directory)")
+    parser.add_argument("--keys", default="", help="the test mode's scripted buttons, "
+                        "FRAME:KEYS:LENGTH,... (tools/web-shots.py's letters)")
     args = parser.parse_args()
     if not os.path.exists(args.page):
         sys.exit(f"svlink: {args.page}: no such file")
     # Commands given as separate words: a new one starts at each command name.
     names = {"hello", "pause", "resume", "step", "frames", "globals", "arrays", "entities", "entity",
              "set", "stats", "logs", "read", "sleep", "break", "clear", "continue", "stack", "locals",
-             "contexts", "options"}
+             "contexts", "options", "reload", "shot"}
     maps_dir = args.maps or os.path.dirname(os.path.abspath(args.page))
     commands = []
     for word in args.commands:
@@ -1314,7 +1693,7 @@ def main():
     try:
         with open_page(args.page, frames=0 if args.no_browser else args.frames,
                        browser=not args.no_browser, port=args.port, token=args.token,
-                       timeout=600 if args.no_browser else 60) as link:
+                       timeout=600 if args.no_browser else 60, keys=args.keys) as link:
             interactive = not commands
             if interactive:
                 print("svlink: connected; commands as in --help, one a line (EOF ends)", file=sys.stderr)

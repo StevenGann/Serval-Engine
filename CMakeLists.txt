@@ -233,6 +233,7 @@ endif()
 # tests' fake endpoint). SERVAL_LINK_AGENT, in debug builds unless SERVAL_LINK
 # is OFF (cmake/Serval.cmake), turns them on; without it they are empty.
 target_sources(${serval_engine_target} PRIVATE src/core/vm_link.c)
+target_sources(${serval_engine_target} PRIVATE src/core/link_reload.c) # debug link (E9): hot reload
 if(SERVAL_TARGET_GBA)
     target_sources(serval PRIVATE src/gba/link_gba.c)
 elseif(SERVAL_TARGET_WEB)

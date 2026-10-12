@@ -306,6 +306,12 @@ typedef struct {
     void (*stopped)(void);
     // The debugger left: every patched opcode restored, no step.
     void (*detached)(void);
+    // debug link (E9): hot reload. After each reply (RELOADED follows
+    // RELOAD_COMMIT's); and before RESUME or STEP lets the game go on: false
+    // if a reload pins it (RELOADING); with go, a reload begun but not
+    // pinned yet is dropped.
+    void (*replied)(void);
+    bool (*resuming)(bool go);
 } ServalLinkVmPart;
 
 // Defined in vm.c (its debug link block), so it exists only in games that
@@ -383,6 +389,71 @@ void serval_vm_link_phase(bool begin);
 //   - the game loaded, reloaded or unloaded a blob (install()): LOADED, and
 //     every breakpoint site is gone.
 void serval_vm_link_loaded(void);
+
+// debug link (E9): hot reload with a plan (docs/debug-link.md#hot-reload):
+// RELOAD_PLAN's actions for a context (section 2), and what became of each
+// (RELOADED).
+enum {
+    LINK_RELOAD_RELOCATE = 0,         // kept at its new offsets, else restarted
+    LINK_RELOAD_RESTART = 1,          // restarted from its handler's start
+    LINK_RELOAD_HALT = 2,             // halted (also a live context the plan doesn't list)
+    LINK_RELOAD_RELOCATE_OR_HALT = 3, // kept, else halted: the debugger's "halt instead"
+    LINK_RELOAD_ACTIONS = 4,
+};
+enum {
+    LINK_RELOAD_KEPT = 0,
+    LINK_RELOAD_RESTARTED = 1,
+    LINK_RELOAD_HALTED = 2,
+    LINK_RELOAD_NOT_LIVE = 0xFF, // (not reported)
+};
+
+// What vm.c's part of a reload needs: the new blob (serval_vm_link_valid()
+// passed it), each context's action, and the plan's maps, through
+// functions on the plan (vm_link.c's): an old pc's new one if it lies in an
+// unchanged function (else 0), an old object's new number (-1: gone or not
+// listed), and for each new instance field the old one whose value it takes
+// (0xFF: none, 0). Fills outcomes (VM_CONTEXTS, LINK_RELOAD_*).
+typedef struct {
+    const u8* blob;
+    u32 size;
+    const u8* actions; // VM_CONTEXTS: LINK_RELOAD_RELOCATE to LINK_RELOAD_RELOCATE_OR_HALT
+    const u8* field_from;
+    const void* plan;
+    u32 (*relocate)(const void* plan, u32 pc);
+    int (*object)(const void* plan, u32 old);
+    u8* outcomes;
+} ServalVmLinkReload;
+
+// vm.c, for vm_link.c: whether a blob passes vm_load's checks (warning about
+// the first problem, as vm_load does); the running blob's object count; and
+// the reload itself, at a frame boundary: the contexts kept, restarted or
+// halted, the bindings renumbered (an instance of a gone object detached)
+// and their fields moved, the blob switched with the scheduler's bookkeeping
+// recorded again, the VM's warnings started over. The event queue is kept;
+// the globals and the RAM arrays are the caller's to set.
+bool serval_vm_link_valid(const u8* b, u32 size);
+u32 serval_vm_link_objects(void);
+void serval_vm_link_reload(const ServalVmLinkReload* reload);
+
+// vm_link.c, for link_reload.c: the scratch (NULL: SERVAL_LINK_SCRATCH is 0);
+// every site removed (its opcode back) and no step.
+u8* serval_vm_link_scratch(void);
+void serval_vm_link_unpatch(void);
+
+// link_reload.c, for vm_link.c: RELOAD_BEGIN to RELOAD_COMMIT (vm_link.c
+// checked that a blob is loaded, link.c that RELOAD_BEGIN's game is parked
+// at a frame boundary); RELOADED after the reply; whether the game may go on
+// (go: and a reload begun without data dropped); whether a reload is under
+// way (no sites set or cleared meanwhile); the VM now runs a copy of the
+// game's own blob in the scratch; the game loaded a blob; the debugger left
+// (a reload that overwrote the VM's blob unloads it).
+u32 serval_link_reload_request(u32 type, LinkReader* r, LinkWriter* w);
+void serval_link_reload_replied(void);
+bool serval_link_reload_resuming(bool go);
+bool serval_link_reload_busy(void);
+void serval_link_reload_copied(const u8* game_blob);
+void serval_link_reload_loaded(void);
+void serval_link_reload_detached(void);
 
 // --- The platform's end ---------------------------------------------------------
 

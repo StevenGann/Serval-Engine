@@ -68,9 +68,9 @@ static void agent_info_attaches(void) {
     CHECK(p[0] == 1 && p[1] == 0);
     CHECK(text_is(p + 2, SERVAL_LINK_ENGINE_VERSION));
     p += 3 + p[2];
-    // debug link (E6): the VM's part's capabilities, its sites
+    // debug link (E6): the VM's part's capabilities, its sites; (E9) hot reload
     CHECK(rd32(p) == (LINK_CAP_VM | LINK_CAP_BREAKPOINTS | LINK_CAP_STEP | LINK_CAP_STATS |
-                      LINK_CAP_ENTITIES | LINK_CAP_STOP_ON_FAULT));
+                      LINK_CAP_ENTITIES | LINK_CAP_STOP_ON_FAULT | LINK_CAP_RELOAD));
     CHECK(p[4] == VM_CONTEXTS && p[5] == VM_STACK && p[6] == VM_CALLS);
     CHECK(rd16(p + 7) == VM_GLOBALS && p[9] == VM_FIELDS && rd16(p + 10) == VM_ARRAY_CELLS);
     CHECK(rd16(p + 12) == MAX_ENT && p[14] == VM_P_COUNT && rd16(p + 15) == LINK_SITES);
@@ -105,7 +105,7 @@ static void requests_before_attaching(void) {
     u16 reload = request(LINK_RELOAD_BEGIN, (const u8[]){0, 0, 0, 0, 0, 0, 0, 0}, 8);
     frame();
     CHECK(error(pause, LINK_BAD_REQUEST) && error(globals, LINK_BAD_REQUEST));
-    CHECK(error(step, LINK_BAD_REQUEST) && error(reload, LINK_UNSUPPORTED)); // E6: STEP known
+    CHECK(error(step, LINK_BAD_REQUEST) && error(reload, LINK_BAD_REQUEST)); // E6, E9: known
     CHECK(!serval_link_parked());
 }
 
@@ -599,11 +599,11 @@ static void malformed_frames(void) {
     // Unknown types, the endpoint's types: UNSUPPORTED.
     u16 unknown = request(0x7F, NULL, 0);
     u16 endpoints = request(LINK_READ_MEM, (const u8[]){0, 0, 0, 4, 4, 0}, 6);
-    u16 reload = request(LINK_RELOAD_BEGIN, NULL, 0);
-    u16 commit = request(LINK_RELOAD_COMMIT, NULL, 0); // E6: CONTEXTS answers now
+    u16 events = request(LINK_RELOADED, NULL, 0); // E9: RELOAD_* answer now; events aren't requests
+    u16 stopped = request(LINK_STOPPED, NULL, 0);
     frame();
     CHECK(error(unknown, LINK_UNSUPPORTED) && error(endpoints, LINK_UNSUPPORTED));
-    CHECK(error(reload, LINK_UNSUPPORTED) && error(commit, LINK_UNSUPPORTED));
+    CHECK(error(events, LINK_UNSUPPORTED) && error(stopped, LINK_UNSUPPORTED));
 }
 
 // A later minor's additions: trailing bytes are ignored, as are flag bits

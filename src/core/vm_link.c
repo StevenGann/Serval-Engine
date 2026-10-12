@@ -21,6 +21,9 @@
 // counted, as without the breakpoint. A site carries kinds (a breakpoint, a
 // step site at a depth up to STEP's, a step site at any depth); sites are
 // kept sorted by pc, found by a binary search at each hit.
+//
+// debug link (E9): hot reload is link_reload.c's, reached from here
+// (request(), and the part's replied and resuming).
 
 #include "link_internal.h"
 #include "serval/debug.h"
@@ -314,7 +317,10 @@ void serval_vm_link_loaded(void) {
     bool stepping = vma.step.active;
     u32 k = vma.step.context;
     end_step();
-    if (!serval_link_attached())
+    serval_link_reload_loaded(); // debug link (E9): the game's own blob, no reload
+    // (serval_vm_link_attached: not while the debugger leaves, whose half-done
+    // reload may unload the VM.)
+    if (!serval_vm_link_attached)
         return; // AGENT_INFO gives the blob's size and hash
     u32 size;
     const u8* b = loaded(&size);
@@ -481,6 +487,7 @@ static u32 copy_blob(void) {
     for (u32 i = 0; i < size; i++)
         copy[i] = b[i];
     serval_vm_link_use_copy(copy);
+    serval_link_reload_copied(b); // debug link (E9): a reload goes back to the game's own
     return 0;
 }
 
@@ -595,9 +602,15 @@ static u32 request(u32 type, LinkReader* r, LinkWriter* w) {
     case LINK_SET_LOCAL:
         return set_local(r);
     case LINK_BREAK_SET:
-        return break_set(r);
     case LINK_BREAK_CLEAR:
-        return break_clear(r);
+        if (serval_link_reload_busy()) // debug link (E9): the scratch is the reload's
+            return fail(LINK_RELOADING, "a reload is under way: set breakpoints after RELOADED");
+        return type == LINK_BREAK_SET ? break_set(r) : break_clear(r);
+    case LINK_RELOAD_BEGIN: // debug link (E9): hot reload (link_reload.c)
+    case LINK_RELOAD_DATA:
+    case LINK_RELOAD_PLAN:
+    case LINK_RELOAD_COMMIT:
+        return serval_link_reload_request(type, r, w);
     default: // LINK_STEP
         return step(r);
     }
@@ -615,7 +628,8 @@ static void info(ServalLinkVmInfo* out) {
     out->scratch = SERVAL_LINK_SCRATCH;
     out->sites = SERVAL_LINK_SCRATCH ? LINK_SITES : 0;
     out->capabilities = LINK_CAP_VM | LINK_CAP_STOP_ON_FAULT |
-                        (SERVAL_LINK_SCRATCH ? LINK_CAP_BREAKPOINTS | LINK_CAP_STEP : 0);
+                        (SERVAL_LINK_SCRATCH ? LINK_CAP_BREAKPOINTS | LINK_CAP_STEP : 0) |
+                        (SERVAL_LINK_SCRATCH ? LINK_CAP_RELOAD : 0); // debug link (E9)
 }
 
 static void poll(bool attached) {
@@ -639,6 +653,19 @@ static void detached(void) {
     end_step();
     while (vma.sites)
         remove_site(vma.sites - 1);
+    serval_link_reload_detached(); // debug link (E9): a reload half done
+}
+
+// debug link (E9): for the hot reload (link_reload.c): the scratch (NULL:
+// none), and every site removed, its opcode back, and no step.
+u8* serval_vm_link_scratch(void) {
+    return SCRATCH;
+}
+
+void serval_vm_link_unpatch(void) {
+    end_step();
+    while (vma.sites)
+        remove_site(vma.sites - 1);
 }
 
 const ServalLinkVmPart serval_link_vm_part = {
@@ -652,6 +679,8 @@ const ServalLinkVmPart serval_link_vm_part = {
     .stats = stats,
     .stopped = stopped,
     .detached = detached,
+    .replied = serval_link_reload_replied, // debug link (E9): hot reload (link_reload.c)
+    .resuming = serval_link_reload_resuming,
 };
 
 #endif // SERVAL_LINK_AGENT

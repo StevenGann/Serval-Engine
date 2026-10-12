@@ -305,7 +305,7 @@ static void capabilities_and_sites(void) {
         return;
     const u8* p = f + 6 + 3 + f[8];
     CHECK(rd32(p) == (LINK_CAP_VM | LINK_CAP_BREAKPOINTS | LINK_CAP_STEP | LINK_CAP_STATS |
-                      LINK_CAP_ENTITIES | LINK_CAP_STOP_ON_FAULT));
+                      LINK_CAP_ENTITIES | LINK_CAP_STOP_ON_FAULT | LINK_CAP_RELOAD)); // E9
     CHECK(rd16(p + 15) == LINK_SITES && rd32(p + 17) == SERVAL_LINK_SCRATCH);
     // Breakpoints change neither AGENT_INFO's size nor its hash: the blob as
     // the game loaded it.

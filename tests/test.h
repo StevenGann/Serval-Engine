@@ -71,5 +71,7 @@ extern const TestSuite web_mixer_tests; // maxmod: the web's mixer
 extern const TestSuite web_lz77_tests;  // lz77: the web's LZ77 decoder
 extern const TestSuite link_tests;      // debug link: the agent, with a fake endpoint
 extern const TestSuite link_vm_tests;   // debug link (E6): the agent's VM part
+// debug link (E9): the agent's hot reload
+extern const TestSuite link_reload_tests;
 
 #endif // SERVAL_TEST_H

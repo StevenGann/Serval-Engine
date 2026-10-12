@@ -70,12 +70,45 @@ if(SERVAL_TARGET_WEB)
                     "-DGENERATOR=${CMAKE_GENERATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/web/svlink-release.cmake")
         set_tests_properties(svlink_release_page PROPERTIES FIXTURES_SETUP svlink_release TIMEOUT 900)
         set(examples "${PROJECT_BINARY_DIR}/examples")
+        # debug link (E9): hot reload end to end. fireflies.lua edited (the
+        # serval walks twice as fast: SPEED, a constant, becomes `speed`, a
+        # global set to 3.0, so Player:step shrinks and the code after it
+        # moves) and built with KEEP_LAYOUT against the page's own build,
+        # into this directory: fireflies.svmap, .svdbg, _script.c, which
+        # svlink_e2e reloads into the running page (svlink-reload-*.png: the
+        # frames before and after).
+        file(READ "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua" reload_script)
+        set(reload_edited "${reload_script}")
+        foreach(edit "local SPEED <const> = 1.5|speed = 3.0" "vx = -SPEED|vx = -speed"
+                     "vx = SPEED|vx = speed" "vy = -SPEED|vy = -speed" "vy = SPEED|vy = speed")
+            string(REPLACE "|" ";" edit "${edit}")
+            list(GET edit 0 from)
+            list(GET edit 1 to)
+            string(FIND "${reload_edited}" "${from}" at)
+            if(at EQUAL -1)
+                message(FATAL_ERROR "svlink_e2e's reload: fireflies.lua has no \"${from}\" any more")
+            endif()
+            string(REPLACE "${from}" "${to}" reload_edited "${reload_edited}")
+        endforeach()
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new" "${reload_edited}")
+        configure_file("${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new"
+                       "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua" COPYONLY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua")
+        add_library(svlink_reload_fireflies OBJECT)
+        serval_add_script(svlink_reload_fireflies "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua"
+                          KEEP_LAYOUT "${examples}/fireflies.svdbg"
+                          HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
+                                  serval/sprites.h serval/path.h serval/screen.h)
+        add_dependencies(svlink_reload_fireflies fireflies)
         add_test(NAME svlink_e2e
             COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlink_test.py"
                     --page "${examples}/fireflies.html"
                     --release-page "${svlink_release}/examples/fireflies.html"
                     --script-c "${examples}/fireflies_script.c" --script-h "${examples}/fireflies_script.h"
-                    --svmap "${examples}/fireflies.svmap" --version "${SERVAL_VERSION_STRING}")
+                    --svmap "${examples}/fireflies.svmap" --version "${SERVAL_VERSION_STRING}"
+                    --reload "${CMAKE_CURRENT_BINARY_DIR}/fireflies.svmap"
+                    --shots "${CMAKE_CURRENT_BINARY_DIR}")
         set_tests_properties(svlink_e2e PROPERTIES FIXTURES_REQUIRED svlink_release
                              SKIP_RETURN_CODE 77 TIMEOUT 600)
     endif()
@@ -124,6 +157,7 @@ if(SERVAL_TARGET_GBA)
     # builds, or with SERVAL_LINK off, none of it (rom/check_link_map.py).
     set(link_agent "$<AND:$<BOOL:${SERVAL_LINK}>,$<CONFIG:Debug,RelWithDebInfo>>")
     target_sources(serval_tests PRIVATE rom/link_tests.c)
+    target_sources(serval_tests PRIVATE rom/link_reload_tests.c) # debug link (E9): a reload's cost
     target_compile_definitions(serval_tests PRIVATE "$<${link_agent}:SERVAL_LINK_AGENT>")
     if(SERVAL_BUILD_EXAMPLES)
         set(link_roms hello fireflies)
@@ -346,6 +380,34 @@ else()
         COMMENT "Finding link_debug.lua's breakpoint sites"
         VERBATIM)
     target_sources(serval_host_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/link_debug_sites.h")
+    # debug link (E9): the agent's hot reload against the fake endpoint
+    # (link_reload_tests.c): a script and its edit, the edit built twice,
+    # without and with KEEP_LAYOUT (the first's .svdbg), and the plans between
+    # them, planned by tools/svlink.py (link_reload_plan.py) as a debugger does
+    target_sources(serval_host_tests PRIVATE link_reload_tests.c)
+    serval_add_script(serval_host_tests link_reload_v1.lua PREFIX R1_ HEADERS serval/ecs.h)
+    serval_add_script(serval_host_tests link_reload_v2.lua PREFIX R2_ HEADERS serval/ecs.h)
+    configure_file(link_reload_v2.lua "${CMAKE_CURRENT_BINARY_DIR}/link_reload_v2k.lua" COPYONLY)
+    serval_add_script(serval_host_tests "${CMAKE_CURRENT_BINARY_DIR}/link_reload_v2k.lua"
+                      KEEP_LAYOUT "${CMAKE_CURRENT_BINARY_DIR}/link_reload_v1.svdbg"
+                      PREFIX R2K_ HEADERS serval/ecs.h)
+    set(reload_builds "")
+    foreach(v v1 v2 v2k)
+        set(base "${CMAKE_CURRENT_BINARY_DIR}/link_reload_${v}")
+        list(APPEND reload_builds "${base}.svmap" "${base}.svdbg" "${base}_script.c")
+    endforeach()
+    set(base "${CMAKE_CURRENT_BINARY_DIR}/link_reload")
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/link_reload_plans.h"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/link_reload_plan.py"
+                -o "${CMAKE_CURRENT_BINARY_DIR}/link_reload_plans.h"
+                "V2=${base}_v1:${base}_v2" "V2K=${base}_v1:${base}_v2k" "SAME=${base}_v2:${base}_v2"
+                "K2=${base}_v2k:${base}_v2"
+        DEPENDS link_reload_plan.py "${PROJECT_SOURCE_DIR}/tools/svlink.py"
+                "${PROJECT_SOURCE_DIR}/tools/svm.py" ${reload_builds}
+        COMMENT "Planning the hot reload tests' reloads"
+        VERBATIM)
+    target_sources(serval_host_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/link_reload_plans.h")
     # debug link: tools/svlink.py, the link's reference client, without a
     # browser: the codec, the WebSocket server, its checks (svlink_e2e, in web
     # builds, runs it against a page)

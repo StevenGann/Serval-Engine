@@ -255,6 +255,9 @@ SERVAL_EWRAM_BSS static bool link_ended;
 #define LINK_QUEUED(count) link_queued(count)
 #define LINK_PHASE(begin) (serval_vm_link_attached ? serval_vm_link_phase(begin) : (void)0)
 #define LINK_LOADED() link_loaded()
+// debug link (E9): a thread's object, which a hot reload restarts it from.
+static void link_thread(const Context* c, u32 object);
+#define LINK_THREAD(c, object) link_thread(c, object)
 #else
 #define LINK_FAULT(kind, problem) ((void)0)
 #define LINK_HALTED(c, reaction) ((void)0)
@@ -263,6 +266,7 @@ SERVAL_EWRAM_BSS static bool link_ended;
 #define LINK_QUEUED(count) ((void)0)
 #define LINK_PHASE(begin) ((void)0)
 #define LINK_LOADED() ((void)0)
+#define LINK_THREAD(c, object) ((void)0)
 #endif
 
 // --- Blob access -------------------------------------------------------------
@@ -1972,6 +1976,7 @@ int vm_start(u16 object, u8 event) {
         return -1;
     }
     Context* c = start_context(handler, ENTITY_NONE, ENTITY_NONE, event, CTX_READY);
+    LINK_THREAD(c, object); // debug link: what a hot reload restarts it from
     return c ? (int)context_index(c) : -1;
 }
 
@@ -2476,5 +2481,150 @@ static void link_loaded(void) {
     link_faults = 0;
     link_ended = false;
     serval_vm_link_loaded();
+}
+
+// debug link (E9): hot reload with a plan (docs/debug-link.md#hot-reload),
+// beside vm_reload(), which keeps its documented behaviour. The agent's hot
+// reload (link_reload.c) takes the new blob and the plan over the link,
+// checks them, sets the globals and the RAM arrays itself, and calls
+// serval_vm_link_reload() for the rest: the contexts, the bindings and their
+// instance fields, and the blob, all at a frame boundary.
+
+// The object each thread (vm_start) runs a handler of: a context with no
+// entity has no binding to say so, and a reload restarts it from it.
+SERVAL_EWRAM_BSS static u16 link_thread_object[VM_CONTEXTS];
+
+static void link_thread(const Context* c, u32 object) {
+    if (c)
+        link_thread_object[context_index(c)] = (u16)object;
+}
+
+bool serval_vm_link_valid(const u8* b, u32 size) {
+    return valid_blob(b, size, "debug link: RELOAD_COMMIT");
+}
+
+u32 serval_vm_link_objects(void) {
+    return object_count;
+}
+
+// Moves a kept context to the new blob: its pc and every return point, each
+// in an unchanged function. False, and nothing moved, if one isn't.
+static bool relocate_context(Context* c, const ServalVmLinkReload* p) {
+    u32 moved[VM_CALLS + 1];
+    u32 cp = c->r.cp;
+    if (c->stacked || cp > VM_CALLS)
+        return false;
+    if (!(moved[cp] = p->relocate(p->plan, c->r.pc)))
+        return false;
+    for (u32 n = 0; n < cp; n++) {
+        if (!(moved[n] = p->relocate(p->plan, c->call_pc[n])))
+            return false;
+    }
+    c->r.pc = moved[cp];
+    for (u32 n = 0; n < cp; n++)
+        c->call_pc[n] = moved[n];
+    return true;
+}
+
+// Restarts a behaviour from its handler's start in the new blob b: a thread
+// in place, ready (the next resume pass runs it); an entity's Create or Room
+// Start halted and its event queued, so the next vm_step() drains it (a
+// Create without zeroing the instance's fields, unlike vm_attach; its Step
+// held until then). False, and nothing changed, if the object (its new
+// number) has no handler for the event, the entity is dead, or the queue is
+// full: the context is halted then.
+static bool restart_context(Context* c, u32 object, const u8* b) {
+    u32 event = c->r.event;
+    u32 handler = event < VM_EV_COUNT
+                      ? le32(b + VM_HEADER_SIZE + object * VM_OBJECT_SIZE + 8 + event * 4)
+                      : 0;
+    if (!handler)
+        return false;
+    Entity e = c->self;
+    if (e == ENTITY_NONE) {
+        start_registers(&c->r, handler, ENTITY_NONE, CTX_READY, event, 0);
+        return true;
+    }
+    if (!serval_entity_alive(e) || queue_count == VM_EVENT_QUEUE)
+        return false;
+    Entity other = c->r.other;
+    halt(c);
+    enqueue(e, other, event);
+    if (event == VM_EV_CREATE)
+        bound_flags[entity_index(e)] |= BIND_CREATE_PENDING;
+    return true;
+}
+
+void serval_vm_link_reload(const ServalVmLinkReload* p) {
+    const u8* b = p->blob;
+    for (u32 k = 0; k < VM_CONTEXTS; k++)
+        p->outcomes[k] = LINK_RELOAD_NOT_LIVE;
+    // The contexts. At a frame boundary every live one is a behaviour, ready
+    // or waiting: no reaction runs, none is stacked.
+    for (u32 k = next_bit(live_contexts, VM_CONTEXTS, 0); k < VM_CONTEXTS;
+         k = next_bit(live_contexts, VM_CONTEXTS, k + 1)) {
+        Context* c = &contexts[k];
+        u32 action = p->actions[k];
+        int object = -1; // its object's new number (-1: gone, or no binding)
+        if (c->self == ENTITY_NONE) {
+            object = p->object(p->plan, link_thread_object[k]);
+        } else {
+            u32 slot = entity_index(c->self);
+            if (slot < MAX_ENT && bound[slot] == c->self)
+                object = p->object(p->plan, bound_object[slot]);
+        }
+        u32 outcome = LINK_RELOAD_HALTED;
+        if (object >= 0 && action != LINK_RELOAD_HALT) {
+            bool relocating =
+                action == LINK_RELOAD_RELOCATE || action == LINK_RELOAD_RELOCATE_OR_HALT;
+            if (relocating && relocate_context(c, p))
+                outcome = LINK_RELOAD_KEPT;
+            else if (action != LINK_RELOAD_RELOCATE_OR_HALT && restart_context(c, (u32)object, b))
+                outcome = LINK_RELOAD_RESTARTED;
+        }
+        if (outcome == LINK_RELOAD_HALTED)
+            halt(c);
+        else if (c->self == ENTITY_NONE)
+            link_thread_object[k] = (u16)object; // renumbered, for the next reload
+        p->outcomes[k] = (u8)outcome;
+    }
+    // The bindings: renumbered, their instance fields moved; an instance of
+    // an object that is gone (or not listed) detached, without Destroy.
+    for (u32 slot = next_bit(bound_slots, MAX_ENT, 0); slot < MAX_ENT;
+         slot = next_bit(bound_slots, MAX_ENT, slot + 1)) {
+        int object = p->object(p->plan, bound_object[slot]);
+        if (object < 0) {
+            unbind(slot);
+            continue;
+        }
+        bound_object[slot] = (u16)object;
+        s32 was[VM_FIELDS];
+        for (u32 n = 0; n < VM_FIELDS; n++)
+            was[n] = fields[slot][n];
+        for (u32 n = 0; n < VM_FIELDS; n++)
+            fields[slot][n] = p->field_from[n] < VM_FIELDS ? was[p->field_from[n]] : 0;
+    }
+    // The blob, and the scheduler's bookkeeping recorded again as install()
+    // does (the bindings' objects have other handlers now). The queue is
+    // kept, and with it the Create-pending flags; the globals and the RAM
+    // arrays are the agent's.
+    reset_warnings();
+    blob = b;
+    blob_size = p->size;
+    object_count = le16(b + 8);
+    string_count = le16(b + 10);
+    global_count = le16(b + 12);
+    array_count = le16(b + 14);
+    array_table = VM_HEADER_SIZE + object_count * VM_OBJECT_SIZE + string_count * 4;
+    ram_layout = layout_of(b);
+    for (u32 w = 0; w < BIT_WORDS(MAX_ENT); w++)
+        bound_slots[w] = anim_end_slots[w] = 0;
+    for (u32 slot = 0; slot < MAX_ENT; slot++) {
+        bound_flags[slot] &= (u8)~BIND_STEP;
+        if (bound[slot] != ENTITY_NONE)
+            note_binding(slot);
+    }
+    link_faults = 0;
+    link_ended = false;
 }
 #endif // debug link

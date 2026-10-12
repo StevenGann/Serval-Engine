@@ -27,6 +27,8 @@ extern const TestSuite gba_map_movement_cost_tests; // ladders and slopes: their
 extern const TestSuite gba_vm_sound_tests; // vm sound: scripts' tracker music and sampled effects
 extern const TestSuite gba_lz77_tests;     // lz77: LZ77-compressed sprites and tilesets
 extern const TestSuite gba_link_tests;     // debug link: the agent, dormant without an endpoint
+// debug link (E9): a hot reload's cost
+extern const TestSuite gba_link_reload_tests;
 
 void test_output(const char* line) {
     debug_log(line);
@@ -79,6 +81,8 @@ int main(void) {
         // save suites run in serval_tests_sram, rom/save_main.c)
         &planned_debug_tests,
         &gba_link_tests,
+        // debug link (E9): a hot reload's cost
+        &gba_link_reload_tests,
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

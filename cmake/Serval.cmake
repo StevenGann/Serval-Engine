@@ -251,8 +251,8 @@ function(serval_add_rom target)
         VERBATIM)
 endfunction()
 
-# serval_add_script(<target> <script.lua | listing.svm> [SYMBOL <name>]
-#                   [PREFIX <p>] [HEADERS <h1> <h2> ...])
+# serval_add_script(<target> <script.lua | listing.svm> [KEEP_LAYOUT <old.svdbg>]
+#                   [SYMBOL <name>] [PREFIX <p>] [HEADERS <h1> <h2> ...])
 #
 # Builds a script blob for a target made by serval_add_rom() (or any target)
 # at build time: a script in the Lua subset (.lua, docs/lua.md) is compiled
@@ -287,8 +287,25 @@ endfunction()
 # script, <basename>.svdbg (svlua.py --debug-info: the listing's lines to the
 # script's, functions, locals, and the globals, fields, arrays, objects and
 # strings by name). They are rebuilt with the blob.
+#
+# hot reload: KEEP_LAYOUT names an earlier build's .svdbg (a copy: not the
+# one this call writes): the script's globals, instance fields and arrays
+# keep the numbers they had there and new ones are appended (svlua.py
+# --keep-layout; docs/lua.md#debug-information), so a build meant for a hot
+# reload (docs/debug-link.md#hot-reload) doesn't renumber the running game's
+# state. The script is rebuilt when that file changes; it may be generated in
+# the same project. An empty value is none, so a variable that may be unset
+# can be passed. Lua scripts only. Put it before SYMBOL, PREFIX and HEADERS:
+# an engine from before it then ignores the two words.
 function(serval_add_script target listing)
-    cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX" "HEADERS")
+    # hot reload: KEEP_LAYOUT "" is none, without CMake 3.31's warning about an
+    # empty value (CMP0174)
+    cmake_policy(PUSH)
+    if(POLICY CMP0174)
+        cmake_policy(SET CMP0174 NEW)
+    endif()
+    cmake_parse_arguments(PARSE_ARGV 2 ARG "" "SYMBOL;PREFIX;KEEP_LAYOUT" "HEADERS")
+    cmake_policy(POP)
     if(NOT TARGET ${target})
         message(FATAL_ERROR "serval_add_script(${target}): no such target; call it after "
                             "serval_add_rom(${target} ...).")
@@ -350,6 +367,18 @@ function(serval_add_script target listing)
     if(ARG_PREFIX)
         set(prefix_args --prefix "${ARG_PREFIX}")
     endif()
+    # hot reload: KEEP_LAYOUT (above)
+    set(layout_args "")
+    set(keep_layout "")
+    if(DEFINED ARG_KEEP_LAYOUT AND NOT ARG_KEEP_LAYOUT STREQUAL "")
+        if(NOT extension STREQUAL ".lua")
+            message(FATAL_ERROR "serval_add_script(${target}): KEEP_LAYOUT keeps a Lua script's "
+                                "numbers; ${listing} is a listing.")
+        endif()
+        cmake_path(ABSOLUTE_PATH ARG_KEEP_LAYOUT BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                   NORMALIZE OUTPUT_VARIABLE keep_layout)
+        set(layout_args --keep-layout "${keep_layout}")
+    endif()
 
     get_target_property(out_dir ${target} BINARY_DIR)
     set(c_file "${out_dir}/${base}_script.c")
@@ -360,12 +389,16 @@ function(serval_add_script target listing)
         set(script "${listing}")
         set(listing "${out_dir}/${base}.svm")
         set(debug_file "${out_dir}/${base}.svdbg") # debug link: the listing's map to the script
+        if(layout_args AND keep_layout STREQUAL debug_file) # hot reload
+            message(FATAL_ERROR "serval_add_script(${target}): KEEP_LAYOUT names the .svdbg this "
+                                "build writes (${debug_file}); give it a copy of an earlier one.")
+        endif()
         file(GLOB engine_headers "${engine_dir}/include/serval/*.h")
         add_custom_command(
             OUTPUT "${listing}" "${debug_file}"
             COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${svlua}" compile "${script}" -o "${listing}"
-                    --debug-info "${debug_file}"
-            DEPENDS "${script}" "${svlua}" ${engine_headers}
+                    --debug-info "${debug_file}" ${layout_args}
+            DEPENDS "${script}" "${svlua}" ${engine_headers} ${keep_layout}
             COMMENT "Compiling ${base}.lua"
             VERBATIM)
     endif()

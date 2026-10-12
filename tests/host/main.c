@@ -27,6 +27,7 @@ int main(void) {
         &planned_debug_tests,                  // debug link: debug.h's planned names (none)
         &link_tests,                           // debug link: the agent
         &link_vm_tests,                        // debug link (E6): its VM part
+        &link_reload_tests,                    // debug link (E9): its hot reload
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

@@ -17,7 +17,8 @@
 // and the events STOPPED, STATS and LOADED. The VM's part (E6, vm_link.c)
 // adds BRK's park, breakpoints, stepping, CONTEXTS, FRAMES, SET_LOCAL and
 // faults, through serval_link_stop(), which parks the game inside a frame;
-// hot reload (E9) is answered UNSUPPORTED until it comes.
+// and (E9) hot reload: RELOAD_BEGIN, RELOAD_DATA, RELOAD_PLAN, RELOAD_COMMIT
+// and RELOADED, the game parked at a frame boundary.
 //
 // debug_break() (docs/debug-link.md#script-breakpoints): parks the game while
 // a debugger is attached (STOPPED, debug_break, no context); otherwise, and
@@ -66,6 +67,7 @@ typedef struct {
     u32 options;      // OPTIONS' flags (bit 0: stop on fault)
     u32 queue_peak;   // events queued at once, at most, since the last STATS
     u32 dropped;      // frames dropped: the endpoint left no room in the outbox
+    bool inside;      // debug link (E9): parked inside a frame (RELOAD_BEGIN needs a boundary)
 } Agent;
 SERVAL_EWRAM_BSS static Agent agent;
 
@@ -438,6 +440,10 @@ static u32 resume_request(LinkReader* r) {
         return SHORT();
     if (mode > 1)
         return fail(LINK_BAD_REQUEST, "RESUME's mode is 0 (run) or 1 (to the next frame boundary)");
+    const ServalLinkVmPart* vm = vm_part(); // debug link (E9): a reload pins the game
+    if (vm && !vm->resuming(true))
+        return fail(LINK_RELOADING,
+                    "a reload is under way: the game stays parked until RELOAD_COMMIT");
     agent.parked = false;
     agent.next_boundary = mode == 1 ? LINK_STOP_FRAME + 1 : 0;
     return 0;
@@ -465,8 +471,12 @@ static u32 options(LinkReader* r) {
 static u32 step_request(const ServalLinkVmPart* vm, LinkReader* r, LinkWriter* w) {
     if (!agent.parked)
         return fail(LINK_NOT_PARKED, "STEP needs the game parked");
+    if (!vm->resuming(false)) // debug link (E9): a reload pins the game
+        return fail(LINK_RELOADING,
+                    "a reload is under way: the game stays parked until RELOAD_COMMIT");
     u32 code = vm->request(LINK_STEP, r, w);
     if (!code) {
+        vm->resuming(true);
         agent.parked = false;
         agent.next_boundary = 0;
     }
@@ -570,6 +580,11 @@ static u32 request(u32 type, LinkReader* r, LinkWriter* w) {
     case LINK_CONTEXTS:    //
     case LINK_FRAMES:      //
     case LINK_SET_LOCAL:   //
+    // debug link (E9): the VM's part, hot reload
+    case LINK_RELOAD_BEGIN:
+    case LINK_RELOAD_DATA:
+    case LINK_RELOAD_PLAN:
+    case LINK_RELOAD_COMMIT:
         break;
     default:
         return fail(LINK_UNSUPPORTED, "this agent doesn't support the request");
@@ -599,6 +614,12 @@ static u32 request(u32 type, LinkReader* r, LinkWriter* w) {
             return step_request(vm, r, w);
         if (type == LINK_SET_LOCAL && !agent.parked)
             return fail(LINK_NOT_PARKED, "SET_LOCAL needs the game parked");
+        if (type == LINK_RELOAD_BEGIN && (!agent.parked || agent.inside)) // debug link (E9)
+            return agent.parked
+                       ? fail(LINK_NOT_AT_BOUNDARY, "RELOAD_BEGIN needs the game parked at "
+                                                    "a frame boundary (PAUSE)")
+                       : fail(LINK_NOT_PARKED, "RELOAD_BEGIN needs the game parked at a "
+                                               "frame boundary (PAUSE)");
         return vm->request(type, r, w);
     }
     }
@@ -626,6 +647,9 @@ static void handle(const u8* frame, u32 size) {
         serval_link_put_str(&w, serval_link_error_text);
     }
     frame_close(&w);
+    const ServalLinkVmPart* vm = vm_part(); // debug link (E9): RELOADED after RELOAD_COMMIT's reply
+    if (vm)
+        vm->replied();
     if (agent.stop) {
         send_stopped(agent.stop - 1u);
         agent.stop = 0;
@@ -718,7 +742,9 @@ void serval_link_stop(u32 reason, u32 context, u32 pc, u32 fault) {
     agent.parked = true;
     agent.next_boundary = 0; // a frame step is over too
     send_stopped_at(reason, context, pc, fault);
+    agent.inside = true; // debug link (E9)
     park(LINK_STATE_INSIDE);
+    agent.inside = false;
 }
 
 u32 serval_link_options(void) {
