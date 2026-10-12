@@ -29,7 +29,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | Core API | raylib | Flat C calls over libtonc: input, drawing, sound, saves | Implemented (sprites, tilemaps and the camera, PSG sound effects and music with the wave channel, tracker music and sampled sound (Maxmod), text, fades, color mixing, alpha blending, palette writes, raster effects, LZ77-compressed sprites and tilesets, ladders and floor slopes, save data, the debug link's `debug_break()`) | [core-api.md](core-api.md) |
 | World | ECS | Fixed-pool entity storage and per-frame bulk processing: movement, physics, map collision, animation, paths, rendering | Implemented | [ecs.md](ecs.md) |
-| Game logic | GameMaker | Objects with events, executed by the bytecode VM | Interpreter, scheduler, engine bridge, the collision pass (`vm_collide`) and the [Lua-subset](lua.md) compiler implemented, with `fireflies` written in it; the debug link's agent, breakpoints and stepping included (hot reload to come); C stays first-class | [vm.md](vm.md) |
+| Game logic | GameMaker | Objects with events, executed by the bytecode VM | Interpreter, scheduler, engine bridge, the collision pass (`vm_collide`) and the [Lua-subset](lua.md) compiler implemented, with `fireflies` written in it; the debug link's agent, breakpoints, stepping and hot reload included; C stays first-class | [vm.md](vm.md) |
 
 ## Guiding principle: precompute everything
 
