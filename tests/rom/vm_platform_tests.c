@@ -95,6 +95,60 @@ static bool row_reads(int col, int row, const char* text) {
     return true;
 }
 
+// One object whose Create turns the shadow on (with 7: any nonzero cell is
+// on), prints string 0, "HI", centered on row 5, waits a frame, then turns
+// the shadow off and clears the text.
+static const u8 centered_printer[] = {
+    'S', 'V', 'M', 'B', VM_FORMAT_VERSION, VM_CELL_BYTES, 0, 0, // magic, version, cells, flags
+    1, 0, 1, 0, 0, 0, 0, 0, // 1 object, 1 string, no globals, no arrays
+    // 0x10: object 0: mask 0, sprite 0, Create @ 0x34, no other handler
+    0, 0, 0, 0, 0, 0, 0, 0, 0x34, 0, 0, 0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    //
+    0x48, 0, 0, 0,                                     // 0x30: string 0 @ 0x48
+    VM_OP_PUSH8, 7,                                    // 0x34: on
+    VM_OP_SYS, VM_SYS_TEXT_SET_SHADOW,                 //
+    VM_OP_PUSH8, 5,                                    //       row
+    VM_OP_PUSH8, 0,                                    //       row string
+    VM_OP_SYS, VM_SYS_TEXT_PRINT_CENTERED,             //
+    VM_OP_PUSH8, 1,                                    //       1
+    VM_OP_WAIT,                                        //       a frame
+    VM_OP_PUSH8, 0,                                    //       off
+    VM_OP_SYS, VM_SYS_TEXT_SET_SHADOW,                 //
+    VM_OP_SYS, VM_SYS_TEXT_CLEAR,                      //
+    VM_OP_HALT,                                        //
+    'H', 'I', 0,                                       // 0x48: string 0
+};
+
+// True if the 4bpp tile has a pixel of color c.
+static bool tile_has(const TILE* t, u32 c) {
+    for (int i = 0; i < 8; i++)
+        for (int shift = 0; shift < 32; shift += 4)
+            if ((t->data[i] >> shift & 15) == c)
+                return true;
+    return false;
+}
+
+// vm.md "Engine calls": text_print_centered, text_set_shadow and text_clear
+// do what the C functions do: "HI" in the middle of row 5 (columns 14 and
+// 15 of 30), the glyphs drawn with their shadow (color 2) while it is on,
+// and every cell blank after the clear.
+static void text_centered_shadow_and_clear(void) {
+    text_clear();
+    text_print(0, 5, "X"); // the centered line blanks the whole row
+    CHECK(vm_load(centered_printer, sizeof centered_printer));
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_CREATE) >= 0);
+    vm_step();
+    CHECK(row_reads(0, 5, "              HI              "));
+    CHECK(tile_has(&tile_mem[0][GLYPH('H')], 2));
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(!tile_has(&tile_mem[0][GLYPH('H')], 2));
+    CHECK(row_reads(0, 5, "                              "));
+    CHECK(debug_warning_count() == before);
+    vm_unload();
+}
+
 // vm.md "Engine calls": with a width of 1 or more, text_print_number right-
 // aligns the number in that many columns, blanks in front, so a number that
 // got shorter leaves nothing behind; a number wider than the width prints in
@@ -296,5 +350,6 @@ static void room_load_costs(void) {
 
 TEST_SUITE(gba_vm_tests, "gba_vm", {"text_calls_print", text_calls_print},
            {"text_print_number_width", text_print_number_width},
+           {"text_centered_shadow_and_clear", text_centered_shadow_and_clear},
            {"blend_call_sets_the_registers", blend_call_sets_the_registers},
            {"collide_costs", collide_costs}, {"room_load_costs", room_load_costs});

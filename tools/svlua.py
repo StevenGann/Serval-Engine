@@ -1409,6 +1409,16 @@ ENGINE = {
     "sfx_playing": ((INT,), BOOL, "SYS SFX_PLAYING"),
     "sfx_stop_all": ((), None, "SYS SFX_STOP_ALL"),
     "sfx_set_volume": ((INT,), None, "SYS SFX_SET_VOLUME"),
+    # the map: the playfield's cells by metatile, its collision and tags by
+    # world pixel (map.h); the results are integers (MAP_TYPE() and MAP_TAG()
+    # bits are tested with &)
+    "map_cell": ((INT, INT), INT, "SYS MAP_CELL"),
+    "map_set_cell": ((INT, INT, INT), None, "SYS MAP_SET_CELL"),
+    "map_collision_at": ((INT, INT), INT, "SYS MAP_COLLISION_AT"),
+    "map_tags_in": ((INT, INT, INT, INT), INT, "SYS MAP_TAGS_IN"),
+    # text (text.h; text_print_centered, with its string, is a TEXT_CALL)
+    "text_clear": ((), None, "SYS TEXT_CLEAR"),
+    "text_set_shadow": ((BOOL,), None, "SYS TEXT_SET_SHADOW"),
     "kill": ((ENTITY,), None, "KILL"),
     "wait": ((INT,), None, "WAIT"),
     "wait_anim": ((), None, "WAIT_ANIM"),
@@ -1419,9 +1429,9 @@ ENGINE = {
 }
 WAITS = ("wait", "wait_anim", "wait_move")
 # Every name the engine gives a script; none is the entity 0.
-# text_print and text_print_number are checked and compiled on their own (a
-# string argument; an optional width).
-TEXT_CALLS = ("text_print", "text_print_number")
+# text_print, text_print_centered and text_print_number are checked and
+# compiled on their own (a string argument; an optional width).
+TEXT_CALLS = ("text_print", "text_print_centered", "text_print_number")
 ENGINE_NAMES = frozenset(ENGINE) | frozenset(TEXT_CALLS) | {"spawn", "instances", "object",
                                                            "array", "none", "math"}
 MATH_FUNCTIONS = ("floor", "abs", "min", "max")
@@ -3473,25 +3483,27 @@ class Checker:
         return result or VOID
 
     def text_call(self, e, name):
-        """text_print(col, row, "text"): a string known at compile time.
-        text_print_number(col, row, n [, width]): an integer."""
+        """text_print(col, row, "text") and text_print_centered(row, "text"):
+        a string known at compile time. text_print_number(col, row, n [,
+        width]): an integer."""
         number = name == "text_print_number"
-        self.arity(e, name, (3, 4) if number else (3,))
-        for index in (0, 1):
+        at = 1 if name == "text_print_centered" else 2  # the text's argument
+        self.arity(e, name, (3, 4) if number else (at + 1,))
+        for index in range(at):
             self.argument(e.args[index], INT, name, index)
-        what = e.args[2]
+        what = e.args[at]
         ty = self.value(what, allow_string=True)
         if not number:
             if ty == STRING:
                 text = what.const.value
                 bad = next((b for b in text if not 0x20 <= b <= 0x7E), None)
                 if bad is not None:
-                    self.fail(what, f"text_print draws printable ASCII (32 to 126), and this "
+                    self.fail(what, f"{name} draws printable ASCII (32 to 126), and this "
                               f"string has the byte {bad} (0x{bad:02X})")
             else:
                 hint = ("text_print_number(col, row, n) prints a number"
                         if ty in (INT, FIXED, None) else None)
-                self.fail(what, f"text_print draws a literal string, and this is "
+                self.fail(what, f"{name} draws a literal string, and this is "
                           f"{article(ty) if ty else 'a value'}", hint)
         elif ty == STRING:
             self.fail(what, "text_print_number prints an integer, and this is a string",
@@ -4732,6 +4744,12 @@ class FuncGen:
             return
         name = sym.name
         if name in TEXT_CALLS:
+            if name == "text_print_centered":
+                self.expr(e.args[0])
+                label = self.cg.string(e.args[1].const.value, e.line)
+                self.op(f"PUSH STR_{label}", e.args[1])
+                self.op("SYS TEXT_PRINT_CENTERED", e)
+                return
             self.expr(e.args[0])
             self.expr(e.args[1])
             if name == "text_print":

@@ -29,7 +29,8 @@
 -- that hit it), Animation End and WAIT_ANIM (no animations run), paths
 -- (WAIT_MOVE never waits), music and paths' bindings, the queue's and the
 -- context pool's limits. Tracker music and sampled effects meet the
--- runner's stand-in for the mixer, below.
+-- runner's stand-in for the mixer, below. The map calls read and change the
+-- runner's test playfield (--map; config.map), or find no playfield.
 --
 -- Usage: lua stub.lua CONFIG.lua SCRIPT.lua
 -- CONFIG.lua returns a table (tools/svlua_difftest.py writes it):
@@ -42,6 +43,7 @@
 --   fields     {{name, type}, ...}: the instance fields, by slot
 --   frames, seed, starts {{object, event}}, attaches {{object, x, y}},
 --   buttons {{frame, mask, length}}, movement, collides {{object, other}},
+--   map        true: the runner's test playfield is loaded (--map)
 --   prints     "all", "last" or {frame = true, ...}
 -- and prints, like svlua_runner: "frame F", "call NAME A..." as calls happen
 -- (the VM's arguments, TEXT_PRINT's string instead of its index),
@@ -341,6 +343,9 @@ function env.wait_anim() end -- no animations run: the VM warns and goes on
 function env.debug_break() end -- debug link: no debugger here (the VM logs BRK and goes on)
 
 function env.text_print(col, row, text) call("TEXT_PRINT", col, row, text) end
+function env.text_print_centered(row, text) call("TEXT_PRINT_CENTERED", row, text) end
+function env.text_clear() call("TEXT_CLEAR") end
+function env.text_set_shadow(on) call("TEXT_SET_SHADOW", on and 1 or 0) end
 function env.text_print_number(col, row, n, width)
   call("TEXT_PRINT_NUMBER", col, row, n, width or 0)
 end
@@ -424,6 +429,65 @@ end
 function env.sfx_stop_all() call("SFX_STOP_ALL") sfx_on = {} end
 function env.sfx_set_volume(v) call("SFX_SET_VOLUME", clamp(v, 0, 255)) end
 function env.camera_set(x, y) end
+
+-- The map: the runner's test playfield (tests/svlua/runner.c, --map; keep the
+-- two the same), 8 x 4 metatiles of 16 pixels, with map.h's rules: cells
+-- changed by map_set_cell (a change back to the original metatile forgets
+-- it), the collision outside the map (solid left and right, empty above and
+-- below), tags ORed over a rectangle. Without config.map there is no
+-- playfield: 0 from every query, and map_set_cell does nothing (the VM
+-- warns). What a script can't reach in a difftest is left out: the
+-- 64-change limit.
+local MAP_W, MAP_H = 8, 4
+local COLLISION = { [0] = 0x00, 0x01, 0x11, 0x20, 0x41, 0x80 } -- by metatile
+local map_cells = {
+  0, 0, 0, 3, 0, 0, 0, 0,
+  0, 2, 2, 0, 0, 3, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0,
+  1, 1, 4, 4, 1, 5, 5, 1,
+}
+local map_changes = {} -- cell number (from 1) -> metatile
+local function map_at(mx, my)
+  local n = my * MAP_W + mx + 1
+  return map_changes[n] or map_cells[n]
+end
+local function on_map(mx, my) return mx >= 0 and mx < MAP_W and my >= 0 and my < MAP_H end
+function env.map_cell(mx, my)
+  if not config.map or not on_map(mx, my) then return 0 end
+  return map_at(mx, my)
+end
+function env.map_set_cell(mx, my, metatile)
+  if not config.map or not on_map(mx, my) or metatile < 0 or metatile > 5 then return end
+  local n = my * MAP_W + mx + 1
+  map_changes[n] = metatile ~= map_cells[n] and metatile or nil
+end
+function env.map_collision_at(x, y)
+  if not config.map then return 0 end
+  local mx, my = x // 16, y // 16 -- floor division: C's arithmetic shift
+  if mx < 0 or mx >= MAP_W then return 0x01 end
+  if my < 0 or my >= MAP_H then return 0x00 end
+  return COLLISION[map_at(mx, my)]
+end
+function env.map_tags_in(x, y, w, h)
+  if not config.map or w <= 0 or h <= 0 then return 0 end
+  local map_w, map_h = MAP_W * 16, MAP_H * 16 -- clipped as map.c clips: no overflow
+  if x < 0 then
+    if x + w <= 0 then return 0 end
+    w, x = w + x, 0
+  end
+  if y < 0 then
+    if y + h <= 0 then return 0 end
+    h, y = h + y, 0
+  end
+  if x >= map_w or y >= map_h then return 0 end
+  local right = w > map_w - x and map_w or x + w
+  local bottom = h > map_h - y and map_h or y + h
+  local tags = 0
+  for my = y // 16, (bottom - 1) // 16 do
+    for mx = x // 16, (right - 1) // 16 do tags = tags | COLLISION[map_at(mx, my)] end
+  end
+  return tags & 0xF0
+end
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end
 

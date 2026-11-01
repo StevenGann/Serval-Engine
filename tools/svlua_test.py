@@ -513,6 +513,47 @@ REJECTED = {
                         r"^sfx_play is an engine function; a script can't redefine it$"),
     "sound_top_local": ("local music_set_volume = 0", 1, 7,
                         r"^music_set_volume is an engine function; a script can't redefine it$"),
+    # the map: integers in, integers out (tags and types are tested with &)
+    "map_cell_fixed": (OBJ + "function A:step() local c = map_cell(1.5, 0) end", 3, 38,
+                       r"^map_cell's first argument is an integer, and this is fixed$"),
+    "map_set_cell_arity": (OBJ + "function A:step() map_set_cell(1, 2) end", 3, 19,
+                           r"^map_set_cell takes 3 arguments, not 2$"),
+    "map_set_cell_boolean": (OBJ + "function A:step() map_set_cell(1, 2, false) end", 3, 38,
+                             r"^map_set_cell's third argument is an integer, and this is a "
+                             r"boolean$"),
+    "map_tags_in_arity": (OBJ + "function A:step() local t = map_tags_in(0, 0, 8) end", 3, 29,
+                          r"^map_tags_in takes 4 arguments, not 3$"),
+    "map_tags_condition": (OBJ + "function A:step() if map_tags_in(0, 0, 8, 8) then end end", 3,
+                           22, r"^conditions must be booleans: map_tags_in\(\.\.\.\) is an "
+                           r"integer"),
+    "map_collision_entity": (OBJ + "function A:step() local c = map_collision_at(self, 0) end",
+                             3, 46, r"^map_collision_at's first argument is an integer, and this "
+                             r"is an entity$"),
+    "map_set_cell_value": (OBJ + "function A:step() local x = map_set_cell(0, 0, 1) end", 3, 29,
+                           r"^map_set_cell\(\) returns no value$"),
+    "map_redefined": ("function map_cell() end", 1, 10,
+                      r"^map_cell is an engine function; a script can't redefine it$"),
+    # text: the shadow a boolean, the centered text a literal (or <const>)
+    # string, as text_print's
+    "text_shadow_integer": (OBJ + "function A:step() text_set_shadow(1) end", 3, 35,
+                            r"^text_set_shadow's first argument is a boolean, and this is an "
+                            r"integer$"),
+    "text_clear_arguments": (OBJ + "function A:step() text_clear(0) end", 3, 19,
+                             r"^text_clear takes 0 arguments, not 1$"),
+    "text_clear_value": (OBJ + "function A:step() local x = text_clear() end", 3, 29,
+                         r"^text_clear\(\) returns no value$"),
+    "centered_arity": (OBJ + 'function A:step() text_print_centered(0, 1, "HI") end', 3, 19,
+                       r"^text_print_centered takes 2 arguments, not 3$"),
+    "centered_number": (OBJ + "function A:step() text_print_centered(0, 5) end", 3, 42,
+                        r"^text_print_centered draws a literal string, and this is an integer"),
+    "centered_row_string": (OBJ + 'function A:step() text_print_centered("A", "B") end', 3, 39,
+                            r"^strings exist only as text_print's argument"),
+    "centered_non_ascii": (OBJ + 'function A:step() text_print_centered(0, "\\t") end', 3, 42,
+                           r"^text_print_centered draws printable ASCII \(32 to 126\), and this "
+                           r"string has the byte 9 \(0x09\)$"),
+    "centered_redefined": ("local text_print_centered = 0", 1, 7,
+                           r"^text_print_centered is an engine function; a script can't "
+                           r"redefine it$"),
     # Top-level names of the engine's planned functions, and their uses:
     # PlannedNames tests the rules with a planned function of its own (this
     # version declares none). debug link: debug_break(), planned before 1.0 to
@@ -1554,7 +1595,9 @@ PROPS = ("X", "Y", "VX", "VY", "SPR", "FRAME", "FLAGS", "ANGLE", "DEPTH", "SCALE
          "BODY_MAX_FALL", "BODY_GRAVITY", "BODY_CONTACT")
 FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, the fields
 SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3,  # vm.md's SYS page
-             2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1)  # sound: music_play to sfx_set_volume
+             2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,  # sound: music_play to sfx_set_volume
+             2, 3, 2, 4,  # the map: map_cell to map_tags_in (made by vm.c: never printed)
+             0, 1, 1)  # text: text_clear to text_print_centered (row, then its text)
 COLOR_CALLS = ("SPRITE_SET_COLORS", "TILESET_SET_COLORS")  # their colors follow the arguments
 
 
@@ -1614,14 +1657,15 @@ class VmRun:
 
 def run_vm(source, frames=1, start=(), attach=(), buttons=(), set_=None, collide=(),
            movement=False, physics=None, seed=None, printed="last", headers=None, files=(),
-           warnings=False):
+           warnings=False, map_=False):
     """Compiles a script, assembles it and runs it on the VM with
     svlua_runner: `start` objects' room_start threads (OBJ or (OBJ, EVENT),
     by listing name), `attach`ed instances ((OBJ, x, y) in pixels, or OBJ),
     `buttons` held ((frame, mask, length)), globals `set_` ({listing name:
     cell}), `collide` pairs ((OBJ, OTHER)); sys_movement with `movement`,
     and sys_physics with contacts and a gravity of `physics` 256ths when it
-    isn't None. Unless `warnings`, the run must not warn. Returns a VmRun."""
+    isn't None; the runner's test playfield with `map_` (--map). Unless
+    `warnings`, the run must not warn. Returns a VmRun."""
     compiled = svlua.compile_program(source, "t.lua")
     assembled = assemble(compiled.listing, header_names(headers, files))
     objects = {name: k for k, name in enumerate(assembled.objects)}
@@ -1648,6 +1692,8 @@ def run_vm(source, frames=1, start=(), attach=(), buttons=(), set_=None, collide
             args.append("--movement")
         if physics is not None:
             args += ["--physics", str(physics)]
+        if map_:
+            args.append("--map")
         done = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if done.returncode != 0:
         raise AssertionError(f"svlua_runner failed ({done.returncode}): {done.stderr}")
@@ -1666,13 +1712,16 @@ def lit(n):
 # --- Code generation ---------------------------------------------------------
 
 
-GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals", "sound")
+GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals", "sound",
+          "map")
 GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
                   "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
                   "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
                   "SONG_WIN": 0, "LAYER_FOREGROUND": 2, "LAYER_ALL": 0x3F,
                   # sound: a sound bank's header (mmutil's), and a button
-                  "MOD_THEME": 0, "SFX_JUMP": 1, "SFX_ENGINE": 2, "BUTTON_START": 8}
+                  "MOD_THEME": 0, "SFX_JUMP": 1, "SFX_ENGINE": 2, "BUTTON_START": 8,
+                  # the map: a game's metatiles and tags
+                  "MT_EMPTY": 0, "MT_BRICK": 2, "TAG_GEM": 0x20, "TAG_SPIKES": 0x40}
 
 
 class Golden(unittest.TestCase):
@@ -1726,7 +1775,10 @@ class Golden(unittest.TestCase):
                          "MUSIC_PLAY", "MUSIC_STOP", "MUSIC_PLAYING", "MUSIC_PAUSE",
                          "MUSIC_RESUME", "MUSIC_PAUSED", "MUSIC_SET_VOLUME", "MUSIC_SET_SPEED",
                          "SFX_PLAY", "SFX_PLAY_EX", "SFX_STOP", "SFX_PLAYING", "SFX_STOP_ALL",
-                         "SFX_SET_VOLUME"):
+                         "SFX_SET_VOLUME",
+                         # the map and text
+                         "MAP_CELL", "MAP_SET_CELL", "MAP_COLLISION_AT", "MAP_TAGS_IN",
+                         "TEXT_CLEAR", "TEXT_SET_SHADOW", "TEXT_PRINT_CENTERED"):
             with self.subTest(sys=sys_call):
                 self.assertIn(f"SYS {sys_call}", text)
         self.assertIn("SETP FIELD_HP", text)  # an instance field
@@ -2454,6 +2506,106 @@ end"""
         self.assertEqual(vm.warnings, 3)  # a volume, a pan, a priority
         self.assertIn("vm: SYS music_set_volume: volume 300 is outside 0 to 255; it plays at "
                       "255", vm.log)
+
+    @needs_runner
+    def test_map_calls_read_and_change_the_playfield(self):
+        """The map calls (vm.md's SYS page) on the runner's test playfield
+        (--map: 8 x 4 metatiles; bricks, tag 0, at (1, 1) and (2, 1); gems,
+        tag 1, at (3, 0) and (5, 1); spikes, solid with tag 2, at (2, 3) and
+        (3, 3); lava, tag 3, at (5, 3) and (6, 3)): results into globals and
+        fields, steering the script; a cell changed, then read back by every
+        query; a change back to the original. vm.c makes them, so the
+        platform sees none."""
+        script = """Hud = object {}
+Player = object { components = C_POS }
+cell = -1
+brick = -1
+gem = 0
+under = 0
+left = 0
+above = 0
+floor = 0
+tags = 0
+function Hud:room_start()
+  cell = map_cell(1, 1)
+  map_set_cell(1, 1, 0)
+  brick = map_cell(1, 1)
+  if map_tags_in(16, 16, 32, 16) == 1 << 4 then gem = 1 end
+  map_set_cell(2, 1, 0)
+  if map_tags_in(16, 16, 32, 16) == 0 then gem = gem + 2 end
+  map_set_cell(1, 1, 2)
+  under = map_collision_at(40, 48)
+  left = map_collision_at(-1, 0)
+  above = map_collision_at(0, -1)
+  floor = map_collision_at(0, 48)
+  tags = map_tags_in(-5, -5, 1000, 1000)
+end
+function Player:step()
+  self.cell = map_cell(math.floor(self.x) // 16, math.floor(self.y) // 16)
+  self.hazard = map_tags_in(math.floor(self.x), math.floor(self.y) + 16, 16, 1)
+  if self.hazard & (1 << 6) ~= 0 then
+    map_set_cell(math.floor(self.x) // 16, math.floor(self.y) // 16 - 2, 3)
+    self.back = map_cell(2, 0) * 100 + map_tags_in(32, 0, 1, 1)
+  end
+end
+"""
+        vm = run_vm(script, start=["HUD"], attach=[("PLAYER", 32, 32)], files=[ECS_H],
+                    map_=True)
+        self.assertEqual(vm.globals, {"CELL": 2, "BRICK": 0, "GEM": 3, "UNDER": 0x41,
+                                      "LEFT": 1, "ABOVE": 0, "FLOOR": 1, "TAGS": 0xF0})
+        (player,) = vm.entities.values()
+        self.assertEqual((player["cell"], player["hazard"]), (0, 0x40))
+        self.assertEqual(player["back"], 3 * 100 + 0x20)  # the gem it put there, read back
+        self.assertEqual(vm.calls, [])
+
+    @needs_runner
+    def test_map_calls_without_a_playfield_or_out_of_range(self):
+        """Without a playfield every query answers 0 (map_collision_at
+        MAP_EMPTY) and map_set_cell warns; on one, a metatile outside a u16
+        is 0xFFFF, which no layer has: map_set_cell warns and changes
+        nothing, rather than setting the metatile the cast would wrap to."""
+        script = OBJ + """n = -1
+function A:room_start()
+  n = map_cell(0, 0) + map_collision_at(-1, 0) + map_tags_in(0, 0, 16, 16)
+  map_set_cell(0, 0, 1)
+end"""
+        vm = run_vm(script, start=["A"], warnings=True)
+        self.assertEqual(vm.globals, {"N": 0})
+        self.assertEqual(vm.warnings, 1)
+        self.assertIn("map_set_cell: no map is loaded on background 2", vm.log)
+        script = OBJ + """n = -1
+function A:room_start()
+  map_set_cell(0, 0, 65536 + 1)
+  map_set_cell(0, 0, -65536 + 2)
+  map_set_cell(9, 0, 1)
+  n = map_cell(0, 0)
+end"""
+        vm = run_vm(script, start=["A"], warnings=True, map_=True)
+        self.assertEqual(vm.globals, {"N": 0})
+        self.assertEqual(vm.warnings, 2)  # a metatile, outside the playfield
+        self.assertIn("map_set_cell(0, 0, 65535): the playfield has only 6 metatiles", vm.log)
+
+    @needs_runner
+    def test_text_calls_pass_their_arguments(self):
+        """text_clear, text_set_shadow (a boolean, 1 or 0) and
+        text_print_centered (the row, then the blob's string: a literal, a
+        <const> or a folded ..) reach the platform in order."""
+        script = OBJ + """local TITLE <const> = "SERVAL DASH"
+function A:room_start()
+  text_clear()
+  text_set_shadow(true)
+  text_print_centered(0, TITLE)
+  wait(1)
+  text_set_shadow(1 > 2)
+  text_print_centered(19, "GEMS " .. "12")
+  text_print_centered(-3, "")
+end"""
+        vm = run_vm(script, frames=2, start=["A"], printed="all")
+        self.assertEqual(vm.calls, [(1, "TEXT_CLEAR"), (1, "TEXT_SET_SHADOW", 1),
+                                    (1, "TEXT_PRINT_CENTERED", 0, "SERVAL DASH"),
+                                    (2, "TEXT_SET_SHADOW", 0),
+                                    (2, "TEXT_PRINT_CENTERED", 19, "GEMS 12"),
+                                    (2, "TEXT_PRINT_CENTERED", -3, "")])
 
 
 class Tool(unittest.TestCase):

@@ -5,18 +5,20 @@
 // music, text, buttons, brightness, palette writes; the web build compiles
 // the GBA files).
 // vm.c makes the portable SYS calls itself (VM_SYS_CAMERA_SET,
-// VM_SYS_RANDOM_RANGE, VM_SYS_PATH_START, VM_SYS_PATH_STOP) and hands every
+// VM_SYS_RANDOM_RANGE, VM_SYS_PATH_START, VM_SYS_PATH_STOP and the map's,
+// VM_SYS_MAP_CELL to VM_SYS_MAP_TAGS_IN) and hands every
 // other one to serval_vm_platform_call, implemented in src/gba/vm_platform.c
 // (GBA and web) and in src/host/platform.c (host: records the call for the
 // tests).
 
 #include "serval/vm.h"
 
-// fn: a VM_SYS_* number other than the four above. args: the call's
+// fn: a VM_SYS_* number other than those above. args: the call's
 // arguments in the order they were pushed (args[0] first), as many as the
 // SYS table in docs/vm.md gives it (the sound calls': already in their C
 // parameters' ranges, vm.c's sound_call). ptr: what vm.c resolved from an index
-// argument (VM_SYS_TEXT_PRINT: the string; VM_SYS_PSG_MUSIC_PLAY: the PsgSong;
+// argument (VM_SYS_TEXT_PRINT, VM_SYS_TEXT_PRINT_CENTERED: the string;
+// VM_SYS_PSG_MUSIC_PLAY: the PsgSong;
 // VM_SYS_SPRITE_SET_COLORS and VM_SYS_TILESET_SET_COLORS: the colors read
 // from the array, as many as the count says, valid until the next SYS call),
 // otherwise NULL; vm.c has already warned about and skipped calls whose

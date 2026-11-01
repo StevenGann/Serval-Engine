@@ -199,7 +199,11 @@ enum {
 // sound calls pass C its arguments in its ranges, never wrapped: an ID past
 // a u16 becomes 0xFFFF, which no sound bank has, and a handle SFX_NONE; a
 // speed below 0 becomes 1 and one past a u16 0xFFFF, for music_set_speed to
-// clamp; a volume, pan or priority outside its range is clamped (warns).
+// clamp; a volume, pan or priority outside its range is clamped (warns). The
+// map calls read and change the playfield (background 2) as their C
+// functions do; a metatile outside a u16 becomes 0xFFFF, which no layer has
+// (map_set_cell warns). text_set_shadow's argument is a boolean (0/1), and
+// text_print_centered's text a string of the blob, as text_print's.
 enum {
     VM_SYS_PSG_PLAY,              // sound id -> psg_play(id)
     VM_SYS_PSG_MUSIC_PLAY,        // song index (VmBindings.psg_songs) -> psg_music_play
@@ -235,6 +239,15 @@ enum {
     VM_SYS_SFX_PLAYING,      // handle -> 1 if sfx_playing(handle), else 0
     VM_SYS_SFX_STOP_ALL,     // sfx_stop_all()
     VM_SYS_SFX_SET_VOLUME,   // volume (0-255) -> sfx_set_volume
+    // the map: the playfield's cells, collision and tags (map.h)
+    VM_SYS_MAP_CELL,         // mx, my -> map_cell: the metatile
+    VM_SYS_MAP_SET_CELL,     // mx, my, metatile -> map_set_cell
+    VM_SYS_MAP_COLLISION_AT, // x, y (world pixels) -> map_collision_at: type and tags
+    VM_SYS_MAP_TAGS_IN,      // x, y, w, h (world pixels) -> map_tags_in: the tags ORed
+    // text: clearing, the drop shadow, centered lines (text.h)
+    VM_SYS_TEXT_CLEAR,          // text_clear()
+    VM_SYS_TEXT_SET_SHADOW,     // on (0/1) -> text_set_shadow
+    VM_SYS_TEXT_PRINT_CENTERED, // row, string index -> text_print_centered
     VM_SYS_COUNT
 };
 

@@ -1,0 +1,122 @@
+; map.svm: map.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+; Constants from the game's C headers (svm.py asm --header for the headers that define them):
+;   C_POS MT_BRICK MT_EMPTY TAG_GEM TAG_SPIKES
+
+; --- Objects ---
+
+.object PLAYER mask=C_POS sprite=0      ; map.lua:6 Player
+
+; --- Strings ---
+
+.string SERVAL_DASH "SERVAL DASH"       ; map.lua:15
+.string OUCH "OUCH"                     ; map.lua:30
+
+; --- Globals (vm_load starts them at their initial values) ---
+
+.globals GEMS                           ; map.lua:10 gems: integer = 0
+
+; --- Player:create, a behaviour: it may wait ---
+.handler PLAYER CREATE                  ; map.lua:12
+    ; 13: text_clear()
+    SYS TEXT_CLEAR                      ; map.lua:13
+    ; 14: text_set_shadow(true)
+    PUSH 1                              ; map.lua:14 true
+    SYS TEXT_SET_SHADOW                 ; map.lua:14
+    ; 15: text_print_centered(0, TITLE)
+    PUSH 0                              ; map.lua:15
+    PUSH STR_SERVAL_DASH                ; map.lua:15
+    SYS TEXT_PRINT_CENTERED             ; map.lua:15
+    ; 16: end
+    HALT                                ; map.lua:16
+
+; --- Player:step, a reaction: it runs to completion ---
+.handler PLAYER STEP                    ; map.lua:18
+    ; frame: 0 mx, 1 my
+    ENTER 0, 2                          ; map.lua:18
+    ; 19: local mx = math.floor(self.x) // 16
+    SELF                                ; map.lua:19
+    GETP X                              ; map.lua:19
+    PUSH 8                              ; map.lua:19
+    SHR                                 ; map.lua:19 math.floor: the whole part
+    PUSH 16                             ; map.lua:19
+    IDIV                                ; map.lua:19
+    STL 0                               ; map.lua:19
+    ; 20: local my = math.floor(self.y) // 16
+    SELF                                ; map.lua:20
+    GETP Y                              ; map.lua:20
+    PUSH 8                              ; map.lua:20
+    SHR                                 ; map.lua:20 math.floor: the whole part
+    PUSH 16                             ; map.lua:20
+    IDIV                                ; map.lua:20
+    STL 1                               ; map.lua:20
+    ; 21: if map_cell(mx, my - 1) == MT_BRICK then
+    LDL 0                               ; map.lua:21 mx
+    LDL 1                               ; map.lua:21 my
+    PUSH 1                              ; map.lua:21
+    SUB                                 ; map.lua:21
+    SYS MAP_CELL                        ; map.lua:21
+    PUSH MT_BRICK                       ; map.lua:21
+    EQ                                  ; map.lua:21
+    JZ player_step_if1_end              ; map.lua:21
+    ; 22: map_set_cell(mx, my - 1, MT_EMPTY)
+    LDL 0                               ; map.lua:22 mx
+    LDL 1                               ; map.lua:22 my
+    PUSH 1                              ; map.lua:22
+    SUB                                 ; map.lua:22
+    PUSH MT_EMPTY                       ; map.lua:22
+    SYS MAP_SET_CELL                    ; map.lua:22
+    ; 23: end
+player_step_if1_end:                    ; map.lua:23
+    ; 24: if map_tags_in(mx * 16, my * 16, 16, 16) & TAG_GEM ~= 0 then
+    LDL 0                               ; map.lua:24 mx
+    PUSH 16                             ; map.lua:24
+    MUL                                 ; map.lua:24
+    LDL 1                               ; map.lua:24 my
+    PUSH 16                             ; map.lua:24
+    MUL                                 ; map.lua:24
+    PUSH 16                             ; map.lua:24
+    PUSH 16                             ; map.lua:24
+    SYS MAP_TAGS_IN                     ; map.lua:24
+    PUSH TAG_GEM                        ; map.lua:24
+    AND                                 ; map.lua:24
+    JZ player_step_if2_end              ; map.lua:24
+    ; 25: map_set_cell(mx, my, MT_EMPTY)
+    LDL 0                               ; map.lua:25 mx
+    LDL 1                               ; map.lua:25 my
+    PUSH MT_EMPTY                       ; map.lua:25
+    SYS MAP_SET_CELL                    ; map.lua:25
+    ; 26: gems = gems + 1
+    LDG GEMS                            ; map.lua:26
+    PUSH 1                              ; map.lua:26
+    ADD                                 ; map.lua:26
+    STG GEMS                            ; map.lua:26
+    ; 27: end
+player_step_if2_end:                    ; map.lua:27
+    ; 28: if map_collision_at(mx * 16 + 8, my * 16 + 16) & TAG_SPIKES ~= 0 then
+    LDL 0                               ; map.lua:28 mx
+    PUSH 16                             ; map.lua:28
+    MUL                                 ; map.lua:28
+    PUSH 8                              ; map.lua:28
+    ADD                                 ; map.lua:28
+    LDL 1                               ; map.lua:28 my
+    PUSH 16                             ; map.lua:28
+    MUL                                 ; map.lua:28
+    PUSH 16                             ; map.lua:28
+    ADD                                 ; map.lua:28
+    SYS MAP_COLLISION_AT                ; map.lua:28
+    PUSH TAG_SPIKES                     ; map.lua:28
+    AND                                 ; map.lua:28
+    JZ player_step_if3_end              ; map.lua:28
+    ; 29: text_set_shadow(false)
+    PUSH 0                              ; map.lua:29 false
+    SYS TEXT_SET_SHADOW                 ; map.lua:29
+    ; 30: text_print_centered(10, "OUCH")
+    PUSH 10                             ; map.lua:30
+    PUSH STR_OUCH                       ; map.lua:30
+    SYS TEXT_PRINT_CENTERED             ; map.lua:30
+    ; 31: end
+player_step_if3_end:                    ; map.lua:31
+    ; 32: end
+    HALT                                ; map.lua:32

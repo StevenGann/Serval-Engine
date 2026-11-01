@@ -26,6 +26,8 @@ list of key=value settings (repeatable ones may appear several times):
                       from frame F for N frames (default 1)
   collide=Object:Other  Object's instances touching Other's get Collision
   movement            run sys_movement (positions follow velocities)
+  map                 load the runner's test playfield (svlua_runner --map;
+                      stub.lua has the same one) for the map calls
   seed=N              random_seed(N) first
   print=all|last|F,F  the frames to compare the state at (default all)
   tolerance=X         for fixed values (default 1/256)
@@ -75,7 +77,13 @@ SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC
              "MUSIC_PLAY": 2, "MUSIC_STOP": 0, "MUSIC_PLAYING": 0, "MUSIC_PAUSE": 0,
              "MUSIC_RESUME": 0, "MUSIC_PAUSED": 0, "MUSIC_SET_VOLUME": 1, "MUSIC_SET_SPEED": 1,
              "SFX_PLAY": 1, "SFX_PLAY_EX": 5, "SFX_STOP": 1, "SFX_PLAYING": 1, "SFX_STOP_ALL": 0,
-             "SFX_SET_VOLUME": 1}  # TEXT_PRINT: col, row, then its text
+             "SFX_SET_VOLUME": 1,
+             # the map (vm.c makes these: they never print) and text
+             "MAP_CELL": 2, "MAP_SET_CELL": 3, "MAP_COLLISION_AT": 2, "MAP_TAGS_IN": 4,
+             "TEXT_CLEAR": 0, "TEXT_SET_SHADOW": 1,
+             "TEXT_PRINT_CENTERED": 1}  # TEXT_PRINT: col, row, then its text; _CENTERED row
+# The calls whose text the runner prints after their arguments.
+TEXT_CALLS = ("TEXT_PRINT", "TEXT_PRINT_CENTERED")
 # The palette calls: the arguments compared (not the array's number: Lua
 # passes the table), by position, then the colors the VM read from it.
 COLOR_ARGS = {"SPRITE_SET_COLORS": (0, 1, 3), "TILESET_SET_COLORS": (0, 2)}
@@ -96,6 +104,7 @@ class Settings:
         self.buttons = []  # (frame, mask, length)
         self.collides = []  # (object, other)
         self.movement = False
+        self.map = False
         self.seed = None
         self.prints = "all"
         self.tolerance = 1 / 256
@@ -129,6 +138,8 @@ def settings_of(text, constants):
                     s.collides.append((obj, other))
                 elif key == "movement":
                     s.movement = True
+                elif key == "map":
+                    s.map = True
                 elif key == "seed":
                     s.seed = int(value, 0)
                 elif key == "print":
@@ -219,6 +230,8 @@ def run_vm(program, runner, tmp):
         args += ["--collide", f"{program.object_number(obj)}:{program.object_number(other)}"]
     if s.movement:
         args.append("--movement")
+    if s.map:
+        args.append("--map")
     done = subprocess.run(args, capture_output=True, text=True, timeout=120)
     if done.returncode != 0:
         raise DiffError(f"svlua_runner failed ({done.returncode}):\n{done.stderr}")
@@ -238,6 +251,7 @@ def run_lua(program, lua, engine, tmp):
         "attaches": [[program.object_number(n), x, y] for n, x, y in s.attaches],
         "buttons": [list(b) for b in s.buttons],
         "movement": s.movement,
+        "map": s.map,
         "collides": [[program.object_number(a), program.object_number(b)]
                      for a, b in s.collides],
         "prints": s.prints if isinstance(s.prints, str) else {f: True for f in s.prints},
@@ -309,7 +323,7 @@ def read_vm(program, output):
                 r.calls[frame].append((name,) + args)
                 continue
             args = tuple(int(w) for w in words[1:1 + SYS_ARITY[name]])
-            if name == "TEXT_PRINT":
+            if name in TEXT_CALLS:
                 args += (words[6][1:-1],)
             r.calls[frame].append((name,) + args)
         elif head == "global":
@@ -346,7 +360,9 @@ def read_lua(program, output):
             frame = int(rest)
             r.calls[frame] = []
         elif head == "call":
-            words = rest.split(" ", 3) if rest.startswith("TEXT_PRINT ") else rest.split()
+            name = rest.split(" ", 1)[0]
+            words = (rest.split(" ", SYS_ARITY[name] + 1) if name in TEXT_CALLS
+                     else rest.split())
             name = words[0]
             args = tuple(int(w) if not w.startswith('"') else w[1:-1] for w in words[1:])
             r.calls[frame].append((name,) + args)

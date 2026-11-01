@@ -58,7 +58,8 @@ const SaveDevice serval_platform_save_device = {
     .read = host_save_read, .write = host_save_write, SAVE_LAYOUT_SRAM};
 
 // The VM's sound, music, text, button, brightness, blending and palette calls,
-// and its tracker music and sampled effects calls: recorded, not made
+// its tracker music and sampled effects calls, and its text_clear,
+// text_set_shadow and text_print_centered: recorded, not made
 // (vm_internal.h).
 ServalHostVmCalls serval_host_vm_calls;
 
@@ -67,8 +68,10 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     static const u8 arity[VM_SYS_COUNT] = {
         1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3, //
         2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
+        2, 3, 2, 4, // map: map_cell to map_tags_in (made by vm.c, never recorded)
+        0, 1, 2,    // text: text_clear to text_print_centered
     };
-    _Static_assert(VM_SYS_COUNT == 31, "add the new call's arity");
+    _Static_assert(VM_SYS_COUNT == 38, "add the new call's arity");
     ServalHostVmCalls* r = &serval_host_vm_calls;
     u32 n = fn < VM_SYS_COUNT ? arity[fn] : 0;
     r->calls++;

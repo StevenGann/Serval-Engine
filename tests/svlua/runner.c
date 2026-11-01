@@ -5,7 +5,7 @@
 //   svlua_runner BLOB.bin [--frames N] [--seed S] [--set GLOBAL:VALUE]...
 //                [--start OBJ[:EVENT]]... [--attach OBJ[:X:Y]]...
 //                [--buttons FRAME:MASK[:LENGTH]]... [--movement] [--physics G]
-//                [--collide OBJ:OTHER]... [--print all|last|F,F,...]
+//                [--collide OBJ:OTHER]... [--map] [--print all|last|F,F,...]
 //
 // The blob is loaded (vm_load, after ecs_reset), the globals --set (after
 // the blob's initial values, standing in for game C code), then the threads are
@@ -30,13 +30,17 @@
 // until music_stop, and is paused from music_pause until music_resume,
 // music_play or music_stop; each sfx_play and sfx_play_ex returns the next
 // handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
-// or sfx_stop_all.
+// or sfx_stop_all. --map loads the test playfield below (map_load, background
+// 2) before the blob, for the map calls (vm.c makes them: they print
+// nothing); without it there is no playfield (map_cell 0, map_set_cell
+// warns).
 //
 // Output, one record per line, numbers in decimal:
 //   frame F                      at the start of frame F
 //   call FN A0 A1 A2 A3 A4 ["TEXT"]
 //                                each engine call the platform makes (VM_SYS_*
-//                                number and arguments; TEXT_PRINT's string;
+//                                number and arguments; TEXT_PRINT's and
+//                                TEXT_PRINT_CENTERED's string;
 //                                after a palette call's, the colors it read,
 //                                C0 C1 ...), as it happens; button queries
 //                                are not listed, sound queries are
@@ -54,6 +58,7 @@
 #include "serval/core.h"
 #include "serval/debug.h"
 #include "serval/ecs.h"
+#include "serval/map.h"
 #include "serval/physics.h"
 #include "serval/random.h"
 #include "serval/screen.h"
@@ -103,7 +108,7 @@ static void usage(const char* problem) {
     fprintf(stderr, "usage: svlua_runner BLOB.bin [--frames N] [--seed S] [--set GLOBAL:VALUE]... "
                     "[--start OBJ[:EVENT]]... [--attach OBJ[:X:Y]]... "
                     "[--buttons FRAME:MASK[:LENGTH]]... [--movement] [--physics G] "
-                    "[--collide OBJ:OTHER]... "
+                    "[--collide OBJ:OTHER]... [--map] "
                     "[--print all|last|F,F,...]\n");
     exit(2);
 }
@@ -160,6 +165,33 @@ static void read_blob(const char* path) {
     if (more)
         usage("the blob is larger than 1 MiB");
 }
+
+// --- The map -----------------------------------------------------------------
+
+// --map: a playfield of 8 x 4 metatiles for the map calls, with each kind of
+// metatile a platformer has. tests/svlua/stub.lua has the same one: change
+// both together. Metatiles: 0 empty, 1 solid, 2 a brick (solid, tag 0), 3 a
+// gem (empty, tag 1), 4 spikes (solid, tag 2), 5 lava (empty, tag 3).
+static const Metatile test_metatiles[] = {
+    {{0, 0, 0, 0}, MAP_EMPTY},
+    {{0, 0, 0, 0}, MAP_SOLID},
+    {{0, 0, 0, 0}, MAP_SOLID | MAP_TAG(0)},
+    {{0, 0, 0, 0}, MAP_EMPTY | MAP_TAG(1)},
+    {{0, 0, 0, 0}, MAP_SOLID | MAP_TAG(2)},
+    {{0, 0, 0, 0}, MAP_EMPTY | MAP_TAG(3)},
+};
+static const u16 test_cells[8 * 4] = {
+    0, 0, 0, 3, 0, 0, 0, 0, //
+    0, 2, 2, 0, 0, 3, 0, 0, //
+    0, 0, 0, 0, 0, 0, 0, 0, //
+    1, 1, 4, 4, 1, 5, 5, 1, //
+};
+static const MapLayer test_playfield = {.width = 8,
+                                        .height = 4,
+                                        .cells = test_cells,
+                                        .metatiles = test_metatiles,
+                                        .metatile_count = 6,
+                                        .bg = 2};
 
 // --- Engine calls ------------------------------------------------------------
 
@@ -225,7 +257,7 @@ static void on_call(void) {
     sound(r);
     printf("call %u %d %d %d %d %d", r->fn, r->args[0], r->args[1], r->args[2], r->args[3],
            r->args[4]);
-    if (r->fn == VM_SYS_TEXT_PRINT && r->ptr)
+    if ((r->fn == VM_SYS_TEXT_PRINT || r->fn == VM_SYS_TEXT_PRINT_CENTERED) && r->ptr)
         printf(" \"%s\"", (const char*)r->ptr);
     if ((r->fn == VM_SYS_SPRITE_SET_COLORS || r->fn == VM_SYS_TILESET_SET_COLORS) && r->ptr) {
         s32 count = r->args[r->fn == VM_SYS_SPRITE_SET_COLORS ? 3 : 2];
@@ -303,7 +335,7 @@ int main(int argc, char** argv) {
     static Set sets[MAX_ITEMS];
     u32 start_count = 0, attach_count = 0, button_count = 0, collide_count = 0, set_count = 0;
     u32 frames = 1;
-    bool movement = false, physics = false;
+    bool movement = false, physics = false, map = false;
     s32 gravity = 0;
     const char* path = NULL;
     for (int k = 1; k < argc; k++) {
@@ -312,6 +344,10 @@ int main(int argc, char** argv) {
         char* parts[3];
         if (!strcmp(arg, "--movement")) {
             movement = true;
+            continue;
+        }
+        if (!strcmp(arg, "--map")) {
+            map = true;
             continue;
         }
         if (arg[0] != '-') {
@@ -392,6 +428,10 @@ int main(int argc, char** argv) {
     read_blob(path);
 
     ecs_reset();
+    if (map && !map_load(&test_playfield)) {
+        fprintf(stderr, "svlua_runner: map_load refuses the test playfield\n");
+        return 2;
+    }
     if (physics) {
         physics_set_contacts(true);
         physics_set_gravity(0, gravity);

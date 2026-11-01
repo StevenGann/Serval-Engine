@@ -1,6 +1,7 @@
 // The VM's engine calls that only the GBA build has (src/core/vm_internal.h):
 // sound, music, text (strings and numbers), buttons, brightness, blending,
-// palette writes, and tracker music and sampled effects. The web build
+// palette writes, tracker music and sampled effects, and clearing, shadowed
+// and centered text. The web build
 // compiles it too. None may wait for a frame: web pages built with a script
 // tell Asyncify so (serval_add_script(), cmake/Serval.cmake).
 
@@ -120,6 +121,17 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         return 0;
     case VM_SYS_SFX_SET_VOLUME:
         sfx_set_volume((u8)args[0]);
+        return 0;
+    // text: clearing, the shadow (vm.c has made `on` 0 or 1), centered lines
+    // (the string vm.c resolved). The map calls are portable: vm.c makes them.
+    case VM_SYS_TEXT_CLEAR:
+        text_clear();
+        return 0;
+    case VM_SYS_TEXT_SET_SHADOW:
+        text_set_shadow(args[0] != 0);
+        return 0;
+    case VM_SYS_TEXT_PRINT_CENTERED:
+        text_print_centered(args[0], ptr);
         return 0;
     default:
         return 0;

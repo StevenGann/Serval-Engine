@@ -826,13 +826,18 @@ static s32 array_get(const u8* record, u32 i) {
 static const u8 sys_arity[VM_SYS_COUNT] = {
     1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3, //
     2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
+    2, 3, 2, 4,                                        // map: map_cell to map_tags_in
+    0, 1, 2,                                           // text: text_clear to text_print_centered
 };
-_Static_assert(VM_SYS_COUNT == 31, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+_Static_assert(VM_SYS_COUNT == 38, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+// A mask of 64 bits since the calls passed 32; SYS_RESULT(fn) tests it.
 #define SYS_RETURNS                                                                                \
-    (1u << VM_SYS_RANDOM_RANGE | 1u << VM_SYS_BUTTON_DOWN | 1u << VM_SYS_BUTTON_PRESSED |          \
-     1u << VM_SYS_MUSIC_PLAYING | 1u << VM_SYS_MUSIC_PAUSED | 1u << VM_SYS_SFX_PLAY |              \
-     1u << VM_SYS_SFX_PLAY_EX | 1u << VM_SYS_SFX_PLAYING)
-_Static_assert(VM_SYS_COUNT <= 32, "SYS_RETURNS is a mask of 32 bits");
+    (1ull << VM_SYS_RANDOM_RANGE | 1ull << VM_SYS_BUTTON_DOWN | 1ull << VM_SYS_BUTTON_PRESSED |    \
+     1ull << VM_SYS_MUSIC_PLAYING | 1ull << VM_SYS_MUSIC_PAUSED | 1ull << VM_SYS_SFX_PLAY |        \
+     1ull << VM_SYS_SFX_PLAY_EX | 1ull << VM_SYS_SFX_PLAYING | 1ull << VM_SYS_MAP_CELL |           \
+     1ull << VM_SYS_MAP_COLLISION_AT | 1ull << VM_SYS_MAP_TAGS_IN)
+_Static_assert(VM_SYS_COUNT <= 64, "SYS_RETURNS is a mask of 64 bits");
+#define SYS_RESULT(fn) ((SYS_RETURNS >> (fn) & 1u) != 0)
 
 // The colors SYS sprite_set_colors and tileset_set_colors pass: `count`
 // elements of array n from the first, into sys_colors. NULL (warning) if
@@ -871,7 +876,10 @@ static const Color* colors_from_array(u32 fn, s32 n, s32 count) {
 // (sfx_play_ex clamps it). A volume, pan or priority outside its range is
 // clamped, with a warning (once per kind): no value of its C type is wrong,
 // so the C function can't warn.
-static s32 sound_u16(s32 value, s32 outside) {
+//
+// A cell as a u16 argument (an ID, a handle, a metatile): the cell if a u16
+// holds it, else `outside`, a value that names nothing.
+static s32 u16_or(s32 value, s32 outside) {
     return value >= 0 && value <= 0xFFFF ? value : outside;
 }
 
@@ -892,27 +900,27 @@ static s32 sound_call(u32 fn, const s32* args) {
         a[k] = args[k];
     switch (fn) {
     case VM_SYS_MUSIC_PLAY:
-        a[0] = sound_u16(a[0], 0xFFFF);
+        a[0] = u16_or(a[0], 0xFFFF);
         a[1] = a[1] != 0;
         break;
     case VM_SYS_MUSIC_SET_VOLUME:
         SOUND_CLAMP(a[0], 0, 255, WARN_SOUND_VOLUME, "music_set_volume", "volume");
         break;
     case VM_SYS_MUSIC_SET_SPEED:
-        a[0] = a[0] < 0 ? 1 : sound_u16(a[0], 0xFFFF);
+        a[0] = a[0] < 0 ? 1 : u16_or(a[0], 0xFFFF);
         break;
     case VM_SYS_SFX_PLAY:
-        a[0] = sound_u16(a[0], 0xFFFF);
+        a[0] = u16_or(a[0], 0xFFFF);
         break;
     case VM_SYS_SFX_PLAY_EX:
-        a[0] = sound_u16(a[0], 0xFFFF);
+        a[0] = u16_or(a[0], 0xFFFF);
         SOUND_CLAMP(a[1], 0, 255, WARN_SOUND_VOLUME, "sfx_play_ex", "volume");
         SOUND_CLAMP(a[2], -128, 127, WARN_SOUND_PAN, "sfx_play_ex", "pan");
         SOUND_CLAMP(a[4], 0, 255, WARN_SOUND_PRIORITY, "sfx_play_ex", "priority");
         break;
     case VM_SYS_SFX_STOP:
     case VM_SYS_SFX_PLAYING:
-        a[0] = sound_u16(a[0], SFX_NONE);
+        a[0] = u16_or(a[0], SFX_NONE);
         break;
     case VM_SYS_SFX_SET_VOLUME:
         SOUND_CLAMP(a[0], 0, 255, WARN_SOUND_VOLUME, "sfx_set_volume", "volume");
@@ -984,6 +992,28 @@ static s32 sys_call(u32 fn, const s32* args) {
     case VM_SYS_SFX_PLAYING:
     case VM_SYS_SFX_SET_VOLUME:
         return sound_call(fn, args);
+    // the map: portable, made here (map.h). The results are a u16 and two
+    // u8s, so never negative. A metatile outside a u16 is 0xFFFF, which no
+    // layer has (metatile_count is a u16): map_set_cell warns and ignores it,
+    // rather than setting another metatile once truncated.
+    case VM_SYS_MAP_CELL:
+        return map_cell(args[0], args[1]);
+    case VM_SYS_MAP_SET_CELL:
+        map_set_cell(args[0], args[1], (u16)u16_or(args[2], 0xFFFF));
+        return 0;
+    case VM_SYS_MAP_COLLISION_AT:
+        return map_collision_at(args[0], args[1]);
+    case VM_SYS_MAP_TAGS_IN:
+        return map_tags_in(args[0], args[1], args[2], args[3]);
+    // text: on is 1 for any nonzero cell; the text is a string of the blob
+    case VM_SYS_TEXT_SET_SHADOW: {
+        s32 on[SYS_MAX_ARGS] = {args[0] != 0, 0, 0, 0, 0};
+        return serval_vm_platform_call(fn, on, NULL);
+    }
+    case VM_SYS_TEXT_PRINT_CENTERED: {
+        const char* s = string_at(args[1]);
+        return s ? serval_vm_platform_call(fn, args, s) : 0;
+    }
     default:
         return serval_vm_platform_call(fn, args, NULL);
     }
@@ -1463,7 +1493,7 @@ static u32 execute(Context* c, bool reaction) {
             }
             u32 n = sys_arity[fn];
             NEED(n);
-            if (n == 0 && (SYS_RETURNS & 1u << fn)) {
+            if (n == 0 && SYS_RESULT(fn)) {
                 ROOM(1); // a result, and no argument popped to make room for it
             }
             s32 args[SYS_MAX_ARGS] = {0, 0, 0, 0, 0};
@@ -1473,7 +1503,7 @@ static u32 execute(Context* c, bool reaction) {
             s32 result = sys_call(fn, args);
             if (c->r.state != CTX_RUNNING)
                 return VM_OPS_PER_SLICE - left; // halted from outside (cannot happen today)
-            if (SYS_RETURNS & 1u << fn)
+            if (SYS_RESULT(fn))
                 st[sp++] = result; // room: an argument was popped, or checked above
             break;
         }

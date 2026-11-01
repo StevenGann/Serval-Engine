@@ -4137,7 +4137,14 @@ static void sys_page_numbers_are_fixed(void) {
     for (u32 k = 0; k < sizeof sound / sizeof sound[0]; k++)
         moved += sound[k] != 17 + k;
     CHECK(moved == 0);
-    CHECK(VM_SYS_COUNT == 31);
+    // the map, then text
+    static const u32 map_text[] = {
+        VM_SYS_MAP_CELL,   VM_SYS_MAP_SET_CELL,    VM_SYS_MAP_COLLISION_AT,   VM_SYS_MAP_TAGS_IN,
+        VM_SYS_TEXT_CLEAR, VM_SYS_TEXT_SET_SHADOW, VM_SYS_TEXT_PRINT_CENTERED};
+    for (u32 k = 0; k < sizeof map_text / sizeof map_text[0]; k++)
+        moved += map_text[k] != 31 + k;
+    CHECK(moved == 0);
+    CHECK(VM_SYS_COUNT == 38);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -4885,6 +4892,221 @@ static void sys_sound_results_need_room(void) {
     CHECK(vm_global(1) == 1);
 #ifndef SERVAL_GBA
     CHECK(serval_host_vm_calls.calls == 0);
+#endif
+}
+
+// the map and text -----------------------------------------------------------
+
+// A playfield for the map calls: 4 x 2 metatiles. 0 empty, 1 solid, 2 a
+// brick (solid, tag 0), 3 a gem (empty, tag 1), 4 spikes (solid, tag 2).
+static const Metatile sys_metatiles[] = {
+    {{0, 0, 0, 0}, MAP_EMPTY},
+    {{0, 0, 0, 0}, MAP_SOLID},
+    {{0, 0, 0, 0}, MAP_SOLID | MAP_TAG(0)},
+    {{0, 0, 0, 0}, MAP_EMPTY | MAP_TAG(1)},
+    {{0, 0, 0, 0}, MAP_SOLID | MAP_TAG(2)},
+};
+static const u16 sys_cells[] = {
+    0, 2, 3, 0, //
+    1, 1, 4, 1, //
+};
+static const MapLayer sys_playfield = {.width = 4,
+                                       .height = 2,
+                                       .cells = sys_cells,
+                                       .metatiles = sys_metatiles,
+                                       .metatile_count = 5,
+                                       .bg = 2};
+
+// vm.md "Engine calls": the map calls are portable, made by vm.c (no
+// platform call): map_cell, map_collision_at and map_tags_in pop their
+// arguments and push C's result; map_set_cell pops three and pushes
+// nothing, and the queries see its change. The 55 underneath shows the
+// stack balanced.
+static void sys_map_calls(void) {
+    reset();
+    CHECK(map_load(&sys_playfield));
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(55);                    // 55
+    push8(1);                     // 55 mx
+    push8(0);                     // 55 mx my
+    sys(VM_SYS_MAP_CELL);         // 55 2
+    stg(1);                       // glob[1] = 2: the brick
+    push8(1);                     // 55 mx
+    push8(0);                     // 55 mx my
+    push8(0);                     // 55 mx my metatile
+    sys(VM_SYS_MAP_SET_CELL);     // 55: the brick broken
+    push8(1);                     //
+    push8(0);                     //
+    sys(VM_SYS_MAP_CELL);         // 55 0
+    stg(2);                       // glob[2] = 0
+    push8(40);                    // 55 x: metatile 2
+    push8(20);                    // 55 x y: row 1
+    sys(VM_SYS_MAP_COLLISION_AT); // 55 spikes
+    stg(3);                       // glob[3] = MAP_SOLID | MAP_TAG(2)
+    push8(-1);                    // 55 x: left of the map
+    push8(0);                     // 55 x y
+    sys(VM_SYS_MAP_COLLISION_AT); // 55 MAP_SOLID
+    stg(4);                       // glob[4] = MAP_SOLID
+    push8(-8);                    // 55 x
+    push8(-8);                    // 55 x y
+    push16(1000);                 // 55 x y w
+    push16(1000);                 // 55 x y w h: the whole map
+    sys(VM_SYS_MAP_TAGS_IN);      // 55 tags
+    stg(5);                       // glob[5] = tags 1 and 2 (the brick is gone)
+    push8(16);                    // 55 x
+    push8(0);                     // 55 x y
+    push8(16);                    // 55 x y w
+    push8(0);                     // 55 x y w h: no area
+    sys(VM_SYS_MAP_TAGS_IN);      // 55 0
+    stg(6);                       // glob[6] = 0
+    stg(0);                       // glob[0] = 55
+    op(VM_OP_HALT);               //
+    CHECK(load());
+    for (u16 g = 1; g <= 6; g++)
+        vm_set_global(g, 99); // each must be written
+#ifndef SERVAL_GBA
+    serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
+#endif
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(vm_global(0) == 55);
+    CHECK(vm_global(1) == 2 && vm_global(2) == 0 && map_cell(1, 0) == 0);
+    CHECK(vm_global(3) == (MAP_SOLID | MAP_TAG(2)) && vm_global(4) == MAP_SOLID);
+    CHECK(vm_global(5) == (MAP_TAG(1) | MAP_TAG(2)) && vm_global(6) == 0);
+    CHECK_WARNED(before, 0);
+#ifndef SERVAL_GBA
+    CHECK(serval_host_vm_calls.calls == 0);
+#endif
+    map_unload(2);
+}
+
+// vm.md "Engine calls": map_set_cell's metatile reaches C in a u16: outside
+// one it is 0xFFFF, which no layer has (metatile_count is a u16), so
+// map_set_cell warns and changes nothing, rather than setting the metatile
+// the cast would wrap to (0x10002 would be 2, a brick). In a u16, every
+// value passes as it is: 5 is past this layer's metatiles too (the same
+// warning, once). mx and my, and the queries' arguments, are ints already.
+static void sys_map_set_cell_metatile_in_a_u16(void) {
+    reset();
+    CHECK(map_load(&sys_playfield));
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    static const s32 metatiles[] = {0x10002, -0xFFFE, INT32_MIN, 5, 3};
+    for (u32 k = 0; k < sizeof metatiles / sizeof metatiles[0]; k++) {
+        push8(0);                 // mx
+        push8(0);                 // mx my
+        push32(metatiles[k]);     // mx my metatile
+        sys(VM_SYS_MAP_SET_CELL); //
+        push8(0);                 //
+        push8(0);                 //
+        sys(VM_SYS_MAP_CELL);     // the cell now
+        append_top(1);            // glob[1] = glob[1] * 10 + it
+    }
+    op(VM_OP_HALT);
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(vm_global(1) == 3); // 0, 0, 0, 0, then the gem
+    // The playfield has only 5 metatiles: map.c warns once per kind for the
+    // program's life, so maybe not here if an earlier suite saw it; the VM
+    // adds no warning of its own.
+    CHECK(debug_warning_count() - before <= 1);
+    map_unload(2);
+
+    // Without a playfield the queries answer 0 (map_collision_at MAP_EMPTY)
+    // and map_set_cell warns.
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push8(0);
+    push8(0);
+    sys(VM_SYS_MAP_CELL);
+    stg(1);
+    push8(-1);
+    push8(0);
+    sys(VM_SYS_MAP_COLLISION_AT);
+    stg(2);
+    push8(0);
+    push8(0);
+    push8(16);
+    push8(16);
+    sys(VM_SYS_MAP_TAGS_IN);
+    stg(3);
+    push8(0);
+    push8(0);
+    push8(1);
+    sys(VM_SYS_MAP_SET_CELL);
+    op(VM_OP_HALT);
+    CHECK(load());
+    for (u16 g = 1; g <= 3; g++)
+        vm_set_global(g, 99);
+    start(0);
+    before = debug_warning_count();
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(vm_global(1) == 0 && vm_global(2) == MAP_EMPTY && vm_global(3) == 0);
+    CHECK(debug_warning_count() - before <= 1); // no map is loaded (once, as above)
+}
+
+// vm.md "Engine calls": text_clear, text_set_shadow and text_print_centered
+// reach the platform in push order: the shadow's `on` as 0 or 1 (any
+// nonzero cell is 1), the centered text's row and its string index, with
+// the string resolved. A bad string index warns and makes no call, as for
+// text_print. tests/rom/vm_platform_tests.c runs them on the GBA.
+static void sys_text_calls_reach_the_platform(void) {
+#ifndef SERVAL_GBA
+    reset();
+    blob_begin(1, 1, GLOBALS);
+    u32 title = string(0, "SERVAL DASH");
+    handler(0, VM_EV_CREATE);
+    push8(55);                       // 55
+    sys(VM_SYS_TEXT_CLEAR);          // frame 1
+    wait_frames(1);                  //
+    push8(7);                        // 55 on
+    sys(VM_SYS_TEXT_SET_SHADOW);     // frame 2: on is 1
+    wait_frames(1);                  //
+    push32(INT32_MIN);               // 55 on
+    sys(VM_SYS_TEXT_SET_SHADOW);     // frame 3: 1 too
+    wait_frames(1);                  //
+    push8(0);                        // 55 on
+    sys(VM_SYS_TEXT_SET_SHADOW);     // frame 4: 0
+    wait_frames(1);                  //
+    push8(-3);                       // 55 row
+    push8(0);                        // 55 row string
+    sys(VM_SYS_TEXT_PRINT_CENTERED); // frame 5
+    wait_frames(1);                  //
+    push8(9);                        // 55 row
+    push8(1);                        // 55 row string: not in the blob
+    sys(VM_SYS_TEXT_PRINT_CENTERED); // warns; no call
+    stg(0);                          // glob[0] = 55
+    op(VM_OP_HALT);                  //
+    CHECK(load());
+    ServalHostVmCalls* r = &serval_host_vm_calls;
+    *r = (ServalHostVmCalls){.calls = 0};
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(last_call(1, VM_SYS_TEXT_CLEAR, 0, 0, 0, NULL));
+    frame();
+    CHECK(last_call(2, VM_SYS_TEXT_SET_SHADOW, 1, 0, 0, NULL));
+    frame();
+    CHECK(last_call(3, VM_SYS_TEXT_SET_SHADOW, 1, 0, 0, NULL));
+    frame();
+    CHECK(last_call(4, VM_SYS_TEXT_SET_SHADOW, 0, 0, 0, NULL));
+    frame();
+    CHECK(last_call(5, VM_SYS_TEXT_PRINT_CENTERED, -3, 0, 0, placed + title));
+    const char* text = r->ptr;
+    CHECK(text && text[0] == 'S' && text[10] == 'H' && text[11] == '\0');
+    CHECK_WARNED(before, 0);
+    frame();
+    CHECK(r->calls == 5 && vm_global(0) == 55 && vm_idle());
+    CHECK_WARNED(before, 1); // the string index
+    *r = (ServalHostVmCalls){.calls = 0};
 #endif
 }
 
@@ -6325,8 +6547,10 @@ TEST_SUITE(
     {"sys_set_colors_refuse_a_bad_array_or_count", sys_set_colors_refuse_a_bad_array_or_count},
     {"sys_sound_calls_reach_the_platform", sys_sound_calls_reach_the_platform},
     {"sys_sound_arguments_in_c_ranges", sys_sound_arguments_in_c_ranges},
-    {"sys_sound_results_need_room", sys_sound_results_need_room}, {"ram_arrays", ram_arrays},
-    {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
+    {"sys_sound_results_need_room", sys_sound_results_need_room}, {"sys_map_calls", sys_map_calls},
+    {"sys_map_set_cell_metatile_in_a_u16", sys_map_set_cell_metatile_in_a_u16},
+    {"sys_text_calls_reach_the_platform", sys_text_calls_reach_the_platform},
+    {"ram_arrays", ram_arrays}, {"rom_arrays_of_every_kind", rom_arrays_of_every_kind},
     {"ram_arrays_across_loads", ram_arrays_across_loads},
     {"reload_keeps_globals_if_their_count_matches", reload_keeps_globals_if_their_count_matches},
     {"globals_start_at_their_initial_values", globals_start_at_their_initial_values},

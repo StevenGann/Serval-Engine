@@ -239,7 +239,9 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `psg_music_play(song)`, `psg_music_stop()`, `psg_music_pause()`, `psg_music_resume()` | `PSG_MUSIC_PLAY`, `_STOP`, `_PAUSE`, `_RESUME` | PSG music; `song` is an index into `VmBindings.psg_songs` |
 | `camera_set(x, y)` | `CAMERA_SET` | whole pixels |
 | `text_print(col, row, "text")` | `TEXT_PRINT` | a literal string or a `<const>` one, printable ASCII |
-| `text_print_number(col, row, n [, width])` | `TEXT_PRINT_NUMBER` | n an integer; with a width of 1 or more, right-aligned in that many columns (no width: just the digits) |
+| `text_print_number(col, row, n [, width])` | `TEXT_PRINT_NUMBER` | n an integer; with a width of 1 or more, right-aligned in that many columns, blank cells in front (no width: just the digits); no zero padding |
+| `text_print_centered(row, "text")` | `TEXT_PRINT_CENTERED` | blanks the row and centers the text in it; the text as `text_print`'s |
+| `text_clear()`, `text_set_shadow(on)` | `TEXT_CLEAR`, `TEXT_SET_SHADOW` | every cell blank; the font's drop shadow, `on` a boolean |
 | `random_range(lo, hi)` | `RANDOM_RANGE` | an integer |
 | `button_down(mask)`, `button_pressed(mask)` | `BUTTON_DOWN`, `BUTTON_PRESSED` | booleans |
 | `screen_set_brightness(level)` | `SCREEN_SET_BRIGHTNESS` | |
@@ -251,6 +253,8 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `music_set_volume(volume)`, `music_set_speed(percent)` | `MUSIC_SET_VOLUME`, `MUSIC_SET_SPEED` | integers: 0-255; 50-200 percent of the module's tempo, 0 meaning 100 |
 | `sfx_play(id)`, `sfx_play_ex(id, volume, pan, pitch, priority)` | `SFX_PLAY`, `SFX_PLAY_EX` | sampled effects ([audio.md](audio.md#sampled-sound-effects)): `id` an `SFX_*` of the sound bank; each returns the effect's handle, an integer (0 when nothing played). `pitch` is fixed (`1.0` as recorded, `2` an octave up, `0.5` down), the rest integers: volume 0-255, pan −128 (left) to 127, priority 0-255 |
 | `sfx_stop(sfx)`, `sfx_playing(sfx)`, `sfx_stop_all()`, `sfx_set_volume(volume)` | `SFX_STOP`, `SFX_PLAYING`, `SFX_STOP_ALL`, `SFX_SET_VOLUME` | `sfx` a handle from `sfx_play`; `sfx_playing` a boolean; the volume 0-255 |
+| `map_cell(mx, my)`, `map_set_cell(mx, my, metatile)` | `MAP_CELL`, `MAP_SET_CELL` | the playfield's cells ([tilemaps.md](tilemaps.md#runtime-changes)), in metatiles: `map_cell` an integer, the metatile (0 outside the map); `map_set_cell` a broken brick, a collected gem |
+| `map_collision_at(x, y)`, `map_tags_in(x, y, w, h)` | `MAP_COLLISION_AT`, `MAP_TAGS_IN` | integers, in world pixels: one pixel's collision byte (`& 15` its type, `MAP_SOLID` 1), and the tags a rectangle overlaps, ORed ([tilemaps.md](tilemaps.md#tags)) |
 | `debug_break()` | (`BRK`) | the debug link's [script breakpoint](debug-link.md#script-breakpoints): stops the whole game here while a debugger is attached (`STOPPED`, brk), and goes on after itself when resumed; with none, debug builds log `vm: BRK at 0x...` and go on, release builds do nothing. No SYS call |
 | `none` | | the entity 0 |
 
@@ -298,7 +302,31 @@ end
 
 The bank itself is C's: `audio_bank_set` has no builtin, as it takes a pointer; the game registers the bank at boot, as it binds songs and paths.
 
-Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`).
+**The map** is the playfield the game's C code loaded (background 2), read by metatile (`map_cell`) or by world pixel (`map_collision_at`, `map_tags_in`), and changed by `map_set_cell`; the tags' meanings are the game's (`#define TAG_GEM MAP_TAG(1)` in a header the script names), and so are the metatile numbers. A platformer's player, a 16 x 16 body, breaks the brick it bumps into from below, collects gems and is hurt by spikes:
+
+```lua
+Player = object { components = C_POS | C_VEL | C_BODY | C_MAPBODY }
+
+gems = 0
+
+function Player:step()
+  local x, y = math.floor(self.x), math.floor(self.y)
+  local above = (y - 1) // 16
+  if self.body_contact & MAP_CONTACT_CEILING ~= 0 and map_cell((x + 8) // 16, above) == MT_BRICK then
+    map_set_cell((x + 8) // 16, above, MT_EMPTY)
+  end
+  if map_tags_in(x, y, 16, 16) & TAG_GEM ~= 0 then
+    map_set_cell((x + 8) // 16, (y + 8) // 16, MT_EMPTY)
+    gems = gems + 1
+    text_print_number(5, 0, gems, 3)
+  end
+  if map_tags_in(x, y + 16, 16, 1) & TAG_SPIKES ~= 0 then self.hp = self.hp - 1 end
+end
+```
+
+A metatile outside 0-65535 doesn't wrap: it is one the layer lacks, and `map_set_cell` warns and changes nothing ([vm.md](vm.md#engine-calls)).
+
+Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`). The text layer's other setup (`text_set_color`, `text_set_style`, `text_set_style_color`, `text_print_centered_in`, `text_clear_area`, `text_print_line`) has no builtin in this version; their names are [reserved](#c-functions).
 
 **C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too. Their names, as every C function's, are [reserved](#c-functions).
 
