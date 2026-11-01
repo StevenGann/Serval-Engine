@@ -12,6 +12,12 @@ the page's test mode, so it needs no click to start; tools/web-shots.py
 finds the browser), and drives the agent.
 
 Usage: tools/svlink.py [options] PAGE.html [COMMAND...]
+       tools/svlink.py [options] GAME.gba [COMMAND...]
+
+A debug ROM (.gba) runs in serval-emu, the mGBA fork (docs/debug-link.md,
+"The fork, as built"; --emu, else SERVAL_EMU, else PATH), headless unless
+--window, which dials this client over TCP on 127.0.0.1 with the token;
+the commands are the same (but shot).
 
 Commands, run in order (none: read them from standard input, one a line):
   hello                    the page's HELLO and the agent's AGENT_INFO
@@ -453,7 +459,8 @@ class Session:
         with self._send_lock:
             if self.closed:
                 raise Closed("the page closed the connection")
-            self.wfile.write(ws_frame(WS_BINARY, data))
+            # A WebSocket message a frame, or (the fork, over TCP) the frame's bytes.
+            self.wfile.write(data if getattr(self, "raw", False) else ws_frame(WS_BINARY, data))
             self.wfile.flush()
 
     def request(self, type_, payload=b"", timeout=10):
@@ -818,6 +825,147 @@ class Server:
     def close(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+class ForkServer:
+    """The debugger's end for the mGBA fork (serval-emu, docs/debug-link.md#transports):
+    a TCP listener on 127.0.0.1 that the fork dials, with TCP_NODELAY, frames
+    back to back in the stream; the endpoint's HELLO must come first and
+    carry the token, or the connection is closed."""
+
+    def __init__(self, token=None, port=0):
+        self.token = token or secrets.token_urlsafe(24)
+        self.sessions = queue.Queue()
+        self.refused = []
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.listener.bind(("127.0.0.1", port))
+        self.listener.listen(4)
+        self.port = self.listener.getsockname()[1]
+        self.connections = []
+        self.thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self.thread.start()
+
+    def _accept_loop(self):
+        while True:
+            try:
+                conn, _ = self.listener.accept()
+            except OSError:
+                return
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.connections.append(conn)
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn):
+        rfile = conn.makefile("rb")
+        wfile = conn.makefile("wb")
+        session = None
+        try:
+            while True:
+                head = rfile.read(2)
+                if len(head) < 2:
+                    break
+                length = struct.unpack("<H", head)[0]
+                if length < 4 or length > FRAME_MAX - 2:
+                    self.refused.append("a broken frame")
+                    break
+                body = rfile.read(length)
+                if len(body) < length:
+                    break
+                type_, flags, seq, payload = parse(head + body)
+                if session is None:
+                    if type_ != HELLO:
+                        self.refused.append("a frame before HELLO")
+                        break
+                    hello = parse_hello(payload)
+                    if hello["proto"][0] != PROTO_MAJOR:
+                        self.refused.append(f"protocol {hello['proto']}")
+                        break
+                    if not secrets.compare_digest(hello["token"].encode(), self.token.encode()):
+                        self.refused.append("wrong token")
+                        break
+                    session = Session(self, hello)
+                    session.wfile = wfile
+                    session.raw = True
+                    session.socket = conn
+                    minor = min(PROTO_MINOR, hello["proto"][1])
+                    reply = bytes([PROTO_MAJOR, minor, KIND_DEBUGGER]) + pack_str("svlink") + pack_str("") \
+                        + struct.pack("<I", 0)
+                    session.send_frame(frame(HELLO, 0, 0, reply))
+                    self.sessions.put(session)
+                    continue
+                session._deliver(type_, flags, seq, payload)
+        except (OSError, ValueError):
+            pass
+        finally:
+            if session:
+                session._close()
+            with contextlib.suppress(OSError):
+                conn.close()
+
+    def accept(self, timeout=30):
+        """The next fork that connected and said HELLO with the token."""
+        try:
+            return self.sessions.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError(f"no emulator connected in {timeout} s") from None
+
+    def close(self):
+        with contextlib.suppress(OSError):
+            self.listener.close()
+        for conn in self.connections:
+            with contextlib.suppress(OSError):
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+
+
+def find_emulator(emu=None):
+    """serval-emu, the mGBA fork's frontend: emu, else SERVAL_EMU, else on PATH."""
+    import shutil
+    for candidate in (emu, os.environ.get("SERVAL_EMU"), shutil.which("serval-emu")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+@contextlib.contextmanager
+def open_rom(rom, emu=None, window=False, port=0, token=None, timeout=60, attach=True, frames=0,
+             unpaced=False, keys=""):
+    """Runs a debug ROM in serval-emu (the mGBA fork), which dials this
+    debugger over TCP, and yields the Session once the agent has rung
+    (AGENT_FOUND) and, with attach, answered AGENT_INFO. window: show its
+    window (default: --headless); frames: quit after that many (0: never);
+    keys: scripted buttons (FRAME:KEYS:LENGTH,..., as the web's test mode's)."""
+    program = find_emulator(emu)
+    if not program:
+        raise FileNotFoundError("serval-emu not found: pass --emu, set SERVAL_EMU or put it on PATH")
+    server = ForkServer(token=token, port=port)
+    command = [program, "--link", f"127.0.0.1:{server.port}", "--link-token", server.token]
+    if not window:
+        command.append("--headless")
+    if unpaced:
+        command.append("--unpaced")
+    if frames:
+        command += ["--frames", str(frames)]
+    if keys:
+        command += ["--keys", keys]
+    process = subprocess.Popen(command + [rom], stdout=subprocess.DEVNULL)
+    session = None
+    try:
+        session = server.accept(timeout)
+        session.emulator = process
+        session.wait_event(AGENT_FOUND, timeout)
+        if attach:
+            session.agent_info()
+        yield session
+    finally:
+        server.close()
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(10)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
 
 # --- The browser -------------------------------------------------------------------
@@ -1664,7 +1812,8 @@ def main():
         description="The debug link's reference client: serves a debug web page and drives its agent.",
         epilog=__doc__.split("Commands,")[1].split("As a library")[0] if "Commands," in __doc__ else None,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("page", help="the page, built with the agent (a debug build: the web preset)")
+    parser.add_argument("page", help="the page, built with the agent (a debug build: the web preset), "
+                        "or a debug ROM (.gba), run in serval-emu, the mGBA fork")
     parser.add_argument("commands", nargs="*", help="commands, run in order (quote ones with arguments)")
     parser.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
     parser.add_argument("--port", type=int, default=0)
@@ -1674,6 +1823,9 @@ def main():
                         "page's directory)")
     parser.add_argument("--keys", default="", help="the test mode's scripted buttons, "
                         "FRAME:KEYS:LENGTH,... (tools/web-shots.py's letters)")
+    parser.add_argument("--emu", help="a ROM's emulator: serval-emu (default: SERVAL_EMU, then PATH)")
+    parser.add_argument("--window", action="store_true", help="a ROM: show serval-emu's window "
+                        "(default: headless)")
     args = parser.parse_args()
     if not os.path.exists(args.page):
         sys.exit(f"svlink: {args.page}: no such file")
@@ -1691,9 +1843,14 @@ def main():
             commands[-1] += parts
     props = property_names()
     try:
-        with open_page(args.page, frames=0 if args.no_browser else args.frames,
-                       browser=not args.no_browser, port=args.port, token=args.token,
-                       timeout=600 if args.no_browser else 60, keys=args.keys) as link:
+        if args.page.lower().endswith(".gba"):
+            opened = open_rom(args.page, emu=args.emu, window=args.window, port=args.port,
+                              token=args.token, keys=args.keys)
+        else:
+            opened = open_page(args.page, frames=0 if args.no_browser else args.frames,
+                               browser=not args.no_browser, port=args.port, token=args.token,
+                               timeout=600 if args.no_browser else 60, keys=args.keys)
+        with opened as link:
             interactive = not commands
             if interactive:
                 print("svlink: connected; commands as in --help, one a line (EOF ends)", file=sys.stderr)
@@ -1709,7 +1866,7 @@ def main():
                     print(f"svlink: {' '.join(words)}: {e}", file=sys.stderr)
                     if not interactive:
                         sys.exit(1)
-    except (TimeoutError, Closed) as e:
+    except (TimeoutError, Closed, FileNotFoundError) as e:
         sys.exit(f"svlink: {e}")
 
 

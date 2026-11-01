@@ -39,12 +39,14 @@ Exits 77 (skipped) without Chrome.
 
 import argparse
 import base64
+import contextlib
 import io
 import json
 import os
 import re
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -296,6 +298,17 @@ class EndToEnd(unittest.TestCase):
         cls.blob = script_bytes(ARGS.script_c)
         cls.names = script_names(ARGS.script_h)
 
+    def open(self, keys=""):
+        """The game, debugged: its web page in headless Chrome, or (--rom) its
+        debug ROM in serval-emu, the mGBA fork."""
+        if ARGS.rom:
+            return svlink.open_rom(ARGS.rom, emu=ARGS.emu, keys=keys)
+        return svlink.open_page(ARGS.page, keys=keys)
+
+    @staticmethod
+    def maps_dir():
+        return os.path.dirname(os.path.abspath(ARGS.rom or ARGS.page))
+
     def picture(self, link):
         """What the screen is made of: OAM, palette RAM, the scroll registers."""
         return (link.read_mem(HARDWARE_OAM, 1024) + link.read_mem(HARDWARE_PALETTE, 1024)
@@ -314,11 +327,15 @@ class EndToEnd(unittest.TestCase):
 
     def test_debug_page(self):
         g = self.names
-        with svlink.open_page(ARGS.page) as link:
+        with self.open() as link:
             # The handshake: the page's HELLO, then AGENT_INFO.
-            self.assertEqual(link.hello["kind"], svlink.KIND_WEB)
+            if ARGS.rom:  # the fork's own version
+                self.assertEqual(link.hello["kind"], svlink.KIND_FORK)
+                self.assertTrue(link.hello["version"].startswith("serval-emu "), link.hello["version"])
+            else:  # a page says its engine's
+                self.assertEqual(link.hello["kind"], svlink.KIND_WEB)
+                self.assertEqual(link.hello["version"], ARGS.version)
             self.assertEqual(link.hello["proto"], (1, 0))
-            self.assertEqual(link.hello["version"], ARGS.version)
             self.assertEqual(link.hello["capabilities"], 7)
             info = link.agent
             self.assertEqual(info["proto"], (1, 0))
@@ -420,10 +437,14 @@ class EndToEnd(unittest.TestCase):
             self.assertGreaterEqual(s1["warnings"], 1)
             link.stats_subscribe(0)
 
-            # The endpoint's own: READ_MEM of what isn't hardware, MACHINE_PAUSE.
-            with self.assertRaises(svlink.LinkError) as refused:
-                link.read_mem(0x02000000, 4)
-            self.assertEqual(refused.exception.code, 8)
+            # The endpoint's own: READ_MEM of what isn't hardware (the fork
+            # reads any address; a page only the hardware's), MACHINE_PAUSE.
+            if ARGS.rom:
+                self.assertEqual(link.read_mem(0x08000000 + 0xAC, 4), b"SVFF")  # the header's game code
+            else:
+                with self.assertRaises(svlink.LinkError) as refused:
+                    link.read_mem(0x02000000, 4)
+                self.assertEqual(refused.exception.code, 8)
             with self.assertRaises(svlink.LinkError) as refused:
                 link.request(svlink.READ_MEM, struct.pack("<IH", HARDWARE_OAM, 0))
             self.assertEqual(refused.exception.code, 2)
@@ -474,12 +495,12 @@ class EndToEnd(unittest.TestCase):
         return state
 
     def test_breakpoints_and_steps(self):
-        maps_dir = os.path.dirname(os.path.abspath(ARGS.page))
+        maps_dir = self.maps_dir()
         # A run with the sync breakpoint alone.
-        with svlink.open_page(ARGS.page) as link:
+        with self.open() as link:
             undisturbed = self.state_at_sync(link, svlink.maps_for(link, maps_dir))
             link.resume(0)
-        with svlink.open_page(ARGS.page) as link:
+        with self.open() as link:
             maps = svlink.maps_for(link, maps_dir)
             self.assertEqual(maps.blob, link.blob)
             # A breakpoint in Firefly:create's flights, hit by the first
@@ -567,8 +588,8 @@ class EndToEnd(unittest.TestCase):
         if not ARGS.reload:
             self.skipTest("no --reload build")
         g = self.names
-        maps_dir = os.path.dirname(os.path.abspath(ARGS.page))
-        with svlink.open_page(ARGS.page, keys=self.walking_keys()) as link:
+        maps_dir = self.maps_dir()
+        with self.open(keys=self.walking_keys()) as link:
             old = svlink.running_build(link, maps_dir)
             new = svlink.Build.load(ARGS.reload, stem=old.stem)
             # The round on, the serval walking, three fireflies wandering.
@@ -577,7 +598,14 @@ class EndToEnd(unittest.TestCase):
             link.set_global(g["G_SCORE"], 7)  # something to carry over (the HUD shows it at a catch)
             player = link.globals(g["G_PLAYER"], 1)[0]
             shots = ARGS.shots or tempfile.mkdtemp(prefix="svlink-reload-")
-            shot = lambda name: link.screenshot(os.path.join(shots, f"svlink-reload-{name}.png"))  # noqa: E731
+            pictures = {}
+
+            def shot(name):
+                # A page's frame as a PNG; the fork's (no screenshots in 1.0) as
+                # what the screen is made of.
+                pictures[name] = self.picture(link)
+                if not ARGS.rom:
+                    link.screenshot(os.path.join(shots, f"svlink-reload-{name}.png"))
             shot("1-before")
             before_speed = self.serval_steps(link, player, 8)
             self.assertTrue(set(before_speed) <= {0, 384} and before_speed.count(384) >= 6, before_speed)
@@ -620,9 +648,11 @@ class EndToEnd(unittest.TestCase):
             self.assertEqual(link.agent_info()["blob_hash"], svlink.fnv1a(new.blob))
             # Nothing on the screen changed with the reload: the same frame.
             shot("3-reloaded")
-            with open(os.path.join(shots, "svlink-reload-2-reloading.png"), "rb") as a, \
-                    open(os.path.join(shots, "svlink-reload-3-reloaded.png"), "rb") as b:
-                self.assertEqual(a.read(), b.read())
+            self.assertEqual(pictures["2-reloading"], pictures["3-reloaded"])
+            if not ARGS.rom:
+                with open(os.path.join(shots, "svlink-reload-2-reloading.png"), "rb") as a, \
+                        open(os.path.join(shots, "svlink-reload-3-reloaded.png"), "rb") as b:
+                    self.assertEqual(a.read(), b.read())
             # The new speed shows: the serval walks 3 pixels a frame (less
             # at an edge); the fireflies fly on.
             after_speed = self.serval_steps(link, player, 8)
@@ -654,6 +684,9 @@ class EndToEnd(unittest.TestCase):
         raise ValueError(text)
 
     def test_release_page(self):
+        if ARGS.rom:
+            self.release_rom()
+            return
         # No agent in the page: none of the link's script, no export.
         with open(ARGS.release_page, "rb") as f:
             page = f.read()
@@ -672,10 +705,50 @@ class EndToEnd(unittest.TestCase):
                 server.close()
 
 
+    def release_rom(self):
+        """A release ROM in the fork: the endpoint connects and says HELLO, the
+        agent never rings, and agent messages are answered NO_AGENT; the
+        endpoint's own messages work. The debug ROM, the same way, does ring:
+        the check can fail."""
+        if not ARGS.release_rom:
+            self.skipTest("no --release-rom")
+        for path, rings in ((ARGS.release_rom, False), (ARGS.rom, True)):
+            with svlink.open_rom(path, emu=ARGS.emu, attach=False, timeout=5) \
+                    if rings else self._no_agent(path) as link:
+                if not rings:
+                    with self.assertRaises(svlink.LinkError) as refused:
+                        link.agent_info()
+                    self.assertEqual(refused.exception.code, 3)  # NO_AGENT
+                    self.assertEqual(link.read_mem(0x080000AC, 4), b"SVFF")
+                    self.assertEqual(link.count(svlink.AGENT_FOUND), 0)
+                else:
+                    self.assertEqual(link.count(svlink.AGENT_FOUND), 1)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _no_agent(path):
+        """The fork running a game that never rings: the session after 3 s."""
+        server = svlink.ForkServer()
+        program = svlink.find_emulator(ARGS.emu)
+        process = subprocess.Popen([program, "--headless", "--link", f"127.0.0.1:{server.port}",
+                                    "--link-token", server.token, path], stdout=subprocess.DEVNULL)
+        try:
+            session = server.accept(30)
+            time.sleep(3)
+            yield session
+        finally:
+            server.close()
+            process.terminate()
+            process.wait(10)
+
+
 def main():
     global ARGS
     parser = argparse.ArgumentParser()
     parser.add_argument("--page")
+    parser.add_argument("--rom", help="the debug ROM, run in serval-emu (the mGBA fork) instead of a page")
+    parser.add_argument("--release-rom", help="with --rom: the release ROM, which has no agent")
+    parser.add_argument("--emu", help="serval-emu (default: SERVAL_EMU, then PATH)")
     parser.add_argument("--release-page")
     parser.add_argument("--script-c")
     parser.add_argument("--script-h")
@@ -685,7 +758,12 @@ def main():
     parser.add_argument("--shots", help="where test_hot_reload saves the frames before and after "
                         "(default: a temporary directory)")
     ARGS, rest = parser.parse_known_args()
-    if ARGS.page:
+    if ARGS.rom:
+        if not svlink.find_emulator(ARGS.emu):
+            print("svlink_test: no serval-emu: skipped (set SERVAL_EMU)")
+            sys.exit(77)
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(EndToEnd)
+    elif ARGS.page:
         try:
             svlink.find_browser()
         except SystemExit:

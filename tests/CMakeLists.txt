@@ -37,6 +37,43 @@ set(_serval_planned_check
     "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-planned.py"
     --include "${PROJECT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/planned"
     -- "${CMAKE_C_COMPILER}" ${_serval_planned_flags})
+# debug link (E9): the reload build both end-to-end tests reload into the
+# running game (svlink_e2e on the web, svlink_emu_e2e in the mGBA fork).
+function(_serval_svlink_reload_build)
+    set(examples "${PROJECT_BINARY_DIR}/examples")
+    # debug link (E9): hot reload end to end. fireflies.lua edited (the
+    # serval walks twice as fast: SPEED, a constant, becomes `speed`, a
+    # global set to 3.0, so Player:step shrinks and the code after it
+    # moves) and built with KEEP_LAYOUT against the page's own build,
+    # into this directory: fireflies.svmap, .svdbg, _script.c, which
+    # svlink_e2e reloads into the running page (svlink-reload-*.png: the
+    # frames before and after).
+    file(READ "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua" reload_script)
+    set(reload_edited "${reload_script}")
+    foreach(edit "local SPEED <const> = 1.5|speed = 3.0" "vx = -SPEED|vx = -speed"
+                 "vx = SPEED|vx = speed" "vy = -SPEED|vy = -speed" "vy = SPEED|vy = speed")
+        string(REPLACE "|" ";" edit "${edit}")
+        list(GET edit 0 from)
+        list(GET edit 1 to)
+        string(FIND "${reload_edited}" "${from}" at)
+        if(at EQUAL -1)
+            message(FATAL_ERROR "svlink_e2e's reload: fireflies.lua has no \"${from}\" any more")
+        endif()
+        string(REPLACE "${from}" "${to}" reload_edited "${reload_edited}")
+    endforeach()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new" "${reload_edited}")
+    configure_file("${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new"
+                   "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua" COPYONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua")
+    add_library(svlink_reload_fireflies OBJECT)
+    serval_add_script(svlink_reload_fireflies "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua"
+                      KEEP_LAYOUT "${examples}/fireflies.svdbg"
+                      HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
+                              serval/sprites.h serval/path.h serval/screen.h)
+    add_dependencies(svlink_reload_fireflies fireflies)
+endfunction()
+
 if(SERVAL_TARGET_WEB)
     file(GLOB _serval_planned_inputs CONFIGURE_DEPENDS
          "${PROJECT_SOURCE_DIR}/include/serval/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/planned/*.c"
@@ -70,37 +107,7 @@ if(SERVAL_TARGET_WEB)
                     "-DGENERATOR=${CMAKE_GENERATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/web/svlink-release.cmake")
         set_tests_properties(svlink_release_page PROPERTIES FIXTURES_SETUP svlink_release TIMEOUT 900)
         set(examples "${PROJECT_BINARY_DIR}/examples")
-        # debug link (E9): hot reload end to end. fireflies.lua edited (the
-        # serval walks twice as fast: SPEED, a constant, becomes `speed`, a
-        # global set to 3.0, so Player:step shrinks and the code after it
-        # moves) and built with KEEP_LAYOUT against the page's own build,
-        # into this directory: fireflies.svmap, .svdbg, _script.c, which
-        # svlink_e2e reloads into the running page (svlink-reload-*.png: the
-        # frames before and after).
-        file(READ "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua" reload_script)
-        set(reload_edited "${reload_script}")
-        foreach(edit "local SPEED <const> = 1.5|speed = 3.0" "vx = -SPEED|vx = -speed"
-                     "vx = SPEED|vx = speed" "vy = -SPEED|vy = -speed" "vy = SPEED|vy = speed")
-            string(REPLACE "|" ";" edit "${edit}")
-            list(GET edit 0 from)
-            list(GET edit 1 to)
-            string(FIND "${reload_edited}" "${from}" at)
-            if(at EQUAL -1)
-                message(FATAL_ERROR "svlink_e2e's reload: fireflies.lua has no \"${from}\" any more")
-            endif()
-            string(REPLACE "${from}" "${to}" reload_edited "${reload_edited}")
-        endforeach()
-        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new" "${reload_edited}")
-        configure_file("${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua.new"
-                       "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua" COPYONLY)
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                     "${PROJECT_SOURCE_DIR}/examples/fireflies/fireflies.lua")
-        add_library(svlink_reload_fireflies OBJECT)
-        serval_add_script(svlink_reload_fireflies "${CMAKE_CURRENT_BINARY_DIR}/reload/fireflies.lua"
-                          KEEP_LAYOUT "${examples}/fireflies.svdbg"
-                          HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
-                                  serval/sprites.h serval/path.h serval/screen.h)
-        add_dependencies(svlink_reload_fireflies fireflies)
+        _serval_svlink_reload_build()
         add_test(NAME svlink_e2e
             COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlink_test.py"
                     --page "${examples}/fireflies.html"
@@ -229,6 +236,45 @@ if(SERVAL_TARGET_GBA)
     # rom/run-rom-test.cmake also checks mGBA's log: that it detected the save
     # type the ROM was built for, and reported no malformed Flash or EEPROM
     # access.
+    # debug link (F1): the same end-to-end tests in the mGBA fork's
+    # serval-emu (tools/svlink_test.py --rom): fireflies' debug ROM against
+    # its blob and maps, hot reload, and a release ROM, which never rings.
+    # serval-emu from SERVAL_EMU (a CMake or environment variable: the
+    # program), else PATH; without it the test exits 77, skipped.
+    if(SERVAL_BUILD_EXAMPLES AND SERVAL_LINK AND CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+        if(NOT SERVAL_EMU AND DEFINED ENV{SERVAL_EMU})
+            set(SERVAL_EMU "$ENV{SERVAL_EMU}")
+        endif()
+        if(NOT SERVAL_EMU)
+            find_program(SERVAL_EMU serval-emu)
+        endif()
+        set(svlink_release "${CMAKE_CURRENT_BINARY_DIR}/svlink-release")
+        set(release_mmutil)
+        if(SERVAL_MMUTIL)
+            set(release_mmutil "-DMMUTIL=${SERVAL_MMUTIL}")
+        endif()
+        add_test(NAME svlink_release_rom
+            COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DBUILD=${svlink_release}"
+                    "-DGENERATOR=${CMAKE_GENERATOR}" ${release_mmutil}
+                    "-DTOOLCHAIN=${PROJECT_SOURCE_DIR}/cmake/arm-gba-toolchain.cmake"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/web/svlink-release.cmake")
+        set_tests_properties(svlink_release_rom PROPERTIES FIXTURES_SETUP svlink_release_rom TIMEOUT 900)
+        _serval_svlink_reload_build()
+        set(examples "${PROJECT_BINARY_DIR}/examples")
+        set(emu_argument)
+        if(SERVAL_EMU)
+            set(emu_argument --emu "${SERVAL_EMU}")
+        endif()
+        add_test(NAME svlink_emu_e2e
+            COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlink_test.py"
+                    --rom "${examples}/fireflies.gba" ${emu_argument}
+                    --release-rom "${svlink_release}/examples/fireflies.gba"
+                    --script-c "${examples}/fireflies_script.c" --script-h "${examples}/fireflies_script.h"
+                    --svmap "${examples}/fireflies.svmap" --version "${SERVAL_VERSION_STRING}"
+                    --reload "${CMAKE_CURRENT_BINARY_DIR}/fireflies.svmap")
+        set_tests_properties(svlink_emu_e2e PROPERTIES FIXTURES_REQUIRED svlink_release_rom
+                             SKIP_RETURN_CODE 77 TIMEOUT 600)
+    endif()
     find_program(MGBA_ROM_TEST mgba-rom-test HINTS ENV MGBA_ROM_TEST_DIR)
     set(save_access_errors "Bad flash|Unsupported flash|Flash entered bad state|beyond end of EEPROM|Bad flash bank")
     if(MGBA_ROM_TEST)
