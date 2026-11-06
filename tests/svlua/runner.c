@@ -39,8 +39,8 @@
 //   frame F                      at the start of frame F
 //   call FN A0 A1 A2 A3 A4 ["TEXT"]
 //                                each engine call the platform makes (VM_SYS_*
-//                                number and arguments; TEXT_PRINT's and
-//                                TEXT_PRINT_CENTERED's string;
+//                                number and arguments; the string of
+//                                TEXT_PRINT, _CENTERED, _FORMAT and _LINE;
 //                                after a palette call's, the colors it read,
 //                                C0 C1 ...), as it happens; button queries
 //                                are not listed, sound queries are
@@ -257,7 +257,9 @@ static void on_call(void) {
     sound(r);
     printf("call %u %d %d %d %d %d", r->fn, r->args[0], r->args[1], r->args[2], r->args[3],
            r->args[4]);
-    if ((r->fn == VM_SYS_TEXT_PRINT || r->fn == VM_SYS_TEXT_PRINT_CENTERED) && r->ptr)
+    if ((r->fn == VM_SYS_TEXT_PRINT || r->fn == VM_SYS_TEXT_PRINT_CENTERED ||
+         r->fn == VM_SYS_TEXT_PRINT_FORMAT || r->fn == VM_SYS_TEXT_PRINT_LINE) &&
+        r->ptr)
         printf(" \"%s\"", (const char*)r->ptr);
     if ((r->fn == VM_SYS_SPRITE_SET_COLORS || r->fn == VM_SYS_TILESET_SET_COLORS) && r->ptr) {
         s32 count = r->args[r->fn == VM_SYS_SPRITE_SET_COLORS ? 3 : 2];
@@ -428,6 +430,7 @@ int main(int argc, char** argv) {
     read_blob(path);
 
     ecs_reset();
+    vm_use_saves(); // the host's save memory: blank at the start of every run
     if (map && !map_load(&test_playfield)) {
         fprintf(stderr, "svlua_runner: map_load refuses the test playfield\n");
         return 2;

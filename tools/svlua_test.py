@@ -513,6 +513,35 @@ REJECTED = {
                         r"^sfx_play is an engine function; a script can't redefine it$"),
     "sound_top_local": ("local music_set_volume = 0", 1, 7,
                         r"^music_set_volume is an engine function; a script can't redefine it$"),
+    # saves take a RAM array, by its name
+    "save_write_rom": ("rom = { 1, 2 }\n" + OBJ + "function A:step() save_write(0, rom, 1) end",
+                       4, 33, r"^save_write writes into or from a RAM array, and rom is a "
+                              r"constant one in ROM$"),
+    "save_read_value": (OBJ + "function A:step() local r = save_read(0, 1, 1) end", 3, 42,
+                        r"^save_read's second argument is an array, by its name, and this is "
+                        r"an integer$"),
+    "save_write_result": ("a = array(2)\n" + OBJ +
+                          "function A:step() local n = save_write(0, a, 1) + 1 end", 4, 29,
+                          r"^.*boolean.*$"),
+    # trigonometry: angles are integers, offsets fixed
+    "fx_sin_fixed": (OBJ + "function A:step() local s = fx_sin(1.5) end", 3, 36,
+                     r"^fx_sin's first argument is an integer, and this is fixed$"),
+    "angle_deg_variable": ("n = 5\n" + OBJ + "function A:step() local s = ANGLE_DEG(n) end",
+                           4, 39, r"^ANGLE_DEG\(n\) takes a constant n from -360 to 360: .*$"),
+    # formatted text: a literal format, a value for each conversion
+    "format_s": (OBJ + 'function A:step() text_print_format(0, 0, "%s", 1) end', 3, 43,
+                 r"^text_print_format prints integers: %d %i %u %x %c, flags - and 0, a width, "
+                 r"and %%; \"%s\" has %s$"),
+    "format_three": (OBJ + 'function A:step() text_print_format(0, 0, "%d%d%d", 1, 2) end', 3, 43,
+                     r"^text_print_format's format has at most 2 values, and \"%d%d%d\" has 3$"),
+    "format_too_few": (OBJ + 'function A:step() text_print_format(0, 0, "%d%d", 1) end', 3, 19,
+                       r"^text_print_format: \"%d%d\" takes 2 values, and this call passes 1$"),
+    "format_too_many": (OBJ + 'function A:step() text_print_format(0, 0, "hi", 1) end', 3, 19,
+                        r"^text_print_format: \"hi\" takes 0 values, and this call passes 1$"),
+    "format_fixed": (OBJ + 'function A:step() text_print_format(0, 0, "%d", 1.5) end', 3, 49,
+                     r"^text_print_format's fourth argument is an integer, and this is fixed$"),
+    "format_not_literal": (OBJ + "function A:step() text_print_format(0, 0, 5) end", 3, 43,
+                           r"^text_print_format draws a literal string, and this is an integer$"),
     # the map: integers in, integers out (tags and types are tested with &)
     "map_cell_fixed": (OBJ + "function A:step() local c = map_cell(1.5, 0) end", 3, 38,
                        r"^map_cell's first argument is an integer, and this is fixed$"),
@@ -1597,7 +1626,10 @@ FIELDS_AT = 2 + len(PROPS)  # an entity line: handle, object, the properties, th
 SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3,  # vm.md's SYS page
              2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,  # sound: music_play to sfx_set_volume
              2, 3, 2, 4,  # the map: map_cell to map_tags_in (made by vm.c: never printed)
-             0, 1, 1)  # text: text_clear to text_print_centered (row, then its text)
+             0, 1, 1,  # text: text_clear to text_print_centered (row, then its text)
+             1, 1, 1, 2,  # random_seed, fx_sin to angle_of (made by vm.c: never printed)
+             3, 3, 1, 1, 1,  # saves (made by vm.c: never printed)
+             4, 2, 4, 2, 1, 3)  # text: print_format (four, then its format) to set_style_color
 COLOR_CALLS = ("SPRITE_SET_COLORS", "TILESET_SET_COLORS")  # their colors follow the arguments
 
 
@@ -1713,7 +1745,7 @@ def lit(n):
 
 
 GOLDEN = ("arithmetic", "logic", "control", "frames", "entities", "arrays", "globals", "sound",
-          "map")
+          "map", "saves")
 GOLDEN_HEADERS = {"SCREEN_W": 240, "FLAGS": 0x35, "MASK": 0xF0, "FIELD_TOP": 24, "C_POS": 1,
                   "C_VEL": 2, "C_SPR": 4, "C_BODY": 8, "SPR_BULLET": 0, "SPR_ENEMY": 1,
                   "PATH_MIRROR_X": 1, "BUTTON_A": 1, "BUTTON_B": 2, "SND_SHOOT": 0,
@@ -2557,6 +2589,100 @@ end
         self.assertEqual((player["cell"], player["hazard"]), (0, 0x40))
         self.assertEqual(player["back"], 3 * 100 + 0x20)  # the gem it put there, read back
         self.assertEqual(vm.calls, [])
+
+    @needs_runner
+    def test_saves_keep_an_array_across_a_rewrite(self):
+        """save_write, save_read and the slot queries on the VM (vm.md's SYS
+        page): fixed and integer arrays alike, the results steering the
+        script; another version doesn't read; an erase empties the slot.
+        vm.c makes them, so the platform sees none."""
+        script = """Hud = object {}
+scores = array(2)
+speeds = array(1)
+wrote = false
+kept = 0
+speed = 0.0
+other = -1
+size = 0
+version = 0
+empty = -1
+function Hud:room_start()
+  scores[1] = 1200
+  scores[2] = -7
+  speeds[1] = 1.5
+  wrote = save_write(0, scores, 3) and save_write(1, speeds, 3)
+  scores[1] = 0
+  speeds[1] = 0.0
+  if save_read(0, scores, 3) == SAVE_OK and save_read(1, speeds, 3) == SAVE_OK then
+    kept = scores[1] + scores[2]
+    speed = speeds[1]
+  end
+  other = save_read(0, scores, 4)
+  size = save_slot_size(0)
+  version = save_slot_version(0)
+  save_erase(0)
+  empty = save_read(0, scores, 3)
+end
+"""
+        vm = run_vm(script, start=["HUD"], headers={"SAVE_OK": 0})
+        self.assertEqual(vm.globals, {"WROTE": 1, "KEPT": 1193, "SPEED": 384, "OTHER": 3,
+                                      "SIZE": 8, "VERSION": 3, "EMPTY": 1})
+        self.assertEqual(vm.calls, [])
+
+    @needs_runner
+    def test_seeding_and_trigonometry_steer_a_script(self):
+        """random_seed repeats a sequence; fx_sin and fx_cos are fixed values,
+        scaled like any other; angle_of aims, ANGLE_DEG folds to C's value."""
+        script = """Hud = object {}
+first = 0
+second = 0
+down = 0.0
+left = 0.0
+aim = 0
+turn = 0
+back = 0
+function Hud:room_start()
+  random_seed(99)
+  first = random_range(0, 1000000)
+  random_seed(99)
+  second = random_range(0, 1000000)
+  down = fx_sin(ANGLE_DEG(90)) * 3
+  left = fx_cos(ANGLE_DEG(180)) * 2.5
+  aim = angle_of(0, -2.5)
+  turn = ANGLE_DEG(90)
+  back = ANGLE_DEG(-90)
+end
+"""
+        vm = run_vm(script, start=["HUD"])
+        self.assertEqual(vm.globals["FIRST"], vm.globals["SECOND"])
+        self.assertEqual({k: vm.globals[k] for k in ("DOWN", "LEFT", "AIM", "TURN", "BACK")},
+                         {"DOWN": 768, "LEFT": -640, "AIM": 49152, "TURN": 16384, "BACK": 49152})
+
+    @needs_runner
+    def test_text_format_and_setup_reach_the_platform(self):
+        """text_print_format's values and format, with zeros for the values
+        it doesn't take; a whole line, an area, colors and styles."""
+        script = """Hud = object {}
+function Hud:room_start()
+  text_print_format(1, 2, "%03d/%d", 7, 9)
+  text_print_format(3, 4, "%c!", 65)
+  text_print_format(5, 6, "100%%")
+  text_print_line(7, 8, "LINE")
+  text_clear_area(1, 2, 3, 4)
+  text_set_color(COLOR_RGB(255, 255, 255), 0)
+  text_set_style(2)
+  text_set_style_color(3, 1, 2)
+end
+"""
+        vm = run_vm(script, start=["HUD"])
+        self.assertEqual(vm.calls_of("TEXT_CLEAR_AREA"), [(1, 2, 3, 4)])
+        self.assertEqual(vm.calls_of("TEXT_SET_COLOR"), [(0x7FFF, 0)])
+        self.assertEqual(vm.calls_of("TEXT_SET_STYLE"), [(2,)])
+        self.assertEqual(vm.calls_of("TEXT_SET_STYLE_COLOR"), [(3, 1, 2)])
+        self.assertEqual(vm.calls_of("TEXT_PRINT_FORMAT"), [(1, 2, 7, 9, "%03d/%d"),
+                                                            (3, 4, 65, 0, "%c!"),
+                                                            (5, 6, 0, 0, "100%%")])
+        self.assertEqual(vm.calls_of("TEXT_PRINT_LINE"), [(7, 8, "LINE")])
 
     @needs_runner
     def test_map_calls_without_a_playfield_or_out_of_range(self):

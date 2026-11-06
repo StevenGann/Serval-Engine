@@ -242,7 +242,16 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `text_print_number(col, row, n [, width])` | `TEXT_PRINT_NUMBER` | n an integer; with a width of 1 or more, right-aligned in that many columns, blank cells in front (no width: just the digits); no zero padding |
 | `text_print_centered(row, "text")` | `TEXT_PRINT_CENTERED` | blanks the row and centers the text in it; the text as `text_print`'s |
 | `text_clear()`, `text_set_shadow(on)` | `TEXT_CLEAR`, `TEXT_SET_SHADOW` | every cell blank; the font's drop shadow, `on` a boolean |
+| `text_print_format(col, row, "format" [, a [, b]])` | `TEXT_PRINT_FORMAT` | what `text_format` makes of a literal format and an integer for each conversion: at most two of `%d %i %u %x %c`, flags `-` and `0`, a width, and `%%`. `text_print_format(0, 0, "%05d", score)`, `"%d/%d"`, `"%c"` for a character by its code. No `%s`: scripts have no string values |
+| `text_print_line(col, row, "text")` | `TEXT_PRINT_LINE` | `text_print`, then the rest of the row blank |
+| `text_clear_area(col, row, width, height)` | `TEXT_CLEAR_AREA` | blanks that rectangle of cells |
+| `text_set_color(text, shadow)`, `text_set_style(style)`, `text_set_style_color(style, text, shadow)` | `TEXT_SET_COLOR`, `TEXT_SET_STYLE`, `TEXT_SET_STYLE_COLOR` | colors from `COLOR_RGB(r, g, b)`; a style 0-3 for text printed from now on, a style's colors for all its text |
 | `random_range(lo, hi)` | `RANDOM_RANGE` | an integer |
+| `random_seed(seed)` | `RANDOM_SEED` | restarts `random_range`'s sequence: the same seed, the same numbers (0 is the engine's fixed seed, what a game starts with) |
+| `fx_sin(angle)`, `fx_cos(angle)` | `FX_SIN`, `FX_COS` | fixed, -1.0 to 1.0, from an integer angle: 65536 a turn, wrapping, so `angle + 1` needs no care; `ANGLE_DEG(90)` is a quarter turn, whole degrees and constant |
+| `angle_of(dx, dy)` | `ANGLE_OF` | the integer angle of a vector, fixed offsets (integers convert): 0 right, `ANGLE_DEG(90)` down, as y points down; `fx_cos` and `fx_sin` of it point along the vector |
+| `save_write(slot, cells, version)`, `save_read(slot, cells, version)` | `SAVE_WRITE`, `SAVE_READ` | a slot holds a RAM array by its name: `save_write` a boolean, `save_read` `SAVE_OK` or why not. See [below](#saving) |
+| `save_erase(slot)`, `save_slot_version(slot)`, `save_slot_size(slot)` | `SAVE_ERASE`, `SAVE_SLOT_VERSION`, `SAVE_SLOT_SIZE` | an integer version; the size in bytes, 4 a cell, 0 for an empty slot |
 | `button_down(mask)`, `button_pressed(mask)` | `BUTTON_DOWN`, `BUTTON_PRESSED` | booleans |
 | `screen_set_brightness(level)` | `SCREEN_SET_BRIGHTNESS` | |
 | `screen_set_blend(top, bottom, top_weight, bottom_weight)` | `SCREEN_SET_BLEND` | integers: the `LAYER_*` masks (from `screen.h`) and the weights, 0-16 ([alpha blending](runtime-systems.md#alpha-blending)) |
@@ -326,7 +335,30 @@ end
 
 A metatile outside 0-65535 doesn't wrap: it is one the layer lacks, and `map_set_cell` warns and changes nothing ([vm.md](vm.md#engine-calls)).
 
-Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`). The text layer's other setup (`text_set_color`, `text_set_style`, `text_set_style_color`, `text_print_centered_in`, `text_clear_area`, `text_print_line`) has no builtin in this version; their names are [reserved](#c-functions).
+<a id="saving"></a>**Saving** keeps a RAM array in a save slot ([save.h](api-reference.md#save-data)), so what a game saves is one array, of any type, its length the data's size. C opts in once at boot, `vm_use_saves()`, as it binds songs and paths (a game whose scripts don't save then links no save code); Studio Advance's generated `main()` does when a script uses a save function. Without it, a save call warns and does nothing.
+
+```lua
+Table = object {}
+top_scores = array(5)
+local SCORES_VERSION <const> = 1 -- raised when the array's layout or length changes
+
+function Table:room_start()
+  if save_read(0, top_scores, SCORES_VERSION) ~= SAVE_OK then
+    for i = 1, 5 do top_scores[i] = (6 - i) * 1000 end -- none yet: the defaults
+  end
+end
+
+function game_over(score)
+  if score > top_scores[5] then
+    top_scores[5] = score
+    if not save_write(0, top_scores, SCORES_VERSION) then text_print(0, 0, "NOT SAVED") end
+  end
+end
+```
+
+A `save_read` that isn't `SAVE_OK` leaves the array as it was. A ROM array (`{ 1, 2 }`) is a compile error; a version outside 0-65535 warns and is refused; the slots and capacity are the game's save type's (8 slots of 500 cells with SRAM). A write costs milliseconds: do it at a natural pause, not every frame.
+
+Lua's `print` is not one of them: it is Lua's console output, which the subset doesn't have (a compile error whose hint names `text_print` and `text_print_number`). `text_print_centered_in` has no builtin in this version; its name is [reserved](#c-functions).
 
 **C-only.** `vm_collide`, the collision pairs ([vm.md](vm.md#collisions)), has no builtin: like `vm_bind`'s songs and paths it is the game's configuration, set once from C at boot, and it outlasts every `vm_load`. The other C setup calls (loading assets, `vm_load`, `vm_start`) are C-only too. Their names, as every C function's, are [reserved](#c-functions).
 
@@ -490,7 +522,7 @@ For a sense of size: fireflies' `.svmap` is 7.5 KB and its `.svdbg` 15 KB (a 1,2
 
 ## Testing
 
-- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read, tracker music and sampled effects with their arguments as C gets them): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit; the sound queries meet the same stand-in for a mixer on both sides (music plays from `music_play` until `music_stop`, paused from `music_pause` until `music_resume`; effects' handles count from 1 and play until stopped). It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Seventeen programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, fixed point, input, palette writes and sound. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
+- **Against real Lua** (`tools/svlua_difftest.py`, CTest `svlua_difftest`). Each program in [`tests/svlua/diff/`](../tests/svlua/diff) runs under Lua 5.4.8 built with `LUA_32BITS`, with [`tests/svlua/stub.lua`](../tests/svlua/stub.lua) as the engine's API, and compiled on the VM by `svlua_runner` ([`tests/svlua/runner.c`](../tests/svlua/runner.c)), from the same start with the same scripted input. After every printed frame the two must agree on every global, RAM array cell, attached instance's properties and fields, and the frame's engine calls (text, numbers, sounds, brightness, blending, palette writes with the colors they read, tracker music and sampled effects with their arguments as C gets them): integers, booleans and entities exactly, fixed values within the tolerance each program states (default 1/256). The stub reproduces what a script can observe: instances as tables whose properties are truncated to their arrays' types and whose unset fields read 0, 0.0, false or none by type; entity handles from the ECS's FIFO of free slots and per-slot generations; behaviours as coroutines in a pool of contexts taken lowest first and resumed in pool order; reactions as plain calls; the event queue's rules; the frame's order; and `random_range`'s generator and scaling bit for bit; the sound queries meet the same stand-in for a mixer on both sides (music plays from `music_play` until `music_stop`, paused from `music_pause` until `music_resume`; effects' handles count from 1 and play until stopped). It doesn't model the ops budget, so the VM run must not warn (a program spreads heavy work over frames with `wait`), nor what the runner doesn't run (paths, animations, music bindings). Twenty programs cover integer edge arithmetic, booleans and short circuits, loops at the integer limits, recursion, arrays of every kind, fields and property truncation, the body's properties, objects compared, waits, spawning and killing, `instances()`, reactions on waiting behaviours, random sequences, seeds, trigonometry bit for bit (the stub runs `trig.c`'s own tables), saves (the stub keeps the slots by `save.h`'s rules), formatted text, fixed point, input, palette writes and sound. The test is skipped unless `SERVAL_LUA32` names such a Lua (`tools/setup-dev.sh --with-lua32`; CI builds one). `LUA_32BITS` makes Lua's floats 32-bit too; the tolerance on fixed values covers that as well.
 - **Unit tests** for each stage, including one test per rejected construct, checking the message; golden listings; and compiled programs run on the VM (`svlua_test.py`).
 - **`fireflies` in Lua** was compared with the hand-written listing frame by frame on the web build, with scripted input through a whole round, catches, the end and a restart: about a thousand frames, every one pixel-identical, and no warning on the web or the GBA ([examples-roadmap.md](examples-roadmap.md#porting-fireflies-to-lua)).
 

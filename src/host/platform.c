@@ -68,10 +68,13 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     static const u8 arity[VM_SYS_COUNT] = {
         1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3, //
         2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
-        2, 3, 2, 4, // map: map_cell to map_tags_in (made by vm.c, never recorded)
-        0, 1, 2,    // text: text_clear to text_print_centered
+        2, 3, 2, 4,       // map: map_cell to map_tags_in (made by vm.c, never recorded)
+        0, 1, 2,          // text: text_clear to text_print_centered
+        1, 1, 1, 2,       // random_seed, fx_sin to angle_of (made by vm.c, never recorded)
+        3, 3, 1, 1, 1,    // saves (made by vm.c, never recorded)
+        5, 3, 4, 2, 1, 3, // text: print_format to set_style_color
     };
-    _Static_assert(VM_SYS_COUNT == 38, "add the new call's arity");
+    _Static_assert(VM_SYS_COUNT == 53, "add the new call's arity");
     ServalHostVmCalls* r = &serval_host_vm_calls;
     u32 n = fn < VM_SYS_COUNT ? arity[fn] : 0;
     r->calls++;

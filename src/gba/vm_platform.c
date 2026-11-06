@@ -133,6 +133,25 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     case VM_SYS_TEXT_PRINT_CENTERED:
         text_print_centered(args[0], ptr);
         return 0;
+    // text: formats vm.c has checked, whole lines, areas, colors and styles
+    case VM_SYS_TEXT_PRINT_FORMAT:
+        text_print(args[0], args[1], text_format(ptr, args[2], args[3]));
+        return 0;
+    case VM_SYS_TEXT_PRINT_LINE:
+        text_print_line(args[0], args[1], ptr);
+        return 0;
+    case VM_SYS_TEXT_CLEAR_AREA:
+        text_clear_area(args[0], args[1], args[2], args[3]);
+        return 0;
+    case VM_SYS_TEXT_SET_COLOR:
+        text_set_color((Color)args[0], (Color)args[1]);
+        return 0;
+    case VM_SYS_TEXT_SET_STYLE:
+        text_set_style(args[0]);
+        return 0;
+    case VM_SYS_TEXT_SET_STYLE_COLOR:
+        text_set_style_color(args[0], (Color)args[1], (Color)args[2]);
+        return 0;
     default:
         return 0;
     }

@@ -15,6 +15,7 @@
 #include "serval/path.h"
 #include "serval/physics.h"
 #include "serval/random.h"
+#include "serval/save.h"
 #include "serval/sprites.h"
 #include "serval/text.h"
 #include "serval/vm.h"
@@ -50,7 +51,9 @@ typedef struct {
 
 static SERVAL_EWRAM_BSS Builder bld;
 
-static void emit(u32 byte) {
+// Not inlined: at -O2 GCC's stringop-overflow can follow a long test's emits to
+// an offset past bytes, which the check here makes unreachable.
+__attribute__((noinline)) static void emit(u32 byte) {
     if (bld.size < BLOB_CAP)
         bld.bytes[bld.size++] = (u8)byte;
     else
@@ -2144,7 +2147,7 @@ static void reaction_waits_and_overruns_halt_only_the_reaction(void) {
         vm_events();
         CHECK(vm_global(0) == 1 + f); // the behaviour, every frame
         CHECK(vm_global(1) == f && vm_global(2) == f && vm_global(3) == 0);
-        CHECK(vm_global(4) == 51 * f); // 51 rounds and an LDG, then halted
+        CHECK(vm_global(4) == 819 * f); // 819 rounds and an LDG, then halted
         CHECK(vm_global(5) == f && vm_global(6) == 0);
     }
     CHECK_WARNED(before, 2); // a wait in a reaction; a reaction over budget
@@ -2888,21 +2891,21 @@ static void budget_throttles_an_endless_loop(void) {
     start(0);
     u32 before = debug_warning_count();
     vm_step();
-    // Ops 1-256 are 51 rounds and the 52nd round's LDG; its PUSH8 isn't run.
-    CHECK(vm_global(0) == 51);
+    // Ops 1-4096 are 819 rounds and the 820th round's LDG; its PUSH8 isn't run.
+    CHECK(vm_global(0) == 819);
     CHECK(vm_global(W) == 1);
     CHECK(vm_ops_this_frame() == VM_OPS_PER_SLICE + 4); // + the witness's 4
     CHECK_WARNED(before, 1);
     vm_events();
     CHECK(vm_ops_this_frame() == VM_OPS_PER_SLICE + 4); // vm_events resumes nothing
     vm_step();
-    // From that PUSH8: the 52nd round ends, then 50 more rounds.
-    CHECK(vm_global(0) == 102);
+    // From that PUSH8: the 820th round ends, then 818 more rounds.
+    CHECK(vm_global(0) == 1638);
     CHECK(vm_global(W) == 2);
     CHECK(vm_ops_this_frame() == VM_OPS_PER_SLICE + 3); // + the witness's last 3
     vm_events();
     vm_step();
-    CHECK(vm_global(0) == 153);
+    CHECK(vm_global(0) == 2457);
     CHECK(vm_ops_this_frame() == VM_OPS_PER_SLICE);
     CHECK(!vm_idle());
     CHECK_WARNED(before, 1); // not again in later frames
@@ -2939,9 +2942,50 @@ static void budget_warns_once_per_loaded_blob(void) {
     CHECK_WARNED(before, 2);
 }
 
+// vm.md "Exact semantics: Budget": the budget is a fuse against endless loops,
+// not a pace: handlers far past what a frame affords still run to the end in
+// one go, so nothing is cut between a read and its write. 60 rounds of 8 ops,
+// and a store after them: a reaction and a behaviour both reach it, in one
+// phase, with no warning.
+static void budget_lets_a_long_handler_finish(void) {
+    enum { L_REACTION, L_BEHAVIOUR };
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    handler(0, VM_EV_DESTROY);
+    label(L_REACTION);           //
+    count(0);                    //
+    ldg(0);                      //
+    push8(60);                   //
+    op(VM_OP_LT);                //
+    jump(VM_OP_JNZ, L_REACTION); //
+    store(1, 1);                 //
+    op(VM_OP_HALT);              //
+    handler(1, VM_EV_CREATE);
+    label(L_BEHAVIOUR);           //
+    count(2);                     //
+    ldg(2);                       //
+    push8(60);                    //
+    op(VM_OP_LT);                 //
+    jump(VM_OP_JNZ, L_BEHAVIOUR); //
+    store(3, 1);                  //
+    op(VM_OP_HALT);               //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    vm_attach(e, 0);
+    vm_events();
+    u32 before = debug_warning_count();
+    vm_kill(e);
+    CHECK(vm_global(0) == 60 && vm_global(1) == 1);
+    start(1);
+    vm_step();
+    CHECK(vm_global(2) == 60 && vm_global(3) == 1);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
 // vm.md "Exact semantics: Budget": inside a Destroy reaction, which cannot
 // wait, the op over the budget halts the reaction instead (a loop that would
-// end after 60 rounds stops in round 32); the entity is destroyed all the
+// end after 600 rounds stops in round 512); the entity is destroyed all the
 // same.
 static void budget_halts_a_destroy_handler(void) {
     enum { L_LOOP };
@@ -2952,9 +2996,9 @@ static void budget_halts_a_destroy_handler(void) {
     label(L_LOOP);           //
     count(0);                // round n: glob[0] = n
     ldg(0);                  //
-    push8(60);               //
+    push16(600);             //
     op(VM_OP_LT);            //
-    jump(VM_OP_JNZ, L_LOOP); // 8 ops a round: round 32's STG is op 256
+    jump(VM_OP_JNZ, L_LOOP); // 8 ops a round: round 512's STG is op 4096
     store(2, 1);             // never runs
     op(VM_OP_HALT);          //
     CHECK(load());
@@ -2964,10 +3008,10 @@ static void budget_halts_a_destroy_handler(void) {
     u32 before = debug_warning_count();
     vm_kill(e);
     CHECK(!entity_alive(e));
-    CHECK(vm_global(1) == 1 && vm_global(0) == 32 && vm_global(2) == 0);
+    CHECK(vm_global(1) == 1 && vm_global(0) == 512 && vm_global(2) == 0);
     CHECK(vm_idle()); // halted, not waiting
     frames(2);
-    CHECK(vm_global(0) == 32);
+    CHECK(vm_global(0) == 512);
     CHECK_WARNED(before, 1);
 }
 
@@ -4144,7 +4188,26 @@ static void sys_page_numbers_are_fixed(void) {
     for (u32 k = 0; k < sizeof map_text / sizeof map_text[0]; k++)
         moved += map_text[k] != 31 + k;
     CHECK(moved == 0);
-    CHECK(VM_SYS_COUNT == 38);
+    // random_seed and trigonometry, saves, then more text
+    static const u32 later[] = {VM_SYS_RANDOM_SEED,
+                                VM_SYS_FX_SIN,
+                                VM_SYS_FX_COS,
+                                VM_SYS_ANGLE_OF,
+                                VM_SYS_SAVE_WRITE,
+                                VM_SYS_SAVE_READ,
+                                VM_SYS_SAVE_ERASE,
+                                VM_SYS_SAVE_SLOT_VERSION,
+                                VM_SYS_SAVE_SLOT_SIZE,
+                                VM_SYS_TEXT_PRINT_FORMAT,
+                                VM_SYS_TEXT_PRINT_LINE,
+                                VM_SYS_TEXT_CLEAR_AREA,
+                                VM_SYS_TEXT_SET_COLOR,
+                                VM_SYS_TEXT_SET_STYLE,
+                                VM_SYS_TEXT_SET_STYLE_COLOR};
+    for (u32 k = 0; k < sizeof later / sizeof later[0]; k++)
+        moved += later[k] != 38 + k;
+    CHECK(moved == 0);
+    CHECK(VM_SYS_COUNT == 53);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -5051,6 +5114,247 @@ static void sys_map_set_cell_metatile_in_a_u16(void) {
     CHECK(vm_idle());
     CHECK(vm_global(1) == 0 && vm_global(2) == MAP_EMPTY && vm_global(3) == 0);
     CHECK(debug_warning_count() - before <= 1); // no map is loaded (once, as above)
+}
+
+// vm.md "Engine calls": random_seed restarts random_range's sequence, the same
+// seed the same numbers; fx_sin and fx_cos take an angle's low 16 bits, so it
+// wraps as C's u16 argument does; angle_of reads fixed values, and an angle
+// comes back as a u16, never negative. All four are portable: no platform call.
+static void sys_seed_and_trigonometry(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    push32(ANGLE_DEG(90));
+    sys(VM_SYS_FX_SIN);
+    stg(0);
+    push32(ANGLE_DEG(180));
+    sys(VM_SYS_FX_COS);
+    stg(1);
+    push32(0x10000 + ANGLE_DEG(90)); // a turn more: the same
+    sys(VM_SYS_FX_SIN);
+    stg(2);
+    push32(0);
+    push32(FX(-3));
+    sys(VM_SYS_ANGLE_OF);
+    stg(3);
+    push32(12345);
+    sys(VM_SYS_RANDOM_SEED);
+    push8(0);
+    push16(1000);
+    sys(VM_SYS_RANDOM_RANGE);
+    stg(4);
+    push32(12345);
+    sys(VM_SYS_RANDOM_SEED);
+    push8(0);
+    push16(1000);
+    sys(VM_SYS_RANDOM_RANGE);
+    stg(5);
+    op(VM_OP_HALT);
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(0) == FX(1));
+    CHECK(vm_global(1) == FX(-1));
+    CHECK(vm_global(2) == FX(1));
+    CHECK(vm_global(3) == ANGLE_DEG(270)); // (0, -3): straight up, y pointing down
+    random_seed(12345);
+    s32 expected = random_range(0, 1000);
+    CHECK(vm_global(4) == expected && vm_global(5) == expected);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// Emits a save call: step 0 pushes slot, array and version, step 1 the slot;
+// its result goes to a global (GLOBALS: it has none).
+static void save_step(u32 step, u32 fn, s32 slot, s32 array, s32 version, u32 result_global) {
+    if (step == 0) {
+        push32(slot);
+        push32(array);
+        push32(version);
+    } else {
+        push32(slot);
+    }
+    sys(fn);
+    if (result_global != GLOBALS)
+        stg(result_global);
+}
+
+// vm.md "Engine calls": the save calls. A RAM array's cells are the slot's
+// data, 4 bytes each: written, changed, read back; the slot's version and size;
+// a version or a size other than the slot's doesn't read and leaves the array
+// alone; an erase empties the slot.
+static void sys_saves_keep_a_ram_array(void) {
+    enum { R_WRITE, R_READ, R_VERSION, R_SIZE, R_OTHER_VERSION, R_OTHER_SIZE, R_ERASED };
+    reset();
+    vm_use_saves();
+    save_erase(0);
+    blob_begin_arrays(1, 0, GLOBALS, 2);
+    ram_array(0, 2, 0);
+    ram_array(1, 3, 2);
+    handler(0, VM_EV_CREATE);
+    push8(0);
+    push8(11);
+    sta(0);
+    push8(1);
+    push32(-22);
+    sta(0);
+    save_step(0, VM_SYS_SAVE_WRITE, 0, 0, 7, R_WRITE);
+    push8(0);
+    push8(99);
+    sta(0);
+    save_step(0, VM_SYS_SAVE_READ, 0, 0, 7, R_READ);
+    save_step(1, VM_SYS_SAVE_SLOT_VERSION, 0, 0, 0, R_VERSION);
+    save_step(1, VM_SYS_SAVE_SLOT_SIZE, 0, 0, 0, R_SIZE);
+    save_step(0, VM_SYS_SAVE_READ, 0, 0, 8, R_OTHER_VERSION);
+    save_step(0, VM_SYS_SAVE_READ, 0, 1, 7, R_OTHER_SIZE);
+    save_step(1, VM_SYS_SAVE_ERASE, 0, 0, 0, GLOBALS);
+    save_step(0, VM_SYS_SAVE_READ, 0, 0, 7, R_ERASED);
+    op(VM_OP_HALT);
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(R_WRITE) == 1);
+    CHECK(vm_global(R_READ) == SAVE_OK);
+    CHECK(serval_vm_array_cell(0) == 11 && serval_vm_array_cell(1) == -22);
+    CHECK(vm_global(R_VERSION) == 7 && vm_global(R_SIZE) == 8);
+    CHECK(vm_global(R_OTHER_VERSION) == SAVE_OTHER_VERSION);
+    CHECK(vm_global(R_OTHER_SIZE) == SAVE_OTHER_VERSION);
+    CHECK(vm_global(R_ERASED) == SAVE_EMPTY);
+    CHECK(vm_idle());
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Engine calls": what a save call refuses, warning and touching nothing:
+// no array, a ROM array, a version a u16 doesn't hold (a cast would tag the
+// save with another one); and every save call before vm_use_saves().
+static void sys_saves_refuse(void) {
+    static const s32 rom[] = {1, 2};
+    enum { R_NO_ARRAY, R_ROM, R_VERSION, R_READ_ROM, R_SLOT, R_CUT = 8, R_CUT_READ, R_CUT_SIZE };
+    reset();
+    vm_use_saves();
+    save_erase(0);
+    blob_begin_arrays(1, 0, GLOBALS, 2);
+    ram_array(0, 2, 0);
+    handler(0, VM_EV_CREATE);
+    save_step(0, VM_SYS_SAVE_WRITE, 0, 5, 1, R_NO_ARRAY);
+    save_step(0, VM_SYS_SAVE_WRITE, 0, 1, 1, R_ROM);
+    save_step(0, VM_SYS_SAVE_WRITE, 0, 0, 0x10000, R_VERSION);
+    save_step(0, VM_SYS_SAVE_READ, 0, 1, 1, R_READ_ROM);
+    save_step(0, VM_SYS_SAVE_WRITE, -1, 0, 1, R_SLOT); // C's own check
+    op(VM_OP_HALT);
+    rom_array(1, ARRAY_S32, rom, 2);
+    CHECK(load());
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(R_NO_ARRAY) == 0 && vm_global(R_ROM) == 0 && vm_global(R_VERSION) == 0);
+    CHECK(vm_global(R_READ_ROM) == SAVE_EMPTY && vm_global(R_SLOT) == 0);
+    CHECK(save_slot_size(0) == 0); // nothing written
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() - before >= 2); // the array, the version; C may warn of the slot
+#endif
+
+    reset();
+    serval_vm_save = NULL; // as a game that never called vm_use_saves()
+    blob_begin_arrays(1, 0, GLOBALS, 1);
+    ram_array(0, 2, 0);
+    handler(0, VM_EV_CREATE);
+    save_step(0, VM_SYS_SAVE_WRITE, 0, 0, 1, R_CUT);
+    save_step(0, VM_SYS_SAVE_READ, 0, 0, 1, R_CUT_READ);
+    save_step(1, VM_SYS_SAVE_SLOT_SIZE, 0, 0, 0, R_CUT_SIZE);
+    op(VM_OP_HALT);
+    CHECK(load());
+    start(0);
+    before = debug_warning_count();
+    vm_step();
+    CHECK(vm_global(R_CUT) == 0 && vm_global(R_CUT_READ) == SAVE_EMPTY);
+    CHECK(vm_global(R_CUT_SIZE) == 0);
+    CHECK(save_slot_size(0) == 0);
+    CHECK_WARNED(before, 1); // one kind, once
+    vm_use_saves();
+}
+
+// vm.md "Engine calls": the text calls reach the platform in push order:
+// formatted text with its two values and its string resolved, a whole line, an
+// area, colors and styles. A format that isn't safe with two integers (a %s,
+// three conversions, a conversion text_format lacks) warns and makes no call.
+static void sys_text_format_and_setup_reach_the_platform(void) {
+#ifndef SERVAL_GBA
+    static const char* const refused[] = {"%s", "%d%d%d", "%q", "%5", "%ld", "%*d", "%.3d"};
+    enum { REFUSED = sizeof refused / sizeof refused[0] };
+    reset();
+    blob_begin(1, 2 + REFUSED, GLOBALS);
+    u32 format = string(0, "%-3d%%%c");
+    u32 line = string(1, "LINE");
+    for (u32 k = 0; k < REFUSED; k++)
+        string(2 + k, refused[k]);
+    handler(0, VM_EV_CREATE);
+    push8(1);
+    push8(2);
+    push8(-3);
+    push8(65);
+    push8(0);
+    sys(VM_SYS_TEXT_PRINT_FORMAT); // frame 1
+    wait_frames(1);
+    push8(4);
+    push8(5);
+    push8(1);
+    sys(VM_SYS_TEXT_PRINT_LINE); // frame 2
+    wait_frames(1);
+    push8(1);
+    push8(2);
+    push8(3);
+    push8(4);
+    sys(VM_SYS_TEXT_CLEAR_AREA); // frame 3
+    wait_frames(1);
+    push16(0x7FFF);
+    push8(0);
+    sys(VM_SYS_TEXT_SET_COLOR); // frame 4
+    wait_frames(1);
+    push8(2);
+    sys(VM_SYS_TEXT_SET_STYLE); // frame 5
+    wait_frames(1);
+    push8(3);
+    push16(0x001F);
+    push16(0x03E0);
+    sys(VM_SYS_TEXT_SET_STYLE_COLOR); // frame 6
+    wait_frames(1);
+    for (u32 k = 0; k < REFUSED; k++) {
+        push8(0);
+        push8(0);
+        push8(1);
+        push8(2);
+        push8((s32)(2 + k));
+        sys(VM_SYS_TEXT_PRINT_FORMAT); // warns; no call
+    }
+    op(VM_OP_HALT);
+    CHECK(load());
+    ServalHostVmCalls* r = &serval_host_vm_calls;
+    *r = (ServalHostVmCalls){.calls = 0};
+    start(0);
+    u32 before = debug_warning_count();
+    vm_step();
+    CHECK(r->calls == 1 && r->fn == VM_SYS_TEXT_PRINT_FORMAT);
+    CHECK(r->args[0] == 1 && r->args[1] == 2 && r->args[2] == -3 && r->args[3] == 65);
+    CHECK(r->ptr == placed + format);
+    frame();
+    CHECK(last_call(2, VM_SYS_TEXT_PRINT_LINE, 4, 5, 1, placed + line));
+    frame();
+    CHECK(last_call4(3, VM_SYS_TEXT_CLEAR_AREA, 1, 2, 3, 4, NULL));
+    frame();
+    CHECK(last_call(4, VM_SYS_TEXT_SET_COLOR, 0x7FFF, 0, 0, NULL));
+    frame();
+    CHECK(last_call(5, VM_SYS_TEXT_SET_STYLE, 2, 0, 0, NULL));
+    frame();
+    CHECK(last_call(6, VM_SYS_TEXT_SET_STYLE_COLOR, 3, 0x001F, 0x03E0, NULL));
+    CHECK_WARNED(before, 0);
+    frame();
+    CHECK(r->calls == 6 && vm_idle());
+    CHECK_WARNED(before, 1); // the formats: one kind, once
+    *r = (ServalHostVmCalls){.calls = 0};
+#endif
 }
 
 // vm.md "Engine calls": text_clear, text_set_shadow and text_print_centered
@@ -6511,6 +6815,11 @@ TEST_SUITE(
     {"context_pool_exhaustion_warns", context_pool_exhaustion_warns},
     {"budget_throttles_an_endless_loop", budget_throttles_an_endless_loop},
     {"budget_warns_once_per_loaded_blob", budget_warns_once_per_loaded_blob},
+    {"budget_lets_a_long_handler_finish", budget_lets_a_long_handler_finish},
+    {"sys_seed_and_trigonometry", sys_seed_and_trigonometry},
+    {"sys_saves_keep_a_ram_array", sys_saves_keep_a_ram_array},
+    {"sys_saves_refuse", sys_saves_refuse},
+    {"sys_text_format_and_setup_reach_the_platform", sys_text_format_and_setup_reach_the_platform},
     {"budget_halts_a_destroy_handler", budget_halts_a_destroy_handler},
     {"ops_this_frame_counts_both_phases", ops_this_frame_counts_both_phases},
     {"stale_binding_counts_as_unbound", stale_binding_counts_as_unbound},

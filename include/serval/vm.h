@@ -38,14 +38,16 @@
 
 // --- Limits ------------------------------------------------------------------
 
-#define VM_CONTEXTS 32       // scripts running or waiting at once
-#define VM_STACK 64          // cells per context: operands and every frame's locals
-#define VM_CALLS 16          // CALL depth per context
-#define VM_GLOBALS 256       // global cells shared by all scripts
-#define VM_FIELDS 16         // instance fields per attached entity (VM_P_FIELD)
-#define VM_ARRAY_CELLS 1024  // the RAM arrays' pool, in cells
-#define VM_EVENT_QUEUE 256   // events waiting for dispatch: a Create and a Room Start per entity
-#define VM_OPS_PER_SLICE 256 // opcodes per handler run; a reaction atop a behaviour counts apart
+#define VM_CONTEXTS 32      // scripts running or waiting at once
+#define VM_STACK 64         // cells per context: operands and every frame's locals
+#define VM_CALLS 16         // CALL depth per context
+#define VM_GLOBALS 256      // global cells shared by all scripts
+#define VM_FIELDS 16        // instance fields per attached entity (VM_P_FIELD)
+#define VM_ARRAY_CELLS 1024 // the RAM arrays' pool, in cells
+#define VM_EVENT_QUEUE 256  // events waiting for dispatch: a Create and a Room Start per entity
+// Opcodes per handler run (a reaction atop a behaviour counts apart): a fuse
+// against endless loops, about 3.6 frames of CPU on the GBA, not a pace.
+#define VM_OPS_PER_SLICE 4096
 
 // --- Blob format (docs/vm.md#blob-format) ------------------------------------
 
@@ -248,6 +250,27 @@ enum {
     VM_SYS_TEXT_CLEAR,          // text_clear()
     VM_SYS_TEXT_SET_SHADOW,     // on (0/1) -> text_set_shadow
     VM_SYS_TEXT_PRINT_CENTERED, // row, string index -> text_print_centered
+    // random seeding and trigonometry (random.h, math.h)
+    VM_SYS_RANDOM_SEED, // seed -> random_seed
+    VM_SYS_FX_SIN,      // angle (its low 16 bits) -> fx_sin: fixed
+    VM_SYS_FX_COS,      // angle (its low 16 bits) -> fx_cos: fixed
+    VM_SYS_ANGLE_OF,    // dx, dy (fixed) -> angle_of: the angle
+    // save data, a RAM array's cells as a slot's data (save.h); the game opts
+    // in with vm_use_saves()
+    VM_SYS_SAVE_WRITE,        // slot, array, version -> 1 if save_write succeeded, else 0
+    VM_SYS_SAVE_READ,         // slot, array, version -> save_read's SAVE_OK, SAVE_EMPTY, ...
+    VM_SYS_SAVE_ERASE,        // slot -> save_erase
+    VM_SYS_SAVE_SLOT_VERSION, // slot -> save_slot_version
+    VM_SYS_SAVE_SLOT_SIZE,    // slot -> save_slot_size: bytes, 4 for each cell saved
+    // text: formatted and whole lines, areas, colors and styles (text.h)
+    VM_SYS_TEXT_PRINT_FORMAT,    // col, row, a, b, string index -> text_print(col, row,
+                                 // text_format(string, a, b)); %s and more than two
+                                 // conversions are refused (no C function of its own)
+    VM_SYS_TEXT_PRINT_LINE,      // col, row, string index -> text_print_line
+    VM_SYS_TEXT_CLEAR_AREA,      // col, row, width, height -> text_clear_area
+    VM_SYS_TEXT_SET_COLOR,       // text, shadow -> text_set_color
+    VM_SYS_TEXT_SET_STYLE,       // style -> text_set_style
+    VM_SYS_TEXT_SET_STYLE_COLOR, // style, text, shadow -> text_set_style_color
     VM_SYS_COUNT
 };
 
@@ -382,6 +405,11 @@ void vm_events(void);
 // --- Inspecting --------------------------------------------------------------
 
 s32 vm_global(u16 index);
+
+// Lets scripts save: VM_SYS_SAVE_* reach save.h from now on (without it they
+// warn and do nothing). A call of its own, so a game whose scripts don't save
+// links no save code and no save type's ROM ID (cmake/Serval.cmake).
+void vm_use_saves(void);
 void vm_set_global(u16 index, s32 value);
 // The object entity e is attached to (vm_attach, SPAWN; an OBJ_* number), or
 // -1 if it isn't attached: a dead entity, ENTITY_NONE, one never attached,

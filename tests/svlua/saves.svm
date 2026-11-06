@@ -1,0 +1,113 @@
+; saves.svm: saves.lua compiled by tools/svlua.py (the Lua subset, docs/lua.md)
+; for Serval Engine's VM. Generated: edit the script, not this listing.
+; Every line names the script's line it comes from.
+
+; --- Objects ---
+
+.object HUD mask=0 sprite=0             ; saves.lua:2 Hud
+
+; --- Strings ---
+
+.string S_03D_D "%03d/%d"               ; saves.lua:20
+.string C "%c"                          ; saves.lua:21
+.string S_100 "100%%"                   ; saves.lua:22
+.string LINE "LINE"                     ; saves.lua:23
+
+; --- Globals (vm_load starts them at their initial values) ---
+
+.globals WROTE                          ; saves.lua:5 wrote: boolean = false
+.globals RESULT                         ; saves.lua:6 result: integer = 0
+.globals DX                             ; saves.lua:7 dx: fixed = 0.0
+.globals DY                             ; saves.lua:8 dy: fixed = 0.0
+.globals AIM                            ; saves.lua:9 aim: integer = 0
+
+; --- Arrays ---
+
+.array SCORES 2                         ; saves.lua:4 scores: integer
+
+; --- Hud:room_start, a behaviour: it may wait ---
+.handler HUD ROOM_START                 ; saves.lua:11
+    ; 12: wrote = save_write(0, scores, 1)
+    PUSH 0                              ; saves.lua:12
+    PUSH ARR_SCORES                     ; saves.lua:12 array scores
+    PUSH 1                              ; saves.lua:12
+    SYS SAVE_WRITE                      ; saves.lua:12
+    STG WROTE                           ; saves.lua:12
+    ; 13: result = save_read(0, scores, 1)
+    PUSH 0                              ; saves.lua:13
+    PUSH ARR_SCORES                     ; saves.lua:13 array scores
+    PUSH 1                              ; saves.lua:13
+    SYS SAVE_READ                       ; saves.lua:13
+    STG RESULT                          ; saves.lua:13
+    ; 14: save_erase(result)
+    LDG RESULT                          ; saves.lua:14
+    SYS SAVE_ERASE                      ; saves.lua:14
+    ; 15: result = save_slot_version(0) + save_slot_size(0)
+    PUSH 0                              ; saves.lua:15
+    SYS SAVE_SLOT_VERSION               ; saves.lua:15
+    PUSH 0                              ; saves.lua:15
+    SYS SAVE_SLOT_SIZE                  ; saves.lua:15
+    ADD                                 ; saves.lua:15
+    STG RESULT                          ; saves.lua:15
+    ; 16: random_seed(result)
+    LDG RESULT                          ; saves.lua:16
+    SYS RANDOM_SEED                     ; saves.lua:16
+    ; 17: dx = fx_cos(ANGLE_DEG(45))
+    PUSH 8192                           ; saves.lua:17
+    SYS FX_COS                          ; saves.lua:17
+    STG DX                              ; saves.lua:17
+    ; 18: dy = fx_sin(ANGLE_DEG(-45))
+    PUSH 57344                          ; saves.lua:18
+    SYS FX_SIN                          ; saves.lua:18
+    STG DY                              ; saves.lua:18
+    ; 19: aim = angle_of(dx, 1)
+    LDG DX                              ; saves.lua:19
+    PUSH 256                            ; saves.lua:19 (1.0)
+    SYS ANGLE_OF                        ; saves.lua:19
+    STG AIM                             ; saves.lua:19
+    ; 20: text_print_format(0, 1, "%03d/%d", result, 9)
+    PUSH 0                              ; saves.lua:20
+    PUSH 1                              ; saves.lua:20
+    LDG RESULT                          ; saves.lua:20
+    PUSH 9                              ; saves.lua:20
+    PUSH STR_S_03D_D                    ; saves.lua:20
+    SYS TEXT_PRINT_FORMAT               ; saves.lua:20
+    ; 21: text_print_format(0, 2, "%c", 65)
+    PUSH 0                              ; saves.lua:21
+    PUSH 2                              ; saves.lua:21
+    PUSH 65                             ; saves.lua:21
+    PUSH 0                              ; saves.lua:21 a value the format doesn't take
+    PUSH STR_C                          ; saves.lua:21
+    SYS TEXT_PRINT_FORMAT               ; saves.lua:21
+    ; 22: text_print_format(0, 3, "100%%")
+    PUSH 0                              ; saves.lua:22
+    PUSH 3                              ; saves.lua:22
+    PUSH 0                              ; saves.lua:22 a value the format doesn't take
+    PUSH 0                              ; saves.lua:22 a value the format doesn't take
+    PUSH STR_S_100                      ; saves.lua:22
+    SYS TEXT_PRINT_FORMAT               ; saves.lua:22
+    ; 23: text_print_line(0, 4, "LINE")
+    PUSH 0                              ; saves.lua:23
+    PUSH 4                              ; saves.lua:23
+    PUSH STR_LINE                       ; saves.lua:23
+    SYS TEXT_PRINT_LINE                 ; saves.lua:23
+    ; 24: text_clear_area(0, 0, 30, 1)
+    PUSH 0                              ; saves.lua:24
+    PUSH 0                              ; saves.lua:24
+    PUSH 30                             ; saves.lua:24
+    PUSH 1                              ; saves.lua:24
+    SYS TEXT_CLEAR_AREA                 ; saves.lua:24
+    ; 25: text_set_color(COLOR_RGB(255, 0, 0), 0)
+    PUSH 31                             ; saves.lua:25
+    PUSH 0                              ; saves.lua:25
+    SYS TEXT_SET_COLOR                  ; saves.lua:25
+    ; 26: text_set_style(1)
+    PUSH 1                              ; saves.lua:26
+    SYS TEXT_SET_STYLE                  ; saves.lua:26
+    ; 27: text_set_style_color(1, 0, 0)
+    PUSH 1                              ; saves.lua:27
+    PUSH 0                              ; saves.lua:27
+    PUSH 0                              ; saves.lua:27
+    SYS TEXT_SET_STYLE_COLOR            ; saves.lua:27
+    ; 28: end
+    HALT                                ; saves.lua:28

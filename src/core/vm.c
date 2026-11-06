@@ -29,8 +29,10 @@
 #include "../ecs/ecs_internal.h"
 #include "serval/debug.h"
 #include "serval/map.h"
+#include "serval/math.h"
 #include "serval/physics.h"
 #include "serval/random.h"
+#include "serval/save.h"
 #include "serval/text.h"
 #include "sprite_internal.h"
 #include "vm_internal.h"
@@ -127,8 +129,9 @@ static u32 array_table; // blob offset of the array table
 static u32 ram_layout;  // fingerprint of the RAM arrays' layout, for vm_reload
 static VmBindings bindings;
 static u32 queue_head, queue_count;
-static u32 ops_frame; // vm_ops_this_frame()
-static bool in_phase; // inside vm_step(), vm_events() or vm_kill()'s Destroy logic
+static u32 ops_frame;             // vm_ops_this_frame()
+ServalVmSaveCall* serval_vm_save; // vm_use_saves()
+static bool in_phase;             // inside vm_step(), vm_events() or vm_kill()'s Destroy logic
 
 #define BEHAVIOUR_EVENTS (1u << VM_EV_CREATE | 1u << VM_EV_ROOM_START)
 
@@ -173,6 +176,10 @@ enum {
     WARN_PATH,
     WARN_COLORS_ARRAY,
     WARN_COLORS_COUNT,
+    WARN_SAVE_UNUSED, // saves: no vm_use_saves(), not a RAM array, a version past a u16
+    WARN_SAVE_ARRAY,
+    WARN_SAVE_VERSION,
+    WARN_TEXT_FORMAT,
     WARN_SOUND_VOLUME, // sound: a volume, pan or priority outside its range
     WARN_SOUND_PAN,
     WARN_SOUND_PRIORITY,
@@ -828,14 +835,19 @@ static const u8 sys_arity[VM_SYS_COUNT] = {
     2, 0, 0, 0, 0, 0, 1, 1, 1, 5, 1, 1, 0, 1,          // sound: music_play to sfx_set_volume
     2, 3, 2, 4,                                        // map: map_cell to map_tags_in
     0, 1, 2,                                           // text: text_clear to text_print_centered
+    1, 1, 1, 2,                                        // random_seed, then trig: fx_sin to angle_of
+    3, 3, 1, 1, 1,                                     // saves: save_write to save_slot_size
+    5, 3, 4, 2, 1, 3,                                  // text: print_format to set_style_color
 };
-_Static_assert(VM_SYS_COUNT == 38, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+_Static_assert(VM_SYS_COUNT == 53, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 // A mask of 64 bits since the calls passed 32; SYS_RESULT(fn) tests it.
 #define SYS_RETURNS                                                                                \
     (1ull << VM_SYS_RANDOM_RANGE | 1ull << VM_SYS_BUTTON_DOWN | 1ull << VM_SYS_BUTTON_PRESSED |    \
      1ull << VM_SYS_MUSIC_PLAYING | 1ull << VM_SYS_MUSIC_PAUSED | 1ull << VM_SYS_SFX_PLAY |        \
      1ull << VM_SYS_SFX_PLAY_EX | 1ull << VM_SYS_SFX_PLAYING | 1ull << VM_SYS_MAP_CELL |           \
-     1ull << VM_SYS_MAP_COLLISION_AT | 1ull << VM_SYS_MAP_TAGS_IN)
+     1ull << VM_SYS_MAP_COLLISION_AT | 1ull << VM_SYS_MAP_TAGS_IN | 1ull << VM_SYS_FX_SIN |        \
+     1ull << VM_SYS_FX_COS | 1ull << VM_SYS_ANGLE_OF | 1ull << VM_SYS_SAVE_WRITE |                 \
+     1ull << VM_SYS_SAVE_READ | 1ull << VM_SYS_SAVE_SLOT_VERSION | 1ull << VM_SYS_SAVE_SLOT_SIZE)
 _Static_assert(VM_SYS_COUNT <= 64, "SYS_RETURNS is a mask of 64 bits");
 #define SYS_RESULT(fn) ((SYS_RETURNS >> (fn) & 1u) != 0)
 
@@ -931,6 +943,71 @@ static s32 sound_call(u32 fn, const s32* args) {
     return serval_vm_platform_call(fn, a, NULL);
 }
 
+// True if text_format can print s with two integers and nothing else: at most
+// two conversions, each of %d %i %u %x %c with flags - and 0 and a width, and
+// %% anywhere. A blob could hold anything; a %s would read an integer as a
+// pointer. svlua.py refuses the rest at compile time, and counts the values.
+static bool format_is_safe(const char* s) {
+    u32 conversions = 0;
+    for (; *s; s++) {
+        if (*s != '%')
+            continue;
+        s++;
+        if (*s == '%')
+            continue;
+        while (*s == '-' || (*s >= '0' && *s <= '9'))
+            s++;
+        if (*s != 'd' && *s != 'i' && *s != 'u' && *s != 'x' && *s != 'c')
+            return false; // the string's end included: s stays on its NUL
+        if (++conversions > 2)
+            return false;
+    }
+    return true;
+}
+
+// The save calls: a RAM array's cells are the data (4 bytes each, as they are
+// in memory: the same on every platform). Refused with a warning, the array
+// and the slot untouched: no vm_use_saves(); no such array, or a ROM one; a
+// version a u16 doesn't hold, which a cast would make another version. The
+// rest (a bad slot, a size past the capacity) is C's to check and warn about.
+// The one call through the pointer, named so that web builds can tell Asyncify
+// it never waits for a frame (cmake/Serval.cmake); inlined, Asyncify would see
+// an indirect call in sys_call and instrument the whole interpreter.
+__attribute__((noinline)) s32 serval_vm_save_call(u32 fn, u32 slot, void* data, u32 size,
+                                                  u16 version) {
+    return serval_vm_save(fn, slot, data, size, version);
+}
+
+static s32 save_call(u32 fn, const s32* args) {
+    s32 refused = fn == VM_SYS_SAVE_READ ? SAVE_EMPTY : 0;
+    if (!serval_vm_save) {
+        WARN_ONCE(WARN_SAVE_UNUSED,
+                  "vm: a script calls SYS %u, a save call, and the game hasn't called "
+                  "vm_use_saves(); nothing is saved or read",
+                  fn);
+        return refused;
+    }
+    if (fn != VM_SYS_SAVE_WRITE && fn != VM_SYS_SAVE_READ)
+        return serval_vm_save_call(fn, (u32)args[0], NULL, 0, 0);
+    s32 n = args[1];
+    const u8* record =
+        n >= 0 && (u32)n < array_count ? blob + array_table + (u32)n * VM_ARRAY_RECORD_SIZE : NULL;
+    if (!record || record[2] != VM_ARRAY_RAM) {
+        WARN_ONCE(WARN_SAVE_ARRAY,
+                  "vm: a save call takes a RAM array, and array %d %s; nothing is saved or read",
+                  (int)n, record ? "is in ROM" : "isn't in the blob");
+        return refused;
+    }
+    if (args[2] < 0 || args[2] > 0xFFFF) {
+        WARN_ONCE(WARN_SAVE_VERSION,
+                  "vm: a save's version is 0 to 65535, and this is %d; nothing is saved or read",
+                  (int)args[2]);
+        return refused;
+    }
+    return serval_vm_save_call(fn, (u32)args[0], &array_cells[le32(record + 4)],
+                               le16(record) * (u32)sizeof(s32), (u16)args[2]);
+}
+
 static s32 sys_call(u32 fn, const s32* args) {
     switch (fn) {
     case VM_SYS_CAMERA_SET:
@@ -1014,6 +1091,41 @@ static s32 sys_call(u32 fn, const s32* args) {
         const char* s = string_at(args[1]);
         return s ? serval_vm_platform_call(fn, args, s) : 0;
     }
+    case VM_SYS_TEXT_PRINT_LINE: {
+        const char* s = string_at(args[2]);
+        return s ? serval_vm_platform_call(fn, args, s) : 0;
+    }
+    case VM_SYS_TEXT_PRINT_FORMAT: {
+        const char* s = string_at(args[4]);
+        if (!s)
+            return 0;
+        if (!format_is_safe(s)) {
+            WARN_ONCE(WARN_TEXT_FORMAT,
+                      "vm: SYS text_print_format: \"%s\" isn't a format of at most two integers "
+                      "(%%d %%i %%u %%x %%c, flags - and 0, a width); nothing is printed",
+                      s);
+            return 0;
+        }
+        return serval_vm_platform_call(fn, args, s);
+    }
+    // random_seed and trigonometry: portable, made here. An angle is its low
+    // 16 bits, as C's u16 argument takes it (a turn is 65536); angle_of's
+    // result is a u16, never negative.
+    case VM_SYS_RANDOM_SEED:
+        random_seed((u32)args[0]);
+        return 0;
+    case VM_SYS_FX_SIN:
+        return fx_sin((u16)args[0]);
+    case VM_SYS_FX_COS:
+        return fx_cos((u16)args[0]);
+    case VM_SYS_ANGLE_OF:
+        return angle_of(args[0], args[1]);
+    case VM_SYS_SAVE_WRITE:
+    case VM_SYS_SAVE_READ:
+    case VM_SYS_SAVE_ERASE:
+    case VM_SYS_SAVE_SLOT_VERSION:
+    case VM_SYS_SAVE_SLOT_SIZE:
+        return save_call(fn, args);
     default:
         return serval_vm_platform_call(fn, args, NULL);
     }

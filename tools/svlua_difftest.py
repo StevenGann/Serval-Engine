@@ -33,7 +33,7 @@ list of key=value settings (repeatable ones may appear several times):
   tolerance=X         for fixed values (default 1/256)
   warnings=allowed    the VM run may warn
 Names in ALL_CAPS come from the engine's headers (ecs.h, core.h,
-sprites.h, path.h, map.h, physics.h, vm.h).
+sprites.h, path.h, map.h, physics.h, save.h, vm.h).
 
 Usage: svlua_difftest.py [--lua LUA] [--runner RUNNER] [-v] [PROGRAM.lua...]
 LUA defaults to $SERVAL_LUA32: a lua binary built with LUA_32BITS
@@ -58,7 +58,8 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 PROGRAMS = os.path.join(ROOT, "tests", "svlua", "diff")
 STUB = os.path.join(ROOT, "tests", "svlua", "stub.lua")
 HEADERS = [os.path.join(ROOT, "include", "serval", name)
-           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h", "screen.h")]
+           for name in ("ecs.h", "core.h", "sprites.h", "path.h", "map.h", "physics.h", "screen.h",
+                        "save.h")]
 SKIP = 77
 
 # The engine properties in VM_P_* order (the runner's and the stub's), and
@@ -81,9 +82,15 @@ SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC
              # the map (vm.c makes these: they never print) and text
              "MAP_CELL": 2, "MAP_SET_CELL": 3, "MAP_COLLISION_AT": 2, "MAP_TAGS_IN": 4,
              "TEXT_CLEAR": 0, "TEXT_SET_SHADOW": 1,
-             "TEXT_PRINT_CENTERED": 1}  # TEXT_PRINT: col, row, then its text; _CENTERED row
+             "TEXT_PRINT_CENTERED": 1,  # TEXT_PRINT: col, row, then its text; _CENTERED row
+             # vm.c makes these (they never print): seeding, trigonometry, saves
+             "RANDOM_SEED": 1, "FX_SIN": 1, "FX_COS": 1, "ANGLE_OF": 2, "SAVE_WRITE": 3,
+             "SAVE_READ": 3, "SAVE_ERASE": 1, "SAVE_SLOT_VERSION": 1, "SAVE_SLOT_SIZE": 1,
+             # more text: TEXT_PRINT_FORMAT col, row, a, b, then its format
+             "TEXT_PRINT_FORMAT": 4, "TEXT_PRINT_LINE": 2, "TEXT_CLEAR_AREA": 4,
+             "TEXT_SET_COLOR": 2, "TEXT_SET_STYLE": 1, "TEXT_SET_STYLE_COLOR": 3}
 # The calls whose text the runner prints after their arguments.
-TEXT_CALLS = ("TEXT_PRINT", "TEXT_PRINT_CENTERED")
+TEXT_CALLS = ("TEXT_PRINT", "TEXT_PRINT_CENTERED", "TEXT_PRINT_FORMAT", "TEXT_PRINT_LINE")
 # The palette calls: the arguments compared (not the array's number: Lua
 # passes the table), by position, then the colors the VM read from it.
 COLOR_ARGS = {"SPRITE_SET_COLORS": (0, 1, 3), "TILESET_SET_COLORS": (0, 2)}
@@ -252,6 +259,8 @@ def run_lua(program, lua, engine, tmp):
         "buttons": [list(b) for b in s.buttons],
         "movement": s.movement,
         "map": s.map,
+        "trig_c": os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "core",
+                               "trig.c"),
         "collides": [[program.object_number(a), program.object_number(b)]
                      for a, b in s.collides],
         "prints": s.prints if isinstance(s.prints, str) else {f: True for f in s.prints},

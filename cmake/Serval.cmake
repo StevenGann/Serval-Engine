@@ -420,10 +420,13 @@ function(serval_add_script target listing)
     # waits, and must assume that of every call through a pointer. The VM's
     # engine calls (serval_vm_platform_call(), src/gba/vm_platform.c) make
     # such calls (tracker music and sampled effects reach Maxmod through a
-    # table) but never wait for a frame; told so, Asyncify leaves the VM's
-    # interpreter alone: about 4 KB smaller, and faster.
+    # table), as do its save calls (serval_vm_save_call(), src/core/vm.c,
+    # through the pointer vm_use_saves() sets), but neither waits for a frame;
+    # told so, Asyncify leaves the VM's interpreter alone: about 4 KB smaller,
+    # and faster.
     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-        target_link_options(${target} PRIVATE -sASYNCIFY_REMOVE=serval_vm_platform_call)
+        target_link_options(${target} PRIVATE
+                            "-sASYNCIFY_REMOVE=serval_vm_platform_call,serval_vm_save_call")
     endif()
 endfunction()
 

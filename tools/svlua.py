@@ -1353,12 +1353,14 @@ C_POOL_PROPERTIES = {
 # The engine's macros a script can call (constant arguments only): (each
 # argument's range, what it makes). The assembler knows C_GAME and
 # BODY_GRAVITY too; COLOR_RGB(r, g, b) (screen.h), whose three arguments its
-# macros don't take, is folded into its value here.
+# macros don't take, and ANGLE_DEG(d) (math.h) are folded into their values
+# here.
 MACROS = {
     "C_GAME": (((0, 14),), "a game component"),
     "BODY_GRAVITY": (((-112, 143),), "a body's gravity scale in 16ths (16 normal, 0 none, "
                                      "-16 reversed)"),
     "COLOR_RGB": (((0, 255),) * 3, "a color's red, green and blue, 8 bits each (screen.h)"),
+    "ANGLE_DEG": (((-360, 360),), "an angle in whole degrees, as an integer (math.h)"),
 }
 VM_FIELDS = 16  # instance fields, VM_P_FIELD0 to VM_P_FIELD0 + 15
 VM_ARRAY_CELLS = 1024
@@ -1419,6 +1421,22 @@ ENGINE = {
     # text (text.h; text_print_centered, with its string, is a TEXT_CALL)
     "text_clear": ((), None, "SYS TEXT_CLEAR"),
     "text_set_shadow": ((BOOL,), None, "SYS TEXT_SET_SHADOW"),
+    "text_clear_area": ((INT, INT, INT, INT), None, "SYS TEXT_CLEAR_AREA"),
+    "text_set_color": ((INT, INT), None, "SYS TEXT_SET_COLOR"),
+    "text_set_style": ((INT,), None, "SYS TEXT_SET_STYLE"),
+    "text_set_style_color": ((INT, INT, INT), None, "SYS TEXT_SET_STYLE_COLOR"),
+    # random seeding and trigonometry (random.h, math.h): an angle is an
+    # integer, 65536 a turn (ANGLE_DEG makes one from degrees)
+    "random_seed": ((INT,), None, "SYS RANDOM_SEED"),
+    "fx_sin": ((INT,), FIXED, "SYS FX_SIN"),
+    "fx_cos": ((INT,), FIXED, "SYS FX_COS"),
+    "angle_of": ((FIXED, FIXED), INT, "SYS ANGLE_OF"),
+    # save data: a RAM array's cells are the slot's data (save.h)
+    "save_write": ((INT, ARRAY, INT), BOOL, "SYS SAVE_WRITE"),
+    "save_read": ((INT, ARRAY, INT), INT, "SYS SAVE_READ"),
+    "save_erase": ((INT,), None, "SYS SAVE_ERASE"),
+    "save_slot_version": ((INT,), INT, "SYS SAVE_SLOT_VERSION"),
+    "save_slot_size": ((INT,), INT, "SYS SAVE_SLOT_SIZE"),
     "kill": ((ENTITY,), None, "KILL"),
     "wait": ((INT,), None, "WAIT"),
     "wait_anim": ((), None, "WAIT_ANIM"),
@@ -1429,9 +1447,14 @@ ENGINE = {
 }
 WAITS = ("wait", "wait_anim", "wait_move")
 # Every name the engine gives a script; none is the entity 0.
-# text_print, text_print_centered and text_print_number are checked and
-# compiled on their own (a string argument; an optional width).
-TEXT_CALLS = ("text_print", "text_print_centered", "text_print_number")
+# text_print, text_print_centered, text_print_line, text_print_number and
+# text_print_format are checked and compiled on their own (a string argument;
+# an optional width; a format and its values).
+TEXT_CALLS = ("text_print", "text_print_centered", "text_print_line", "text_print_number",
+              "text_print_format")
+# text_print_format's values, at most: its SYS call passes two.
+FORMAT_VALUES = 2
+FORMAT_CONVERSION = re.compile(r"%(?:%|[-0-9]*[diuxc])")
 ENGINE_NAMES = frozenset(ENGINE) | frozenset(TEXT_CALLS) | {"spawn", "instances", "object",
                                                            "array", "none", "math"}
 MATH_FUNCTIONS = ("floor", "abs", "min", "max")
@@ -3418,17 +3441,26 @@ class Checker:
                   f"{article(ty)}", hint)
 
     def array_argument(self, arg, fname, index):
-        """An engine call's array argument (the palette calls' colors): a
-        top-level array by its name, whose elements are integers."""
+        """An engine call's array argument (the palette calls' colors, whose
+        elements are integers; the save calls', a RAM array of any type): a
+        top-level array by its name."""
         o = _strip(arg)
         if not (isinstance(o, Name) and o.sym is not None and o.sym.kind == "array"):
             ty = self.expr(arg)
             self.fail(arg, f"{fname}'s {_ORDINALS[index]} argument is an array, by its name, "
                       f"and this is {article(ty) if ty else 'not one'}",
+                      "declare one at the top level: scores = array(16)"
+                      if fname in ("save_write", "save_read") else
                       "declare one at the top level: colors = array(16) or "
                       "colors = { COLOR_RGB(255, 0, 0), ... }")
         o.ty = ARRAY
         arr = o.sym
+        if fname in ("save_write", "save_read"):
+            if arr.rom:
+                self.fail(arg, f"{fname} writes into or from a RAM array, and {arr.name} is a "
+                          "constant one in ROM", f"declare it with array(n): {arr.name} = "
+                          f"array({len(arr.items)})")
+            return
         if arr.elem is None:
             arr.elem = INT
             arr.elem_origin = arg
@@ -3483,12 +3515,15 @@ class Checker:
         return result or VOID
 
     def text_call(self, e, name):
-        """text_print(col, row, "text") and text_print_centered(row, "text"):
-        a string known at compile time. text_print_number(col, row, n [,
-        width]): an integer."""
+        """text_print(col, row, "text"), text_print_line(col, row, "text") and
+        text_print_centered(row, "text"): a string known at compile time.
+        text_print_number(col, row, n [, width]): an integer.
+        text_print_format(col, row, "format" [, a [, b]]): a string known at
+        compile time, and an integer for each of its conversions."""
         number = name == "text_print_number"
+        formatted = name == "text_print_format"
         at = 1 if name == "text_print_centered" else 2  # the text's argument
-        self.arity(e, name, (3, 4) if number else (at + 1,))
+        self.arity(e, name, (3, 4) if number else (3, 4, 5) if formatted else (at + 1,))
         for index in range(at):
             self.argument(e.args[index], INT, name, index)
         what = e.args[at]
@@ -3500,6 +3535,8 @@ class Checker:
                 if bad is not None:
                     self.fail(what, f"{name} draws printable ASCII (32 to 126), and this "
                               f"string has the byte {bad} (0x{bad:02X})")
+                if formatted:
+                    self.text_format(e, what, text.decode("ascii"))
             else:
                 hint = ("text_print_number(col, row, n) prints a number"
                         if ty in (INT, FIXED, None) else None)
@@ -3546,10 +3583,36 @@ class Checker:
             r, g, b = (v >> 3 for v in values)
             e.const = Const(INT, r | g << 5 | b << 10)
             return INT
+        if name == "ANGLE_DEG":
+            d = values[0]  # (u16)(d * 65536L / 360): C's division truncates
+            turned = abs(d) * 65536 // 360
+            e.const = Const(INT, (turned if d >= 0 else -turned) & 0xFFFF)
+            return INT
         n = values[0]
         value = 1 << (16 + n) if name == "C_GAME" else n - 16
         e.const = Const(INT, value, f"{name}({n})")
         return INT
+
+    def text_format(self, e, what, text):
+        """text_print_format's format: what text_format prints with integers
+        (vm.c refuses the rest, for blobs from anywhere), and a value for each
+        conversion."""
+        rest = FORMAT_CONVERSION.sub(lambda m: "", text)
+        if "%" in rest:
+            at = rest.index("%")
+            self.fail(what, "text_print_format prints integers: %d %i %u %x %c, flags - and 0, "
+                      f"a width, and %%; \"{text}\" has {rest[at:at + 2]}")
+        wanted = sum(m.group() != "%%" for m in FORMAT_CONVERSION.finditer(text))
+        if wanted > FORMAT_VALUES:
+            self.fail(what, f"text_print_format's format has at most {FORMAT_VALUES} values, and "
+                      f"\"{text}\" has {wanted}", "print the rest with another call")
+        passed = len(e.args) - 3
+        if wanted != passed:
+            plural = "" if wanted == 1 else "s"
+            self.fail(e, f"text_print_format: \"{text}\" takes {wanted} value{plural}, and this "
+                      f"call passes {passed}")
+        for index in range(3, len(e.args)):
+            self.argument(e.args[index], INT, "text_print_format", index)
 
     def math_call(self, e, name):
         fname = f"math.{name}"
@@ -4752,10 +4815,19 @@ class FuncGen:
                 return
             self.expr(e.args[0])
             self.expr(e.args[1])
-            if name == "text_print":
+            if name in ("text_print", "text_print_line"):
                 label = self.cg.string(e.args[2].const.value, e.line)
                 self.op(f"PUSH STR_{label}", e.args[2])
-                self.op("SYS TEXT_PRINT", e)
+                self.op(f"SYS {name.upper()}", e)
+            elif name == "text_print_format":
+                for index in (3, 4):  # its values, then the format: a constant, in any order
+                    if index < len(e.args):
+                        self.expr(e.args[index])
+                    else:
+                        self.op("PUSH 0", e, "a value the format doesn't take")
+                label = self.cg.string(e.args[2].const.value, e.line)
+                self.op(f"PUSH STR_{label}", e.args[2])
+                self.op("SYS TEXT_PRINT_FORMAT", e)
             else:
                 self.expr(e.args[2])
                 if len(e.args) == 4:

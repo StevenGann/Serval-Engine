@@ -128,6 +128,52 @@ static bool tile_has(const TILE* t, u32 c) {
     return false;
 }
 
+// One object whose Create prints string 0, "%03d/%c", on row 7 from column 2,
+// with 42 and 'Z', then "%s", string 1, which must print nothing.
+static const u8 format_printer[] = {
+    'S', 'V', 'M', 'B', VM_FORMAT_VERSION, VM_CELL_BYTES, 0, 0, // magic, version, cells, flags
+    1, 0, 2, 0, 0, 0, 0, 0, // 1 object, 2 strings, no globals, no arrays
+    // 0x10: object 0: mask 0, sprite 0, Create @ 0x38, no other handler
+    0, 0, 0, 0, 0, 0, 0, 0, 0x38, 0, 0, 0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    //
+    0x52, 0, 0, 0, 0x5A, 0, 0, 0,                      // 0x30: strings 0 @ 0x52, 1 @ 0x5A
+    VM_OP_PUSH8, 2,                                    // 0x38: col
+    VM_OP_PUSH8, 7,                                    //       row
+    VM_OP_PUSH8, 42,                                   //       a
+    VM_OP_PUSH8, 'Z',                                  //       b
+    VM_OP_PUSH8, 0,                                    //       string 0
+    VM_OP_SYS, VM_SYS_TEXT_PRINT_FORMAT,               //
+    VM_OP_PUSH8, 2,                                    //
+    VM_OP_PUSH8, 8,                                    //
+    VM_OP_PUSH8, 1,                                    //
+    VM_OP_PUSH8, 2,                                    //
+    VM_OP_PUSH8, 1,                                    //       string 1: refused
+    VM_OP_SYS, VM_SYS_TEXT_PRINT_FORMAT,               //
+    VM_OP_HALT, 0,                                     // 0x50
+    '%', '0', '3', 'd', '/', '%', 'c', 0,              // 0x52
+    '%', 's', 0,                                       // 0x5A
+};
+
+// vm.md "Engine calls": text_print_format prints what text_format makes of its
+// format and two values; a format with a %s prints nothing, and warns.
+static void text_format_prints_and_refuses(void) {
+    text_clear();
+    CHECK(vm_load(format_printer, sizeof format_printer));
+    u32 before = debug_warning_count();
+    CHECK(vm_start(0, VM_EV_CREATE) >= 0);
+    vm_step();
+    CHECK(vm_idle());
+    CHECK(row_reads(0, 7, "  042/Z "));
+    CHECK(row_reads(0, 8, "        "));
+#ifdef SERVAL_DEBUG
+    CHECK(debug_warning_count() == before + 1);
+#else
+    (void)before;
+#endif
+    text_clear();
+    vm_unload();
+}
+
 // vm.md "Engine calls": text_print_centered, text_set_shadow and text_clear
 // do what the C functions do: "HI" in the middle of row 5 (columns 14 and
 // 15 of 30), the glyphs drawn with their shadow (color 2) while it is on,
@@ -351,5 +397,6 @@ static void room_load_costs(void) {
 TEST_SUITE(gba_vm_tests, "gba_vm", {"text_calls_print", text_calls_print},
            {"text_print_number_width", text_print_number_width},
            {"text_centered_shadow_and_clear", text_centered_shadow_and_clear},
+           {"text_format_prints_and_refuses", text_format_prints_and_refuses},
            {"blend_call_sets_the_registers", blend_call_sets_the_registers},
            {"collide_costs", collide_costs}, {"room_load_costs", room_load_costs});

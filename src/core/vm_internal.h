@@ -26,6 +26,13 @@
 // calls without one.
 s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr);
 
+// The save calls, once vm_use_saves() has set this (NULL before: the VM warns
+// and makes none). A pointer so that vm.c doesn't link save.c. Only vm_save.c
+// sets it, and tests that take saves away again.
+typedef s32 ServalVmSaveCall(u32 fn, u32 slot, void* data, u32 size, u16 version);
+extern ServalVmSaveCall* serval_vm_save;
+ServalVmSaveCall serval_vm_save_call; // calls it (vm.c): Asyncify knows it by name
+
 // For tools that inspect a running VM from C (the host's script runner,
 // tests/svlua/runner.c; the engine never calls them): the object entity e is
 // attached to, or -1 if it is not attached; its instance field n (0 if it is

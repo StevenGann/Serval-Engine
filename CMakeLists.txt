@@ -72,6 +72,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/text_format.c
     src/core/trig.c
     src/core/vm.c
+    src/core/vm_save.c # vm_use_saves(): an object of its own, so only games that call it link save.c
     src/ecs/animate.c
     src/ecs/ecs.c
     src/ecs/map_movement.c

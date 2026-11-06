@@ -298,6 +298,10 @@ env.none = none
 function env.C_GAME(n) return 1 << (16 + n) end
 function env.BODY_GRAVITY(n) return n - 16 end
 function env.COLOR_RGB(r, g, b) return (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) end
+function env.ANGLE_DEG(d) -- (u16)(d * 65536L / 360): C's division truncates
+  local turned = (d < 0 and -d or d) * 65536 // 360
+  return (d < 0 and -turned or turned) & 0xFFFF
+end
 
 function env.object(t)
   local o = {}
@@ -344,6 +348,16 @@ function env.debug_break() end -- debug link: no debugger here (the VM logs BRK 
 
 function env.text_print(col, row, text) call("TEXT_PRINT", col, row, text) end
 function env.text_print_centered(row, text) call("TEXT_PRINT_CENTERED", row, text) end
+function env.text_print_format(col, row, text, a, b)
+  call("TEXT_PRINT_FORMAT", col, row, a or 0, b or 0, text)
+end
+function env.text_print_line(col, row, text) call("TEXT_PRINT_LINE", col, row, text) end
+function env.text_clear_area(col, row, w, h) call("TEXT_CLEAR_AREA", col, row, w, h) end
+function env.text_set_color(text, shadow) call("TEXT_SET_COLOR", text, shadow) end
+function env.text_set_style(style) call("TEXT_SET_STYLE", style) end
+function env.text_set_style_color(style, text, shadow)
+  call("TEXT_SET_STYLE_COLOR", style, text, shadow)
+end
 function env.text_clear() call("TEXT_CLEAR") end
 function env.text_set_shadow(on) call("TEXT_SET_SHADOW", on and 1 or 0) end
 function env.text_print_number(col, row, n, width)
@@ -488,9 +502,103 @@ function env.map_tags_in(x, y, w, h)
   end
   return tags & 0xF0
 end
+
+-- Trigonometry: fx_sin, fx_cos and angle_of as src/core/trig.c does them, from
+-- its own tables (config.trig_c: its path), bit for bit: their results are exact,
+-- whatever Lua's single-precision floats would round. Fixed values go in and
+-- come out as this stub's floats, each the nearest of the VM's 256ths.
+local trig_c
+local function c_table(name)
+  if not trig_c then
+    local f = assert(io.open(config.trig_c))
+    trig_c = f:read("a")
+    f:close()
+  end
+  local body = assert(trig_c:match(name .. "%[%d+%] = {(.-)};"), name)
+  local t, n = {}, 0
+  for v in body:gmatch("%d+") do t[n] = math.tointeger(tonumber(v)); n = n + 1 end
+  return t
+end
+local sin_quarter, recip_table, atan_table
+local function trig_tables()
+  if not sin_quarter then
+    sin_quarter, recip_table, atan_table =
+      c_table("sin_quarter"), c_table("recip_table"), c_table("atan_table")
+  end
+end
+local function sin_256ths(angle)
+  trig_tables()
+  angle = angle & 0xFFFF
+  local negative = angle > 0x8000
+  local a = negative and 0x10000 - angle or angle
+  local steps = (a + 32) >> 6
+  local index = steps > 256 and 512 - steps or steps
+  local v = (sin_quarter[index] + 8) >> 4
+  return negative and -v or v
+end
+function env.fx_sin(angle) return sin_256ths(angle) / 256 end
+function env.fx_cos(angle) return sin_256ths((angle & 0xFFFF) + 0x4000) / 256 end
+local function ratio_of(big, small) -- u32s
+  local function down(limit, n)
+    if not math.ult(big, 1 << limit) then big, small = big >> n, small >> n end
+  end
+  local function up(limit, n)
+    if big < 1 << limit then big, small = big << n, small << n end
+  end
+  if not math.ult(big, 1 << 17) then
+    down(25, 8) down(21, 4) down(19, 2) down(18, 1) down(17, 1)
+  else
+    up(8, 8) up(12, 4) up(14, 2) up(15, 1) up(16, 1)
+  end
+  local ratio = (small * recip_table[(big - (1 << 16) + 128) >> 8]) >> 15
+  return math.ult(0xFFFF, ratio) and 0xFFFF or ratio
+end
+local function lerp_atan(ratio)
+  local k, f = ratio >> 11, ratio & 0x7FF
+  local lo, hi = atan_table[k], atan_table[k + 1]
+  return lo + (((hi - lo) * f + 0x400) >> 11)
+end
+function env.angle_of(dx, dy)
+  trig_tables()
+  dx, dy = math.floor(dx * 256 + 0.5), math.floor(dy * 256 + 0.5)
+  local ax, ay = dx < 0 and -dx or dx, dy < 0 and -dy or dy
+  if ax == 0 and ay == 0 then return 0 end
+  local a = math.ult(ax, ay) and 0x4000 - lerp_atan(ratio_of(ay, ax))
+            or lerp_atan(ratio_of(ax, ay))
+  if dx < 0 then a = 0x8000 - a end
+  if dy < 0 then a = -a end
+  return a & 0xFFFF
+end
+
+-- Saves: the slots of the host's SRAM layout, with save.h's rules: 8 save_slots of
+-- 2000 bytes, a cell 4 bytes; another version or size doesn't read. An array
+-- is a table of its cells; a version outside a u16 is refused (the VM warns),
+-- so is a bad slot or size (C warns). Blank at the start of every run.
+local SAVE_OK, SAVE_EMPTY, SAVE_OTHER_VERSION = 0, 1, 3
+local save_slots = {}
+local function good_slot(slot) return slot >= 0 and slot < 8 end
+local function good_version(version) return version >= 0 and version <= 0xFFFF end
+function env.save_write(slot, cells, version)
+  if not good_slot(slot) or not good_version(version) or #cells * 4 > 2000 then return false end
+  save_slots[slot] = { version = version, cells = table.move(cells, 1, #cells, 1, {}) }
+  return true
+end
+function env.save_read(slot, cells, version)
+  if not good_slot(slot) or not good_version(version) then return SAVE_EMPTY end
+  local saved = save_slots[slot]
+  if not saved then return SAVE_EMPTY end
+  if saved.version ~= version or #saved.cells ~= #cells then return SAVE_OTHER_VERSION end
+  table.move(saved.cells, 1, #cells, 1, cells)
+  return SAVE_OK
+end
+function env.save_erase(slot) save_slots[slot] = nil end
+function env.save_slot_version(slot) return save_slots[slot] and save_slots[slot].version or 0 end
+function env.save_slot_size(slot) return save_slots[slot] and #save_slots[slot].cells * 4 or 0 end
+
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end
 
+function env.random_seed(seed) state = seed == 0 and 0x2545F491 or seed end
 function env.random_range(lo, hi)
   if hi <= lo then return lo end
   local span = hi - lo + 1 -- wraps; 0 means the whole 32-bit range
