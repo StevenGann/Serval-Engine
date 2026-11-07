@@ -247,7 +247,7 @@ Each is named after the C function it calls, and its SYS call ([vm.md](vm.md#eng
 | `text_clear_area(col, row, width, height)` | `TEXT_CLEAR_AREA` | blanks that rectangle of cells |
 | `text_set_color(text, shadow)`, `text_set_style(style)`, `text_set_style_color(style, text, shadow)` | `TEXT_SET_COLOR`, `TEXT_SET_STYLE`, `TEXT_SET_STYLE_COLOR` | colors from `COLOR_RGB(r, g, b)`; a style 0-3 for text printed from now on, a style's colors for all its text |
 | `random_range(lo, hi)` | `RANDOM_RANGE` | an integer |
-| `random_seed(seed)` | `RANDOM_SEED` | restarts `random_range`'s sequence: the same seed, the same numbers (0 is the engine's fixed seed, what a game starts with) |
+| `random_seed(seed)` | `RANDOM_SEED` | restarts `random_range`'s sequence: the same seed, the same numbers, and a frame count makes a fine seed, as the engine hashes it (0 is the engine's fixed seed, what a game starts with) |
 | `fx_sin(angle)`, `fx_cos(angle)` | `FX_SIN`, `FX_COS` | fixed, -1.0 to 1.0, from an integer angle: 65536 a turn, wrapping, so `angle + 1` needs no care; `ANGLE_DEG(90)` is a quarter turn, whole degrees and constant |
 | `angle_of(dx, dy)` | `ANGLE_OF` | the integer angle of a vector, fixed offsets (integers convert): 0 right, `ANGLE_DEG(90)` down, as y points down; `fx_cos` and `fx_sin` of it point along the vector |
 | `save_write(slot, cells, version)`, `save_read(slot, cells, version)` | `SAVE_WRITE`, `SAVE_READ` | a slot holds a RAM array by its name: `save_write` a boolean, `save_read` `SAVE_OK` or why not. See [below](#saving) |

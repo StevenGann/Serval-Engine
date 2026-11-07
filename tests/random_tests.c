@@ -105,7 +105,32 @@ static void wide_ranges(void) {
     CHECK(seen_negative && seen_positive);
 }
 
+// A small seed (a frame count, 1 to 8191) is what a game has at hand, and
+// xorshift32 seeded with one gives a small first number: the first
+// random_range(0, 1) was always 0, and the first random_range(0, 311) under
+// 23, whichever frame START was pressed on. The seed is hashed first.
+static void small_seeds_give_different_first_numbers(void) {
+    int ones = 0;
+    for (u32 seed = 1; seed <= 1000; seed++) {
+        random_seed(seed);
+        ones += random_range(0, 1);
+    }
+    CHECK(ones > 400 && ones < 600);
+    bool seen[312] = {false};
+    int distinct = 0;
+    for (u32 seed = 300; seed < 400; seed++) {
+        random_seed(seed);
+        int v = random_range(0, 311);
+        if (!seen[v]) {
+            seen[v] = true;
+            distinct++;
+        }
+    }
+    CHECK(distinct > 60);
+}
+
 TEST_SUITE(random_tests, "random", {"same_seed_same_sequence", same_seed_same_sequence},
+           {"small_seeds_give_different_first_numbers", small_seeds_give_different_first_numbers},
            {"zero_seed_still_produces_numbers", zero_seed_still_produces_numbers},
            {"range_stays_within_bounds", range_stays_within_bounds},
            {"degenerate_ranges", degenerate_ranges}, {"wide_ranges", wide_ranges},

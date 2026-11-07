@@ -7,8 +7,14 @@
 
 static u32 state = DEFAULT_SEED;
 
+static u32 mix32(u32 h);
+
+// The seed is hashed into the state: xorshift32 started from a small number
+// (a frame count, what a game has at hand) gives a small first number, so
+// the first random_range(0, 1) was 0 for every seed under 8192. mix32 is a
+// bijection, so distinct seeds stay distinct sequences, and only 0 maps to 0.
 void random_seed(u32 seed) {
-    state = seed ? seed : DEFAULT_SEED;
+    state = seed ? mix32(seed) : DEFAULT_SEED;
 }
 
 u32 random_u32(void) {
@@ -51,7 +57,7 @@ static u32 history_frame;
 static u32 history_buttons;
 
 // A 32-bit integer hash with good avalanche (lowbias32, by Chris Wellons):
-// shifts, XORs and two multiplies, no division.
+// shifts, XORs and two multiplies, no division. random_seed() uses it too.
 static u32 mix32(u32 h) {
     h ^= h >> 16;
     h *= 0x7FEB352Du;

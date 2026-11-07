@@ -437,7 +437,7 @@ Deterministic xorshift32: the same seed always gives the same sequence. Not for 
 
 | Function | Description |
 | --- | --- |
-| `void random_seed(u32 seed)` | Restarts the sequence. 0 is replaced by a fixed non-zero value, which `serval_init()` also uses, so a game that never seeds plays the same on every boot. Scripts: `random_seed` (`VM_SYS_RANDOM_SEED`). |
+| `void random_seed(u32 seed)` | Restarts the sequence. The seed is hashed into the generator's state (lowbias32), so a small seed such as a frame count gives a sequence as different from the next frame's as any other: `random_seed(300)` and `random_seed(301)` don't begin with the same numbers, which raw xorshift32 did for every seed under 8192. 0 is replaced by a fixed non-zero value, which `serval_init()` also uses, so a game that never seeds plays the same on every boot. Scripts: `random_seed` (`VM_SYS_RANDOM_SEED`). |
 | `u32 random_entropy(void)` | A value that varies with the player, for seeding: a hash of `frame_count()` and the button history since `serval_init()` (which buttons, and on exactly which frame each was pressed or released). Not CPU timing: the same input gives the same value on the GBA and the web and in every build, so recorded input replays the same game. Call it after waiting for the player (e.g. when START is pressed): `random_seed(random_entropy())`. Before any input it depends on `frame_count()` alone, so it is the same on every boot. Changes only from frame to frame. |
 | `u32 random_u32(void)` | The next 32 random bits. |
 | `int random_range(int lo, int hi)` | A random integer in `[lo, hi]`, both inclusive (scaled by multiplication: no division, no modulo bias). Any `int` range works, even the full one. Returns `lo` if `hi <= lo` (*warns* if `hi < lo`). |

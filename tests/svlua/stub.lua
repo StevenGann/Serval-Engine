@@ -271,7 +271,16 @@ local held, held_before = 0, 0
 -- The engine's random_range (src/core/random.c): xorshift32, scaled by the
 -- high half of a 32 x 32-bit product, here from 16-bit pieces (Lua's
 -- integers are 32 bits).
-local state = config.seed or 0x2545F491
+-- random.c's mix32 (lowbias32): the seed is hashed into the state.
+local function mix32(h)
+  h = h ~ (h >> 16)
+  h = (h * 0x7FEB352D) & 0xFFFFFFFF
+  h = h ~ (h >> 15)
+  h = (h * 0x846CA68B) & 0xFFFFFFFF
+  h = h ~ (h >> 16)
+  return h
+end
+local state = config.seed and config.seed ~= 0 and mix32(config.seed & 0xFFFFFFFF) or 0x2545F491
 if state == 0 then state = 0x2545F491 end
 local function random_u32()
   state = state ~ (state << 13)
@@ -598,7 +607,7 @@ function env.save_slot_size(slot) return save_slots[slot] and #save_slots[slot].
 function env.path_start(e, path, flags) end
 function env.path_stop(e) end
 
-function env.random_seed(seed) state = seed == 0 and 0x2545F491 or seed end
+function env.random_seed(seed) state = seed == 0 and 0x2545F491 or mix32(seed & 0xFFFFFFFF) end
 function env.random_range(lo, hi)
   if hi <= lo then return lo end
   local span = hi - lo + 1 -- wraps; 0 means the whole 32-bit range
