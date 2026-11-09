@@ -161,11 +161,18 @@ def _tables():
 
 
 def _split(text):
-    """(before, block, after) around the marker lines, or None."""
+    """(before, block, after) around the marker lines, or None if neither is
+    there; ValueError if only one is, or the end comes first."""
     b = text.find(BEGIN)
-    e = text.find(END)
-    if b < 0 or e < b:
+    e = text.find(END, b + len(BEGIN)) if b >= 0 else text.find(END)
+    if b < 0 and e < 0:
         return None
+    if b < 0:
+        raise ValueError("the script has the end marker but no begin marker")
+    if e < 0:
+        if text.find(END) >= 0:
+            raise ValueError("the end marker comes before the begin marker")
+        raise ValueError("the script has the begin marker but no end marker")
     e = text.find("\n", e)
     e = len(text) if e < 0 else e + 1
     return text[:b], text[b:e], text[e:]
@@ -179,7 +186,11 @@ def _pack_command(script, check):
     except FileNotFoundError:
         print("servle_words: %s does not exist" % script)
         return 1
-    parts = _split(text)
+    try:
+        parts = _split(text)
+    except ValueError as err:
+        print("servle_words: %s: %s" % (script, err))
+        return 1
     if check:
         if parts is None:
             print("servle_words: %s has no generated word block; run tools/servle_words.py pack" % script)

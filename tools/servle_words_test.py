@@ -107,6 +107,23 @@ class ServleWordsTest(unittest.TestCase):
             self.assertEqual(servle_words.main(["pack", "--check", "--script", p]), 1)
         self.assertEqual(len(out.getvalue().splitlines()), 3)  # one line per failed check
 
+    def test_pack_refuses_broken_markers(self):
+        cases = {
+            "begin only": "a()\n" + servle_words.BEGIN + "\nb()\n",
+            "end only": "a()\n" + servle_words.END + "\nb()\n",
+            "end first": servle_words.END + "\nb()\n" + servle_words.BEGIN + "\n",
+        }
+        for name, text in cases.items():
+            for args in (["pack"], ["pack", "--check"]):
+                with tempfile.TemporaryDirectory() as d, redirect_stdout(io.StringIO()) as out:
+                    p = os.path.join(d, "s.lua")
+                    with open(p, "w") as f:
+                        f.write(text)
+                    self.assertEqual(servle_words.main(args + ["--script", p]), 1, name)
+                    with open(p) as f:
+                        self.assertEqual(f.read(), text, name)  # untouched
+                self.assertEqual(len(out.getvalue().splitlines()), 1, name)
+
     @unittest.skipUnless(os.path.exists(SCRIPT), "examples/servle/servle.lua does not exist yet")
     def test_block_is_current(self):
         self.assertEqual(servle_words.main(["pack", "--check"]), 0)

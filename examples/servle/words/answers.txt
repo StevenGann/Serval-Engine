@@ -495,7 +495,6 @@ gaily
 gamma
 gases
 gauge
-gayer
 geese
 ghost
 giant
@@ -885,7 +884,6 @@ prawn
 preen
 press
 price
-prick
 pride
 prime
 print

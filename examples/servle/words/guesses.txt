@@ -1466,7 +1466,6 @@ dinar
 dined
 diner
 dines
-dinge
 dingo
 dings
 dingy
@@ -1851,7 +1850,6 @@ fatal
 fated
 fates
 fatly
-fatso
 fatty
 fatwa
 faugh
@@ -2104,7 +2102,6 @@ frets
 friar
 fried
 fries
-frigs
 frill
 frise
 frisk
@@ -2260,7 +2257,6 @@ gills
 gilts
 gimel
 gimme
-ginny
 gipon
 girds
 girls
@@ -2499,7 +2495,6 @@ handy
 hangs
 hanks
 hanky
-haole
 haply
 happy
 hards
@@ -3249,7 +3244,6 @@ loyal
 luaus
 lubed
 lubes
-lubra
 lucid
 lucks
 lucky
@@ -3638,7 +3632,6 @@ napes
 nappe
 nappy
 narcs
-nards
 nares
 naris
 narky
@@ -4847,7 +4840,6 @@ shade
 shads
 shady
 shaft
-shags
 shahs
 shake
 shako
@@ -5475,7 +5467,6 @@ tacks
 tacky
 tacos
 taels
-taffy
 tafia
 taiga
 tails
