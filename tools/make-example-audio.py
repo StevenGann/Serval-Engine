@@ -46,8 +46,9 @@ count-in with no chart notes, and ends with a held note fading out.
 The charts (charts() below): per song, HARD and EASY, (tick, lane) pairs,
 lanes 0-3 LEFT, RIGHT, B, A. The right hand (B, A) follows the melody's
 contour, the left (LEFT, RIGHT) the drums (kick LEFT, snare or clap RIGHT);
-EASY keeps a beat of HARD at most every beat (calm, stride) or every other
-(rush).
+on HARD the hands take turns, the melody leading each bar's first half and
+the drums its second. EASY keeps one beat of HARD every beat (calm), three
+a bar (stride) or two (rush), spread over all four lanes.
 
 SET tests (tests/rom), measurable:
 - tone.mod: 4 channels, speed 6, tempo 125 (a row is 6 ticks of 20 ms: 120
@@ -795,23 +796,27 @@ def fade_out(song, bar, start=4):
                 song.effect(row, channel, 0xA, 0x02)
 
 
-def charts(song, anchors, easy_rows):
+def charts(song, anchors, easy_slots):
     """HARD and EASY, each a sorted list of (tick, lane), from the song's
-    notes and its bars' hands.
+    notes and its bars' hands. The left hand (LEFT, RIGHT) plays the drums,
+    the right hand (B, A) its bar's melodic part (lead, bass or pad).
 
-    HARD: the right hand (B, A) plays every note of its part, by the melody's
-    contour: up to A, down to B, a repeated note on the other button, and two
-    notes a sixteenth apart always on both. The left hand (LEFT, RIGHT) plays
-    its part's kicks and low toms on LEFT and snares, claps, rims and high
-    toms on RIGHT: on the rows of a bar in `anchors` always, elsewhere only on
-    eighths where the right hand has no note within a row, so the two hands
-    take turns. Two notes in one lane are at least 2 rows apart.
+    HARD: the right hand's notes follow the melody's contour: up to A, down
+    to B, a repeated note on the other button, and two notes a sixteenth
+    apart always on both. The left hand's are the kicks and low toms on LEFT,
+    the snares, claps, rims and high toms on RIGHT, on eighths. The hands
+    take turns: in the first half of a bar the right hand leads and a drum
+    hit within a row of one of its notes is left out; in the second half the
+    drums lead and the melody's notes near them are left out. On the rows of
+    a bar in `anchors` both play. Two notes in one lane are at least 2 rows
+    apart.
 
-    EASY: from HARD, a note every `easy_rows` rows at most, on beats only:
-    for each slot, the note on its first row (or, with 8-row slots, its
-    second beat), one of them, on a different button from the last when it
-    can."""
-    right, previous, lane = [], None, 2
+    EASY: from HARD, at most one note for each slot of `easy_slots` (per
+    bar: the rows a slot may take its note from), on beats only. Of the
+    notes a slot offers it takes the one in the lane used least so far
+    (then the earlier, then a different button from the last), so every
+    lane gets its share."""
+    right, previous, lane = {}, None, 2
     last_part, last_row = None, -99
     for row, _, part, pitch in sorted(song.notes):
         hand = song.hands.get(row // 16, (None, None))[1]
@@ -823,35 +828,45 @@ def charts(song, anchors, easy_rows):
             lane = 5 - lane
         else:
             lane = 3 if pitch > previous else 2
-        if right and right[-1][1] == lane and row - last_row < 2:
+        if right and right[last_row] == lane and row - last_row < 2:
             lane = 5 - lane
-        right.append((row, lane))
+        right[row] = lane
         previous, last_part, last_row = pitch, part, row
-    right_rows = {row for row, _ in right}
-    left, last = [], {}
+    left = {}
     for row, _, part, letter in sorted(song.notes):
         hand = song.hands.get(row // 16, (None, None))[0]
-        if row < 16 or part != hand or letter not in LEFT_LANES:
-            continue
-        lane = LEFT_LANES[letter]
-        if row % 16 not in anchors and (row % 2 or right_rows & {row - 1, row, row + 1}):
-            continue
-        if row - last.get(lane, -99) < 2:
-            continue
-        left.append((row, lane))
-        last[lane] = row
-    hard = sorted(left + right)
+        on_eighth = row % 2 == 0 or row % 16 in anchors
+        if row >= 16 and part == hand and letter in LEFT_LANES and on_eighth:
+            left[row] = LEFT_LANES[letter]
+
+    def near(hand, row):
+        return any(r in hand for r in (row - 1, row, row + 1))
+
+    candidates = []
+    for row, lane in right.items():
+        if row % 16 in anchors or row % 16 < 8 or not near(left, row):
+            candidates.append((row, lane))
+    for row, lane in left.items():
+        if row % 16 in anchors or row % 16 >= 8 or not near(right, row):
+            candidates.append((row, lane))
+    hard, last = [], {}
+    for row, lane in sorted(candidates):
+        if row - last.get(lane, -99) >= 2:
+            hard.append((row, lane))
+            last[lane] = row
     at = {}
     for row, lane in hard:
         at.setdefault(row, []).append(lane)
-    easy, previous = [], None
-    for start in range(16, song.bars * 16, easy_rows):
-        for row in range(start, start + easy_rows, 4):
-            if row in at:
-                lanes = sorted(at[row], key=lambda lane: (lane == previous, lane < 2))
-                easy.append((row, lanes[0]))
-                previous = lanes[0]
-                break
+    easy, previous, used = [], None, [0, 0, 0, 0]
+    for top in range(16, song.bars * 16, 16):
+        for rows in easy_slots:
+            offered = [(used[lane], i, lane == previous, lane, top + row)
+                       for i, row in enumerate(rows) for lane in at.get(top + row, [])]
+            if offered:
+                _, _, _, lane, row = min(offered)
+                easy.append((row, lane))
+                used[lane] += 1
+                previous = lane
     return [(row * 6, lane) for row, lane in hard], [(row * 6, lane) for row, lane in easy]
 
 
@@ -961,11 +976,11 @@ def stride_song():
 
 # --- rhythm_rush.mod: "Night Chase", 148 BPM, E minor --------------------------
 
-RUSH_A = ["E5/2 E5/2 G5/2 E5/2 B5/4 A5/2 G5/2", "E5/2 G5/2 C6/4 B5/2 G5/2 E5/4",
+RUSH_A = ["E5/2 G5/2 B5/3 A5/3 G5/2 F#5/4", "E5/2 G5/2 C6/4 B5/2 G5/2 E5/4",
           "F#5/2 A5/2 D6/3 C6/1 B5/2 A5/2 F#5/4", "B5/6 A5/2 F#5/4 D5/4",
-          "E5/2 E5/2 G5/2 E5/2 B5/4 A5/2 G5/2", "G5/2 A5/2 B5/2 C6/2 E6/4 D6/2 C6/2",
+          "E5/2 G5/2 B5/3 D6/3 C6/2 B5/4", "G5/2 A5/2 B5/2 C6/2 E6/4 D6/2 C6/2",
           "D6/2 C6/2 A5/2 F#5/2 D5/4 F#5/2 A5/2", "B5/4 A5/2 F#5/2 D#5/8"]
-RUSH_A2 = RUSH_A[:4] + ["B5/2 B5/2 D6/2 B5/2 E6/4 D6/2 B5/2", "C6/2 B5/2 G5/2 E5/2 G5/2 C6/2 E6/4",
+RUSH_A2 = RUSH_A[:4] + ["B5/3 D6/3 E6/2 D6/1 B5/1 A5/2 B5/4", "C6/2 B5/2 G5/2 E5/2 G5/2 C6/2 E6/4",
                         "F#6/2 E6/2 D6/2 A5/2 F#5/2 A5/2 D6/4", "D#6/4 B5/2 F#5/2 B5/8"]
 RUSH_B = ["G5/4 E6/6 D6/2 C6/2 B5/2", "A5/4 F#5/2 A5/2 D6/6 C6/2",
           "B5/4 D6/2 F#6/2 E6/4 D6/2 B5/2", "E6/8 r/4 B5/1 C6/1 D6/2",
@@ -1062,10 +1077,10 @@ def calibrate_module():
     return song.module()
 
 
-RHYTHM_SONGS = {  # key: (song, the rows of a bar the left hand always plays, EASY's rows)
-    "calm": (calm_song, {0, 12}, 4),
-    "stride": (stride_song, {0, 12}, 4),
-    "rush": (rush_song, {0, 12}, 8),
+RHYTHM_SONGS = {  # key: (song, the rows of a bar both hands play, EASY's slots in a bar)
+    "calm": (calm_song, {0, 12}, [(0,), (4,), (8,), (12,)]),
+    "stride": (stride_song, {0, 12}, [(0,), (4,), (8, 12)]),
+    "rush": (rush_song, {0, 12}, [(0, 4), (8, 12)]),
 }
 
 
@@ -1093,9 +1108,9 @@ def rhythm_set():
     files = {"rhythm_title.mod": title_song().module(restart=0),
              "rhythm_calibrate.mod": calibrate_module()}
     songs = {}
-    for key, (make, anchors, easy_rows) in RHYTHM_SONGS.items():
+    for key, (make, anchors, easy_slots) in RHYTHM_SONGS.items():
         song = make()
-        hard, easy = charts(song, anchors, easy_rows)
+        hard, easy = charts(song, anchors, easy_slots)
         files[f"rhythm_{key}.mod"] = song.module()
         songs[key] = (song, hard, easy)
     files["rhythm_charts.h"] = charts_header(songs)
