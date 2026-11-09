@@ -15,7 +15,7 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba
+#    effects.gba, jukebox.gba, servle.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -33,6 +33,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
 | [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all a script in the Lua subset ([lua.md](lua.md)), compiled at build time to bytecode for the VM ([vm.md](vm.md)): objects with event handlers (`create`, `step`, `collision`, `destroy`, `anim_end`, `room_start`), waits, fields; and the little C a game made in Studio Advance keeps: the frame loop, the collision pair the VM tests (`vm_collide`), a restart |
 | [`effects`](../examples/effects/main.c) | Screen effects, a scene each: alpha blending (`screen_set_blend`, `SPRITE_BLEND`: a see-through foreground, glows, shadows) and how a brightness fade pauses it; runtime sprite tiles (`sprite_set_tiles`: card faces composed when dealt); a game made of scenes in their own files, art drawn at boot |
+| [`servle`](../examples/servle/main.c) | A whole game in a script, effects included: two threads (one plays the rounds as plain code with waits, one runs every effect a frame at a time), RAM arrays and ROM arrays (a dictionary packed 2 bytes a word, and its lookup), styled and formatted text, saves and seeding from a script (`vm_use_saves`, `save_read`, `save_write`, `random_seed`), sprites shown in four palettes and squashed, scaled, tilted and lifted through their properties |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 

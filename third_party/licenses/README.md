@@ -1,6 +1,6 @@
 # Third-party licenses
 
-Verbatim license texts of third-party code compiled into game ROMs, and into web builds where noted. `libtonc.txt` covers every ROM and every web build; `emscripten.txt` and `musl.txt` every web build; `maxmod.txt` only ROMs that link Maxmod: those that call tracker music or sampled sound effects (`audio_bank_set()`, `music_*()`, `sfx_*()`; web builds don't link it). Games built with Serval Engine must reproduce the notices of what they contain (for example in a credits screen or a notices file shipped with the game). See [docs/licensing.md](https://github.com/StevenGann/Serval-Engine/blob/main/docs/licensing.md) (release archives do not include `docs/`).
+Verbatim license texts of third-party code compiled into game ROMs, and into web builds where noted (`scowl.txt`, for an example's data, opens with a note on its source and what it covers, above the verbatim text). `libtonc.txt` covers every ROM and every web build; `emscripten.txt` and `musl.txt` every web build; `maxmod.txt` only ROMs that link Maxmod: those that call tracker music or sampled sound effects (`audio_bank_set()`, `music_*()`, `sfx_*()`; web builds don't link it). Games built with Serval Engine must reproduce the notices of what they contain (for example in a credits screen or a notices file shipped with the game). See [docs/licensing.md](https://github.com/StevenGann/Serval-Engine/blob/main/docs/licensing.md) (release archives do not include `docs/`).
 
 | File | Component | License | Taken from |
 | --- | --- | --- | --- |

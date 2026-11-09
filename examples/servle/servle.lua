@@ -5,7 +5,9 @@
 -- it boots, builds the art, binds the sounds and the song, opts in to saves
 -- (vm_use_saves), starts the Game thread and runs the frame loop. Everything
 -- else is here: the title, the rules, the controls, the marking, the word
--- lists and their lookup, the statistics and their save.
+-- lists and their lookup, the statistics and their save. main.c's opening
+-- comment says what the game does on screen; tools/servle_test.py (CTest
+-- servle_script) plays it on the VM and checks the rules.
 --
 -- The script ends with the word lists, packed into three tables by
 -- tools/servle_words.py from examples/servle/words/answers.txt and

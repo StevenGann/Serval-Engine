@@ -108,10 +108,18 @@ thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:
 
 [examples.servle]
 title = "SERVLE"
-summary = "A five-letter word-guessing game, six tries, with statistics kept in save memory; every rule, the word lists and their lookup are a script in the Lua subset (`servle.lua`)"
+summary = "A five-letter word-guessing game, six tries: tiles that spin, flip and hop, a cheer, confetti and a serval that reacts, statistics kept in save memory; every rule, every effect, the word lists and their lookup are a script in the Lua subset (`servle.lua`)"
 tags = ["vm", "save", "text", "music"]
 level = 4
-thumbnail = { frame = 400, keys = ["200:S:2", "230:U:3", "240:A:2"] }
+# TILES, then QUIET: START on frame 400 makes the answer QUITE, so the board
+# shows all three marks.
+thumbnail = { frame = 1110, keys = [
+    "400:S:2",
+    "446:D:37", "485:A:1", "488:U:45", "535:A:1", "538:U:57", "597:A:1",
+    "600:U:29", "631:A:1", "634:D:41", "677:A:1",
+    "790:D:49", "841:A:1", "844:D:33", "879:A:1", "882:U:45", "929:A:1",
+    "932:U:29", "963:A:1", "966:D:37", "1005:A:1",
+] }
 
 [examples.effects]
 title = "EFFECTS"

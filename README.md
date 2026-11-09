@@ -59,6 +59,7 @@ Later, with no API yet (each can be added without breaking games): palette shari
 | [`fireflies`](examples/fireflies/main.c) | A serval catching fireflies at dusk, 60 seconds a round, whose logic is entirely a script in the Lua subset (`fireflies.lua`), compiled to bytecode for the VM at build time: objects with event handlers, waits, spawning, scoring, the timer, the HUD, sound and music; C only loads the blob, names the collision pair the VM tests (`vm_collide()`) and runs the frame loop |
 | [`effects`](examples/effects/main.c) | The engine's screen effects, a scene each, switched with L and R: alpha blending (a see-through waterfall, glowing wisps and a lamp's halo, blended shadows, blending paused by a brightness fade), palette writes (a sky fading to dusk, a palette cycle on the water, a gem's hit flash), runtime sprite tiles (card faces composed when they are dealt, a frame counter rebuilt every frame), streamed sprites (plasma orbs of 32 frames drawn from 8 slots) and raster effects (a lake's reflections rippling line by line, a sunset sky gradient) |
 | [`jukebox`](examples/jukebox/main.c) | Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop, played from a Lua script (`pads.lua`), beside PSG blips; the frame's CPU time, the mixer's included, on screen |
+| [`servle`](examples/servle/main.c) | A five-letter word-guessing game, six tries, whose rules, effects and word lists are all a script in the Lua subset (`servle.lua`): letter tiles that spin, flip and hop, a cheer, confetti and a serval that reacts, a dictionary of 6,365 words packed into ROM arrays with its lookup, styled and formatted text, statistics saved from the script, a tune on the tone generators |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.
 
@@ -74,7 +75,7 @@ cmake --preset gba-release
 cmake --build --preset gba-release
 # -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba
+#    effects.gba, jukebox.gba, servle.gba
 ```
 
 Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()` (and compiles Lua scripts with `serval_add_script()`); see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.

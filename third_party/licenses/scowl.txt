@@ -3,8 +3,9 @@ https://sourceforge.net/projects/wordlist/files/SCOWL/2020.12.07/scowl-2020.12.0
 http://wordlist.aspell.net
 
 Used only to derive the word lists in examples/servle/words/ (hand-curated
-afterwards); it covers those lists, not the engine or other games. The text
-below is the COPYRIGHT, SOURCES, and CREDITS section of SCOWL's README.
+afterwards); it covers those lists, not the engine or other games. Everything
+from the line "COPYRIGHT, SOURCES, and CREDITS:" on is that section of
+SCOWL's README, verbatim; this note above it is not part of it.
 
 COPYRIGHT, SOURCES, and CREDITS:
 
