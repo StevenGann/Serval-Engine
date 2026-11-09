@@ -9,6 +9,10 @@
 //   - Tracker music: music_play() looped, music_stop(), music_pause() and
 //     music_resume(), music_set_volume() and music_set_speed(), and
 //     music_playing() and music_paused() for the display
+//   - Pictures in time with the music: music_position() (show.c) gives the
+//     module's order, row and tick at the VBlank that shows the frame, so
+//     the lights flare on the beat, the beat lamps step through the bar and
+//     the record turns a turn a bar, at any SPEED, and stops when paused
 //   - Sampled effects: sfx_play(), and sfx_play_ex() with a volume, a pan,
 //     a pitch and a priority; a looped sample held with its handle and
 //     stopped with sfx_stop(); sfx_playing() counting the effects playing;
@@ -18,41 +22,67 @@
 //     (serval_add_script()), which names the bank's samples from
 //     jukebox_bank.h and calls the same functions through the VM's SYS
 //     calls; the menu is C, and reads the script's count of effects
-//     playing (vm_global)
+//     playing and which way its laser went (vm_global)
 //   - The PSG playing beside the mixer, at its full volume: a short square
 //     wave blip for each move of the cursor
+//   - Art drawn at boot (art.c): a cabinet on one fixed map layer, palette
+//     animation (tileset_set_colors) for the pulse and the pads' flashes, a
+//     backdrop gradient (raster_backdrop), a rotated sprite (the record),
+//     per-draw palettes, screen_set_brightness() for the fade-in and the
+//     boom's flash
 //   - frame_cpu_permille(), which counts the mixer's time
 //
 // What to expect when booting the ROM:
-//   - Black screen, white text: "SERVAL JUKEBOX" on top, then four rows,
-//     MUSIC, VOLUME, SPEED and EFFECTS, with a cursor (">") on MUSIC, and the
-//     buttons below. The music starts at once: THEME, an upbeat chiptune in
-//     A minor at 132 BPM (drums, a bass, a lead and chord arpeggios), which
-//     loops after about 51 seconds (past its intro).
-//   - Up and down move the cursor (a short PSG blip each time); left and
-//     right change the row's value (held, they repeat):
+//   - After the splash, the jukebox fades in on a purple-to-navy gradient:
+//     a marquee across the top with a row of bulbs and "SERVAL JUKEBOX" in
+//     gold letters; a turntable on the left, a black record with a red label
+//     (a paw print) under a silver tonearm; the control panel on the right,
+//     four rows, MUSIC (the tune's name in a dark display between < and >),
+//     VOLUME and EFFECTS (meters of ten lamps, green to amber to red, and
+//     the number), SPEED (a slider with a knob, ticks at 50/100/150/200%),
+//     a gold quaver for the cursor on MUSIC; under them the music's state
+//     (PLAYING in gold, PAUSED in pink, STOPPED in grey), four beat lamps
+//     and the module's ORDER and ROW; four pads at the foot, gold A COIN,
+//     cyan B LASER, orange L BOOM, green R HUM; the buttons and the
+//     bottom line under them.
+//   - The music starts at once: THEME, an upbeat chiptune in A minor at 132
+//     BPM (drums, a bass, a lead and chord arpeggios), which loops after
+//     about 51 seconds (past its intro). The record turns with it, a turn a
+//     bar; on every beat the trim, the bulbs and the sky flare and a ripple
+//     runs along the title, the beat lamp moves on (the bar's first in
+//     orange, the others green) and the cursor nods; the bulbs chase a step
+//     a row.
+//   - Up and down move the cursor, which glides to its row (a short PSG
+//     blip each time); left and right change the row's value (held, they
+//     repeat):
 //     - MUSIC: THEME, CALM (a slow, mellow piece in D major at 90 BPM: a
-//       sine bass, a triangle melody, a bell arpeggio and a soft pad) or OFF.
-//       A new module starts from its beginning, at 100% speed.
-//     - VOLUME: the music's volume, 0-255 in steps of 15 (the bar shows it).
+//       sine bass, a triangle melody, a bell arpeggio and a soft pad; its
+//       record's label is teal) or OFF (the tonearm swings off the record,
+//       which stops, its label grey, and the lights rest). A new module
+//       starts from its beginning, at 100% speed.
+//     - VOLUME: the music's volume, 0-255 in steps of 15.
 //     - SPEED: the music's tempo, 50-200% in steps of 10, the pitch
-//       unchanged.
+//       unchanged; the record, the lights and the beat lamps follow it.
 //     - EFFECTS: the effects' volume, 0-255, playing effects too.
-//   - START pauses the music (the state line says PAUSED, the music falls
-//     silent mid-note) and resumes it exactly where it stopped.
-//   - A: a coin (two rising tones). B: a laser zap, falling, panned to the
-//     left and right speakers in turn, its pitch a little different each
-//     time. L: an explosion, priority 2 (it takes a channel from the others
-//     when all are busy). R, held: an engine's hum, looped until R is
-//     released.
+//   - START pauses the music (PAUSED, the music falls silent mid-note, the
+//     record stops and the bar's lamp blinks) and resumes it exactly where
+//     it stopped.
+//   - A: a coin (two rising tones); a coin flips up out of its pad. B: a
+//     laser zap, falling, panned to the left and right speakers in turn,
+//     its pitch a little different each time; a beam shoots to that side.
+//     L: an explosion, priority 2 (it takes a channel from the others when
+//     all are busy); sparks burst from its pad, the screen flashes white and
+//     shakes. R, held: an engine's hum, looped until R is released; its pad
+//     throbs and ripples rise from it. Each pad lights up as it plays.
 //   - The bottom line shows how many effects are playing (the script counts
 //     them) and the CPU time a frame takes, the mixer's and the script's
-//     included: about 7% with nothing playing (the mixer about 3, the VM
-//     running the script about 4), 20-25% with the music and a few effects.
-//   - The web build sounds the same: the music, the effects and the PSG
-//     blips (the browser starts the sound at the first click or key press,
-//     so the page waits for one). Its CPU figure is the browser's time, not
-//     the GBA's.
+//     included: about 10% with nothing playing (the mixer about 3, the VM
+//     running the script about 4, the pictures about 3), 25-30% with the
+//     music and a few effects.
+//   - The web build looks and sounds the same: the music, the effects and
+//     the PSG blips (the browser starts the sound at the first click or key
+//     press, so the page waits for one). Its CPU figure is the browser's
+//     time, not the GBA's.
 //   (In mGBA's default keyboard mapping, the D-pad is the arrow keys, A is X,
 //   B is Z, L is A, R is S, START is Enter.)
 //
@@ -60,29 +90,18 @@
 
 #include "serval/serval.h"
 
+#include "jukebox.h"
 #include "jukebox_bank.h"
 #include "pads_script.h"
-
-enum { ROW_MUSIC, ROW_VOLUME, ROW_SPEED, ROW_EFFECTS, ROW_COUNT };
-enum { TUNE_THEME, TUNE_CALM, TUNE_OFF, TUNE_COUNT };
+#include "show.h"
 
 static const char* const tune_names[TUNE_COUNT] = {"THEME", "CALM", "OFF"};
 static const u16 tune_modules[] = {MOD_THEME, MOD_CALM};
-
-#define FIRST_ROW 3 // the text row of ROW_MUSIC
 
 // The PSG blip for the cursor.
 static const PsgSound blip = {
     .channel = PSG_SQUARE1, .frequency = 1760, .frames = 3, .volume = 9, .duty = PSG_DUTY_25};
 static const PsgSound* const psg_sounds[] = {&blip};
-
-typedef struct {
-    int row;
-    int tune;
-    int volume; // 0-255
-    int speed;  // percent
-    int effects;
-} Jukebox;
 
 static void play_tune(Jukebox* j) {
     if (j->tune == TUNE_OFF) {
@@ -121,47 +140,42 @@ static void change(Jukebox* j, int by) {
     }
 }
 
-// A bar of 10 cells for 0-255.
-static const char* bar(int value) {
-    static char cells[11];
-    int full = (value * 10 + 127) / 255;
-    for (int i = 0; i < 10; i++)
-        cells[i] = i < full ? '#' : '.';
-    cells[10] = '\0';
-    return cells;
-}
-
-// Redraws the menu when it changed, and the bottom line four times a
-// second, so the text costs little of the CPU time shown.
+// Redraws the menu's text when it changed (show.c draws its meters and its
+// cursor), and the bottom line four times a second, so the text costs
+// little of the CPU time shown.
 static void draw(const Jukebox* j, bool all) {
+    static const char* const names[ROW_COUNT] = {"MUSIC", "VOLUME", "SPEED", "EFFECTS"};
     if (all) {
         for (int r = 0; r < ROW_COUNT; r++) {
-            char cursor = r == j->row ? '>' : ' ';
-            const char* line = "";
+            int y = MENU_ROW(r);
+            text_set_style(r == j->row ? TEXT_HIGHLIGHT : TEXT_NORMAL);
+            text_print(11, y, names[r]);
+            text_set_style(TEXT_NORMAL);
             switch (r) {
             case ROW_MUSIC:
-                line = text_format("%c MUSIC   < %s >", cursor, tune_names[j->tune]);
+                text_print(17, y, "<");
+                text_print_centered_in(18, 7, y, tune_names[j->tune]);
+                text_print(25, y, ">");
                 break;
             case ROW_VOLUME:
-                line = text_format("%c VOLUME  %s %d", cursor, bar(j->volume), j->volume);
+                text_print_line(25, y, text_format("%3d", j->volume));
                 break;
             case ROW_SPEED:
-                line = text_format("%c SPEED   %d%%", cursor, j->speed);
+                text_print_line(25, y, text_format("%3d%%", j->speed));
                 break;
             case ROW_EFFECTS:
-                line = text_format("%c EFFECTS %s %d", cursor, bar(j->effects), j->effects);
+                text_print_line(25, y, text_format("%3d", j->effects));
                 break;
             }
-            text_print_line(1, FIRST_ROW + r * 2, line);
         }
     }
     if (all || frame_count() % 15 == 0) {
-        const char* state = !music_playing() ? "STOPPED" : music_paused() ? "PAUSED" : "PLAYING";
-        text_print_line(3, FIRST_ROW + ROW_COUNT * 2, text_format("MUSIC %s", state));
         u32 permille = frame_cpu_permille();
-        text_print_line(1, 19,
-                        text_format("EFFECTS PLAYING %d   CPU %d.%d%%", (int)vm_global(G_PLAYING),
+        text_set_style(STYLE_DIM);
+        text_print_line(14, 19,
+                        text_format("SFX %d  CPU %2d.%d%%", (int)vm_global(G_PLAYING),
                                     (int)(permille / 10), (int)(permille % 10)));
+        text_set_style(TEXT_NORMAL);
     }
 }
 
@@ -172,11 +186,11 @@ int main(void) {
     psg_table_set(psg_sounds, 1);
     random_seed(random_entropy());
 
-    text_print_centered(1, "SERVAL JUKEBOX");
-    text_print_centered(13, "UP/DOWN PICK  LEFT/RIGHT SET");
-    text_print_centered(14, "START PAUSE / RESUME");
-    text_print_centered(16, "A COIN  B LASER  L BOOM");
-    text_print_centered(17, "R (HOLD) ENGINE HUM");
+    show_start(); // the cabinet, faded in over the first frames
+    text_set_style(STYLE_DIM);
+    text_print_centered(18, "UP/DOWN PICK  LEFT/RIGHT SET");
+    text_print(1, 19, "START PAUSE");
+    text_set_style(TEXT_NORMAL);
 
     // The pads and the pause button: pads.lua's thread.
     ecs_reset();
@@ -191,7 +205,7 @@ int main(void) {
         frame_begin();
         vm_step(); // the pads: effects, and START pausing or resuming the music
         vm_events();
-        bool changed = button_pressed(BUTTON_START); // the state line
+        bool changed = false;
         if (button_repeat(BUTTON_UP | BUTTON_DOWN)) {
             int by = button_down(BUTTON_UP) ? -1 : 1;
             j.row = (j.row + by + ROW_COUNT) % ROW_COUNT;
@@ -206,6 +220,7 @@ int main(void) {
             changed = true;
         }
         draw(&j, changed);
+        show_frame(&j); // the record, the lights, the meters, the pads
         frame_end();
     }
 }

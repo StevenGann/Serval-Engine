@@ -77,7 +77,8 @@ target_link_libraries(effects PRIVATE serval_warnings)
 # made at build time by tools/make-example-audio.py (original, synthesized:
 # nothing is downloaded), and mmutil builds them into jukebox_bank.c and
 # jukebox_bank.h (serval_add_soundbank(), cmake/Serval.cmake).
-serval_add_rom(jukebox SOURCES jukebox/main.c TITLE "JUKEBOX" GAME_CODE "SVJB")
+serval_add_rom(jukebox SOURCES jukebox/main.c jukebox/art.c jukebox/show.c TITLE "JUKEBOX"
+               GAME_CODE "SVJB")
 target_link_libraries(jukebox PRIVATE serval_warnings)
 set(jukebox_audio theme.mod calm.mod coin.wav laser.wav boom.wav engine.wav)
 list(TRANSFORM jukebox_audio PREPEND "${CMAKE_CURRENT_BINARY_DIR}/jukebox_audio/")
