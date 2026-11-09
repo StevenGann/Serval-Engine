@@ -31,10 +31,10 @@
 // music_play or music_stop; each sfx_play and sfx_play_ex returns the next
 // handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
 // or sfx_stop_all; music_ticks() is 256 x (F - 1) in frame F, a tick a
-// frame from 0, whatever the music does. --map loads the test playfield below (map_load, background
-// 2) before the blob, for the map calls (vm.c makes them: they print
-// nothing); without it there is no playfield (map_cell 0, map_set_cell
-// warns).
+// frame from 0, whatever the music does. --map loads the test playfield
+// below (map_load, background 2) before the blob, for the map calls (vm.c
+// makes them: they print nothing); without it there is no playfield
+// (map_cell 0, map_set_cell warns).
 //
 // Output, one record per line, numbers in decimal:
 //   frame F                      at the start of frame F

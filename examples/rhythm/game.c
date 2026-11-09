@@ -97,7 +97,7 @@ void game_init(void) {
     // Each text style builds its glyphs the first time it is used (tens of
     // thousands of cycles): use them now, under the black, not in a song.
     text_clear();
-    text_set_style(2); // SAVE FAILED's
+    text_set_style(TEXT_WARNING); // SAVE FAILED's
     text_set_style(TEXT_HIGHLIGHT);
     text_set_style(TEXT_NORMAL);
     sound_init();

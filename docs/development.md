@@ -285,7 +285,7 @@ The fit's first number is what a frame costs whatever its ops (the scheduler's v
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not): release builds and debug builds (the `gba-debug` preset: CMake's Debug configuration, -O0) at `270bba5`, with every planned function implemented. A ROM may use up to 30,464 bytes ([below](#debug-builds)):
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not): release builds and debug builds (the `gba-debug` preset: CMake's Debug configuration, -O0) at `270bba5` for most rows (the later ones are as the paragraph below the table explains), with every planned function implemented. A ROM may use up to 30,464 bytes ([below](#debug-builds)):
 
 | Example | Release | Debug |
 | --- | --- | --- |

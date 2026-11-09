@@ -11,9 +11,12 @@
 //   press seen this frame was polled at the VBlank before (a frame before
 //   music_ticks()) and happened on average half a frame before that poll.
 //   Presses are judged at it, and notes expire against it.
-// - draw time: music_ticks() + DRAW_MS. The pads' line, low on the screen,
-//   shows about a frame after the VBlank music_ticks() names, so a note is
-//   drawn where it is then.
+// - draw time: music_ticks() - the player's calibration + DRAW_MS. The
+//   pads' line, low on the screen, shows about a frame after the VBlank
+//   music_ticks() names, so a note is drawn where it is then; and what is
+//   drawn is what the player hears, the music delayed by the calibration,
+//   so a note crosses its pad at the moment a press there is PERFECT. The
+//   beat's pulse and the serval's dance follow the same heard time.
 // - the windows: PERFECT_MS and GOOD_MS either side of a note.
 //
 // The autoplay presses each note in the first frame whose press time has
@@ -99,6 +102,7 @@ typedef struct {
     u16 tick_samples;
     FIXED input_delay, draw_ahead, calibration, perfect, good;
     FIXED now;       // music_ticks() of the picture drawn (held while paused)
+    FIXED heard;     // ... less the calibration: the time the player hears
     FIXED end;       // the module's end
     u16 draw_from;   // every note before it is judged
     u16 auto_next;   // the autoplay's next note
@@ -268,7 +272,7 @@ static void draw_notes(int marker_x) {
     const Chart* c = st.chart;
     while (st.draw_from < c->count && play_note_judged(&play, st.draw_from))
         st.draw_from++;
-    FIXED drawn = st.now + st.draw_ahead;
+    FIXED drawn = st.heard + st.draw_ahead;
     s32 speed = scroll[st.difficulty];
     int count = 0;
     for (u16 i = st.draw_from; i < c->count && count < NOTE_SPRITES; i++) {
@@ -298,7 +302,7 @@ static void draw_notes(int marker_x) {
 static void draw_serval(int beat, int into) {
     u8 frame = DANCE_IDLE;
     u16 flags = 0;
-    if (beat >= 0 && st.now < st.end) {
+    if (beat >= 0 && st.heard < st.end) {
         if (into < BEAT_TICKS / 4) {
             frame = DANCE_PAW;
             flags = beat & 1 ? SPRITE_FLIP_H : 0;
@@ -311,12 +315,13 @@ static void draw_serval(int beat, int into) {
 
 static void draw(void) {
     // Which beat, and how many ticks into it (a division a frame).
+    st.heard = st.now - st.calibration;
     int beat = -1, into = 0;
-    if (st.now >= 0) {
-        beat = (int)(st.now / (BEAT_TICKS << 8));
-        into = (int)((st.now - beat * (BEAT_TICKS << 8)) >> 8);
+    if (st.heard >= 0) {
+        beat = (int)(st.heard / (BEAT_TICKS << 8));
+        into = (int)((st.heard - beat * (BEAT_TICKS << 8)) >> 8);
     }
-    set_pulse(beat >= 0 && st.now < st.end ? pulse_curve[into] : 0);
+    set_pulse(beat >= 0 && st.heard < st.end ? pulse_curve[into] : 0);
     set_flashes();
     u32 score = play_score(&play)->score;
     if (score != st.shown_score)

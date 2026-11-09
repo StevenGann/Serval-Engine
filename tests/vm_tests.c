@@ -4874,9 +4874,9 @@ static void sys_set_colors_refuse_a_bad_array_or_count(void) {
 // the platform with their arguments in push order, and those with a result
 // push it: music_playing, music_paused and sfx_playing a boolean, sfx_play
 // and sfx_play_ex a handle, music_ticks a FIXED (on the host, the recorder's
-// sound_value). The
-// others push nothing, though the recorder offers 77: the 55 underneath is
-// all that is left. tests/rom/vm_platform_tests.c runs them on the GBA.
+// sound_value). The others push nothing, though the recorder offers 77: the
+// 55 underneath is all that is left. tests/rom/vm_platform_tests.c runs them
+// on the GBA.
 static void sys_sound_calls_reach_the_platform(void) {
 #ifndef SERVAL_GBA
     reset();
@@ -5077,10 +5077,10 @@ static void sys_sound_arguments_in_c_ranges(void) {
 }
 
 // vm.md "Opcode reference": a SYS call with a result and no arguments
-// (music_playing, music_paused, music_ticks) needs a free cell: on a full stack it
-// overflows, warning and halting its context before the call is made. And
-// sfx_play_ex, the one call of 5 arguments, underflows on 4 (a different
-// kind of fault, below).
+// (music_playing, music_paused, music_ticks) needs a free cell: on a full
+// stack it overflows, warning and halting its context before the call is
+// made. And sfx_play_ex, the one call of 5 arguments, underflows on 4 (a
+// different kind of fault, below).
 static void sys_sound_results_need_room(void) {
     reset();
     blob_begin(4, 0, GLOBALS);

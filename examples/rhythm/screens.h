@@ -11,6 +11,9 @@
 
 #include <serval/serval.h>
 
+// Text style 2: light red by default (text.h), for what went wrong.
+#define TEXT_WARNING 2
+
 // The serval at (x, foot y), dancing to `ticks` of music at 4 rows a beat
 // (a paw up on the beat, left then right, a bob on the half beat), or
 // standing for ticks below 0.

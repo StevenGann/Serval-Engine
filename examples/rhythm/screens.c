@@ -194,7 +194,7 @@ static void select_auto(void) {
 }
 
 static void select_message(const char* s, bool warning) {
-    text_set_style(warning ? 2 : TEXT_HIGHLIGHT);
+    text_set_style(warning ? TEXT_WARNING : TEXT_HIGHLIGHT);
     text_print_centered(MESSAGE_ROW, s);
     text_set_style(TEXT_NORMAL);
     message_frames = MESSAGE_FRAMES;
@@ -352,7 +352,7 @@ void results_show(const SelectChoice* played, const Score* s, u32 fell) {
     else if (full_combo)
         text_print_centered_in(0, 23, row, "FULL COMBO");
     if (fell && records_save_failed()) {
-        text_set_style(2);
+        text_set_style(TEXT_WARNING);
         text_print_centered_in(0, 23, FAILED_ROW, "SAVE FAILED");
     }
     text_set_style(TEXT_NORMAL);
