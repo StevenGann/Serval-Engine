@@ -34,7 +34,7 @@ static Color colors[TEXT_STYLES][2] = {
 };
 
 #ifdef SERVAL_DEBUG
-static bool warned_style, warned_area, warned_string;
+static bool warned_style, warned_area, warned_string, warned_surface;
 #endif
 
 // A 4-bit pixel mask (bit 0 = leftmost pixel) spread to 4bpp pixels of color
@@ -75,7 +75,23 @@ static void set_palette(u32 n) {
     pal_bg_bank[TEXT_PALBANK][2 * n + 2] = colors[n][1];
 }
 
-static void text_init(void) {
+// Sets the layer up: the font, the colors, an empty map, background 0 on.
+// surface: not while the pixel surface is on, whose pages are this layer's
+// VRAM (and bitmap modes have no background 0): returns false, and the call
+// that needed the layer does nothing.
+static bool text_init(void) {
+    if (serval_surface_on) {
+#ifdef SERVAL_DEBUG
+        if (!warned_surface) {
+            warned_surface = true;
+            SERVAL_WARN("text: there is no text layer while the pixel surface is on "
+                        "(surface.h): nothing is printed. Show numbers with sprites, or "
+                        "draw them into the surface");
+        }
+#endif
+        return false;
+    }
+    serval_text_lost_hook = serval_text_deactivate; // surface: surface_begin() turns it off
     loaded = 0;
     load_style(0); // tile 0, the blank cell, is style 0's space
     if (style != 0)
@@ -90,6 +106,7 @@ static void text_init(void) {
     REG_BG0VOFS = 0;
     REG_DISPCNT |= DCNT_BG0;
     ready = true;
+    return true;
 }
 
 static bool valid_style(const char* function, int n) {
@@ -164,8 +181,8 @@ void serval_text_deactivate(void) {
 // constants.
 static inline __attribute__((always_inline)) void print_within(int col, int row, const char* s,
                                                                int lo, int hi, u32 base) {
-    if (!ready)
-        text_init();
+    if (__builtin_expect(!ready, 0) && !text_init())
+        return;
     if (row < 0 || row >= TEXT_ROWS)
         return;
     SCR_ENTRY* map = &se_mem[TEXT_SCREENBLOCK][row * 32];
@@ -236,6 +253,8 @@ void text_print_line(int col, int row, const char* s) {
     if (!valid_string("text_print_line", s))
         return;
     print(col, row, s, entry_base(TEXT_PALBANK, style));
+    if (__builtin_expect(!ready, 0)) // surface: no layer to blank the row's rest on, either
+        return;
     int end = col;
     while (*s++)
         end++;
@@ -243,8 +262,8 @@ void text_print_line(int col, int row, const char* s) {
 }
 
 void text_clear(void) {
-    if (!ready)
-        text_init();
+    if (!ready && !text_init())
+        return;
     memset32(&se_mem[TEXT_SCREENBLOCK][0], 0, sizeof(SCREENBLOCK) / 4);
 }
 
@@ -266,8 +285,8 @@ static bool valid_area(const char* function, int width, int height) {
 void text_clear_area(int col, int row, int width, int height) {
     if (!valid_area("text_clear_area", width, height))
         return;
-    if (!ready)
-        text_init();
+    if (!ready && !text_init())
+        return;
     for (int r = row; r < row + height; r++)
         blank(r, col, col + width);
 }
@@ -278,8 +297,8 @@ static void print_centered_in(const char* function, int col, int width, int row,
     int length = 0;
     while (s[length])
         length++;
-    if (!ready)
-        text_init();
+    if (!ready && !text_init())
+        return;
     blank(row, col, col + width);
     print_within(col + (width - length) / 2, row, s, col < 0 ? 0 : col,
                  col + width < TEXT_COLS ? col + width : TEXT_COLS,

@@ -20,6 +20,8 @@ enum {
     BG0VOFS = 0x12 / 2,
     BG2PA = 0x20 / 2,
     BG2PD = 0x26 / 2,
+    BG2X = 0x28 / 2, // 32 bits: the low halfword here
+    BG2Y = 0x2C / 2,
     WIN0H = 0x40 / 2,
     WIN0V = 0x44 / 2,
     WININ = 0x48 / 2,
@@ -511,6 +513,40 @@ static void bitmap_and_affine_modes(void) {
     render();
     CHECK(pixel(5, 7) == rgb(red));
     CHECK(pixel(6, 7) == rgb(backdrop));
+    // surface: the page through BG2's matrix, as surface_set_transform() sets
+    // it. Screen columns as bitmap rows, doubled in width: screen (x, y) shows
+    // bitmap (y, x / 2), so bitmap pixel (7, 5) is screen (10, 7) and (11, 7).
+    io[BG2PA] = 0;
+    io[BG2PA + 1] = 256; // PB
+    io[BG2PA + 2] = 128; // PC
+    io[BG2PA + 3] = 0;   // PD
+    vram[0xA000 + 7 * 240 + 5] = 0;
+    vram[0xA000 + 5 * 240 + 7] = 9;
+    render();
+    CHECK(pixel(9, 7) == rgb(backdrop));
+    CHECK(pixel(10, 7) == rgb(red));
+    CHECK(pixel(11, 7) == rgb(red));
+    CHECK(pixel(12, 7) == rgb(backdrop));
+    CHECK(pixel(10, 6) == rgb(backdrop) && pixel(10, 8) == rgb(backdrop));
+    // Shrunk to half size from a reference point: screen (x, y) shows bitmap
+    // (2x + 4, 2y + 2); past the bitmap's edge, the backdrop.
+    io[BG2PA] = 512;
+    io[BG2PA + 1] = 0;
+    io[BG2PA + 2] = 0;
+    io[BG2PA + 3] = 512;
+    io[BG2X] = 4 << 8;
+    io[BG2Y] = 2 << 8;
+    vram[0xA000 + 5 * 240 + 7] = 0;
+    vram[0xA000 + 12 * 240 + 24] = 9;   // screen (10, 5)
+    vram[0xA000 + 158 * 240 + 238] = 9; // screen (117, 78), the last inside
+    render();
+    CHECK(pixel(10, 5) == rgb(red));
+    CHECK(pixel(11, 5) == rgb(backdrop) && pixel(10, 6) == rgb(backdrop));
+    CHECK(pixel(117, 78) == rgb(red));
+    CHECK(pixel(118, 78) == rgb(backdrop) && pixel(117, 79) == rgb(backdrop));
+    CHECK(pixel(239, 159) == rgb(backdrop));
+    io[BG2X] = 0;
+    io[BG2Y] = 0;
     // Mode 1: BG2 affine, 128x128, 8bpp tiles; 1-byte map entries.
     reset(0x0401);
     io[BG2PA] = 256;

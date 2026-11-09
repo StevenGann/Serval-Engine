@@ -29,6 +29,7 @@ extern const TestSuite gba_lz77_tests;     // lz77: LZ77-compressed sprites and 
 extern const TestSuite gba_link_tests;     // debug link: the agent, dormant without an endpoint
 // debug link (E9): a hot reload's cost
 extern const TestSuite gba_link_reload_tests;
+extern const TestSuite gba_surface_tests; // surface: the pixel surface
 
 void test_output(const char* line) {
     debug_log(line);
@@ -83,6 +84,9 @@ int main(void) {
         &gba_link_tests,
         // debug link (E9): a hot reload's cost
         &gba_link_reload_tests,
+        // surface: the pixel surface. Last: it writes over the VRAM of the
+        // text layer, the tileset and the sprite tiles
+        &gba_surface_tests,
     };
     // Not the failure count itself: exit codes wrap at 256, so 256 failures
     // would look like a pass.

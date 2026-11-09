@@ -39,6 +39,8 @@ World coordinates are pixels from the top-left of the playfield (BG2) map; colli
 | BG palette bank 15 | Text layer |
 | Charblock 0 tiles 384-511, screenblocks 24-27 | Unused today; reserved for the text layer and the engine ([core-api.md](core-api.md#hardware-the-engine-uses)) |
 
+The [pixel surface](surface.md) takes all of the charblocks 0-3 above for its pages, so it and the map layers exclude each other: `surface_begin()` refuses while a layer is loaded, and `map_load()`, `tileset_load()` and `tileset_set_tiles()` refuse while the surface is on (each returns `false` or does nothing, *warns*). After `surface_end()`, load the tileset again before a map layer.
+
 Map layers are 4bpp, 32×32-entry (256×256 pixel) regular backgrounds; `map_load()` sets their BGxCNT (character base 1, their screenblock, priority = BG number) and DISPCNT enable bit at once, and `map_unload()` clears the bit at the next `frame_end()`.
 
 ## Metatiles

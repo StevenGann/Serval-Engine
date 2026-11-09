@@ -18,6 +18,7 @@
 #include "serval/save.h"
 #include "serval/screen.h"
 #include "serval/sprites.h"
+#include "serval/surface.h"
 #include "serval/text.h"
 #include "serval/vm.h"
 

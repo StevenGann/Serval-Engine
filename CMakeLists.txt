@@ -105,6 +105,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/sprite_stream.c
         src/gba/sprite_tiles.c
         src/gba/sprites.c
+        src/gba/surface.c
         src/gba/text.c
         src/gba/vm_platform.c
         src/gba/wave.c
@@ -148,6 +149,7 @@ elseif(SERVAL_TARGET_WEB)
         src/gba/sprite_stream.c
         src/gba/sprite_tiles.c
         src/gba/sprites.c
+        src/gba/surface.c
         src/gba/text.c
         src/gba/vm_platform.c
         src/gba/wave.c

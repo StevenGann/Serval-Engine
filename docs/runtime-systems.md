@@ -111,6 +111,8 @@ Variable-width font renderer drawing glyphs into BG tiles; text boxes with typew
 
 **Implemented so far:** a minimal fixed-width HUD/debug text layer (`include/serval/text.h`): libtonc's 8x8 `sys8` font on BG0, a 30x20 character grid, up to four color styles with an optional drop shadow (`text_set_style()`: white by default, `TEXT_HIGHLIGHT` yellow; `text_set_color()`, `text_set_shadow()`, `text_set_style_color()`), `text_print_line()` for lines redrawn with changing content, centering on the screen or within columns (`text_print_centered()`, `text_print_centered_in()`), `text_clear_area()`, and `text_format()` (printf-style, including `%.3s`) for numbers without a C library. The full system above will build on or replace it.
 
+While the [pixel surface](surface.md) is on there is no text layer (bitmap modes have no tiled background, and the surface's pages are the font's and the map's memory): the text calls do nothing and *warn* once, and the layer sets itself up again at the first text call after `surface_end()`. The `raycaster` example shows its numbers with sprites.
+
 ## Special effects
 
 **Status:** brightness fades, color mixing, alpha blending (`screen_set_blend()`, with the `LAYER_*` constants, and `SPRITE_BLEND` in `sprites.h`) and raster effects (`raster_scroll()`, `raster_backdrop()`, `raster_clear()`) implemented (`include/serval/screen.h`). Palette writes, implemented, are in the sprite and tilemap docs ([below](#palette-effects)). Windows and mosaic come after 1.0, with no API yet.

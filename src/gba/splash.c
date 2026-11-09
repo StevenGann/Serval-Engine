@@ -5,6 +5,7 @@
 #include <tonc.h>
 
 #include "../core/splash_internal.h"
+#include "../core/warn.h"
 #include "internal.h"
 #include "screen_internal.h"
 #include "splash_art.h"
@@ -31,6 +32,13 @@ static void set_darkness(u32 level) {
 }
 
 void serval_splash(void) {
+    // surface: the splash is drawn on the text layer, which the pixel surface
+    // has no room for.
+    if (serval_surface_on) {
+        SERVAL_WARN("serval_splash: not while the pixel surface is on (surface.h): call it "
+                    "before surface_begin(). Skipped");
+        return;
+    }
     // Borrow the backdrop, a grey in bank 14 and the logo's bank 13, the
     // blend control (the game's brightness or blending), the text shadow and
     // background 0 (control register and display bit); put them back at the

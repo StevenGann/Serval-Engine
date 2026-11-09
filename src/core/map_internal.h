@@ -51,6 +51,11 @@ extern u8 serval_map_kinds;
 // the VBlank flush into frame_end()). Host builds do nothing.
 void serval_map_attach(void);
 
+// surface: asked by map_load() before it loads anything: true if the platform
+// can't show map layers now (GBA: while the pixel surface is on, surface.h;
+// it has warned). Host builds: never.
+bool serval_map_blocked(void);
+
 // The metatile index of cell (mx, my) of the playfield, which must be inside
 // it, including runtime changes.
 u32 serval_map_cell_in(const MapLayer* layer, u32 mx, u32 my);

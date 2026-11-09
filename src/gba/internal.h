@@ -194,6 +194,28 @@ extern bool serval_backdrop_raster;
 // (entry y for line y; frame_end() writes entry 0 itself), or NULL.
 const u16* serval_raster_lines(void);
 
+// surface: the pixel surface (surface.c, docs/surface.md), display mode 4.
+// serval_surface_on (core.c) is true between surface_begin() and
+// surface_end(): its pages are the VRAM of the text layer, the tileset and
+// the map layers, so text.c, map.c and the splash refuse their calls then,
+// reading only this flag (games without the surface link none of
+// surface.c). frame_end() calls serval_surface_commit_hook in VBlank, after
+// the map's commit (NULL while the surface is off). serval_text_lost_hook is
+// set by the text layer once it is set up: surface_begin() calls it, and the
+// next text call after surface_end() sets the layer up again (the font's
+// tiles and the map are gone). serval_sprite_floor_set() unloads every
+// sprite group, as sprite_groups_reset() does, and makes groups load from
+// OBJ VRAM tile `tile` up from now on: 512 while the surface is on (the
+// hardware shows no sprite tile below it in bitmap modes), else 0.
+// serval_surface_transform() is for tests: the six values last written to
+// background 2's affine registers (write-only), in surface_set_transform()'s
+// order.
+extern bool serval_surface_on;
+extern void (*serval_surface_commit_hook)(void);
+extern void (*serval_text_lost_hook)(void);
+void serval_sprite_floor_set(u32 tile);
+void serval_surface_transform(FIXED out[6]);
+
 // maxmod: tracker music and sampled sound effects. The calls games and
 // scripts make (sampled_audio.c) reach Maxmod (maxmod.c) only through
 // serval_mixer_ops, which audio_bank_set() sets while a bank is registered

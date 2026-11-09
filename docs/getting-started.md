@@ -15,7 +15,7 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba, servle.gba
+#    effects.gba, jukebox.gba, raycaster.gba, servle.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -33,6 +33,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
 | [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all a script in the Lua subset ([lua.md](lua.md)), compiled at build time to bytecode for the VM ([vm.md](vm.md)): objects with event handlers (`create`, `step`, `collision`, `destroy`, `anim_end`, `room_start`), waits, fields; and the little C a game made in Studio Advance keeps: the frame loop, the collision pair the VM tests (`vm_collide`), a restart |
 | [`effects`](../examples/effects/main.c) | Screen effects, a scene each: alpha blending (`screen_set_blend`, `SPRITE_BLEND`: a see-through foreground, glows, shadows) and how a brightness fade pauses it; runtime sprite tiles (`sprite_set_tiles`: card faces composed when dealt); a game made of scenes in their own files, art drawn at boot |
+| [`raycaster`](../examples/raycaster/main.c) | The pixel surface ([surface.md](surface.md)): a first-person maze game that draws its own picture, a ray and a textured column at a time; fixed-point math without division, hot loops in IWRAM, a picture drawn over two frames, sprites as a HUD over it, text screens and the surface in one game |
 | [`servle`](../examples/servle/main.c) | A whole game in a script, effects included: two threads (one plays the rounds as plain code with waits, flips included, one runs every other effect a frame at a time), RAM arrays and ROM arrays (a dictionary packed 2 bytes a word, and its lookup), styled and formatted text, saves and seeding from a script (`vm_use_saves`, `save_read`, `save_write`, `random_seed`), sprites shown in four palettes and squashed, scaled, tilted and lifted through their properties |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
@@ -201,5 +202,6 @@ debug_log(text_format("spawned %u", count));              // mGBA's log window
 - [tilemaps.md](tilemaps.md): tilesets, map layers, the camera, map bodies and map collision.
 - [audio.md](audio.md#psg-music): PSG music; [tracker music and sampled sound effects](audio.md#sound-bank) from a sound bank (`serval_add_soundbank()`, [development.md](development.md#building-a-game); the `jukebox` example).
 - [runtime-systems.md](runtime-systems.md): save data, fades, paths, physics details.
+- [surface.md](surface.md): the pixel surface, for games that draw their own picture (first-person views, polygons).
 - [development.md](development.md#memory-use): memory (IWRAM) budgets, and [the benchmark](development.md#benchmark).
 - [licensing.md](licensing.md): the notices a shipped game must include.

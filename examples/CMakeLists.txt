@@ -94,6 +94,11 @@ serval_add_soundbank(jukebox jukebox_bank ${jukebox_audio})
 serval_add_script(jukebox jukebox/pads.lua
                   HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
 
+serval_add_rom(raycaster SOURCES raycaster/main.c raycaster/game.c raycaster/world.c
+               raycaster/view.c raycaster/art.c raycaster/sound.c
+               TITLE "WISP WARREN" GAME_CODE "SVRC")
+target_link_libraries(raycaster PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -105,4 +110,5 @@ if(COMMAND serval_add_rom_checks)
                           fireflies servle bunnymark_bench)
     serval_add_rom_checks(effects)
     serval_add_rom_checks(jukebox)
+    serval_add_rom_checks(raycaster)
 endif()

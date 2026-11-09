@@ -34,6 +34,12 @@ void debug_exit(int code) {
 // Host builds draw nothing: map layers only matter for collision there.
 void serval_map_attach(void) {}
 
+// surface: the pixel surface, which takes the map layers' place, is the GBA's
+// and the web's.
+bool serval_map_blocked(void) {
+    return false;
+}
+
 // Save memory: SRAM's, starting like never-written SRAM (all 0xFF).
 static u8* save_memory(void) {
     static u8 memory[SAVE_SIZE_SRAM];

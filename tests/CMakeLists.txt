@@ -149,6 +149,7 @@ if(SERVAL_TARGET_GBA)
                 rom/raster_tests.c
                 rom/wave_tests.c
                 rom/vm_sound_tests.c
+                rom/surface_tests.c
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")
