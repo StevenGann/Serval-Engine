@@ -99,6 +99,11 @@ serval_add_rom(raycaster SOURCES raycaster/main.c raycaster/game.c raycaster/wor
                TITLE "WISP WARREN" GAME_CODE "SVRC")
 target_link_libraries(raycaster PRIVATE serval_warnings)
 
+serval_add_rom(racer SOURCES racer/main.c racer/game.c racer/view.c racer/art.c racer/road.c
+               racer/track.c
+               TITLE "SAVANNA RUN" GAME_CODE "SVRR")
+target_link_libraries(racer PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -111,4 +116,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(effects)
     serval_add_rom_checks(jukebox)
     serval_add_rom_checks(raycaster)
+    serval_add_rom_checks(racer)
 endif()

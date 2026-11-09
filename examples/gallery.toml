@@ -142,3 +142,10 @@ summary = "A first-person maze game drawn by the game itself on the pixel surfac
 tags = ["surface", "sprites", "music", "text"]
 level = 4
 thumbnail = { frame = 640, keys = ["200:S:2", "260:A:2", "350:U:60", "420:B:2", "460:U:50", "520:r:30"] }
+
+[examples.racer]
+title = "SAVANNA RUN"
+summary = "A pseudo-3D road racer: one still picture of a road bent line by line with `raster_scroll()`, light and dark stripes rolling toward the player by palette writes alone, a sunset sky swinging with the curves, and a serval at the wheel of a safari jeep against the clock"
+tags = ["effects", "tilemaps", "sprites", "text"]
+level = 3
+thumbnail = { frame = 695, keys = ["300:A:400"] }
