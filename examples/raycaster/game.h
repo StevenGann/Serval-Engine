@@ -38,7 +38,8 @@ static inline FIXED fix_to_fx(Fix f) {
 #define GRID_W 32
 #define GRID_H 32
 
-// A map cell: 0 is open floor, 1-63 a wall with texture cell - 1 (TEX_*),
+// A map cell: 0 is open floor, 1-63 a wall with texture cell - 1 (TEX_*; a
+// torch and the moon gate have several, shown in turn),
 // and CELL_DOOR | n the door doors[n], which is open floor while it is open.
 #define CELL_DOOR 0x80
 extern u8 grid_cells[GRID_W * GRID_H];
@@ -54,10 +55,15 @@ enum {
     TEX_WOOD,
     TEX_BRICK,
     TEX_BANNER,
+    TEX_TORCH,                 // 2 frames
+    TEX_SHELF = TEX_TORCH + 2, // a bookcase
+    TEX_BARS,                  // a barred window
+    TEX_DRAIN,
+    TEX_RELIEF, // a carved moon
     TEX_DOOR,
     TEX_LOCK,
-    TEX_GATE,
-    TEX_COUNT
+    TEX_GATE, // 4 frames
+    TEX_COUNT = TEX_GATE + 4
 };
 #define TEX_SIZE 64
 
@@ -82,7 +88,7 @@ extern Door doors[MAX_DOORS];
 // --- Things -------------------------------------------------------------------
 
 // Everything in the warren that isn't a wall: drawn as a picture facing the
-// serval, 32 x 32 texels, one cell wide and tall, standing on the floor.
+// serval, 64 x 64 texels, one cell wide and tall, standing on the floor.
 enum {
     THING_NONE, // a free slot
     THING_WISP, // the pale blue kind: comes close and strikes
@@ -95,19 +101,25 @@ enum {
     THING_PILLAR,
 };
 
-// The pictures of things (art.c): each wisp frame once per kind.
+// The pictures of things (art.c). The hex wisp is drawn from the wisp's
+// pictures in its own colors (SHADE_HEX), and casts in two of its own.
 enum {
-    PIC_WISP,                // drifting (2), striking, hurt, fading (2)
-    PIC_HEX = PIC_WISP + 6,  // the same six in violet
-    PIC_FLASK = PIC_HEX + 6, //
+    PIC_WISP,                     // drifting: 4 frames
+    PIC_HEX = PIC_WISP,           // (the hex wisp's are the wisp's)
+    PIC_WISP_REAR = PIC_WISP + 4, // rearing up to strike
+    PIC_WISP_STRIKE,              //
+    PIC_WISP_HURT,                //
+    PIC_WISP_FADE,                // 3 frames
+    PIC_HEX_CAST = PIC_WISP + 10, // gathering a hex, casting it: 2 frames
+    PIC_FLASK = PIC_HEX_CAST + 2, //
     PIC_CRYSTALS,
     PIC_KEY,
-    PIC_BRAZIER, // 2 frames
-    PIC_URN = PIC_BRAZIER + 2,
+    PIC_BRAZIER, // 3 frames
+    PIC_URN = PIC_BRAZIER + 3,
     PIC_PILLAR,
     PIC_COUNT
 };
-#define PIC_SIZE 32
+#define PIC_SIZE 64
 
 // What a wisp is doing.
 enum { WISP_ASLEEP, WISP_CHASING, WISP_STRIKING, WISP_HURT, WISP_FADING };
@@ -197,11 +209,14 @@ extern u8 pic_texels[PIC_COUNT][PIC_SIZE * PIC_SIZE];
 // skips the air above and below.
 extern u8 pic_spans[PIC_COUNT][PIC_SIZE * 2];
 
-// The surface's palette: 31 base colors at 8 brightness levels. Color number
-// = level * 32 + base color; level 0 is the brightest. `tint` picks the
-// table: the plain one, or the red one shown for a moment when hurt.
-#define SHADES 8
+// The surface's palette: 31 base colors at 7 brightness levels. Color number
+// = level * 32 + base color; level 0 is the brightest. The eighth row of 32
+// is the hex wisp's: its colors in the places of the wisp's, so the two share
+// their pictures. `tint` picks the table: the plain one, or the red one shown
+// for a moment when hurt.
+#define SHADES 7
 #define SHADE(level) ((level) << 5)
+#define SHADE_HEX SHADE(SHADES)
 #define BASE_CEILING 6
 #define BASE_FLOOR 31
 enum { TINT_NONE, TINT_HURT, TINT_COUNT };
@@ -209,10 +224,19 @@ const Color* art_palette(u32 tint);
 
 // Sprites: the HUD over the view.
 enum {
-    SPR_WAND,  // 32x64: at rest, and two frames of the flash
+    SPR_WAND,  // 64x64: at rest, and two frames of the flash
     SPR_GLYPH, // 8x16: GLYPH_* frames
     SPR_ICON,  // 16x16: ICON_* frames
     SPR_CROSS, // 8x8
+    // The title's, menu's and results' (title.c), in groups of their own:
+    // hud_group is the sprites before these.
+    SPR_LOGO,   // 32x32: the logo's letters, LOGO_* frames
+    SPR_START,  // 32x16: PRESS START on the title, a label's frames
+    SPR_STORY,  // 32x8: the title's line of story, a label's frames
+    SPR_WORD,   // 32x16: the menu's and results' labels in the big font
+    SPR_LINE,   // 32x8: and in the small font
+    SPR_PANEL,  // 32x16: the glass band, PANEL_* frames
+    SPR_CURSOR, // 16x16: the menu's spark, 2 frames
     SPRITE_COUNT
 };
 enum { GLYPH_0, GLYPH_P = 10, GLYPH_A, GLYPH_U, GLYPH_S, GLYPH_E, GLYPH_D, GLYPH_PERCENT };
@@ -244,7 +268,77 @@ enum {
     SOUND_COUNT
 };
 void sound_init(void);
-void sound_music(bool on); // the warren's tune
+// The music: one tune at a time. Asking for the tune that is playing changes
+// nothing, so screens can ask on every entry.
+enum { TUNE_NONE, TUNE_TITLE, TUNE_WARREN, TUNE_COUNT };
+void sound_music(u32 tune);
+
+// --- The title, the menu and the results (title.c) ---------------------------------
+
+// Converts the logo and the fonts, and mixes the view's colors for these
+// screens; at boot, after art_build().
+void title_build(void);
+
+// Their sprites, in two groups that are never loaded together: the title's
+// (SPR_LOGO, SPR_START, SPR_STORY) and the menu's and results' (the rest).
+extern const SpriteAsset title_sprites[SPRITE_COUNT - SPR_LOGO];
+extern const SpriteGroup title_group, menu_group;
+enum {
+    LOGO_W,
+    LOGO_I,
+    LOGO_S,
+    LOGO_P,
+    LOGO_A,
+    LOGO_R,
+    LOGO_E,
+    LOGO_N,
+    LOGO_I_FLICKER,
+    LOGO_MOON,
+    LOGO_FRAMES
+};
+enum { PANEL_FILL, PANEL_EDGE, PANEL_FRAMES };
+// Palettes, for SPRITE_PALETTE(): the first two are in both groups, then the
+// title's and the menu's own.
+enum { PAL_TEXT, PAL_PULSE, PAL_WISP, PAL_WARREN, PAL_GLINT };
+enum { PAL_GOLD = PAL_PULSE + 1, PAL_SOFT, PAL_RED, PAL_GLASS, PAL_BAR };
+
+// A line of text as sprites: `blocks` frames of `sprite`, 32 pixels each,
+// from frame `first`, drawn side by side.
+typedef struct {
+    u8 sprite; // SPR_START, SPR_STORY, SPR_WORD (the big font) or SPR_LINE (the small)
+    u8 first;
+    u8 blocks;
+    u8 width; // of the text, in pixels
+} Label;
+// Composes `text` into the next free frames of `sprite`: as many as it
+// needs, or `blocks` of them (room for label_set()). In the small font, text
+// between two '~' is in the palette's second color, and + @ $ < > are the
+// D-pad and the A, B, L and R buttons. The frames are in RAM: they show once
+// the sprite's group is loaded after this. labels_clear() gives all of a
+// sprite's frames back.
+Label label_make(u32 sprite, const char* text, u32 blocks);
+void labels_clear(u32 sprite);
+// Changes a label on screen (sprite_set_tiles(): one label a frame).
+void label_set(Label* label, const char* text);
+void label_draw(Label label, int x, int y, u16 flags);
+void label_draw_centered(Label label, int y, u16 flags);
+
+// The logo, `time` frames after it began to arrive (its letters drop in one
+// after another: all are in place after logo_frames()), and `leaving` frames
+// after it began to leave, upward (0: it stays).
+void logo_draw(int time, int leaving);
+int logo_frames(void);
+// A band of glass across the screen with a rule along its top and bottom, and
+// a bar of `blocks` x 32 pixels by 20: SPR_PANEL's frames, drawn with `flags`
+// (SPRITE_BLEND, and for the bar SPRITE_PALETTE(PAL_BAR)). Draw them after
+// what stands on them: of two sprites, the one drawn first is in front.
+void band_draw(int top, int height, u16 flags);
+void bar_draw(int x, int y, int blocks, u16 flags);
+
+// The surface's colors behind these screens, in place of art_palette()'s: the
+// view dimmed toward night blue, and the last picture of a run for the results.
+enum { VIEW_TITLE, VIEW_BETWEEN, VIEW_MENU, VIEW_WON, VIEW_LOST, VIEW_COUNT };
+const Color* view_colors(u32 which);
 
 // --- The game (game.c) -------------------------------------------------------------
 

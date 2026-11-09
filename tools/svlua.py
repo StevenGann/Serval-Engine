@@ -24,9 +24,10 @@ Usage:
                            earlier build's map has as it did, and append the
                            new ones, so a hot reload doesn't move them
 
-The listing keeps the script's names: objects, globals and arrays upper-cased
-(Firefly is OBJ_FIREFLY to C, score is G_SCORE), functions as labels, top-level
-<const> numbers as .const lines. Names in ALL_CAPS that the script doesn't
+The listing keeps the script's names: objects, globals, arrays and instance
+fields upper-cased (Firefly is OBJ_FIREFLY to C, score is G_SCORE, hp is
+FIELD_HP, a .field line), functions as labels, top-level <const> numbers as
+.const lines. Names in ALL_CAPS that the script doesn't
 define are constants from the game's C headers: they pass through to the
 listing, so svm.py needs --header for every header that defines them (the
 listing's first lines name them). Every line of code ends with a
@@ -1363,6 +1364,11 @@ MACROS = {
     "ANGLE_DEG": (((-360, 360),), "an angle in whole degrees, as an integer (math.h)"),
 }
 VM_FIELDS = 16  # instance fields, VM_P_FIELD0 to VM_P_FIELD0 + 15
+# The C header svm.py --defs writes ends each family with its count
+# (OBJ_COUNT, G_COUNT, ...), so no object, global, array or field can be
+# named count: it would define the same name twice.
+COUNT_FAMILIES = {"object": ("OBJ", "objects"), "global": ("G", "globals"),
+                  "array": ("ARR", "arrays"), "instance field": ("FIELD", "instance fields")}
 VM_ARRAY_CELLS = 1024
 VM_GLOBALS = 256
 MAX_ARRAYS = 0xFFFF  # the blob's 16-bit count
@@ -1550,6 +1556,8 @@ class ObjectSym(Sym):
         self.sprite = None
         self.components_const = None
         self.sprite_const = None
+        self.fields = []  # the declared instance fields: (FieldSym, its default's expression)
+        self.defaults = []  # after checking: (FieldSym, Const)
         self.index = None
         self.handlers = {}  # event name -> Body
         self.listing = name.upper()
@@ -1623,7 +1631,8 @@ class FieldSym:
         self.node = node
         self.ty = None
         self.origin = None
-        self.listing = None  # its .const name
+        self.declared_in = None  # the name of the object whose fields = { ... } declared it first
+        self.listing = None  # FIELD_NAME, its name in the listing (.field) and the C header
 
 
 class Body:
@@ -1713,6 +1722,7 @@ class Resolver:
         self.top_locals = {}  # top-level locals declared so far
         self.later_locals = {}  # every top-level local name -> its line
         self.listing_names = {}  # (category, LISTING) -> Sym
+        self.declared_fields = {}  # an object { ... } call -> [(FieldSym, default expression)]
         self.builtins = {}
 
     def error(self, node, message, hint=None):
@@ -1728,6 +1738,8 @@ class Resolver:
                 self.later_locals.setdefault(stat.name.name, stat.name.line)
         for stat in stats:
             self.predeclare(stat)
+        for stat in stats:  # the declared fields take the first slots, in declaration order
+            self.predeclare_fields(stat)
         for stat in stats:
             self.top_statement(stat)
         objects = sorted((s for s in self.p.top_order if s.kind == "object"),
@@ -1791,6 +1803,7 @@ class Resolver:
         else:
             sym = GlobalSym(name.name, name, value, is_local)
         if hasattr(sym, "listing"):
+            self.check_count_name(name, category, sym.listing)
             key = (category, sym.listing)
             other = self.listing_names.get(key)
             if other is not None:
@@ -1803,6 +1816,60 @@ class Resolver:
         else:
             self.globals[name.name] = sym
         return sym
+
+    def check_count_name(self, node, category, listing):
+        """A name whose upper case is COUNT would be OBJ_COUNT, G_COUNT,
+        ARR_COUNT or FIELD_COUNT in the C header, which already defines that
+        as the family's count."""
+        if listing != "COUNT":
+            return
+        prefix, plural = COUNT_FAMILIES[category]
+        name = node.name if isinstance(node, Name) else listing.lower()
+        example = {"object": "Counter", "global": "total", "array": "totals",
+                   "instance field": "total"}[category]
+        self.error(node, f"{category} {name} would be {prefix}_COUNT in the C header, which is "
+                   f"the number of {plural}", f"rename it (e.g. {example}): svm.py --defs writes "
+                   f"{prefix}_COUNT after the {plural}")
+
+    def predeclare_fields(self, stat):
+        """An object's fields = { name = default, ... }: each name an instance
+        field, allocated now so the declared fields take the first slots in
+        declaration order, before the fields handlers allocate by first use
+        (number_layout() renumbers them by name under --keep-layout)."""
+        if isinstance(stat, Assign):
+            pairs = zip(stat.targets, stat.values)
+        elif isinstance(stat, Local):
+            pairs = zip(stat.names, stat.values)
+        else:
+            return
+        for target, value in pairs:
+            if not (isinstance(target, Name) and _rhs_kind(value) == "object"):
+                continue
+            if len(value.args) != 1 or not isinstance(value.args[0], Table):
+                continue  # object_decl reports it
+            owner = target.name
+            for item in value.args[0].items:
+                if item.kind != "name" or item.key != "fields":
+                    continue
+                if not isinstance(item.value, Table):
+                    self.error(item.value, "an object's fields are a table of name = default "
+                               "pairs", f"{owner} = object {{ fields = {{ kind = 0, hits = 2 }} }}")
+                declared = []
+                for pair in item.value.items:
+                    if pair.kind != "name":
+                        self.error(pair, "an object's fields are a table of name = default "
+                                   f"pairs", f"{owner} = object {{ fields = {{ kind = 0, hits = 2 "
+                                   "} }: each name declares an instance field with its default")
+                    if any(f.name == pair.key for f, _ in declared):
+                        self.error(pair, f"{pair.key} is given twice")
+                    names = BodyResolver(self, None)
+                    shown = f"{owner}'s field {pair.key}"
+                    names.property_as_field(pair, pair.key, shown, "self", " in create")
+                    field = names.new_field(pair, pair.key, shown, "self")
+                    if field.declared_in is None:
+                        field.declared_in = owner
+                    declared.append((field, pair.value))
+                self.declared_fields[value] = declared
 
     def top_statement(self, stat):
         if isinstance(stat, Local):
@@ -1880,15 +1947,21 @@ class Resolver:
             self.error(call, "object takes a table: object { components = ..., sprite = ... }")
         seen = {}
         for item in call.args[0].items:
-            if item.kind != "name" or item.key not in ("components", "sprite"):
-                self.error(item, "an object has two fields, components and sprite",
-                           "object { components = C_POS | C_SPR, sprite = SPR_X }")
+            if item.kind != "name" or item.key not in ("components", "sprite", "fields"):
+                self.error(item, "an object has three fields, components, sprite and fields",
+                           "object { components = C_POS | C_SPR, sprite = SPR_X, "
+                           "fields = { hp = 3 } }")
             if item.key in seen:
                 self.error(item, f"{item.key} is given twice")
             seen[item.key] = item.value
-            self.top_expr(item.value)
+            if item.key == "fields":
+                for pair in item.value.items:
+                    self.top_expr(pair.value)
+            else:
+                self.top_expr(item.value)
         sym.components = seen.get("components")
         sym.sprite = seen.get("sprite")
+        sym.fields = self.declared_fields.get(call, [])
 
     def array_decl(self, sym, value):
         if not sym.rom:
@@ -2346,25 +2419,44 @@ class BodyResolver:
         else:
             self.expr(obj)
         if e.name not in PROPERTIES:
-            fields = self.r.p.fields
-            if e.name not in fields:
-                self.reserved_field(e)
-                if len(fields) == VM_FIELDS:
-                    self.error(e, f"a {VM_FIELDS + 1}th instance field, {e.name}: the VM has "
-                               f"{VM_FIELDS} (VM_FIELDS), shared by name by every object: "
-                               + ", ".join(fields), "reuse a field name, or keep the value "
-                               "in a global or an array")
-                fields[e.name] = FieldSym(e.name, len(fields), e)
-            e.field = fields[e.name]
+            e.field = self.new_field(e, e.name, _describe(e) or e.name, _describe(e.obj) or "e")
 
-    def reserved_field(self, e):
+    def new_field(self, node, name, shown, owner):
+        """The instance field called name (allocating its slot at its first
+        appearance): e.name in code, a declared field, a spawn table's key.
+        shown is how a message names it (self.hp, Brick's field hp,
+        spawn(Brick, ...)), owner an entity for the hints."""
+        fields = self.r.p.fields
+        if name not in fields:
+            self.reserved_field(node, name, shown, owner)
+            if name.upper() == "COUNT":
+                self.r.check_count_name(node, "instance field", "COUNT")
+            if len(fields) == VM_FIELDS:
+                self.error(node, f"a {VM_FIELDS + 1}th instance field, {name}: the VM has "
+                           f"{VM_FIELDS} (VM_FIELDS), shared by name by every object: "
+                           + ", ".join(fields), "reuse a field name, or keep the value "
+                           "in a global or an array")
+            fields[name] = FieldSym(name, len(fields), node)
+        return fields[name]
+
+    def property_as_field(self, node, name, shown, owner, where):
+        """A declared field or a spawn table's key that is a property: every
+        instance has it already, and it is set on the entity."""
+        if name not in PROPERTIES:
+            return
+        if name in READ_ONLY:
+            why, how = READ_ONLY[name]
+            self.error(node, f"{shown}: {name} is an engine property, not an instance field, "
+                       f"and a read-only one: {why}", how)
+        self.error(node, f"{shown}: {name} is an engine property, not an instance field: every "
+                   f"instance has it", f"set it on the entity{where}: {owner}.{name} = ...")
+
+    def reserved_field(self, node, name, shown, owner):
         """A new instance field's name can't start with a prefix kept for later
         engine properties."""
-        name = e.name
         prefix = next((p for p in RESERVED_PREFIXES if name.startswith(p)), None)
         if prefix is None:
             return
-        owner = _describe(e.obj) or "e"
         hint = (f"rename the field, e.g. my_{name} or {prefix[:-1]}{name[len(prefix):]} "
                 f"(instance fields can't start with {', '.join(RESERVED_PREFIXES[:-1])} or "
                 f"{RESERVED_PREFIXES[-1]})")
@@ -2375,9 +2467,28 @@ class BodyResolver:
             close = difflib.get_close_matches(name[len(prefix):], rests, n=1)
             if close:
                 hint = f"did you mean {rests[close[0]]}? If not, {hint}"
-        self.error(e, f"{_describe(e) or name}: {prefix} is reserved for engine properties, and "
+        self.error(node, f"{shown}: {prefix} is reserved for engine properties, and "
                    f"{name} isn't one: an instance field can't take the name of a property a "
                    "later engine version may add", hint)
+
+    def spawn_table(self, call, table):
+        """spawn's fourth argument: { field = expr, ... }, each key an
+        instance field of the new instance (item.field), set before its
+        Create runs."""
+        obj = _strip(call.args[0])
+        owner = f"spawn({_describe(obj) or 'Obj'}, ...)"
+        seen = set()
+        for item in table.items:
+            if item.kind != "name":
+                self.error(item, "spawn's fourth argument is a table of fields: "
+                           f"spawn({_describe(obj) or 'Obj'}, x, y, {{ hp = 3 }})")
+            if item.key in seen:
+                self.error(item, f"{item.key} is given twice")
+            seen.add(item.key)
+            self.property_as_field(item, item.key, owner, "e", " it returns (local e = "
+                                   f"spawn({_describe(obj) or 'Obj'}, x, y))")
+            item.field = self.new_field(item, item.key, owner, "e")
+            self.expr(item.value)
 
     def call(self, e):
         func = e.func
@@ -2399,8 +2510,18 @@ class BodyResolver:
                 self.use(func)
         else:
             self.expr(func)
-        for arg in e.args:
+        args, table = e.args, None
+        if isinstance(func, Name) and func.sym.kind == "builtin" and func.sym.name == "spawn" \
+                and len(args) >= 4:
+            if not isinstance(args[3], Table):
+                self.error(args[3], "spawn's fourth argument is a table of fields: "
+                           f"spawn({_describe(args[0]) or 'Obj'}, x, y, {{ hp = 3 }})",
+                           "its values set the new instance's fields before its create runs")
+            args, table = args[:3] + args[4:], args[3]  # a fifth: the checker counts them
+        for arg in args:
             self.expr(arg)
+        if table is not None:
+            self.spawn_table(e, table)
 
 
 def resolve(chunk, file, functions):
@@ -2627,6 +2748,23 @@ class Checker:
                 if c.value is not None and not 0 <= c.value <= limit:
                     self.error(e, f"{part} {c.value} doesn't fit (0 to {limit})")
             setattr(sym, part + "_const", c)
+        sym.defaults = []
+        for field, e in sym.fields:
+            ty = self.value(e)
+            c = e.const
+            if ty != INT or c is None:
+                hint = ("a literal, a header constant or arithmetic on them: fields = { hp = 3, "
+                        "kind = KIND_BLUE }")
+                if ty == FIXED and c is not None:
+                    hint = (f"a declared field is an integer; for a fixed value start it in "
+                            f"create: self.{field.name} = {Checker.show(c)}")
+                elif ty is not None and ty != INT:
+                    hint = (f"a declared field is an integer; for {article(ty)} start it in "
+                            f"create: self.{field.name} = ...")
+                self.error(e, f"the default of {sym.name}'s field {field.name} must be a "
+                           "constant integer", hint)
+            self.settle(field, INT, e)
+            sym.defaults.append((field, c))
 
     def top_array(self, sym):
         if not sym.rom:
@@ -2815,7 +2953,7 @@ class Checker:
                 if field.ty is None:
                     self.settle(field, vt, value)
                 else:
-                    self.compatible(f"the field {field.name}", field.ty, field.origin, vt, value)
+                    self.compatible(f"the field {field.name}", field.ty, field, vt, value)
         else:  # Index
             arr = self.array_of(target.obj)
             if arr.rom:
@@ -2840,14 +2978,23 @@ class Checker:
             self.fail(node, "strings exist only as text_print's argument",
                       'text_print(col, row, "text")')
         where = ""
+        declared = None  # a declared field's object: its default typed it
+        if isinstance(origin, FieldSym):  # a field: typed by its default, or its first value
+            declared = origin.declared_in
+            origin = origin.origin
         if origin == "property":
             where = " (an engine property)"
+        elif declared is not None:
+            where = f" (from its default in {declared}, line {origin.line})"
         elif isinstance(origin, Node):
             where = f" (from its first value, line {origin.line})"
         hint = None
         if have == INT and vt == FIXED:
             hint = "math.floor(x) makes a fixed value an integer"
-            if origin not in (None, "property"):
+            if declared is not None:
+                hint = (f"a declared field is an integer; a fixed field starts in create "
+                        f"(self.{name.split()[-1]} = 0.0), undeclared ({hint})")
+            elif origin not in (None, "property"):
                 hint = f"to make it fixed, start it as fixed: 0.0, not 0 ({hint})"
         self.fail(node, f"{name} is {article(have)}{where}, and this is {article(vt)}", hint)
 
@@ -3556,13 +3703,21 @@ class Checker:
         return VOID
 
     def spawn_call(self, e):
-        self.arity(e, "spawn", (3,))
+        self.arity(e, "spawn", (3, 4))
         obj = _strip(e.args[0])
         if not (isinstance(obj, Name) and obj.sym.kind == "object"):
             self.fail(e.args[0], "spawn's first argument is an object: spawn(Firefly, x, y)")
         obj.ty = OBJECT
         for index in (1, 2):
             self.argument(e.args[index], FIXED, "spawn", index)
+        if len(e.args) == 4:  # { field = value, ... }: each value stored in its field
+            for item in e.args[3].items:
+                vt = self.value(item.value)
+                field = item.field
+                if field.ty is None:
+                    self.settle(field, vt, item.value)
+                else:
+                    self.compatible(f"the field {field.name}", field.ty, field, vt, item.value)
         return ENTITY
 
     def macro(self, e, name):
@@ -3760,6 +3915,19 @@ def _leftmost(e):
     return e
 
 
+def _calls_a_function(e):
+    """Whether an expression calls a script function (which may wait); the
+    builtins and the engine calls never do."""
+    if isinstance(e, Call) and isinstance(e.func, Name) and e.func.sym.kind == "function":
+        return True
+    for name in e.fields:
+        value = getattr(e, name)
+        for child in value if isinstance(value, list) else (value,):
+            if isinstance(child, Node) and _calls_a_function(child):
+                return True
+    return False
+
+
 class _Op(str):
     """A listing line holding an op, with what --debug-info says of it: the
     script's line and column it came from, and whether a statement starts
@@ -3830,7 +3998,7 @@ class CodeGen:
         self.gens = []  # each generated body's FuncGen, in listing order
         self.lines = []  # the listing's lines
         self.strings = {}  # bytes -> (listing name, line of first use)
-        self.string_names = set()
+        self.string_names = {"COUNT"}  # STR_COUNT is the header's number of strings
         self.labels = set()
         self.names = {}  # every .const and generated expression name -> what it is
 
@@ -3881,7 +4049,7 @@ class CodeGen:
         for c in p.consts:
             if c.ty in NUMERIC and not c.inline:
                 self.claim(c.name, f"constant {c.name}", c.node)
-        for field in p.fields.values():
+        for field in p.fields.values():  # a name a header constant takes gets a suffix
             base = "FIELD_" + field.name.upper()
             name, n = base, 2
             while name in self.names or name in p.headers:
@@ -3967,16 +4135,20 @@ class CodeGen:
                 line += " " + name
             out.append(line)
         consts = [c for c in p.consts if c.ty in NUMERIC and not c.inline]
-        if consts or p.fields:
+        if consts:
             out += ["", "; --- Constants ---", ""]
             for c in consts:
                 note = f"{c.name} = {fixed_text(c.definition.value)}" if (
                     c.ty == FIXED and c.definition.value is not None) else None
                 out.append(self.located(f".const {c.name} {c.definition.asm()}", c.node.line, note))
-            for field in p.fields.values():
-                out.append(self.located(f".const {field.listing} VM_P_FIELD0 + {field.slot}",
-                                        field.node.line,
-                                        f"instance field {field.name} ({field.ty})"))
+        if p.fields:  # .field NAME n: FIELD_NAME is VM_P_FIELD0 + n, in the C header too
+            out += ["", "; --- Instance fields ---", ""]
+            for field in sorted(p.fields.values(), key=lambda f: f.slot):
+                note = f"instance field {field.name} ({field.ty})"
+                if field.declared_in is not None:
+                    note += f", declared by {field.declared_in}"
+                out.append(self.located(f".field {field.listing[len('FIELD_'):]} {field.slot}",
+                                        field.node.line, note))
         if p.objects:
             out += ["", "; --- Objects ---", ""]
             for obj in p.objects:
@@ -4837,12 +5009,7 @@ class FuncGen:
                 self.op("SYS TEXT_PRINT_NUMBER", e)
             return
         if name == "spawn":
-            obj = _strip(e.args[0]).sym
-            self.expr(e.args[1], FIXED)
-            self.expr(e.args[2], FIXED)
-            self.op(f"SPAWN {obj.listing}", e)
-            if discard:
-                self.op("DROP", e, "the entity isn't used")
+            self.spawn(e, discard)
             return
         params, result, operation = ENGINE[name]
         for arg, want in zip(e.args, params):
@@ -4854,6 +5021,45 @@ class FuncGen:
         self.op(operation, e)
         if discard and result is not None:
             self.op("DROP", e, "the result isn't used")
+
+    def spawn(self, e, discard):
+        """SPAWN, then the new instance's fields: its object's declared
+        defaults (those that aren't 0: the fields start zeroed), then the
+        spawn table's values, one SETP each (DUP keeps the entity), before
+        anything can run its Create. A table value that calls a script
+        function is computed before SPAWN, after x and y as Lua orders the
+        arguments, and kept in a frame cell: the call may wait, and the
+        Create must not run before the fields are set. Nothing else in an
+        expression can wait."""
+        obj = _strip(e.args[0]).sym
+        items = e.args[3].items if len(e.args) == 4 else []
+        given = {item.key for item in items}
+        mark = self.next_slot
+        self.expr(e.args[1], FIXED)
+        self.expr(e.args[2], FIXED)
+        spilled = {}
+        for item in items:
+            if _calls_a_function(item.value):
+                slot = self.alloc(f"(spawn {item.key})")
+                self.expr(item.value, item.field.ty)
+                self.op(f"STL {slot}", item.value, f"{item.key}, set after the spawn")
+                spilled[item.key] = slot
+        self.op(f"SPAWN {obj.listing}", e)
+        for field, c in obj.defaults:
+            if field.name not in given and not c.is_zero:
+                self.op("DUP", e, f"{obj.name}'s field {field.name}")
+                self.push(c, e)
+                self.op(f"SETP {field.listing}", e)
+        for item in items:
+            self.op("DUP", item, f"{item.key}")
+            if item.key in spilled:
+                self.op(f"LDL {spilled[item.key]}", item.value, f"{item.key}, computed before")
+            else:
+                self.expr(item.value, item.field.ty)
+            self.op(f"SETP {item.field.listing}", item)
+        self.next_slot = mark
+        if discard:
+            self.op("DROP", e, "the entity isn't used")
 
     def math_call(self, e, name):
         ty = e.ty

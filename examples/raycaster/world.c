@@ -8,6 +8,8 @@
 //
 // One character per cell, 32 x 32, north at the top:
 //   #  stone      m  mossy stone   w  wood        b  brick
+//   t  a torch    d  a drain       s  a bookcase  c  a barred window
+//   r  a carved moon
 //   B  a banner   G  the moon gate: the way out
 //   D  a door     L  the locked door (it needs the key)
 //   > < ^ v  where the serval starts, and which way it looks
@@ -20,32 +22,32 @@
 // border must be walls: world_start() makes it so, or rays would leave the map.
 static const char* const warren[GRID_H] = {
     "################################", //
-    "#....#f......f#wwwwwwwww#bbbbbb#", //
+    "#....tf......f#wsswwssww#bbcbbb#", //
     "#.>..D........w..u...u.w#b.u..b#", //
-    "#....#..i..i..w.+.....*w#b...kb#", //
-    "#B####........D....n...w#b.A..b#", //
-    "#m...#..i..i..w.*.....+w#b....b#", //
+    "#....t..i..i..w.+.....*s#b...kb#", //
+    "#B####........D....n...w#b.A..c#", //
+    "#m...#..i..i..w.*.....+s#b....b#", //
     "#m.*.#...a....w..u...u.w#b.u..b#", //
     "#m...#f......fwwwwwwwwww#bbDbbb#", //
-    "#m...####D####mmmmmmmmmmmmm.mmm#", //
+    "#m...###tDt###mmmmmmdmmmmmm.mmm#", //
     "#m.h.m.......................nm#", //
     "#m...D..a.........n..........mm#", //
     "#m.+.m......................mmm#", //
-    "#mmmmmmmm.mmmmmmDmmmmmmmmmmmm###", //
-    "#bbbbbbbm.m#f......f#####B######", //
+    "#mmmmmdmm.mmmmmmDmmmmmmmmmmmm###", //
+    "#bbbcbbbm.m#f......f###r#B#r####", //
     "#b.....bm.m#........#f.......f.#", //
-    "#b.u.u.bm.m#..i..i..#..........#", //
-    "#b.....bm.m#........#....A.....#", //
-    "#b..h..D..m#..a..a..L.........N#", //
-    "#b.....bm.m#........#....H.....G", //
-    "#b.u.u.bm.m#..i..i..#..........#", //
-    "#b*...+bm.m#...N....#..........#", //
+    "#c.u.u.bm.m#..i..i..#..........#", //
+    "#b.....bm.m#........#....A.....t", //
+    "#b..h..D..m#..a..a..L.........Nr", //
+    "#b.....bm.d#........#....H.....G", //
+    "#b.u.u.bm.m#..i..i..#..........r", //
+    "#b*...+bm.m#...N....#..........t", //
     "#bbbbbbbm.m#........#f.......f.#", //
     "#mmmmmmmm.m#f..+*..f############", //
-    "#m........m##########mmmmmmmmmm#", //
+    "#m........m###t##t###mmmmdmmmmm#", //
     "#m.mmmmmmmm#....h...D........*m#", //
     "#m.m#######B........#mm.mmmmmmm#", //
-    "#m.m#f....f#..u..u..#m..m#######", //
+    "#m.d#f....f#..u..u..#m..m#######", //
     "#m.D...a...D........#m.+m#######", //
     "#m.m#f....f#...+*...#mmmm#######", //
     "#m.m########B########mmmm#######", //
@@ -63,6 +65,11 @@ Run run;
 // way like walls, but not the view.
 static u32 furniture[GRID_H];
 static int door_count;
+// The walls with more than one picture, torches and the moon gate: their
+// cells, to show the pictures in turn.
+#define MAX_FLICKERS 16
+static u16 flickers[MAX_FLICKERS] SERVAL_EWRAM_BSS;
+static u8 flicker_count SERVAL_EWRAM_BSS;
 
 // --- Rules ------------------------------------------------------------------------
 
@@ -133,8 +140,19 @@ static const Rules rules[DIFFICULTY_COUNT] = {
 
 // --- Building the warren ------------------------------------------------------------
 
+// A wall's first texture from its character; -1 if it isn't a wall.
+static int wall_texture(char c) {
+    static const char chars[] = "#mwbBtsdcrG";
+    static const u8 textures[] = {TEX_STONE, TEX_MOSS,  TEX_WOOD, TEX_BRICK,  TEX_BANNER, TEX_TORCH,
+                                  TEX_SHELF, TEX_DRAIN, TEX_BARS, TEX_RELIEF, TEX_GATE};
+    for (int i = 0; chars[i]; i++)
+        if (chars[i] == c)
+            return textures[i];
+    return -1;
+}
+
 static bool is_wall_char(char c) {
-    return c == '#' || c == 'm' || c == 'w' || c == 'b' || c == 'B' || c == 'G';
+    return wall_texture(c) >= 0;
 }
 
 static void add_thing(int x, int y, u8 kind, u8 pic, s8 health, bool glows) {
@@ -163,6 +181,7 @@ void world_start(u32 difficulty) {
     run = (Run){.difficulty = (u8)difficulty};
     player = (Player){.health = HEALTH_MAX, .sparks = SPARKS_START};
     door_count = 0;
+    flicker_count = 0;
     for (int i = 0; i < MAX_THINGS; i++)
         things[i].kind = THING_NONE;
 
@@ -175,25 +194,12 @@ void world_start(u32 difficulty) {
             char who = (char)(c | 0x20);
             bool here = who == 'a' || (who == 'n' && difficulty >= NORMAL) ||
                         (who == 'h' && difficulty >= HARD);
+            if (is_wall_char(c)) {
+                cell = (u8)(wall_texture(c) + 1);
+                if ((c == 't' || c == 'G') && flicker_count < MAX_FLICKERS)
+                    flickers[flicker_count++] = (u16)(y * GRID_W + x);
+            }
             switch (c) {
-            case '#':
-                cell = TEX_STONE + 1;
-                break;
-            case 'm':
-                cell = TEX_MOSS + 1;
-                break;
-            case 'w':
-                cell = TEX_WOOD + 1;
-                break;
-            case 'b':
-                cell = TEX_BRICK + 1;
-                break;
-            case 'B':
-                cell = TEX_BANNER + 1;
-                break;
-            case 'G':
-                cell = TEX_GATE + 1;
-                break;
             case 'D':
             case 'L':
                 if (door_count < MAX_DOORS) {
@@ -382,7 +388,7 @@ static void use(Fix dir_x, Fix dir_y) {
     if ((unsigned)x >= GRID_W || (unsigned)y >= GRID_H)
         return;
     u32 cell = grid_cell(x, y);
-    if (cell == TEX_GATE + 1) {
+    if (cell > TEX_GATE && cell <= TEX_COUNT) { // any of its frames
         run.won = true;
         run.over = true;
         return;
@@ -571,8 +577,7 @@ static void approach(Thing* t, int index, Fix speed) {
 static void wisp_tick(Thing* t, int index) {
     const Rules* r = &rules[run.difficulty];
     bool hex = t->kind == THING_HEX;
-    u8 pics = hex ? PIC_HEX : PIC_WISP;
-    u8 drift = (u8)(pics + ((run.ticks + (u32)index * 3) >> 3 & 1));
+    u8 drift = (u8)(PIC_WISP + ((run.ticks + (u32)index * 3) >> 2 & 3));
     if (t->rest)
         t->rest--;
 
@@ -613,7 +618,11 @@ static void wisp_tick(Thing* t, int index) {
     }
 
     case WISP_STRIKING:
-        t->pic = (u8)(pics + 2);
+        // The wind-up, then the blow in the last ticks before it lands.
+        if (hex)
+            t->pic = (u8)(PIC_HEX_CAST + (t->timer <= 5));
+        else
+            t->pic = t->timer > 4 ? PIC_WISP_REAR : PIC_WISP_STRIKE;
         if (--t->timer)
             break;
         // It lands if the serval hasn't got away: out of a wisp's reach, or
@@ -633,13 +642,13 @@ static void wisp_tick(Thing* t, int index) {
         break;
 
     case WISP_HURT:
-        t->pic = (u8)(pics + 3);
+        t->pic = PIC_WISP_HURT;
         if (--t->timer == 0)
             t->state = WISP_CHASING;
         break;
 
     case WISP_FADING:
-        t->pic = (u8)(pics + (t->timer > FADE_TICKS / 2 ? 4 : 5));
+        t->pic = (u8)(PIC_WISP_FADE + (t->timer > 7 ? 0 : t->timer > 3 ? 1 : 2));
         if (--t->timer == 0)
             t->kind = THING_NONE;
         break;
@@ -660,6 +669,17 @@ void world_tick(const Controls* input) {
         if (t->kind == THING_WISP || t->kind == THING_HEX)
             wisp_tick(t, i);
         else if (t->kind == THING_BRAZIER)
-            t->pic = (u8)(PIC_BRAZIER + ((run.ticks + (u32)i * 5) >> 2 & 1));
+            t->pic = (u8)(PIC_BRAZIER + ((run.ticks + (u32)i * 5) >> 2) % 3);
+    }
+    // Torches flicker and the moon gate turns: the next picture every 4 ticks.
+    if ((run.ticks & 3) == 0) {
+        u32 step = run.ticks >> 2;
+        for (int i = 0; i < flicker_count; i++) {
+            u8* cell = &grid_cells[flickers[i]];
+            if (*cell > TEX_GATE)
+                *cell = (u8)(TEX_GATE + 1 + (step & 3));
+            else
+                *cell = (u8)(TEX_TORCH + 1 + ((step + (u32)i) & 1));
+        }
     }
 }

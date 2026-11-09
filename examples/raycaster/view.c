@@ -76,8 +76,8 @@ static inline __attribute__((always_inline)) u32 recip(u32 d) {
 #define NEAREST (FIX_ONE / 16)
 
 // Texels per pixel of a wall or thing at distance d, with the fraction bits
-// that leave the texel's number in the top 6 (a 64-texel wall) or 5 (a
-// 32-texel picture) bits of 32, so the drawing loops get it with one shift:
+// that leave the texel's number in the top 6 bits of 32 (walls and pictures
+// are 64 texels tall), so the drawing loops get it with one shift:
 // d * 64 / 160, shifted left 26 - 16 = d * 409.6.
 #define TEXEL_STEP(d) ((u32)(d) * 409 + (((u32)(d) * 154) >> 8))
 
@@ -129,6 +129,10 @@ typedef u16 __attribute__((may_alias)) Pair;
 typedef u32 __attribute__((may_alias)) Quad;
 static u32 line[VIEW_ROWS / 4];
 static u32 backdrop[VIEW_ROWS / 4];
+// The same for the odd columns: where the floor is between two brightness
+// levels the two differ, in a checkerboard, which halves the steps. (In
+// EWRAM: reading it is a little slower, and fast RAM is scarce.)
+static u32 backdrop_odd[VIEW_ROWS / 4] SERVAL_EWRAM_BSS;
 
 void view_init(void) {
     for (u32 i = 0; i <= RECIP_STEPS; i++)
@@ -137,13 +141,17 @@ void view_init(void) {
     // The floor and ceiling have no texture: each row is the floor's color
     // as dark as the floor is far there. Row y of the lower half shows the
     // floor HORIZON / (y + 0.5 - HORIZON) cells away (where a wall's foot
-    // would be), and the ceiling mirrors it.
-    u8* rows = (u8*)backdrop;
-    for (int y = 0; y < HORIZON; y++) {
-        u32 distance = (u32)(HORIZON * 2 * FIX_ONE) / (u32)(2 * y + 1);
-        u32 shade = SHADE(shade_at(distance));
-        rows[HORIZON + y] = (u8)(shade | BASE_FLOOR);
-        rows[HORIZON - 1 - y] = (u8)(shade | BASE_CEILING);
+    // would be), and the ceiling mirrors it. The levels are counted in
+    // halves: at an odd half, every other pixel takes the darker level.
+    for (int parity = 0; parity < 2; parity++) {
+        u8* rows = (u8*)(parity ? backdrop_odd : backdrop);
+        for (int y = 0; y < HORIZON; y++) {
+            u32 distance = (u32)(HORIZON * 2 * FIX_ONE) / (u32)(2 * y + 1);
+            u32 level = ((distance * 3) >> 17) + ((u32)(y ^ parity) & 1);
+            level = level / 2 < SHADES ? level / 2 : SHADES - 1;
+            rows[HORIZON + y] = (u8)(SHADE(level) | BASE_FLOOR);
+            rows[HORIZON - 1 - y] = (u8)(SHADE(level) | BASE_CEILING);
+        }
     }
 }
 
@@ -221,14 +229,16 @@ SERVAL_IWRAM_CODE void view_begin(void) {
         s->depth = depth;
         s->left = left;
         s->top = top;
-        s->across = fix_mul(depth, FIX(0.4)); // 32 texels over 80 / depth columns
-        s->grow = scale / 8;                  // 160 / depth rows over 32 texels
+        s->across = fix_mul(depth, FIX(0.8)); // 64 texels over 80 / depth columns
+        s->grow = scale / 16;                 // 160 / depth rows over 64 texels
         s->down = TEXEL_STEP(depth);
         s->first = (s16)first;
         s->last = (s16)last;
         s->top_row = (s16)top_row;
         s->bottom_row = (s16)bottom_row;
-        s->shade = (u8)SHADE(t->glows ? 0 : shade_at((u32)depth));
+        // A hex wisp is a wisp in the colors of the palette's last row.
+        s->shade =
+            (u8)(t->kind == THING_HEX ? SHADE_HEX : SHADE(t->glows ? 0 : shade_at((u32)depth)));
     }
 }
 
@@ -331,7 +341,7 @@ SERVAL_IWRAM_CODE void view_draw(int first, int last) {
         // The floor and ceiling first, unless the wall hides all of them.
         if (y0 > 0) {
             volatile u32* out = line; // volatile: or the compiler calls memcpy(), in ROM
-            const u32* in = backdrop;
+            const u32* in = col & 1 ? backdrop_odd : backdrop;
             for (int i = 0; i < VIEW_ROWS / 4; i += 8) {
                 out[i] = in[i];
                 out[i + 1] = in[i + 1];
@@ -427,7 +437,7 @@ SERVAL_IWRAM_CODE void view_draw(int first, int last) {
                 shade |= shade << 8;
                 step *= 2;
                 while (out < end) {
-                    u32 texel = texels[v >> 27];
+                    u32 texel = texels[v >> 26];
                     if (texel)
                         *out = (Pair)(texel | texel << 8 | shade);
                     out++;
@@ -438,7 +448,7 @@ SERVAL_IWRAM_CODE void view_draw(int first, int last) {
                 u8* out = rows + ya;
                 u8* end = rows + yb;
                 while (out < end) {
-                    u32 texel = texels[v >> 27];
+                    u32 texel = texels[v >> 26];
                     if (texel)
                         *out = (u8)(texel | shade);
                     out++;

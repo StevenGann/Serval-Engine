@@ -25,7 +25,7 @@
 .globals ALIVE=1                        ; globals.lua:15 alive: boolean = true
 .globals HERO                           ; globals.lua:16 hero: entity = none
 .globals ORIGIN=ORIGIN                  ; globals.lua:17 origin: integer = ORIGIN
-.globals COUNT                          ; globals.lua:18 count: integer = 0
+.globals BONUS                          ; globals.lua:18 bonus: integer = 0
 .globals LOWEST=-2147483648             ; globals.lua:19 lowest: integer = -2147483648
 .globals HIGHEST=-2147483647            ; globals.lua:20 highest: integer = -2147483647
 .globals DRIFT=-128                     ; globals.lua:21 drift: fixed = -0.5
@@ -54,11 +54,11 @@
     ; 29: origin = origin + HALF
     ADD                                 ; globals.lua:29
     STG ORIGIN                          ; globals.lua:29
-    ; 30: if not paused then level = level + count end
+    ; 30: if not paused then level = level + bonus end
     LDG PAUSED                          ; globals.lua:30
     JNZ init_room_start_if1_end         ; globals.lua:30
     LDG LEVEL                           ; globals.lua:30
-    LDG COUNT                           ; globals.lua:30
+    LDG BONUS                           ; globals.lua:30
     ADD                                 ; globals.lua:30
     STG LEVEL                           ; globals.lua:30
 init_room_start_if1_end:                ; globals.lua:30

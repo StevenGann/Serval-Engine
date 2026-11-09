@@ -557,24 +557,38 @@ static bool read_only(u32 prop) {
 _Static_assert(C_GAME(0) == 1u << TAG_SHIFT && C_GAME(14) == 1u << (TAG_SHIFT + 14),
                "VM_P_TAGS maps C_GAME(n) to bit n");
 
-// The slot of the entity in `cell` for GETP or SETP of `prop`, or -1 (warning)
-// for an unknown property, a dead entity, or a field of an unattached one.
-static int prop_slot(u32 prop, s32 cell, u32 at) {
-    (void)at; // only for warnings
+// Who reads or writes a property, for its warnings: the GETP/SETP ops at a
+// pc, or one of the host calls (vm_prop, vm_set_prop) by name.
+typedef struct {
+    const char* call; // NULL for the ops
+    u32 at;           // the ops' pc
+} PropUser;
+
+// WARN_ONCE with the user in front: "vm: GETP/SETP at 0x..: " or "vm_prop: ".
+#define PROP_WARN(user, problem, fmt, ...)                                                         \
+    do {                                                                                           \
+        if ((user).call)                                                                           \
+            WARN_ONCE(problem, "%s: " fmt, (user).call, __VA_ARGS__);                              \
+        else                                                                                       \
+            WARN_ONCE(problem, "vm: GETP/SETP at 0x%x: " fmt, (user).at, __VA_ARGS__);             \
+    } while (0)
+
+// The slot of entity e for a read or write of `prop`, or -1 (warning) for an
+// unknown property, a dead entity, or a field of an unattached one. `cell` is
+// what named the entity, for the warning (the op's cell, or e itself).
+static int prop_slot(u32 prop, Entity e, s32 cell, PropUser user) {
+    (void)cell; // only for warnings
     bool field = prop >= VM_P_FIELD0 && prop < VM_P_FIELD0 + VM_FIELDS;
     if (prop >= VM_P_COUNT && !field) {
-        WARN_ONCE(WARN_PROPERTY,
-                  "vm: GETP/SETP at 0x%x: no property %u (the engine's are 0 to %d, the "
-                  "instance fields %d to %d); reads 0, writes nothing",
-                  at, prop, VM_P_COUNT - 1, VM_P_FIELD0, VM_P_FIELD0 + VM_FIELDS - 1);
+        PROP_WARN(user, WARN_PROPERTY,
+                  "no property %u (the engine's are 0 to %d, the instance fields %d to %d); "
+                  "reads 0, writes nothing",
+                  prop, VM_P_COUNT - 1, VM_P_FIELD0, VM_P_FIELD0 + VM_FIELDS - 1);
         return -1;
     }
-    Entity e = cell_entity(cell);
     if (!serval_entity_alive(e)) {
-        WARN_ONCE(WARN_PROP_ENTITY,
-                  "vm: GETP/SETP at 0x%x: entity %d is not alive (stale handle?); reads 0, "
-                  "writes nothing",
-                  at, (int)cell);
+        PROP_WARN(user, WARN_PROP_ENTITY,
+                  "entity %d is not alive (stale handle?); reads 0, writes nothing", (int)cell);
         return -1;
     }
     u32 i = entity_index(e);
@@ -582,21 +596,38 @@ static int prop_slot(u32 prop, s32 cell, u32 at) {
         // e is alive in slot i, so a binding there that is still attached is
         // e's.
         if (!attached(i)) {
-            WARN_ONCE(WARN_FIELD_UNATTACHED,
-                      "vm: GETP/SETP at 0x%x: entity %u is not attached to an object, so it has "
-                      "no instance fields (property %u); reads 0, writes nothing",
-                      at, i, prop);
+            PROP_WARN(user, WARN_FIELD_UNATTACHED,
+                      "entity %u is not attached to an object, so it has no instance fields "
+                      "(property %u); reads 0, writes nothing",
+                      i, prop);
             return -1;
         }
         return (int)i;
     }
     if (!ent_has(i, prop_component[prop]))
-        WARN_ONCE(WARN_PROP_COMPONENT,
-                  "vm: GETP/SETP at 0x%x: entity %u lacks the component of property %u "
-                  "(C_POS for X/Y, C_VEL for VX/VY, C_BODY for BODY_*, C_ANIM for "
-                  "ANIM_TIME/STEP, else C_SPR); its array is used anyway",
-                  at, i, prop);
+        PROP_WARN(user, WARN_PROP_COMPONENT,
+                  "entity %u lacks the component of property %u (C_POS for X/Y, C_VEL for "
+                  "VX/VY, C_BODY for BODY_*, C_ANIM for ANIM_TIME/STEP, else C_SPR); its array "
+                  "is used anyway",
+                  i, prop);
     return (int)i;
+}
+
+// The slot for GETP or SETP of `prop` on the entity in `cell`, as prop_slot.
+static int op_prop_slot(u32 prop, s32 cell, u32 at) {
+    return prop_slot(prop, cell_entity(cell), cell, (PropUser){NULL, at});
+}
+
+// True (warning) if `prop` is one the engine owns, which a write must refuse
+// whatever the entity.
+static bool read_only_refused(u32 prop, PropUser user) {
+    if (!read_only(prop))
+        return false;
+    PROP_WARN(user, WARN_PROP_READ_ONLY,
+              "property %u is read-only (VM_P_BODY_CONTACT, VM_P_OBJECT: the engine sets "
+              "them); nothing is written",
+              prop);
+    return true;
 }
 
 static s32 get_prop(u32 i, u32 prop) {
@@ -646,6 +677,13 @@ static s32 get_prop(u32 i, u32 prop) {
     default: // an instance field (prop_slot checked)
         return fields[i][prop - VM_P_FIELD0];
     }
+}
+
+// What a read of `prop` gives for prop_slot's answer i: the property, or for
+// -1 what reads 0 ... except VM_P_OBJECT, since no entity is attached to no
+// object: -1, never object 0's number.
+static s32 prop_read(int i, u32 prop) {
+    return i >= 0 ? get_prop((u32)i, prop) : prop == VM_P_OBJECT ? -1 : 0;
 }
 
 // Stores the cell in the property's array, truncated to its type.
@@ -1531,9 +1569,8 @@ static u32 execute(Context* c, bool reaction) {
             NEED(1);
             u32 prop = code[pc];
             pc += 1;
-            int i = prop_slot(prop, st[sp - 1], at);
-            // No entity is attached to no object: -1, never object 0's number.
-            st[sp - 1] = i >= 0 ? get_prop((u32)i, prop) : prop == VM_P_OBJECT ? -1 : 0;
+            int i = op_prop_slot(prop, st[sp - 1], at);
+            st[sp - 1] = prop_read(i, prop);
             break;
         }
         case VM_OP_SETP: {
@@ -1542,15 +1579,11 @@ static u32 execute(Context* c, bool reaction) {
             u32 prop = code[pc];
             pc += 1;
             s32 value = st[--sp];
-            if (read_only(prop)) { // whatever the entity: the engine owns it
+            if (read_only_refused(prop, (PropUser){NULL, at})) {
                 sp--;
-                WARN_ONCE(WARN_PROP_READ_ONLY,
-                          "vm: SETP at 0x%x: property %u is read-only (VM_P_BODY_CONTACT, "
-                          "VM_P_OBJECT: the engine sets them); nothing is written",
-                          at, prop);
                 break;
             }
-            int i = prop_slot(prop, st[--sp], at);
+            int i = op_prop_slot(prop, st[--sp], at);
             if (i >= 0)
                 set_prop((u32)i, prop, value);
             break;
@@ -2409,6 +2442,22 @@ int vm_object_of(Entity e) {
     if (e == ENTITY_NONE || slot >= MAX_ENT || bound[slot] != e || !attached(slot))
         return -1;
     return bound_object[slot];
+}
+
+// The host's GETP and SETP: the ops' checks and conversions (prop_slot,
+// get_prop, set_prop), warning as the call.
+s32 vm_prop(Entity e, u32 prop) {
+    int i = prop_slot(prop, e, (s32)e, (PropUser){"vm_prop", 0});
+    return prop_read(i, prop);
+}
+
+void vm_set_prop(Entity e, u32 prop, s32 value) {
+    PropUser user = {"vm_set_prop", 0};
+    if (read_only_refused(prop, user))
+        return;
+    int i = prop_slot(prop, e, (s32)e, user);
+    if (i >= 0)
+        set_prop((u32)i, prop, value);
 }
 
 int serval_vm_attached_object(Entity e) {

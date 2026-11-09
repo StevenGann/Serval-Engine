@@ -138,10 +138,10 @@ thumbnail = { frame = 300, keys = ["240:D:2", "260:l:2"] }
 
 [examples.raycaster]
 title = "WISP WARREN"
-summary = "A first-person maze game drawn by the game itself on the pixel surface: textured walls that darken with distance, sliding doors, a key and a locked door, wisps that chase and strike, a HUD of sprites; a ray per column in fixed point with no division, 30 pictures a second"
-tags = ["surface", "sprites", "music", "text"]
+summary = "A first-person maze game drawn by the game itself on the pixel surface: textured walls that fade into a blue haze, torches, sliding doors, a key and a locked door, wisps that chase and strike, a title and menus of sprites over the running view; a ray per column in fixed point with no division, 30 pictures a second"
+tags = ["surface", "sprites", "effects", "music"]
 level = 4
-thumbnail = { frame = 640, keys = ["200:S:2", "260:A:2", "350:U:60", "420:B:2", "460:U:50", "520:r:30"] }
+thumbnail = { frame = 720, keys = ["240:S:2", "300:A:2", "430:U:60", "500:B:2", "540:U:50", "600:r:30"] }
 
 [examples.racer]
 title = "SAVANNA RUN"

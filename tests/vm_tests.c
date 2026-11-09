@@ -3833,6 +3833,159 @@ static void instance_fields(void) {
     CHECK_WARNED(before, 1);
 }
 
+// vm.md "Public API": vm_set_prop() between vm_attach() and the next vm_step()
+// gives a placed instance its settings before its Create runs (what an
+// editor's room loader does), and vm_prop() reads them back. Attaching again
+// zeroes the fields, as always.
+static void host_sets_fields_before_create(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);      // self
+    getp(VM_P_FIELD(2)); // field 2
+    stg(0);              // glob[0]
+    op(VM_OP_SELF);      // self
+    getp(VM_P_FIELD0);   // field 0
+    stg(1);              // glob[1]
+    count(2);            // glob[2] += 1: Creates run
+    op(VM_OP_HALT);      //
+    CHECK(load());
+    Entity e = entity_create(C_POS);
+    u32 before = debug_warning_count();
+    vm_attach(e, 0);
+    vm_set_prop(e, VM_P_FIELD(2), 7);
+    CHECK(vm_prop(e, VM_P_FIELD(2)) == 7 && vm_prop(e, VM_P_FIELD0) == 0);
+    vm_set_global(0, 99);
+    vm_step();
+    CHECK(vm_global(0) == 7 && vm_global(1) == 0 && vm_global(2) == 1);
+    vm_set_prop(e, VM_P_FIELD(2), -3); // after Create: a plain field write
+    CHECK(vm_prop(e, VM_P_FIELD(2)) == -3);
+    vm_attach(e, 0); // attached again: zeroed before its Create
+    CHECK(vm_prop(e, VM_P_FIELD(2)) == 0);
+    vm_step();
+    CHECK(vm_global(0) == 0 && vm_global(2) == 2);
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Public API": vm_prop() reads the engine properties as GETP does
+// (extending the pool's type back) and vm_set_prop() writes them as SETP does
+// (truncating to it; VM_P_TAGS changing only the game components), with or
+// without a blob loaded. VM_P_OBJECT is vm_object_of(). A property whose
+// component the entity lacks warns, as for GETP.
+static void host_reads_and_writes_engine_properties(void) {
+    reset();
+    blob_begin(2, 0, GLOBALS);
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_SPR | C_BODY | C_GAME(3));
+    u32 i = entity_index(e);
+    pos_x[i] = FX(5);
+    body_contact[i] = BODY_SIDE_BOTTOM;
+    u32 before = debug_warning_count();
+    CHECK(vm_prop(e, VM_P_X) == FX(5));
+    CHECK(vm_prop(e, VM_P_BODY_CONTACT) == BODY_SIDE_BOTTOM);
+    vm_set_prop(e, VM_P_Y, FX(-3));
+    CHECK(pos_y[i] == FX(-3) && vm_prop(e, VM_P_Y) == FX(-3));
+    vm_set_prop(e, VM_P_FRAME, 0x1FE); // a u8: truncated
+    CHECK(spr_frame[i] == 0xFE && vm_prop(e, VM_P_FRAME) == 0xFE);
+    vm_set_prop(e, VM_P_DEPTH, -2); // an s16: sign-extended back
+    CHECK(spr_depth[i] == -2 && vm_prop(e, VM_P_DEPTH) == -2);
+    vm_set_prop(e, VM_P_BODY_GRAVITY, BODY_GRAVITY(0));
+    CHECK(body_gravity[i] == BODY_GRAVITY(0) && vm_prop(e, VM_P_BODY_GRAVITY) == BODY_GRAVITY(0));
+    CHECK(vm_prop(e, VM_P_TAGS) == 1 << 3);
+    vm_set_prop(e, VM_P_TAGS, 0x18001); // bits 0 and 15 (no C_GAME(15)), and 16
+    CHECK(ent_mask[i] == (C_POS | C_SPR | C_BODY | C_GAME(0) | C_ALIVE));
+    CHECK(vm_prop(e, VM_P_TAGS) == 1);
+    CHECK(vm_prop(e, VM_P_OBJECT) == -1); // not attached: no warning
+    vm_attach(e, 1);
+    CHECK(vm_prop(e, VM_P_OBJECT) == 1 && vm_object_of(e) == 1);
+    CHECK_WARNED(before, 0);
+    CHECK(vm_prop(e, VM_P_VX) == 0); // no C_VEL: warns, reads the array anyway
+    vm_set_prop(e, VM_P_VX, FX(1));
+    CHECK(vel_x[i] == FX(1));
+    CHECK_WARNED(before, 1); // once for the two
+    // The ECS pools are there without a blob.
+    vm_unload();
+    before = debug_warning_count();
+    CHECK(vm_prop(e, VM_P_X) == FX(5));
+    vm_set_prop(e, VM_P_X, FX(6));
+    CHECK(pos_x[i] == FX(6));
+    CHECK_WARNED(before, 0);
+}
+
+// vm.md "Public API": vm_set_prop() of a read-only property (VM_P_BODY_CONTACT,
+// VM_P_OBJECT) warns and writes nothing, whatever the entity; an unknown
+// property warns, reads 0 and writes nothing (once each, for vm_prop and
+// vm_set_prop alike, as for GETP and SETP).
+static void host_property_misuse_warns(void) {
+    // The first engine property not assigned, the last one reserved for the
+    // engine, the first past the instance fields, the last a u8 names, and one
+    // past that.
+    static const u32 unknown[] = {VM_P_COUNT, VM_P_FIELD0 - 1, VM_P_FIELD(VM_FIELDS), 255, 256};
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    CHECK(load());
+    Entity e = entity_create(C_POS | C_BODY);
+    u32 i = entity_index(e);
+    vm_attach(e, 0);
+    body_contact[i] = BODY_SIDE_TOP;
+    u32 before = debug_warning_count();
+    vm_set_prop(e, VM_P_BODY_CONTACT, BODY_SIDE_BOTTOM);
+    CHECK(body_contact[i] == BODY_SIDE_TOP);
+    CHECK_WARNED(before, 1);
+    vm_set_prop(e, VM_P_OBJECT, 5);
+    vm_set_prop(ENTITY_NONE, VM_P_OBJECT, 5);
+    CHECK(vm_object_of(e) == 0);
+    CHECK_WARNED(before, 1); // the same problem: once
+    before = debug_warning_count();
+    for (u32 k = 0; k < sizeof unknown / sizeof unknown[0]; k++) {
+        vm_set_prop(e, unknown[k], 1);
+        CHECK(vm_prop(e, unknown[k]) == 0);
+    }
+    CHECK_WARNED(before, 1);
+    CHECK(pos_x[i] == 0 && body_w[i] == 0 && body_h[i] == 0 && body_contact[i] == BODY_SIDE_TOP);
+    for (u32 n = 0; n < VM_FIELDS; n++)
+        CHECK(vm_prop(e, VM_P_FIELD(n)) == 0);
+    // A dead entity: as GETP, 0 (and -1 for VM_P_OBJECT, never object 0's
+    // number), with a warning.
+    before = debug_warning_count();
+    CHECK(vm_prop(ENTITY_NONE, VM_P_X) == 0);
+    CHECK(vm_prop(ENTITY_NONE, VM_P_OBJECT) == -1);
+    vm_set_prop(ENTITY_NONE, VM_P_X, FX(1));
+    CHECK_WARNED(before, 1);
+}
+
+// vm.md "Public API": an instance field of an entity that isn't attached
+// reads 0 and takes no write (*warns*): a field belongs to a binding, so the
+// host sets a placed instance's fields after vm_attach(), not before.
+static void host_fields_of_an_unattached_entity(void) {
+    reset();
+    blob_begin(1, 0, GLOBALS);
+    handler(0, VM_EV_CREATE);
+    op(VM_OP_SELF);    // self
+    getp(VM_P_FIELD0); // field 0
+    stg(0);            // glob[0]
+    op(VM_OP_HALT);    //
+    CHECK(load());
+    Entity loose = entity_create(C_POS);
+    u32 before = debug_warning_count();
+    CHECK(vm_prop(loose, VM_P_FIELD0) == 0);
+    CHECK_WARNED(before, 1);
+    vm_set_prop(loose, VM_P_FIELD0, 9); // the same problem: no repeat
+    CHECK(vm_prop(loose, VM_P_FIELD0) == 0);
+    CHECK_WARNED(before, 1);
+    vm_set_global(0, 99);
+    vm_attach(loose, 0); // its fields start zeroed: the write went nowhere
+    vm_step();
+    CHECK(vm_global(0) == 0);
+    vm_detach(loose); // detached: no fields again
+    before = debug_warning_count();
+    vm_set_prop(loose, VM_P_FIELD(1), 4);
+    CHECK(vm_prop(loose, VM_P_FIELD(1)) == 0);
+    CHECK_WARNED(before, 0);            // warned once already since the load
+    CHECK(vm_prop(loose, VM_P_X) == 0); // an engine property needs no binding
+    CHECK_WARNED(before, 0);
+}
+
 // vm.md "Entities" (NEXTI), "Exact semantics: Arrays, fields, instances":
 // NEXTI e gives the next attached instance of the object after e in slot
 // order (0: from the first), and 0 when none is left: a loop over every
@@ -6835,6 +6988,10 @@ TEST_SUITE(
     {"spawned_kinematic_bodies", spawned_kinematic_bodies},
     {"tags_are_the_game_components", tags_are_the_game_components},
     {"instance_fields", instance_fields},
+    {"host_sets_fields_before_create", host_sets_fields_before_create},
+    {"host_reads_and_writes_engine_properties", host_reads_and_writes_engine_properties},
+    {"host_property_misuse_warns", host_property_misuse_warns},
+    {"host_fields_of_an_unattached_entity", host_fields_of_an_unattached_entity},
     {"nexti_loops_over_an_objects_instances", nexti_loops_over_an_objects_instances},
     {"wait_move_resumes_when_the_path_ends", wait_move_resumes_when_the_path_ends},
     {"wait_anim_resumes_on_the_last_frame", wait_anim_resumes_on_the_last_frame},

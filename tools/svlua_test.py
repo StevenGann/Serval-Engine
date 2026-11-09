@@ -423,8 +423,73 @@ REJECTED = {
                                  r"f returns a value at line 1 and nothing here"),
     "object_in_code": (OBJ + "function A:step() local o = object {} end", 3, 29,
                        r"object declares at the top level only"),
-    "object_fields": ("A = object { speed = 3 }", 1, 14, r"an object has two fields, components "
-                      r"and sprite"),
+    "object_fields": ("A = object { speed = 3 }", 1, 14, r"an object has three fields, "
+                      r"components, sprite and fields"),
+    # an object's declared fields (fields = { name = default, ... })
+    "fields_not_a_table": ("A = object { fields = 3 }", 1, 23,
+                           r"an object's fields are a table of name = default pairs"),
+    "fields_positional": ("A = object { fields = { 3 } }", 1, 25,
+                          r"an object's fields are a table of name = default pairs"),
+    "fields_bracket_key": ("A = object { fields = { [1] = 3 } }", 1, 25,
+                           r"an object's fields are a table of name = default pairs"),
+    "field_default_not_constant": ("n = 2\nA = object { fields = { hp = n } }", 2, 30,
+                                   r"the default of A's field hp must be a constant integer"),
+    "field_default_fixed": ("A = object { fields = { speed = 1.5 } }", 1, 33,
+                            r"the default of A's field speed must be a constant integer"),
+    "field_default_boolean": ("A = object { fields = { on = true } }", 1, 30,
+                              r"the default of A's field on must be a constant integer"),
+    "field_is_a_property": ("A = object { fields = { angle = 1 } }", 1, 25,
+                            r"A's field angle: angle is an engine property, not an instance "
+                            r"field"),
+    "field_is_a_read_only_property": ("A = object { fields = { object = 1 } }", 1, 25,
+                                      r"A's field object: object is an engine property"),
+    "field_reserved_prefix": ("A = object { fields = { body_speed = 1 } }", 1, 25,
+                              r"A's field body_speed: body_ is reserved for engine properties"),
+    "field_declared_twice": ("A = object { fields = { hp = 1, hp = 2 } }", 1, 33,
+                             r"hp is given twice"),
+    "field_declared_in_two_objects_differently": (
+        "A = object { fields = { hp = 1 } }\nB = object { fields = { hp = 2 } }\n"
+        "function A:step() self.hp = 1.5 end", 3, 29,
+        r"the field hp is an integer \(from its default in A, line 1\), and this is fixed"),
+    "seventeen_declared_fields": ("A = object { fields = { " + ", ".join(
+        f"f{i} = 0" for i in range(17)) + " } }", 1, 25 + 10 * 8 + 6 * 9,
+        r"a 17th instance field, f16: the VM has 16 \(VM_FIELDS\)"),
+    # spawn's table of fields
+    "spawn_table_not_a_table": (OBJ + "function A:step() spawn(B, 0, 0, 3) end", 3, 34,
+                                r"spawn's fourth argument is a table of fields: "
+                                r"spawn\(B, x, y, \{ hp = 3 \}\)"),
+    "spawn_table_positional": (OBJ + "function A:step() spawn(B, 0, 0, { 3 }) end", 3, 36,
+                               r"spawn's fourth argument is a table of fields"),
+    "spawn_table_property": (OBJ + "function A:step() spawn(B, 0, 0, { x = 1 }) end", 3, 36,
+                             r"spawn\(B, \.\.\.\): x is an engine property, not an instance "
+                             r"field"),
+    "spawn_table_reserved_prefix": (OBJ + "function A:step() spawn(B, 0, 0, { vm_x = 1 }) end",
+                                    3, 36, r"spawn\(B, \.\.\.\): vm_ is reserved for engine "
+                                    r"properties, and vm_x isn't one"),
+    "spawn_table_twice": (OBJ + "function A:step() spawn(B, 0, 0, { hp = 1, hp = 2 }) end", 3,
+                          44, r"hp is given twice"),
+    "spawn_table_type": ("A = object { fields = { hp = 1 } }\nB = object {}\n"
+                         "function A:step() spawn(B, 0, 0, { hp = 1.5 }) end", 3, 41,
+                         r"the field hp is an integer \(from its default in A, line 1\), and "
+                         r"this is fixed"),
+    "spawn_table_string": (OBJ + "function A:step() spawn(B, 0, 0, { hp = 'x' }) end", 3, 41,
+                           r"strings exist only as text_print's argument"),
+    "spawn_five_arguments": (OBJ + "function A:step() spawn(B, 0, 0, {}, 1) end", 3, 19,
+                             r"spawn takes 3 or 4 arguments, not 5"),
+    # names the defs header writes as the counts
+    "global_count": ("count = 0", 1, 1, r"global count would be G_COUNT in the C header, which "
+                     r"is the number of globals"),
+    "local_count": ("local Count = 0", 1, 7, r"global Count would be G_COUNT in the C header"),
+    "object_count": ("Count = object {}", 1, 1, r"object Count would be OBJ_COUNT in the C "
+                     r"header, which is the number of objects"),
+    "array_count": ("count = array(2)", 1, 1, r"array count would be ARR_COUNT in the C header, "
+                    r"which is the number of arrays"),
+    "rom_count": ("COUNT = { 1, 2 }", 1, 1, r"array COUNT would be ARR_COUNT in the C header"),
+    "field_count": (OBJ + "function A:step() self.count = 1 end", 3, 19,
+                    r"instance field count would be FIELD_COUNT in the C header, which is the "
+                    r"number of instance fields"),
+    "declared_field_count": ("A = object { fields = { count = 1 } }", 1, 25,
+                             r"instance field count would be FIELD_COUNT in the C header"),
     "rom_assigned": (OBJ + "t = {1, 2}\nfunction A:step() t[1] = 3 end", 4, 19,
                      r"t is a constant table \(in ROM\): its elements can't be assigned"),
     "array_as_value": (OBJ + "t = array(4)\nfunction A:step() local u = t end", 4, 29,
@@ -850,8 +915,53 @@ function A:destroy() hurt(self) end""")
                           r"is a boolean")
 
     def test_a_field_read_before_any_write_is_an_integer(self):
-        p = self.check(OBJ + "function A:step() local n = self.count end")
-        self.assertEqual(p.fields["count"].ty, "integer")
+        p = self.check(OBJ + "function A:step() local n = self.seen end")
+        self.assertEqual(p.fields["seen"].ty, "integer")
+
+    def test_declared_fields(self):
+        """An object's fields = { ... } declares instance fields with their
+        defaults: integers, constant (header constants allowed), typed by
+        the default; they take the first slots, in declaration order, before
+        the fields a handler's first use allocates, even one above the
+        declaration."""
+        p = self.check("""A = object {}
+function A:step() self.seen = 1 end
+B = object { components = C_POS, fields = { hp = 3, kind = KIND_BLUE, hits = 0 } }
+C = object { fields = { kind = KIND_RED + 1, speed = 2 } }
+function B:create() self.speed = self.speed + 1; self.target = none end""")
+        fields = {name: (f.slot, f.ty) for name, f in p.fields.items()}
+        self.assertEqual(fields, {"hp": (0, "integer"), "kind": (1, "integer"),
+                                  "hits": (2, "integer"), "speed": (3, "integer"),
+                                  "seen": (4, "integer"), "target": (5, "entity")})
+        b, c = p.objects[1], p.objects[2]
+        self.assertEqual([(f.name, d.value, d.text) for f, d in b.defaults],
+                         [("hp", 3, None), ("kind", None, "KIND_BLUE"), ("hits", 0, None)])
+        self.assertEqual([(f.name, d.value, d.text) for f, d in c.defaults],
+                         [("kind", None, "KIND_RED + 1"), ("speed", 2, None)])
+        self.assertEqual(list(p.headers), ["C_POS", "KIND_BLUE", "KIND_RED"])
+        # components and sprite as before; an empty fields table is allowed
+        p = self.check("A = object { fields = {}, sprite = 2 }")
+        self.assertEqual(p.objects[0].defaults, [])
+        self.assertEqual(p.objects[0].sprite_const.value, 2)
+
+    def test_spawn_with_a_table(self):
+        """spawn's fourth argument names fields, declared or not, with
+        ordinary expressions; a field's type comes from the first value the
+        program gives it, the spawn table included."""
+        p = self.check("""A = object { fields = { hp = 3 } }
+B = object {}
+n = 0
+function A:step()
+  local e = spawn(A, 0, 0, { hp = n + 1, speed = 1.5 })
+  local f = spawn(B, self.x, 0, { hp = 2, friend = e })
+  spawn(A, 0, 0)
+  spawn(A, 0, 0, {})
+end
+function B:create() self.speed = self.speed * 2 end""")
+        fields = {name: (f.slot, f.ty) for name, f in p.fields.items()}
+        self.assertEqual(fields, {"hp": (0, "integer"), "speed": (1, "fixed"),
+                                  "friend": (2, "entity")})
+        self.assertEqual(local_types(p, "A:step"), {"e": "entity", "f": "entity"})
 
     def test_waits_in_behaviours_and_their_functions(self):
         p = self.check(OBJ + """function hover(n) wait(n) end
@@ -1814,7 +1924,9 @@ class Golden(unittest.TestCase):
             with self.subTest(sys=sys_call):
                 self.assertIn(f"SYS {sys_call}", text)
         self.assertIn("SETP FIELD_HP", text)  # an instance field
-        self.assertIn(".const FIELD_HP VM_P_FIELD0 + 0", text)
+        self.assertIn(".field POWER 0 ", text)  # a declared one, first
+        self.assertIn(".field HP 2 ", text)
+        self.assertIn("DUP", ops)  # spawn with fields: SPAWN, then DUP, value, SETP for each
 
 
 class Listing(unittest.TestCase):
@@ -1981,6 +2093,70 @@ class Listing(unittest.TestCase):
         with self.assertRaisesRegex(svlua.CompileError, r"OBJ_A would name both"):
             self.compile("A = object {}\nlocal OBJ_A <const> = 1")
 
+    def test_fields_in_the_listing(self):
+        """Each instance field is a .field line, NAME n (svm.py defines
+        FIELD_NAME as VM_P_FIELD0 + n and writes it to the defs header), the
+        declared ones first; a name a header constant takes gets a suffix."""
+        listing = self.compile("A = object { fields = { kind = 2, hp = 0 } }\n"
+                               "function A:step() self.top = FIELD_TOP; self.hp = self.kind end")
+        self.assertIn("; --- Instance fields ---", listing)
+        for line in (".field KIND 0 ", ".field HP 1 ", ".field TOP_2 2 ", "SETP FIELD_TOP_2",
+                     "PUSH FIELD_TOP "):
+            self.assertIn(line, listing)
+        self.assertNotIn(".const FIELD", listing)
+        self.assertIn("instance field kind (integer)", listing)
+        result = assemble(listing, header_names({"FIELD_TOP": 24}))
+        self.assertEqual(result.fields, [("KIND", 0), ("HP", 1), ("TOP_2", 2)])
+
+    def test_spawn_sets_the_declared_defaults(self):
+        """SPAWN, then for each declared field whose default isn't 0: DUP,
+        the default, SETP. The entity stays on the stack."""
+        code = self.code("A = object { fields = { hp = 3, kind = 0, tier = KIND_GOLD } }\n"
+                         "e = none\nfunction A:step() e = spawn(A, 1, 2) end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 1:start + 11], [
+            "PUSH 256", "PUSH 512", "SPAWN A", "DUP", "PUSH 3", "SETP FIELD_HP", "DUP",
+            "PUSH KIND_GOLD", "SETP FIELD_TIER", "STG E"])
+        code = self.code("A = object { fields = { hp = 0 } }\nfunction A:step() spawn(A, 1, 2) end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 1:start + 5], ["PUSH 256", "PUSH 512", "SPAWN A", "DROP"])
+
+    def test_spawn_with_a_table_in_the_listing(self):
+        """A table value replaces its default (one SETP per field, defaults
+        first, then the table's fields in order); a value is computed after
+        SPAWN, unless it calls a script function, which may wait: that one
+        is computed before (after x and y, left to right, as Lua evaluates
+        the arguments) and kept in a frame cell, so the new instance's
+        Create can't run before its fields are set; integers convert for a
+        fixed field."""
+        code = self.code("A = object { fields = { hp = 3, kind = 1 } }\nn = 0\n"
+                         "function f() return n end\n"
+                         "function A:create() self.speed = 0.5 end\n"
+                         "function A:step() spawn(A, 1, 2, { kind = n, speed = 1, hp = f() + 1, "
+                         "x2 = self.x * 2 }) end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 1:start + 23], [
+            "ENTER 0, 1", "PUSH 256", "PUSH 512", "CALL f", "PUSH 1", "ADD", "STL 0", "SPAWN A",
+            "DUP", "LDG N", "SETP FIELD_KIND",
+            "DUP", "PUSH 256", "SETP FIELD_SPEED",
+            "DUP", "LDL 0", "SETP FIELD_HP",
+            "DUP", "SELF", "GETP X", "PUSH 2", "MUL"])
+        self.assertEqual(code[start + 23:start + 25], ["SETP FIELD_X2", "DROP"])
+        code = self.code(OBJ + "function A:step() local e = spawn(B, 1, 2, { hp = 5 }) end")
+        start = code.index(".handler A STEP")
+        self.assertEqual(code[start + 1:start + 9], [
+            "ENTER 0, 1", "PUSH 256", "PUSH 512", "SPAWN B", "DUP", "PUSH 5", "SETP FIELD_HP",
+            "STL 0"])
+
+    def test_count_strings_keep_clear_of_the_header(self):
+        """A string "COUNT" would be STR_COUNT, the defs header's number of
+        strings: its listing name is generated, so it moves aside."""
+        listing = self.compile(OBJ + "function A:step() text_print(1, 1, 'COUNT'); "
+                               "text_print(1, 2, 'count') end")
+        self.assertIn('.string COUNT_2 "COUNT"', listing)
+        self.assertIn('.string COUNT_3 "count"', listing)
+        self.assertNotIn(".string COUNT ", listing)
+
 
 @needs_runner
 class Semantics(unittest.TestCase):
@@ -2100,20 +2276,20 @@ end"""
 lo = {lit(start)}
 hi = {lit(limit)}
 st = {lit(step)}
-count = 0
+rounds = 0
 last = 0
 sum = 0
 function Probe:room_start()
   {header}
-    count = count + 1
+    rounds = rounds + 1
     last = i
     sum = sum + i
-    if count == 50 then break end
+    if rounds == 50 then break end
   end
 end"""
         expected = self.lua_for(start, limit, step)
         vm = run_vm(script, frames=10, start=["PROBE"], headers=consts, warnings=True)
-        self.assertEqual(vm.globals["COUNT"], len(expected))
+        self.assertEqual(vm.globals["ROUNDS"], len(expected))
         if expected:
             self.assertEqual(vm.globals["LAST"], expected[-1])
         self.assertEqual(vm.globals["SUM"], svlua.wrap32(sum(expected)))
@@ -2285,19 +2461,19 @@ end""", start=["A"])
         script = """Enemy = object { components = 1 }
 Boss = object {}
 Probe = object {}
-count = 0
+seen = 0
 hp = 0
 function Probe:room_start()
   for e in instances(Enemy) do
-    count = count + 1
-    e.hp = e.hp + count
+    seen = seen + 1
+    e.hp = e.hp + seen
     e.x = e.x + 1
-    if count == 2 then kill(e) end
+    if seen == 2 then kill(e) end
   end
 end
 function Enemy:step() hp = hp + self.hp end"""
         vm = run_vm(script, start=["PROBE"], attach=["ENEMY", "BOSS", ("ENEMY", 2, 0), "ENEMY"])
-        self.assertEqual(vm.globals["COUNT"], 3)
+        self.assertEqual(vm.globals["SEEN"], 3)
         self.assertEqual(vm.globals["HP"], 1 + 3)  # the Step reactions of the two left
         enemies = {h: e for h, e in vm.entities.items() if e["object"] == "ENEMY"}
         self.assertEqual(sorted((h & 0xFF, e["X"], e["hp"]) for h, e in enemies.items()),
@@ -2357,6 +2533,37 @@ function Shot:create() self.body_w = 4; self.body_h = 4; self.vx = 3 end
         shot = next(e for e in run.entities.values() if e["object"] == "SHOT")
         self.assertEqual((shot["X"], shot["Y"]), ((200 + 3 * 20) * 256, 20 * 256))  # past 240
         self.assertEqual((shot["VX"], shot["VY"], shot["BODY_CONTACT"]), (3 * 256, 0, 0))
+
+    def test_spawned_fields_reach_create(self):
+        """A spawned instance's Create sees its declared defaults and the
+        spawn table's values: the SETPs follow SPAWN in the same run, and
+        the Create runs when the queue drains after it. A table value that
+        waits (a function call) still sets its field first, and the table
+        doesn't change the entity spawn returns."""
+        run = run_vm("""Factory = object {}
+Thing = object { components = C_POS, fields = { hp = 3, kind = 0, tier = MAX_ENT } }
+seen = array(16)
+n = 0
+function later(v) wait(1); return v end
+function Thing:create()
+  n = n + 1
+  seen[n] = self.hp * 1000 + self.kind * 100 + self.tier - MAX_ENT + self.extra * 10
+end
+function Factory:room_start()
+  local a = spawn(Thing, 1, 1)
+  local b = spawn(Thing, 2, 2, { hp = 7 })
+  local c = spawn(Thing, 3, 3, { kind = n + 1, extra = 2, tier = MAX_ENT + 4 })
+  seen[10] = a.hp * 100 + b.hp * 10 + c.kind
+  local d = spawn(Thing, 4, 4, { hp = later(9) })
+  seen[11] = d.hp
+end
+""", frames=4, start=["FACTORY"], files=[ECS_H])
+        self.assertEqual(run.arrays["SEEN"][:4], [3000, 7000, 3104 + 20, 9000])
+        self.assertEqual(run.arrays["SEEN"][9:11], [3 * 100 + 7 * 10 + 1, 9])
+        self.assertEqual(run.globals["N"], 4)
+        things = [e for _, e in sorted(run.entities.items()) if e["object"] == "THING"]
+        self.assertEqual([(e["hp"], e["kind"], e["extra"]) for e in things],
+                         [(3, 0, 0), (7, 0, 0), (3, 1, 2), (9, 0, 0)])
 
     @needs_runner
     def test_collisions_tell_objects_apart(self):
@@ -3316,8 +3523,28 @@ end
             self.assertEqual(self.numbers(new, key), self.numbers(old, key))
         self.assertEqual(new.assembled.globals, ["A", "B", "C"])
         self.assertEqual(new.assembled.arrays, ["XS", "YS", "ZS"])
-        self.assertIn(".const FIELD_HP VM_P_FIELD0 + 0", new.compiled.listing)
-        self.assertIn(".const FIELD_SP VM_P_FIELD0 + 2", new.compiled.listing)
+        self.assertIn(".field HP 0 ", new.compiled.listing)
+        self.assertIn(".field SP 2 ", new.compiled.listing)
+
+    def test_declared_fields_keep_their_numbers(self):
+        """An edit that declares a field the old build used (or uses one it
+        declared) keeps its number: the layout is by name, whatever gives
+        the field its slot."""
+        old = self.build(self.OLD)
+        new = self.build("""\
+A = object { fields = { sp = 1, hits = 2, hp = 3 } }
+a = 1
+b = 2
+c = 3
+xs = array(2)
+ys = { 5, 6 }
+zs = array(3)
+function A:create()
+  self.mp = b + c + xs[1] + ys[1] + zs[1] + a
+end
+""", old)
+        self.assertEqual(self.numbers(new, "fields"), {"hp": 0, "mp": 1, "sp": 2, "hits": 3})
+        self.assertIn(".field HITS 3 ", new.compiled.listing)
 
     def test_removed_and_added(self):
         """A name an edit removed leaves its number free (an unnamed global

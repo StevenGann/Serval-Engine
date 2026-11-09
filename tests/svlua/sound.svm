@@ -4,9 +4,9 @@
 ; Constants from the game's C headers (svm.py asm --header for the headers that define them):
 ;   C_POS MOD_THEME SFX_ENGINE BUTTON_A SFX_JUMP BUTTON_B BUTTON_START
 
-; --- Constants ---
+; --- Instance fields ---
 
-.const FIELD_SHOT VM_P_FIELD0 + 0       ; sound.lua:16 instance field shot (integer)
+.field SHOT 0                           ; sound.lua:16 instance field shot (integer)
 
 ; --- Objects ---
 

@@ -262,6 +262,17 @@ class Errors(unittest.TestCase):
         "an initial value naming nothing": (".globals A=NOPE\n" + OK, 1, "unknown name NOPE"),
         "an initial value for a global defined twice": (".globals A B A=1\n" + OK, 1,
                                                         "already defined"),
+        ".field without a number": (".field HP\n" + OK, 1, ".field takes a NAME and a number"),
+        ".field with a bad name": (".field 2 0\n" + OK, 1, ".field takes a NAME and a number"),
+        ".field past VM_FIELDS": (".field HP 16\n" + OK, 1,
+                                  r"field 16 is outside the instance fields \(0 to 15, VM_FIELDS\)"),
+        ".field below 0": (".field HP -1\n" + OK, 1, "outside the instance fields"),
+        ".field defined twice": (".field HP 0\n.field HP 1\n" + OK, 2,
+                                 "FIELD_HP is already defined"),
+        ".field number used twice": (".field HP 0\n.field MP 0\n" + OK, 2,
+                                     "field 0 is already HP"),
+        ".field after a .const of its name": (".const FIELD_HP 70\n.field HP 0\n" + OK, 2,
+                                              "FIELD_HP is already defined"),
     }
 
     def test_each_error_names_its_line(self):
@@ -843,6 +854,58 @@ class OperandTable(unittest.TestCase):
         self.assertEqual(VM.ops["ENTER"], 0x2E)
         self.assertNotIn("INTERRUPTIBLE", VM.ops)
         self.assertNotIn(0x33, VM.op_names)  # unassigned
+
+
+class Fields(unittest.TestCase):
+    """`.field NAME n`: the instance field VM_P_FIELD0 + n, named FIELD_NAME
+    in the listing and in the defs header, where FIELD_COUNT is the number of
+    field slots in use (the highest n plus one)."""
+
+    LISTING = (".field HP 0\n.field KIND 1\n.field TOP_2 VM_FIELDS - 1\n"
+               ".object X\n.handler X CREATE\nSELF\nPUSH FIELD_KIND\nSETP FIELD_HP\n"
+               "SELF\nGETP FIELD_TOP_2\nDROP\nHALT\n")
+
+    def test_names_the_properties(self):
+        result = asm(self.LISTING)
+        self.assertEqual(result.fields, [("HP", 0), ("KIND", 1), ("TOP_2", 15)])
+        code = result.blob[-10:]
+        field0 = VM.field0
+        self.assertEqual(code[1:3], bytes((VM.ops["PUSH8"], field0 + 1)))
+        self.assertEqual(code[3:5], bytes((VM.ops["SETP"], field0)))
+        self.assertEqual(code[6:8], bytes((VM.ops["GETP"], field0 + 15)))
+        self.assertEqual(result.warnings, [])
+        # the fields aren't in the blob: the disassembly has no .field lines
+        self.assertNotIn(".field", svm.disassemble(result.blob, VM))
+
+    def test_defs_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, h = os.path.join(tmp, "f.svm"), os.path.join(tmp, "f.h")
+            with open(listing, "w") as f:
+                f.write(self.LISTING)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(svm.main(["asm", listing, "--defs", h, "--prefix", "P_"]), 0)
+            with open(h) as f:
+                header = f.read()
+            for line in ("// Fields", f"#define P_FIELD_HP {VM.field0}",
+                         f"#define P_FIELD_KIND {VM.field0 + 1}",
+                         f"#define P_FIELD_TOP_2 {VM.field0 + 15}", "#define P_FIELD_COUNT 16"):
+                self.assertIn(line, header)
+            self.assertIn("objects, strings, globals, arrays and instance fields", header)
+            # no fields: the family is there, with a count of 0
+            with open(listing, "w") as f:
+                f.write(GOLDEN_LISTING)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(svm.main(["asm", listing, "--defs", h]), 0)
+            with open(h) as f:
+                header = f.read()
+            self.assertIn("// Fields\n#define FIELD_COUNT 0\n", header)
+
+    def test_count_is_the_slots_in_use(self):
+        """A slot --keep-layout kept free counts, as an unnamed global does
+        in G_COUNT: FIELD_COUNT is the highest number plus one."""
+        result = asm(".field A 3\n.field B 1\n" + Errors.OK)
+        self.assertEqual(result.fields, [("A", 3), ("B", 1)])
+        self.assertEqual(svm.defs_header(result, "x.h", "", None, "x.svm").count("FIELD_COUNT 4"), 1)
 
 
 class GeneratedFiles(unittest.TestCase):

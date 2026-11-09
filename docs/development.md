@@ -291,7 +291,7 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | `racer` | 12,528 bytes | 18,272 bytes |
 | `jukebox` | 13,768 bytes | 14,156 bytes |
 | `servle` | 14,000 bytes | 19,976 bytes |
-| `raycaster` | 15,816 bytes | 25,128 bytes |
+| `raycaster` | 15,988 bytes | 25,520 bytes |
 | `shmup` | 16,364 bytes | 22,588 bytes |
 | `blackjack` | 17,896 bytes | 23,512 bytes |
 | `pong` | 18,308 bytes | 23,572 bytes |

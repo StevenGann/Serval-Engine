@@ -32,13 +32,13 @@ if (surface_begin()) {
 
 While the surface is on it is the screen's only background.
 
-- **No text layer.** `text.h`'s calls do nothing (*warns*, once). `surface_begin()` turns the layer off; the next text call after `surface_end()` sets it up again, fonts and colors included. Show numbers with sprites (the raycaster's HUD does), or draw them into the surface.
+- **No text layer.** `text.h`'s calls do nothing (*warns*, once). `surface_begin()` turns the layer off; the next text call after `surface_end()` sets it up again, fonts and colors included. Show text with sprites (the raycaster composes its menus' lines from its own fonts into sprite frames, a hardware sprite per 32 pixels, and its HUD's numbers from digit sprites), or draw it into the surface.
 - **No map layers and no tileset.** `surface_begin()` refuses while a map layer is loaded (`map_unload()` them first), and `map_load()`, `tileset_load()` and `tileset_set_tiles()` refuse while the surface is on (*warns*). After `surface_end()`, load the tileset again before a map layer: its video memory held pixels.
 - **Sprites keep 512 of their 1,024 tiles**, and `surface_begin()` and `surface_end()` unload every sprite group, as `sprite_groups_reset()` does: load the groups to show over the surface after `surface_begin()`. Everything else about sprites is unchanged (drawing, rotation, blending, the 128 hardware sprites).
 - **No splash:** `serval_splash()` returns at once (*warns*) while the surface is on. It runs at boot, before any of this.
 - **Unchanged:** the backdrop (color 0), brightness fades, alpha blending (the surface is `LAYER_PLAYFIELD`, so sprites can blend over it and it over the backdrop), `raster_backdrop()`, sound, save data, the VM.
 
-A game switches between the two worlds behind a fade: menus as text, then the surface to play, as the raycaster does. Both calls take effect at once, not at the next `frame_end()`.
+A game can switch between the two worlds behind a fade (menus as text, then the surface to play), or keep the surface on throughout and draw its menus with sprites, as the raycaster does: its title and menus stand over its own view, running dimmed behind them. Both calls take effect at once, not at the next `frame_end()`.
 
 **Why.** The surface is the hardware's display mode 4, whose two pages are the first 38,400 bytes of VRAM at `0x06000000` and at `0x0600A000`. That is all the VRAM the tiled backgrounds use (the text layer's font in charblock 0, the tileset in charblocks 1-2, the screenblocks at the top of charblock 3) and, for the second page, sprite tiles 0-431; and in bitmap modes the hardware shows only sprite tiles 512 and up, whatever is stored below. The engine doesn't save and restore any of it: turning the surface on is a decision about the whole screen.
 
@@ -77,7 +77,7 @@ The values are applied at the next `frame_end()`, in VBlank, together with a fli
 
 The surface's 256 colors are the background palette (the same memory as a tileset's 16 banks). `surface_set_colors()` writes through the engine's shadow palette like `sprite_set_colors()` and `tileset_set_colors()`: the colors change at the next `frame_end()`, in VBlank, about 140 cycles per 16 colors written. Color 0 is the backdrop, as `screen_set_backdrop()` sets it. `surface_begin()` leaves in the palette whatever the tileset and the text layer had put there, so set the colors after it; the text layer writes its own (241-248) again when it is next set up.
 
-With 256 colors and no blending inside the picture, shading is done in the palette. The raycaster spends them as 31 base colors at 8 brightness levels, color number = level × 32 + base, so darkening a texel with distance is one OR; a second table of the same colors mixed toward red (`color_mix()`) is swapped in for a moment when the player is hurt.
+With 256 colors and no blending inside the picture, shading is done in the palette. The raycaster spends them as 31 base colors at 7 brightness levels and one row of other colors (its violet wisps'), color number = level × 32 + base, so darkening a texel with distance is one OR; the levels fade toward a dark blue rather than black, and glowing colors (fire, gold, eyes) darken less, all decided when the table is made. Other tables of the same colors are swapped in whole: mixed toward red (`color_mix()`) for a moment when the player is hurt, and toward night blue behind the menus.
 
 ## Timing: pictures over several frames
 
@@ -85,7 +85,7 @@ With 256 colors and no blending inside the picture, shading is done in the palet
 
 The raycaster draws each picture over two frames (52 of its 120 columns, then 68 and the flip) and steps its world once per picture: 30 pictures a second, each frame within its time, sound and input still served 60 times a second. A picture that needs one frame and a half would otherwise show at 30 a second with the frame loop stalled half the time.
 
-For scale, on the GBA (release build, measured with `frame_cpu_permille()`): the raycaster's two frames of a picture each take 55% to 75% of a frame's CPU time for 120 x 160 textured pixels with a few things in view, its drawing loops in IWRAM as ARM code. (An unoptimized Debug build of the same loops takes over 200%: it plays correctly, at about a third of the speed.) A full-screen, full-resolution picture drawn pixel by pixel in C is beyond one frame; the transform (fewer pixels, stretched) and several frames per picture are how a game fits.
+For scale, on the GBA (release build, measured with `frame_cpu_permille()`): the raycaster's two frames of a picture each take 55% to 80% of a frame's CPU time for 120 x 160 textured pixels with a few things in view, its drawing loops in IWRAM as ARM code. (An unoptimized Debug build of the same loops takes over 200%: it plays correctly, at about a third of the speed.) A full-screen, full-resolution picture drawn pixel by pixel in C is beyond one frame; the transform (fewer pixels, stretched) and several frames per picture are how a game fits.
 
 ## Hardware (GBA)
 

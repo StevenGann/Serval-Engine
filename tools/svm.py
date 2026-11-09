@@ -40,6 +40,9 @@ Listing syntax, one statement per line; `;` starts a comment; case matters:
                                        .array's in the pool unless at= says where
   .rom NAME kind expr, expr, ...       a ROM array of s8, u8, s16, u16 or s32
                                        values (range-checked), numbered likewise
+  .field NAME n                        instance field n (0 to VM_FIELDS - 1):
+                                       FIELD_NAME is VM_P_FIELD0 + n in
+                                       expressions and in the --defs header
   .handler OBJECT EVENT                the code that follows is OBJECT's handler
                                        for EVENT: CREATE STEP DESTROY COLLISION
                                        ANIM_END ROOM_START
@@ -59,9 +62,11 @@ engine call (TEXT_PRINT, ...), SPAWN and NEXTI an object, TRACE a string, LDG
 and STG a global, LDA, STA and LEN an array, LDL and STL a number, ENTER two
 numbers (ENTER 0, 3), JMP, JZ, JNZ and CALL a label, PUSH8/16/32 an
 expression; a number or an expression works wherever a name does, except as
-a jump or call target. In expressions, objects, strings, globals and arrays
-are named OBJ_NAME, STR_NAME, G_NAME and ARR_NAME, as the header --defs
-writes them. Expressions: integers (decimal or 0x hex, a trailing u
+a jump or call target. In expressions, objects, strings, globals, arrays and
+instance fields are named OBJ_NAME, STR_NAME, G_NAME, ARR_NAME and FIELD_NAME,
+as the header --defs writes them (with OBJ_COUNT, STR_COUNT, G_COUNT and
+ARR_COUNT, the tables' sizes, and FIELD_COUNT, the highest field number plus
+one). Expressions: integers (decimal or 0x hex, a trailing u
 ignored), names (the listing's, then --header constants, then vm.h's VM_*
 names), the operators
 + - * / << >> | & ~ and parentheses with C precedence, and the engine's macros
@@ -730,13 +735,14 @@ class Assembled:
     """What assemble() returns."""
 
     def __init__(self, blob, objects, strings, globals_, arrays, code_size, warnings,
-                 global_values=None, pcs=None):
+                 global_values=None, pcs=None, fields=None):
         self.blob = blob
         self.objects = objects  # names (None for a numbered one), in order
         self.strings = strings
         self.globals = globals_
         self.global_values = global_values or [0] * len(globals_)  # their initial values
         self.arrays = arrays
+        self.fields = fields or []  # (name, number) of each .field, in listing order
         self.code_size = code_size  # bytes between the tables and the end
         self.warnings = warnings  # [(file, line, message)]
         self.pcs = pcs or []  # [(pc, listing line)] of every op and .byte line, in pc order
@@ -760,7 +766,8 @@ class Assembler:
         self.vm = vm
         self.headers = headers or HeaderNames(vm.names)
         self.file = file
-        self.consts = {}  # the listing's expression names: .const, OBJ_, STR_, G_
+        self.consts = {}  # the listing's expression names: .const, OBJ_, STR_, G_, FIELD_
+        self.fields = []  # (name, number) of each .field, in listing order
         self.objects = []  # [name or None, mask, sprite, [handler code offset or None] * events]
         self.object_index = {}
         self.strings = []  # [name or None, bytes]
@@ -870,6 +877,23 @@ class Assembler:
         if len(parts) != 2 or not re.fullmatch(_IDENT, parts[0]):
             self.error(".const takes a NAME and an expression")
         self.define(parts[0], self.value(parts[1]))
+
+    def directive_field(self, rest):
+        """`.field NAME n`: instance field n, FIELD_NAME in expressions (the
+        property VM_P_FIELD0 + n) and in the defs header. Not in the blob: a
+        field is a property number, which the code carries."""
+        parts = rest.split(None, 1)
+        if len(parts) != 2 or not re.fullmatch(_IDENT, parts[0]):
+            self.error(".field takes a NAME and a number: .field HP 0")
+        name, number = parts[0], self.value(parts[1])
+        if not 0 <= number < self.vm.fields:
+            self.error(f"field {number} is outside the instance fields (0 to "
+                       f"{self.vm.fields - 1}, VM_FIELDS)")
+        for other, n in self.fields:
+            if n == number:
+                self.error(f"field {number} is already {other}")
+        self.define("FIELD_" + name, self.vm.field0 + number)
+        self.fields.append((name, number))
 
     def directive_object(self, rest):
         parts = rest.split(None, 1)
@@ -1251,7 +1275,7 @@ class Assembler:
         return Assembled(bytes(blob), [o[0] for o in self.objects], [s[0] for s in self.strings],
                          list(self.globals), [a.name for a in self.arrays], len(self.code),
                          self.warnings, [svalue(v) for v in values],
-                         [(tables_end + at, line) for at, line in self.pcs])
+                         [(tables_end + at, line) for at, line in self.pcs], list(self.fields))
 
 
 class _LineError(Exception):
@@ -1280,12 +1304,15 @@ def c_source(blob, symbol, listing_name):
     return "\n".join(lines)
 
 
-def defs_header(assembled, out_name, prefix, symbol, listing_name):
+def defs_header(assembled, out_name, prefix, symbol, listing_name, field0=None):
+    """The --defs header. field0: VM_P_FIELD0 (vm.h's, by default)."""
+    if field0 is None:
+        field0 = load_vm().field0
     guard = re.sub(r"\W", "_", os.path.basename(out_name)).upper()
     if not re.match(r"[A-Za-z_]", guard):
         guard = "_" + guard
-    lines = [f"// {os.path.basename(out_name)}: the objects, strings, globals and arrays of the "
-             f"script blob assembled by {TOOL} from {listing_name}.",
+    lines = [f"// {os.path.basename(out_name)}: the objects, strings, globals, arrays and "
+             f"instance fields of the script blob assembled by {TOOL} from {listing_name}.",
              "// Generated; edit the listing instead.", "",
              f"#ifndef {guard}", f"#define {guard}", ""]
     for title, family, names in (("Objects", "OBJ", assembled.objects),
@@ -1298,6 +1325,15 @@ def defs_header(assembled, out_name, prefix, symbol, listing_name):
                 lines.append(f"#define {prefix}{family}_{name} {index}")
         lines.append(f"#define {prefix}{family}_COUNT {len(names)}")
         lines.append("")
+    # The instance fields: each its property number (VM_P_FIELD0 + n, what
+    # vm_set_prop() takes), and the number of slots in use (the highest n
+    # plus one, so a slot --keep-layout kept free counts, as an unnamed global
+    # does in G_COUNT).
+    lines.append("// Fields")
+    for name, number in assembled.fields:
+        lines.append(f"#define {prefix}FIELD_{name} {field0 + number}")
+    count = max((number for _, number in assembled.fields), default=-1) + 1
+    lines += [f"#define {prefix}FIELD_COUNT {count}", ""]
     if symbol:
         lines += [f"extern const unsigned char {symbol}[];",
                   f"extern const unsigned int {symbol}_size;", ""]
@@ -1680,7 +1716,8 @@ def cmd_asm(args, vm):
             f.write(c_source(assembled.blob, args.symbol, listing_name))
     if args.defs:
         with open(args.defs, "w", encoding="utf-8") as f:
-            f.write(defs_header(assembled, args.defs, args.prefix, args.symbol, listing_name))
+            f.write(defs_header(assembled, args.defs, args.prefix, args.symbol, listing_name,
+                                vm.field0))
     if args.map:
         with open(args.map, "w", encoding="utf-8", newline="\n") as f:
             f.write(json_document(debug_map(assembled, args.listing)))
@@ -1714,7 +1751,8 @@ def main(argv=None):
     asm.add_argument("--c", metavar="OUT.c", help="write the blob as a C array (needs --symbol)")
     asm.add_argument("--symbol", metavar="NAME", help="the C array's name; NAME_size is its size")
     asm.add_argument("--defs", metavar="OUT.h",
-                     help="write a header with OBJ_*, STR_*, G_* and ARR_* defines and the counts")
+                     help="write a header with OBJ_*, STR_*, G_*, ARR_* and FIELD_* defines and "
+                          "the counts")
     asm.add_argument("--prefix", default="", metavar="P", help="prefix for the --defs names")
     asm.add_argument("--map", metavar="OUT.svmap",
                      help="write the debug link's map: each op's pc and listing line, the "

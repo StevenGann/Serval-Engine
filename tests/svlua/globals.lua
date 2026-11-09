@@ -15,7 +15,7 @@ speed = SPEED
 alive = true
 hero = none
 origin = ORIGIN
-count = 0                             -- 0: no initial value needed
+bonus = 0                             -- 0: no initial value needed
 lowest = math.mininteger
 highest = -math.maxinteger
 drift = -0.5
@@ -27,5 +27,5 @@ function Init:room_start()
   text_print(1, 1, GREETING)
   speed = speed * 2
   origin = origin + HALF
-  if not paused then level = level + count end
+  if not paused then level = level + bonus end
 end

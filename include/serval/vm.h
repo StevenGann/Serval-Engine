@@ -158,10 +158,10 @@ enum {
     VM_OP_TRACE = 0x51,
 };
 
-// Entity properties for GETP and SETP: the ECS arrays of the same names,
-// then the instance fields (VM_P_FIELD0 on). Append-only; 21 to 63 are
-// reserved for the engine. VM_P_BODY_CONTACT and VM_P_OBJECT are read-only:
-// SETP of them warns and writes nothing.
+// Entity properties for GETP and SETP (and C's vm_prop, vm_set_prop): the
+// ECS arrays of the same names, then the instance fields (VM_P_FIELD0 on).
+// Append-only; 21 to 63 are reserved for the engine. VM_P_BODY_CONTACT and
+// VM_P_OBJECT are read-only: SETP of them warns and writes nothing.
 enum {
     VM_P_X,         // pos_x (FIXED)
     VM_P_Y,         // pos_y (FIXED)
@@ -421,6 +421,29 @@ void vm_set_global(u16 index, s32 value);
 // vm_kill) is not attached: its binding is cleared, its script halted, with a
 // warning, as wherever the VM finds one.
 int vm_object_of(Entity e);
+// Entity e's property `prop` (a VM_P_* engine property or an instance field,
+// VM_P_FIELD(n)), read exactly as the GETP op reads it: the ECS pool's value
+// extended back to an s32 (sign-extending s16, zero-extending u8 and u16),
+// VM_P_TAGS as bits, VM_P_OBJECT as vm_object_of. Works with or without a
+// blob loaded for the engine properties. Warns (once per problem, as the VM
+// does) and returns 0 for a property that doesn't exist, a dead entity or
+// ENTITY_NONE (VM_P_OBJECT: -1, never object 0's number), or an instance
+// field of an entity that isn't attached (fields belong to the binding).
+s32 vm_prop(Entity e, u32 prop);
+// Writes e's property `prop` exactly as the SETP op does: truncated to the
+// pool's type, VM_P_TAGS changing only the game components. The read-only
+// properties (VM_P_BODY_CONTACT, VM_P_OBJECT: the engine sets them), a
+// property that doesn't exist, a dead entity and a field of an entity that
+// isn't attached warn and write nothing.
+//
+// Its purpose: giving a placed instance its settings before its Create runs.
+// vm_attach() zeroes the fields and queues Create, which runs in the next
+// vm_step(), so fields written between the two are what Create sees:
+//     vm_attach(e, OBJ_BRICK);
+//     vm_set_prop(e, FIELD_KIND, BRICK_KIND_SILVER); // svm.py --defs names them
+// A script's spawn table does the same for spawned instances (SETP after
+// SPAWN; docs/lua.md).
+void vm_set_prop(Entity e, u32 prop, s32 value);
 u32 vm_ops_this_frame(void); // opcodes run since the latest vm_step() began
 bool vm_idle(void);          // no context live and no event queued
 

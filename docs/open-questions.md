@@ -39,6 +39,7 @@ Engine-side decisions still to be made. Editor and product questions are tracked
 - [x] Animated tiles (`tileset_set_tiles`), sprite animation (`sys_animate`), screen brightness fades, text styles, color and shadow ([tilemaps.md](tilemaps.md), [sprites.md](sprites.md#animation)).
 - [x] Fixed and self-scrolling map layers (`MAP_LAYER_FIXED`, `map_set_scroll`) ([tilemaps.md](tilemaps.md#fixed-and-self-scrolling-layers)).
 - [x] PSG music with pause, resume, tempo changes and sound priorities ([audio.md](audio.md#psg-music)).
+- [ ] PSG music with dynamics: per-note volume and duty in a track, notes that hold, and a jingle on several channels (a non-looping song played as an effect). Found by `raycaster`'s tunes ([examples-roadmap.md](examples-roadmap.md#what-raycaster-exposed)); a minor addition (fields whose zero keeps today's behaviour) when a game needs it.
 - [x] Physics: per-body gravity, contact reports, maximum fall speed, `body_hit_side` ([runtime-systems.md](runtime-systems.md#physics)).
 - [x] Cheap per-kind entity loops (`ecs_gather`, `ecs_count`, `ecs_free_count`) ([ecs.md](ecs.md#iterating)).
 - [x] Movement paths (`path.h`), `angle_of` and `fx_length` ([runtime-systems.md](runtime-systems.md#paths)).

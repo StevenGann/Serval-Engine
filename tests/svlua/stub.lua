@@ -5,7 +5,8 @@
 -- script can observe of the engine, as docs/vm.md specifies it and the
 -- runner drives it:
 --
---   - objects, and instances as tables: the engine's properties (x, y, vx,
+--   - objects (with their declared fields' defaults, which spawn sets), and
+--     instances as tables: the engine's properties (x, y, vx,
 --     vy, sprite, ..., body_gravity, truncated to their arrays' types as SETP
 --     does; body_contact, which only physics sets, reads 0; object, the
 --     instance's object, false for an entity that isn't attached) and
@@ -314,7 +315,8 @@ end
 
 function env.object(t)
   local o = {}
-  info[o] = { mask = t.components or 0, sprite = t.sprite or 0, index = #objects }
+  info[o] = { mask = t.components or 0, sprite = t.sprite or 0, index = #objects,
+              fields = t.fields or {} }  -- the declared fields' defaults
   objects[#objects + 1] = o
   return o
 end
@@ -325,13 +327,21 @@ function env.array(n)
   return a
 end
 
-function env.spawn(object, x, y)
+-- spawn(Obj, x, y [, { field = value, ... }]): the object's declared defaults,
+-- then the table's values, set before the instance's Create runs (the drain
+-- comes after the spawning code yields or ends). Lua evaluates the table's
+-- values before the call, as the compiled code does for any that may wait.
+function env.spawn(object, x, y, fields)
   local o = info[object]
   local e = entity_create(o.mask)
   if e == none then return none end
   e.x, e.y = x, y
   if o.mask & E.C_SPR ~= 0 then e.sprite = o.sprite end
   attach(e, object)
+  for name, value in pairs(o.fields) do e[name] = value end
+  if fields then
+    for name, value in pairs(fields) do e[name] = value end
+  end
   return e
 end
 

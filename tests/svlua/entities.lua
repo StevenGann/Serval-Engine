@@ -1,6 +1,8 @@
 -- Entities: properties and instance fields (GETP, SETP), spawn and kill,
--- waits, engine functions (SYS) and text_print, loops over instances (NEXTI).
-Bullet = object { components = C_POS | C_VEL | C_SPR, sprite = SPR_BULLET }
+-- waits, engine functions (SYS) and text_print, loops over instances (NEXTI),
+-- an object's declared fields and their defaults, spawn with a table.
+Bullet = object { components = C_POS | C_VEL | C_SPR, sprite = SPR_BULLET,
+                  fields = { power = 1, bounces = 0 } }
 Enemy = object { components = C_POS | C_SPR | C_BODY | C_GAME(2), sprite = SPR_ENEMY }
 
 hits = 0
@@ -32,9 +34,12 @@ function Enemy:step()
   self.x = self.x + self.speed
   self.anim_time = 0
   if button_pressed(BUTTON_A) then
-    target = spawn(Bullet, self.x, self.y - 8)
+    target = spawn(Bullet, self.x, self.y - 8)        -- power = 1 (bounces 0 needs no op)
     target.vy = -2
     psg_play(SND_SHOOT)
+  end
+  if button_pressed(BUTTON_B) then
+    spawn(Bullet, self.x, self.y, { power = 3, bounces = hits, speed = 0.5 })
   end
   if button_down(BUTTON_B) and target ~= none then
     camera_set(math.floor(target.x) - 120, 0)
