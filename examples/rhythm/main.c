@@ -58,9 +58,10 @@
 //     (grey), and the combo goes. The score grows with each hit, faster
 //     with the combo (up to twice at 50). A press with no note near does
 //     nothing but the blip.
-//   - With AUTO, the game presses every note itself, each at its tick: the
-//     blips play the chart, every pad flashes on its note and every
-//     judgement is PERFECT, through the last note.
+//   - With AUTO, the game presses every note itself, in the first frame
+//     that reaches it, judged as a press in that frame would be: the blips
+//     play the chart, every pad flashes on its note and every judgement is
+//     PERFECT, through the last note (a GOOD or MISS there is a timing bug).
 //   - START pauses: a blip, the music stops, the picture holds, and PAUSED
 //     over CONTINUE, RETRY and QUIT, chosen with UP and DOWN and A (START
 //     or B continue). CONTINUE goes on exactly where it was; RETRY starts
@@ -75,8 +76,8 @@
 //     hardware sprites used (and the highest), the counts so far (P, G,
 //     M), the busiest scanline's sprite time (L, cycles of 1,210), sprites
 //     cut short (C) and lost (X), both 0, and with AUTO, how late after its
-//     note's tick the latest autoplay press was seen (A, milliseconds: at
-//     most a frame, about 17).
+//     note's tick the latest autoplay press came (A, milliseconds: under
+//     a frame, 17, while the music plays smoothly; PERFECT allows 35).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //

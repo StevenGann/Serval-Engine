@@ -16,10 +16,12 @@
 //   drawn where it is then.
 // - the windows: PERFECT_MS and GOOD_MS either side of a note.
 //
-// The autoplay presses each note at its exact tick through play_press(),
-// in the first frame whose press time has reached it, as a player with no
-// error at all would be seen; the readout (SELECT) shows how long after its
-// note the latest of those frames came (at most a frame).
+// The autoplay presses each note in the first frame whose press time has
+// reached it, and is judged at that press time through play_press(), as a
+// player with no calibration (0) who pressed in that frame would be: a note
+// it presses too late is a GOOD or a MISS like anyone's. The readout
+// (SELECT) shows how long after its note the latest of those presses came
+// (a frame's worth of ticks or less while the music plays smoothly).
 //
 // The picture: the notes fall at a fixed number of pixels a tick for the
 // difficulty, the pads flash on a press (brightly on a hit) by palette, a
@@ -181,7 +183,7 @@ static void autoplay(FIXED press) {
         if (n->lane >= LANES)
             continue;
         sound_play(SND_LANE + n->lane);
-        Judgement j = play_press(&play, n->lane, t);
+        Judgement j = play_press(&play, n->lane, press);
         if (j != JUDGE_NONE)
             hit(n->lane, j);
     }
@@ -445,10 +447,17 @@ static PlayResult pause_frame(void) {
         sound_play(SND_SELECT);
         start_song();
     } else if (choice == MENU_QUIT) {
+        text_clear_area(0, MENU_ROW, TEXT_COLS, MENU_ITEMS + 2);
         sound_play(SND_SELECT);
         music_stop();
         st.paused = false;
+        sprite_stats_scanlines(false);
         return PLAY_QUIT;
+    } else {
+        // Held where it stopped, but kept current: the music's position
+        // settles a frame or two after the pause, and the first frame after
+        // CONTINUE must draw from where it settled, not jump to it.
+        st.now = music_ticks();
     }
     draw();
     readout_draw();
@@ -489,7 +498,7 @@ void play_begin(u8 song, u8 difficulty, bool autoplay, s16 calibration_ms) {
     st.difficulty = difficulty < DIFF_COUNT ? difficulty : 0;
     st.chart = &st.song->charts[st.difficulty];
     st.autoplay = autoplay;
-    st.calibration_ms = calibration_ms;
+    st.calibration_ms = autoplay ? 0 : calibration_ms; // the autoplay presses on the beat
     text_clear();
     ro.on = false;
     sprite_stats_scanlines(false);
@@ -527,8 +536,10 @@ PlayResult play_frame(void) {
     animate();
     draw();
     readout_draw();
-    if (play_done(&play) && (st.now >= st.end || st.stopped > STOPPED_LIMIT))
+    if (play_done(&play) && (st.now >= st.end || st.stopped > STOPPED_LIMIT)) {
+        sprite_stats_scanlines(false);
         return PLAY_FINISHED;
+    }
     return PLAY_RUNNING;
 }
 

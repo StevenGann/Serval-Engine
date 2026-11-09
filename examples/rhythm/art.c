@@ -237,28 +237,48 @@ static bool glyph_pixel(char c, int x, int y) {
 
 // --- Background tiles ---------------------------------------------------------------------
 
-// Room for the backgrounds' tiles; art_build() counts them into bg_tiles_used.
-#define BG_TILE_MAX 640
+// Room for the backgrounds' tiles: they take 203 (the blank one included),
+// counted into bg_tiles_used; art_build() logs it if they ever outgrow this.
+#define BG_TILE_MAX 256
 
+// The tiles are found again by a key, their words folded into one, whose
+// low bits pick one of BG_BUCKETS lists: a list's latest tile (plus 1, 0
+// for none), and each tile's next in its list (likewise).
+#define BG_BUCKETS 64
 static u32 bg_tiles[BG_TILE_MAX * 8] SERVAL_EWRAM_BSS;
+static u32 bg_keys[BG_TILE_MAX] SERVAL_EWRAM_BSS;
+static u16 bg_next[BG_TILE_MAX] SERVAL_EWRAM_BSS;
+static u16 bg_first[BG_BUCKETS] SERVAL_EWRAM_BSS;
 static u16 bg_tiles_used;
+static bool bg_tiles_full; // a tile found no room: shown as the blank one
 
 // The tile with these 8 words: an existing one if any is the same, else a
 // new one (tile 0 is the blank one, made first).
 static u16 add_tile(const u32* words) {
-    for (u16 t = 0; t < bg_tiles_used; t++) {
+    u32 key = 0;
+    for (int i = 0; i < 8; i++)
+        key = ((key << 5) | (key >> 27)) ^ words[i];
+    u16* first = &bg_first[key % BG_BUCKETS];
+    for (int t = *first - 1; t >= 0; t = bg_next[t] - 1) {
+        if (bg_keys[t] != key)
+            continue;
         const u32* old = bg_tiles + t * 8;
         int i = 0;
         while (i < 8 && old[i] == words[i])
             i++;
         if (i == 8)
-            return t;
+            return (u16)t;
     }
-    if (bg_tiles_used == BG_TILE_MAX)
-        return 0; // never with these pictures: art_build() checks the count in debug builds
+    if (bg_tiles_used == BG_TILE_MAX) {
+        bg_tiles_full = true;
+        return 0;
+    }
     u32* out = bg_tiles + bg_tiles_used * 8;
     for (int i = 0; i < 8; i++)
         out[i] = words[i];
+    bg_keys[bg_tiles_used] = key;
+    bg_next[bg_tiles_used] = *first;
+    *first = (u16)(bg_tiles_used + 1);
     return bg_tiles_used++;
 }
 
@@ -294,27 +314,76 @@ static int lane_of(int x) {
     return -1;
 }
 
-// A pad at the foot of lane l: the socket, the paw print in it, the label.
-// Returns a colour, or -1 where the runway shows through.
-static int pad_pixel(int l, int x, int y) {
-    int cx = lane_x[l];
-    int px0 = cx - PAD_PAW / 2, py0 = PAD_Y - PAD_PAW / 2;
-    if (in_paw(x, y, px0, py0, PAD_PAW)) {
-        if (!in_paw(x - 1, y - 1, px0, py0, PAD_PAW))
-            return PAD_COLOR0 + P_PAW_LIGHT;
+// The pads' paw print, drawn once (build_pad()): what each pixel of its
+// box, and a pixel's width around it, is. The pads look it up rather than
+// test five ellipses for every pixel and its neighbours.
+enum { PAW_OUT, PAW_EDGE, PAW_IN, PAW_LIGHT };
+#define PAD_PAW_BOX (PAD_PAW + 2)
+static u8 pad_paw[PAD_PAW_BOX][PAD_PAW_BOX] SERVAL_EWRAM_BSS;
+
+// The pad's socket and the paw print in it, drawn once for every lane
+// (build_pad()): a colour for each pixel of the pad's tiles (columns from
+// the lane's left, lines from PAD_TILE_ROW's), or -1 where the runway or
+// the label shows through.
+static s8 pad_shape[PAD_TILE_ROWS * 8][LANE_W] SERVAL_EWRAM_BSS;
+
+// A pixel of the pad's shape, dx from the lane's middle, on line y.
+static int pad_shape_pixel(int dx, int y) {
+    int bx = dx + PAD_PAW / 2 + 1, by = y - (PAD_Y - PAD_PAW / 2) + 1;
+    int paw =
+        bx >= 0 && by >= 0 && bx < PAD_PAW_BOX && by < PAD_PAW_BOX ? pad_paw[by][bx] : PAW_OUT;
+    if (paw == PAW_LIGHT)
+        return PAD_COLOR0 + P_PAW_LIGHT;
+    if (paw == PAW_IN)
         return PAD_COLOR0 + P_PAW;
-    }
     // In half pixels from the socket's middle (between two pixels).
-    int u = 2 * (x - cx) + 1, v = 2 * (y - PAD_Y) + 1;
+    int u = 2 * dx + 1, v = 2 * (y - PAD_Y) + 1;
     if (in_ellipse(u, v, 0, 0, 2 * SOCKET_RX, 2 * SOCKET_RY)) {
-        for (int dy = -1; dy <= 1; dy++)
-            for (int dx = -1; dx <= 1; dx++)
-                if (in_paw(x + dx, y + dy, px0, py0, PAD_PAW))
-                    return PAD_COLOR0 + P_PAW_EDGE;
+        if (paw == PAW_EDGE)
+            return PAD_COLOR0 + P_PAW_EDGE;
         if (!in_ellipse(u, v, 0, 0, 2 * SOCKET_RX - 3, 2 * SOCKET_RY - 3))
             return PAD_COLOR0 + P_RIM;
         return PAD_COLOR0 + P_SOCKET;
     }
+    return -1;
+}
+
+static void build_pad(void) {
+    for (int y = 0; y < PAD_PAW_BOX; y++)
+        for (int x = 0; x < PAD_PAW_BOX; x++)
+            pad_paw[y][x] = in_paw(x - 1, y - 1, 0, 0, PAD_PAW) ? PAW_IN : PAW_OUT;
+    for (int y = 0; y < PAD_PAW_BOX; y++)
+        for (int x = 0; x < PAD_PAW_BOX; x++) {
+            // In order, so the pixels above and left are done: inside is
+            // PAW_IN or PAW_LIGHT, outside PAW_OUT or PAW_EDGE.
+            u8* p = &pad_paw[y][x];
+            if (*p == PAW_IN) {
+                if (!(x > 0 && y > 0 && pad_paw[y - 1][x - 1] >= PAW_IN))
+                    *p = PAW_LIGHT;
+                continue;
+            }
+            for (int dy = -1; dy <= 1 && *p == PAW_OUT; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    int u = x + dx, v = y + dy;
+                    if (u >= 0 && v >= 0 && u < PAD_PAW_BOX && v < PAD_PAW_BOX &&
+                        pad_paw[v][u] >= PAW_IN) {
+                        *p = PAW_EDGE;
+                        break;
+                    }
+                }
+        }
+    for (int y = 0; y < PAD_TILE_ROWS * 8; y++)
+        for (int x = 0; x < LANE_W; x++)
+            pad_shape[y][x] = (s8)pad_shape_pixel(x - LANE_W / 2, PAD_TILE_ROW * 8 + y);
+}
+
+// A pad at the foot of lane l: the socket, the paw print in it, the label.
+// Returns a colour, or -1 where the runway shows through.
+static int pad_pixel(int l, int x, int y) {
+    int cx = lane_x[l];
+    int c = pad_shape[y - PAD_TILE_ROW * 8][x - (cx - LANE_W / 2)];
+    if (c >= 0)
+        return c;
     if (glyph_pixel(lane_label[l], x - (cx - 3), y - LABEL_Y))
         return PAD_COLOR0 + P_LABEL;
     return -1;
@@ -339,53 +408,112 @@ static u32 hash(int x, int y) {
     return h ^ (h >> 16);
 }
 
-// The sky's band at line y, dithered where two meet.
-static int sky_pixel(int x, int y) {
-    static const u8 edges[3] = {56, 88, 112};
+// The stage is painted a line at a time, back to front, into a band of
+// lines (a metatile row's 16), and its tiles cut from that: the sky's
+// bands, dithered where two meet; a star on about one pixel in 97 of the
+// upper sky; the spotlight, a cone from the panel down to the floor, every
+// other pixel lit; the horizon's black grass and two acacias (a trunk and
+// a flat crown, a smaller one to the right); the floor, an ellipse at the
+// serval's feet, its rim catching the light. The grass's top line in each
+// column and the spotlight's half width on each line are tables
+// (build_stage_tables()).
+static u8 grass_top[SCREEN_W] SERVAL_EWRAM_BSS;
+static u8 spot_half[SCREEN_H] SERVAL_EWRAM_BSS;
+
+#define SKY_BANDS 3 // the edges between the sky's four colours
+static const u8 sky_edges[SKY_BANDS] = {56, 88, 112};
+#define STARS_FOOT 100 // the stars lie above line 100
+#define CROWN_TOP 100  // the acacias' crowns lie within lines 100-118
+#define CROWN_FOOT 119
+#define FLOOR_TOP 140 // the floor starts on line 140
+
+#define STAGE_LINES 16
+static u8 stage_lines[STAGE_LINES][SCREEN_W] SERVAL_EWRAM_BSS;
+static int stage_lines_top; // the band's first line, -1 before the first
+
+static void build_stage_tables(void) {
+    for (int x = 0; x < SCREEN_W; x++)
+        grass_top[x] = (u8)(128 - ((x * 7) % 5) - ((x * 3) % 4) - (x % 9 == 0 ? 3 : 0));
+    for (int y = 0; y < SCREEN_H; y++)
+        spot_half[y] =
+            y < FIELD_TOP ? 0 : (u8)(6 + (y - FIELD_TOP) * 34 / (STAGE_FOOT - FIELD_TOP));
+    stage_lines_top = -1;
+}
+
+// Shadow on line y wherever the ellipse of middle (cx, cy) and radii
+// (rx, ry), in half pixels (pixel x at 2x), covers it.
+static void paint_crown(u8* line, int y, int cx, int cy, int rx, int ry) {
+    for (int x = (cx - rx) / 2; x <= (cx + rx) / 2; x++)
+        if (in_ellipse(2 * x, 2 * y, cx, cy, rx, ry))
+            line[x] = F_SHADOW;
+}
+
+static void paint_stage_line(u8* line, int y) {
     int band = 0;
-    while (band < 3 && y >= edges[band] + 2)
+    while (band < SKY_BANDS && y >= sky_edges[band] + 2)
         band++;
-    if (band < 3 && y >= edges[band] - 2 && ((x + y) & 1))
-        band++;
-    return F_SKY + band;
+    bool dither = band < SKY_BANDS && y >= sky_edges[band] - 2;
+    for (int x = 0; x < SCREEN_W; x++)
+        line[x] = (u8)(F_SKY + band + (dither && ((x + y) & 1)));
+    if (y < STARS_FOOT) {
+        // Only between and beside the lanes' pairs: the lanes hide the rest.
+        const int from[3] = {0, lane_x[1] + LANE_W / 2, lane_x[3] + LANE_W / 2};
+        const int to[3] = {lane_x[0] - LANE_W / 2, lane_x[2] - LANE_W / 2, SCREEN_W};
+        for (int r = 0; r < 3; r++)
+            for (int x = from[r]; x < to[r]; x++)
+                if (hash(x, y) < 0xFFFFFFFFu / 97)
+                    line[x] = F_STAR;
+    }
+    for (int x = STAGE_X - spot_half[y]; x < STAGE_X + spot_half[y]; x++)
+        if (((x + y) & 1) == 0)
+            line[x] = F_SPOT;
+    for (int x = 0; x < SCREEN_W; x++)
+        if (y >= grass_top[x])
+            line[x] = F_SHADOW;
+    if (y >= 108 && y < 130) {
+        line[83] = line[84] = F_SHADOW;
+        if (y >= 114)
+            line[156] = F_SHADOW;
+    }
+    if (y >= CROWN_TOP && y < CROWN_FOOT) {
+        paint_crown(line, y, 168, 216, 26, 7);
+        paint_crown(line, y, 158, 210, 12, 5);
+        paint_crown(line, y, 312, 228, 20, 5);
+    }
+    if (y >= FLOOR_TOP) {
+        // In half pixels from the floor's middle (between two pixels).
+        int v = 2 * (y - STAGE_FOOT) + 1;
+        for (int x = STAGE_X - 46; x < STAGE_X + 46; x++) {
+            int u = 2 * (x - STAGE_X) + 1;
+            if (in_ellipse(u, v, 0, 0, 92, 20))
+                line[x] = in_ellipse(u, v + 4, 0, 0, 92, 20) ? F_STAGE : F_RAIL;
+        }
+    }
 }
 
-// The horizon's black grass and two acacias.
-static bool in_shadow(int x, int y) {
-    int grass = 128 - ((x * 7) % 5) - ((x * 3) % 4) - (x % 9 == 0 ? 3 : 0);
-    if (y >= grass)
-        return true;
-    // An acacia: a trunk and a flat crown; a smaller one to the right.
-    if ((x == 83 || x == 84) && y >= 108 && y < 130)
-        return true;
-    if (in_ellipse(2 * x, 2 * y, 168, 216, 26, 7) || in_ellipse(2 * x, 2 * y, 158, 210, 12, 5))
-        return true;
-    if (x == 156 && y >= 114 && y < 130)
-        return true;
-    return in_ellipse(2 * x, 2 * y, 312, 228, 20, 5);
+// The stage's tile whose top-left pixel is (x0, y0), from the band of
+// lines that holds it (painted when the band moves on).
+static u16 make_stage_tile(int x0, int y0) {
+    int top = y0 & ~(STAGE_LINES - 1);
+    if (top != stage_lines_top) {
+        for (int i = 0; i < STAGE_LINES; i++)
+            paint_stage_line(stage_lines[i], top + i);
+        stage_lines_top = top;
+    }
+    u32 words[8];
+    for (int row = 0; row < 8; row++) {
+        const u8* p = &stage_lines[y0 - top + row][x0];
+        u32 word = 0;
+        for (int col = 7; col >= 0; col--)
+            word = (word << 4) | p[col];
+        words[row] = word;
+    }
+    return add_tile(words);
 }
 
-static int stage_pixel(int x, int y) {
-    // The floor: an ellipse at the serval's feet, its rim catching the light.
-    int u = 2 * (x - STAGE_X) + 1, v = 2 * (y - STAGE_FOOT) + 1;
-    if (in_ellipse(u, v, 0, 0, 92, 20))
-        return in_ellipse(u, v + 4, 0, 0, 92, 20) ? F_STAGE : F_RAIL;
-    if (in_shadow(x, y))
-        return F_SHADOW;
-    // The spotlight: a cone from the panel down to the floor, every other
-    // pixel lit.
-    int half = 6 + (y - FIELD_TOP) * 34 / (STAGE_FOOT - FIELD_TOP);
-    if (y >= FIELD_TOP && x >= STAGE_X - half && x < STAGE_X + half && ((x + y) & 1) == 0)
-        return F_SPOT;
-    if (y < 100 && hash(x, y) % 97 == 0)
-        return F_STAR;
-    return sky_pixel(x, y);
-}
-
+// A lane's pixel: its pad, or its runway.
 static int field_pixel(int x, int y) {
     int l = lane_of(x);
-    if (l < 0)
-        return stage_pixel(x, y);
     if (y >= PAD_TILE_ROW * 8 && y < (PAD_TILE_ROW + PAD_TILE_ROWS) * 8) {
         int c = pad_pixel(l, x, y);
         if (c >= 0)
@@ -399,12 +527,22 @@ static int field_pixel(int x, int y) {
 static Metatile field_metatiles[FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
 static u16 field_cells[FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
 
+// A runway's tiles depend only on their column: made once a column (plus
+// 1, so that 0 means not yet).
+static u16 runway_tiles[SCREEN_W / 8] SERVAL_EWRAM_BSS;
+
+// A tile lies wholly in a lane or wholly on the stage (the lanes' edges
+// fall on tile edges), so the choice is made once a tile.
 static u16 field_se(int tx, int ty) {
     int x = tx * 8, y = ty * 8;
     int l = lane_of(x);
-    int bank = l >= 0 && ty >= PAD_TILE_ROW && ty < PAD_TILE_ROW + PAD_TILE_ROWS ? BANK_PAD + l
-                                                                                 : BANK_FIELD;
-    return MAP_SE(make_tile(field_pixel, x, y), bank, 0);
+    if (l < 0)
+        return MAP_SE(make_stage_tile(x, y), BANK_FIELD, 0);
+    if (ty >= PAD_TILE_ROW && ty < PAD_TILE_ROW + PAD_TILE_ROWS)
+        return MAP_SE(make_tile(field_pixel, x, y), BANK_PAD + l, 0);
+    if (!runway_tiles[tx])
+        runway_tiles[tx] = (u16)(make_tile(field_pixel, x, y) + 1);
+    return MAP_SE(runway_tiles[tx] - 1, BANK_FIELD, 0);
 }
 
 // --- The panel ----------------------------------------------------------------------------
@@ -482,20 +620,16 @@ static const MapLayer panel_layer = {
 #define CANVAS_H 64
 static u8 canvas[CANVAS_W * CANVAS_H] SERVAL_EWRAM_BSS;
 
-static void canvas_clear(void) {
-    for (int i = 0; i < CANVAS_W * CANVAS_H; i++)
+// Clears the canvas's top h lines and the one under them (which outline()
+// reads); nothing is painted below that before the next clear.
+static void canvas_clear(int h) {
+    for (int i = 0; i < CANVAS_W * int_min(h + 1, CANVAS_H); i++)
         canvas[i] = 0;
 }
 
 static void put(int x, int y, int c) {
     if (x >= 0 && x < CANVAS_W && y >= 0 && y < CANVAS_H)
         canvas[y * CANVAS_W + x] = (u8)c;
-}
-
-static u8 at(int x, int y) {
-    if (x < 0 || x >= CANVAS_W || y < 0 || y >= CANVAS_H)
-        return 0;
-    return canvas[y * CANVAS_W + x];
 }
 
 // Cuts a w x h block from (x0, y0) of the canvas into 4bpp tiles, row by
@@ -541,24 +675,25 @@ static void sprite(int id, u8 size, int frames, int palette, const u32* tiles, i
     };
 }
 
-// Around everything painted with a colour from 2 up: colour 1, the outline.
+// Around everything painted with a colour from 2 up: colour 1, the outline,
+// on the empty pixels of the w x h block at the canvas's top left. Each
+// painted pixel (in the block or just beside it) marks its neighbours.
 static void outline(int w, int h) {
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++) {
-            if (at(x, y))
+    int sw = int_min(w + 1, CANVAS_W), sh = int_min(h + 1, CANVAS_H);
+    for (int y = 0; y < sh; y++)
+        for (int x = 0; x < sw; x++) {
+            if (canvas[y * CANVAS_W + x] < 2)
                 continue;
-            bool edge = false;
-            for (int dy = -1; dy <= 1 && !edge; dy++)
-                for (int dx = -1; dx <= 1 && !edge; dx++)
-                    edge = at(x + dx, y + dy) >= 2;
-            if (edge)
-                put(x, y, 1);
+            for (int ny = int_max(y - 1, 0); ny <= y + 1 && ny < h; ny++)
+                for (int nx = int_max(x - 1, 0); nx <= x + 1 && nx < w; nx++)
+                    if (!canvas[ny * CANVAS_W + nx])
+                        canvas[ny * CANVAS_W + nx] = 1;
         }
 }
 
 // The note: a paw print, lit from the top left, shaded at the bottom right.
 static u32* build_note(u32* out) {
-    canvas_clear();
+    canvas_clear(16);
     for (int y = 0; y < 16; y++)
         for (int x = 0; x < 16; x++)
             if (in_paw(x, y, 1, 1, 14))
@@ -581,7 +716,7 @@ static u32* build_burst(u32* out) {
     static const u8 spark[BURST_FRAMES] = {4, 4, 3};
     const u32* first = out;
     for (int f = 0; f < BURST_FRAMES; f++) {
-        canvas_clear();
+        canvas_clear(32);
         int r = radius[f];
         if (ring[f]) {
             for (int y = 0; y < 32; y++)
@@ -688,7 +823,7 @@ static void serval_halves(const char* const* rows, int h, int y0) {
 static u32* build_serval(u32* out) {
     const u32* first = out;
     for (int f = 0; f < DANCE_FRAMES; f++) {
-        canvas_clear();
+        canvas_clear(64);
         int bob = f == DANCE_BOB ? 2 : 0; // all but the legs down two lines
         serval_halves(serval_legs, 13, 42);
         serval_part(serval_tail, 15, 0, 28 + bob, false);
@@ -708,18 +843,27 @@ static u32* build_serval(u32* out) {
 // Text in the doubled letters (10x14, 12 apart), its top-left at (x0, y0),
 // shaded from colour 2 at the top to 6 at the foot.
 static void letters(const char* s, int x0, int y0) {
-    for (; *s; s++, x0 += 12)
-        for (int y = 0; y < 14; y++)
+    for (; *s; s++, x0 += 12) {
+        int g = 0;
+        while (font_chars[g] && font_chars[g] != *s)
+            g++;
+        if (!font_chars[g])
+            continue;
+        for (int y = 0; y < 14; y++) {
+            const char* row = font[g][y / 2];
+            int c = 2 + y * 5 / 14;
             for (int x = 0; x < 10; x++)
-                if (glyph_pixel(*s, x / 2, y / 2))
-                    put(x0 + x, y0 + y, 2 + y * 5 / 14);
+                if (row[x / 2] == '#')
+                    put(x0 + x, y0 + y, c);
+        }
+    }
 }
 
 static u32* build_words(u32* out) {
     static const char* const words[WORD_COUNT] = {"PERFECT", "GOOD", "MISS", "1", "2", "3", "4"};
     const u32* first = out;
     for (int w = 0; w < WORD_COUNT; w++) {
-        canvas_clear();
+        canvas_clear(16);
         int n = 0;
         while (words[w][n])
             n++;
@@ -735,7 +879,7 @@ static u32* build_words(u32* out) {
 static u32* build_digits(u32* out) {
     const u32* first = out;
     for (int d = 0; d < 10; d++) {
-        canvas_clear();
+        canvas_clear(16);
         char s[2] = {(char)('0' + d), 0};
         letters(s, 3, 1);
         outline(16, 16);
@@ -747,7 +891,7 @@ static u32* build_digits(u32* out) {
 
 // The progress marker: a small diamond.
 static u32* build_marker(u32* out) {
-    canvas_clear();
+    canvas_clear(8);
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 8; x++) {
             int d = int_abs(2 * x - 7) + int_abs(2 * y - 7);
@@ -778,10 +922,16 @@ void art_build(void) {
     build_palettes();
     u32 blank[8] = {0};
     bg_tiles_used = 0;
+    for (int b = 0; b < BG_BUCKETS; b++)
+        bg_first[b] = 0;
     add_tile(blank); // tile 0
+    build_pad();
+    build_stage_tables();
     build_layer(field_metatiles, field_cells, FIELD_MAP_H, field_pixel, BANK_FIELD, true);
     build_layer(panel_metatiles, panel_cells, PANEL_MAP_H, panel_pixel, BANK_PANEL, false);
     tileset_tiles = bg_tiles_used;
+    if (bg_tiles_full)
+        debug_log("rhythm: the backgrounds need more tiles than BG_TILE_MAX: raise it (art.c)");
     build_sprites();
 }
 

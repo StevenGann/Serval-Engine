@@ -17,10 +17,11 @@ typedef enum {
 
 // Starts song `song` (SONG_*) at `difficulty` (DIFF_*): shows the play
 // screen and plays the module from row 0. `autoplay` presses every note
-// itself, at its tick, through the same judging as the buttons (a score
-// that is never a record). `calibration_ms`: the player's offset, how much
-// later than the music the presses come (docs/audio.md#position).
-// RETRY on the pause menu starts the same again.
+// itself, in the first frame that reaches it, judged as a button press in
+// that frame would be (a score that is never a record; no calibration).
+// `calibration_ms`: the player's offset, how much later than the music the
+// presses come (docs/audio.md#position). RETRY on the pause menu starts
+// the same again.
 void play_begin(u8 song, u8 difficulty, bool autoplay, s16 calibration_ms);
 
 // One frame of it, between frame_begin() and frame_end().
