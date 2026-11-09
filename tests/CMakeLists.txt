@@ -477,6 +477,10 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # servle's word lists (tools/servle_words.py): the pack format, the lookups
+    # as the script does them, the lists' sizes, and the generated block.
+    add_test(NAME servle_words_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/servle_words_test.py")
     # The sound bank builder (tools/soundbank.py): mmutil's names, what it
     # refuses (a sample named "none" among them), and a whole bank with the
     # mmutil serval_add_soundbank() found.
