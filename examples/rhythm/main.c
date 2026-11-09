@@ -38,7 +38,7 @@
 //     A goes on, with a two-note chime (as every choice made in the menus;
 //     a move between choices ticks).
 //   - The song select, over the stage dimmed: CALM (a relaxed groove,
-//     100 BPM, 1:12), STRIDE (bouncy and funky, 124 BPM, 1:06) and RUSH (a
+//     100 BPM, 1:12), STRIDE (bouncy and funky, 124 BPM, 1:05) and RUSH (a
 //     driving rock beat, 148 BPM, 1:21), a paw beside the one chosen; the
 //     difficulty (EASY or HARD); the best score and grade for it (dashes
 //     before any), and FULL COMBO once played without a miss. The chosen
