@@ -77,4 +77,12 @@ FIXED ms_to_ticks(s32 ms, u16 tick_samples);
 // the middle two, rounded toward zero. 0 for none. The array is not changed.
 s16 calibration_median_ms(const s16* errors_ms, u8 count);
 
+// A calibration tap at press_ticks (music_ticks() less the input's delay,
+// as a press is judged in a song) against a click every beat_ticks from tick
+// 0: its error, milliseconds from the nearest click (late positive), to the
+// nearest (halves away from zero), into *error_ms. Returns false, leaving it
+// alone, for a tap half a beat or more from every click (before the first,
+// or exactly between two), or for beat_ticks or tick_samples 0.
+bool calibration_tap_ms(FIXED press_ticks, FIXED beat_ticks, u16 tick_samples, s16* error_ms);
+
 #endif

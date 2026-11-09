@@ -7,7 +7,7 @@
 // long. Three moments are taken from it, each a fixed time away, turned into
 // ticks of the song (ms_to_ticks()) whenever a tick's length changes:
 //
-// - press time: music_ticks() - INPUT_MS - the player's calibration. A
+// - press time: music_ticks() - PLAY_INPUT_MS - the player's calibration. A
 //   press seen this frame was polled at the VBlank before (a frame before
 //   music_ticks()) and happened on average half a frame before that poll.
 //   Presses are judged at it, and notes expire against it.
@@ -39,7 +39,6 @@
 
 // --- Timing (docs/audio.md#position) ------------------------------------------------------
 
-#define INPUT_MS 25   // a press seen this frame came about 1.5 frames before music_ticks()
 #define DRAW_MS 17    // the pads' line shows about a frame after music_ticks()
 #define PERFECT_MS 35 // either side of a note
 #define GOOD_MS 80
@@ -132,7 +131,7 @@ static Readout ro SERVAL_EWRAM_BSS;
 
 static void set_timing(u16 tick_samples) {
     st.tick_samples = tick_samples;
-    st.input_delay = ms_to_ticks(INPUT_MS, tick_samples);
+    st.input_delay = ms_to_ticks(PLAY_INPUT_MS, tick_samples);
     st.draw_ahead = ms_to_ticks(DRAW_MS, tick_samples);
     st.calibration = ms_to_ticks(st.calibration_ms, tick_samples);
     st.perfect = ms_to_ticks(PERFECT_MS, tick_samples);
@@ -195,9 +194,7 @@ static void set_pulse(int level) {
     if (level == st.shown_pulse)
         return;
     st.shown_pulse = (u8)level;
-    tileset_set_colors(BANK_FIELD * 16, field_pulse[level], PULSE_COLORS);
-    for (int l = 0; l < LANES; l++)
-        tileset_set_colors((BANK_PAD + l) * 16 + 1, &field_pulse[level][1], FIELD_SHARED);
+    art_pulse(level);
 }
 
 static void set_flashes(void) {
@@ -205,7 +202,7 @@ static void set_flashes(void) {
         if (st.flash[l] == st.shown_flash[l])
             continue;
         st.shown_flash[l] = st.flash[l];
-        tileset_set_colors((BANK_PAD + l) * 16 + PAD_COLOR0, pad_flash[l][st.flash[l]], PAD_COLORS);
+        art_pad_flash(l, st.flash[l]);
     }
 }
 

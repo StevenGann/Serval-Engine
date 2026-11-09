@@ -186,3 +186,21 @@ s16 calibration_median_ms(const s16* errors_ms, u8 count) {
         return sorted[count / 2];
     return (s16)(((s32)sorted[count / 2 - 1] + sorted[count / 2]) / 2);
 }
+
+bool calibration_tap_ms(FIXED press_ticks, FIXED beat_ticks, u16 tick_samples, s16* error_ms) {
+    if (beat_ticks <= 0 || tick_samples == 0)
+        return false;
+    // The nearest click: half a beat on, then whole beats down.
+    FIXED half = beat_ticks / 2;
+    if (press_ticks + half < 0)
+        return false; // before the first click's half beat
+    FIXED error = press_ticks - (press_ticks + half) / beat_ticks * beat_ticks; // -half .. half
+    if (error == -half)
+        return false; // exactly between two clicks (or half a beat before the first)
+    // ticks * tick_samples / MUSIC_RATE seconds: in 24.8, to the nearest ms.
+    int64_t num = (int64_t)error * tick_samples * 1000;
+    int64_t den = (int64_t)MUSIC_RATE * 256;
+    int64_t round = den / 2;
+    *error_ms = (s16)(num >= 0 ? (num + round) / den : -((-num + round) / den));
+    return true;
+}

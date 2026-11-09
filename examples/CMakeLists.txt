@@ -109,8 +109,9 @@ target_link_libraries(racer PRIVATE serval_warnings)
 # from the same notes by tools/make-example-audio.py's rhythm set (original,
 # synthesized): the modules, built into rhythm_bank.c and rhythm_bank.h, and
 # rhythm_charts.h beside the bank's header.
-serval_add_rom(rhythm SOURCES rhythm/main.c rhythm/game.c rhythm/play.c rhythm/judge.c
-               rhythm/songs.c rhythm/art.c rhythm/sound.c TITLE "BEAT PAWS" GAME_CODE "SVBP")
+serval_add_rom(rhythm SOURCES rhythm/main.c rhythm/game.c rhythm/screens.c rhythm/calibrate.c
+               rhythm/records.c rhythm/play.c rhythm/judge.c rhythm/songs.c rhythm/art.c
+               rhythm/sound.c TITLE "BEAT PAWS" GAME_CODE "SVBP")
 target_link_libraries(rhythm PRIVATE serval_warnings)
 target_include_directories(rhythm PRIVATE rhythm)
 set(rhythm_audio rhythm_title.mod rhythm_calibrate.mod rhythm_calm.mod rhythm_stride.mod

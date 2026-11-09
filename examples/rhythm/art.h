@@ -60,6 +60,7 @@ enum {
     SPR_WORD,   // 32x16: WORD_PIECES frames a word, left to right (draw_word() in play.c)
     SPR_DIGIT,  // 16x16: 0-9, each 12 pixels wide with its outline
     SPR_MARKER, // 8x8: the progress marker, origin its middle
+    SPR_BIG,    // 32x32: a big letter a frame (big_letters), origin its middle
     SPRITE_COUNT,
 };
 
@@ -89,6 +90,12 @@ enum {
     OBJ_PALETTES,
 };
 
+// The big letters' frames, in order: the title's and the grades'.
+extern const char big_letters[];
+
+// The frame of big letter c (0 for one it lacks).
+int art_big_frame(char c);
+
 // Builds every picture into EWRAM. Call once at boot, before art_load().
 void art_build(void);
 
@@ -96,8 +103,24 @@ void art_build(void);
 // the screen black.
 void art_load(void);
 
-// Shows the play screen's two backgrounds; art_hide_play() takes them off.
+// Shows the play screen's two backgrounds; art_hide_play() takes them off
+// (both, or either shown alone).
 void art_show_play(void);
 void art_hide_play(void);
+
+// Shows the field alone (the title's stage), or the panel alone.
+void art_show_field(void);
+void art_show_panel(void);
+
+// The field's colours at a stage of the beat's pulse (0 at rest), and a
+// lane's pad at a stage of its flash (0 at rest): palette writes, for the
+// next VBlank.
+void art_pulse(int level);
+void art_pad_flash(int lane, int level);
+
+// The field's colours and the pads' at rest, mixed toward the backdrop by
+// amount (0-256): the stage dimmed behind a menu's text. art_pulse(0) and
+// art_pad_flash(lane, 0) undo it.
+void art_dim(u32 amount);
 
 #endif // RHYTHM_ART_H

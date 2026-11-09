@@ -9,6 +9,11 @@
 
 #include <serval/serval.h>
 
+// A press seen in a frame came about 1.5 frames before that frame's
+// music_ticks() (docs/audio.md#position): this much, before the player's
+// calibration. The calibration's taps are timed the same way.
+#define PLAY_INPUT_MS 25
+
 typedef enum {
     PLAY_RUNNING,  // the song goes on (or is paused)
     PLAY_FINISHED, // every note judged and the music at its end: play_result() holds the score

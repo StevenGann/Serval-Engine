@@ -195,7 +195,7 @@ static bool in_paw(int x, int y, int x0, int y0, int size) {
 }
 
 // The 5x7 letters, '#' set. Only the ones used.
-static const char font_chars[] = "PERFCTGODMIS0123456789<>BA";
+static const char font_chars[] = "PERFCTGODMIS0123456789<>BAW";
 static const char* const font[][7] = {
     {"####.", "#...#", "#...#", "####.", "#....", "#....", "#...."}, // P
     {"#####", "#....", "#....", "####.", "#....", "#....", "#####"}, // E
@@ -223,6 +223,7 @@ static const char* const font[][7] = {
     {"#....", "##...", "###..", "####.", "###..", "##...", "#...."}, // >
     {"####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."}, // B
     {".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"}, // A
+    {"#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"}, // W
 };
 
 // Whether pixel (x, y) of glyph c (5x7) is set; false outside it.
@@ -649,10 +650,14 @@ static u32* pack(int x0, int y0, int w, int h, u32* out) {
     return out;
 }
 
+const char big_letters[] = "BEATPWSCD"; // the title's, then the grades' others
+
 // Every frame's tiles: the note 4, the burst 48, the serval 192, the words
-// 224, the digits 40, the marker 1.
+// 224, the digits 40, the marker 1, the big letters 144.
+#define BIG_COUNT ((int)sizeof big_letters - 1)
 #define OBJ_TILES                                                                                  \
-    (4 + BURST_FRAMES * 16 + DANCE_FRAMES * 64 + WORD_COUNT * WORD_PIECES * 8 + 10 * 4 + 1)
+    (4 + BURST_FRAMES * 16 + DANCE_FRAMES * 64 + WORD_COUNT * WORD_PIECES * 8 + 10 * 4 + 1 +       \
+     BIG_COUNT * 16)
 static u32 obj_tiles[OBJ_TILES * 8] SERVAL_EWRAM_BSS;
 
 static SpriteAsset sprites[SPRITE_COUNT] SERVAL_EWRAM_BSS;
@@ -889,6 +894,30 @@ static u32* build_digits(u32* out) {
     return out;
 }
 
+// The big letters: the 5x7 font four times over (20x28), shaded like the
+// words, in a 32x32 frame each with their outline.
+static u32* build_big(u32* out) {
+    const u32* first = out;
+    for (int i = 0; i < BIG_COUNT; i++) {
+        canvas_clear(32);
+        for (int y = 0; y < 28; y++)
+            for (int x = 0; x < 20; x++)
+                if (glyph_pixel(big_letters[i], x / 4, y / 4))
+                    put(6 + x, 2 + y, 2 + y * 5 / 28);
+        outline(32, 32);
+        out = pack(0, 0, 32, 32, out);
+    }
+    sprite(SPR_BIG, SPRITE_32x32, BIG_COUNT, PAL_GOLD, first, 16, 16);
+    return out;
+}
+
+int art_big_frame(char c) {
+    for (int i = 0; i < BIG_COUNT; i++)
+        if (big_letters[i] == c)
+            return i;
+    return 0;
+}
+
 // The progress marker: a small diamond.
 static u32* build_marker(u32* out) {
     canvas_clear(8);
@@ -912,6 +941,7 @@ static void build_sprites(void) {
     out = build_words(out);
     out = build_digits(out);
     out = build_marker(out);
+    out = build_big(out);
     for (int i = 0; i < SPRITE_COUNT; i++)
         sprite_table[i] = &sprites[i];
 }
@@ -946,6 +976,38 @@ void art_load(void) {
 void art_show_play(void) {
     map_load(&field_layer);
     map_load(&panel_layer);
+}
+
+void art_show_field(void) {
+    map_load(&field_layer);
+}
+
+void art_show_panel(void) {
+    map_load(&panel_layer);
+}
+
+void art_pulse(int level) {
+    tileset_set_colors(BANK_FIELD * 16, field_pulse[level], PULSE_COLORS);
+    for (int l = 0; l < LANES; l++)
+        tileset_set_colors((BANK_PAD + l) * 16 + 1, &field_pulse[level][1], FIELD_SHARED);
+}
+
+void art_pad_flash(int lane, int level) {
+    tileset_set_colors((BANK_PAD + lane) * 16 + PAD_COLOR0, pad_flash[lane][level], PAD_COLORS);
+}
+
+void art_dim(u32 amount) {
+    Color c[PULSE_COLORS];
+    for (int i = 0; i < PULSE_COLORS; i++)
+        c[i] = i ? color_mix(field_rest[i], field_rest[0], amount) : field_rest[0];
+    tileset_set_colors(BANK_FIELD * 16, c, PULSE_COLORS);
+    for (int l = 0; l < LANES; l++) {
+        tileset_set_colors((BANK_PAD + l) * 16 + 1, &c[1], FIELD_SHARED);
+        Color p[PAD_COLORS];
+        for (int i = 0; i < PAD_COLORS; i++)
+            p[i] = color_mix(pad_flash[l][0][i], field_rest[0], amount);
+        tileset_set_colors((BANK_PAD + l) * 16 + PAD_COLOR0, p, PAD_COLORS);
+    }
 }
 
 void art_hide_play(void) {

@@ -405,8 +405,9 @@ else()
     # (the example itself is built only for the GBA and the web)
     target_sources(serval_host_tests PRIVATE racer_tests.c ../examples/racer/road.c
                    ../examples/racer/track.c)
-    # rhythm: the example's judging and scoring, portable C tested here
-    target_sources(serval_host_tests PRIVATE rhythm_tests.c ../examples/rhythm/judge.c)
+    # rhythm: the example's judging, scoring and records, portable C tested here
+    target_sources(serval_host_tests PRIVATE rhythm_tests.c ../examples/rhythm/judge.c
+                   ../examples/rhythm/records.c)
     serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
     # debug link: the agent against a fake endpoint (link_tests.c), with a

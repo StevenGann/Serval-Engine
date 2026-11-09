@@ -2,8 +2,6 @@
 // lanes, one pair for each thumb, onto paw-print pads, in time with tracker
 // music; press each as it lands. A serval dances on the stage between them.
 //
-// A work in progress: the play screen is done, the title is a placeholder.
-//
 // Demonstrates:
 //   - Keeping time with tracker music (play.c): every frame starts from
 //     music_position(), the ticks heard since row 0, and the charts are in
@@ -25,16 +23,37 @@
 //     from under) and a sprite in front of it (SPRITE_ABOVE_FOREGROUND)
 //   - PSG blips for presses and menus over Maxmod's tracker music
 //   - music_pause()/music_resume() for a pause menu
+//   - A calibration measured by tapping along to steady clicks (the median
+//     of the taps' errors, calibrate.c) and saved with the best scores in
+//     one versioned save slot (records.c; its rules tested on the host)
 //   - The frame's CPU time, the sprites and the busiest scanline on screen
 //     (frame_cpu_permille, sprite_stats, sprite_stats_scanlines): SELECT
 //
 // What to expect when booting the ROM:
-//   - The Serval Engine splash, then a placeholder title: "BEAT PAWS", the
-//     song to play ("CALM  HARD  AUTO" at boot), PRESS START blinking, and
-//     the title music, a cheerful loop at 112 BPM. UP and DOWN change the
-//     song (CALM, STRIDE, RUSH), LEFT and RIGHT the difficulty (EASY,
-//     HARD), R turns AUTO on and off, each with a click. START or A fades
-//     to the song.
+//   - The Serval Engine splash, then the title: the play screen's stage
+//     under its night sky, BEAT PAWS in big gold and mint letters that hop
+//     one a beat, the serval dancing, a paw print falling onto a pad on
+//     every beat (the pad flashes and sparks as it lands), PRESS START
+//     blinking, and the title music, a cheerful loop at 112 BPM. START or
+//     A goes on, with a click.
+//   - The song select, over the stage dimmed: CALM, STRIDE and RUSH with
+//     their tempos and lengths, a paw beside the one chosen; the
+//     difficulty (EASY or HARD); the best score and grade for it (dashes
+//     before any), and FULL COMBO once played without a miss. The chosen
+//     song plays, looping, and the serval dances to it. UP and DOWN choose
+//     the song, LEFT and RIGHT the difficulty, R turns AUTO on and off
+//     ("AUTO: NO RECORDS"), A plays, B goes back to the title, SELECT
+//     opens the calibration. Holding L and R and pressing SELECT erases the
+//     records (RECORDS ERASED; the calibration stays).
+//   - The calibration: steady clicks at 120 BPM, a timing line across the
+//     top (EARLY to LATE, -200 to +200 ms; a white diamond at 0). Tap A,
+//     B, LEFT or RIGHT on every click: each tap puts a rose diamond on the
+//     line and its error under TAPS n / 16 (LAST +12 MS), and the serval
+//     lifts a paw. After 16 the offset is their median (MEASURED), the
+//     amber diamond. LEFT and RIGHT adjust it (1 ms a press, 4 a repeat
+//     held), A saves it, B leaves the saved one, START taps again (and
+//     stops the tapping early). A positive offset means the presses come
+//     late, as with a TV's lag or wireless audio: the game moves them back.
 //   - The play screen: a dark panel across the top with the song, its
 //     difficulty (and AUTO) and the score (000000), and a groove with a
 //     white diamond that travels along it as the song goes. Two pairs of
@@ -66,11 +85,15 @@
 //     over CONTINUE, RETRY and QUIT, chosen with UP and DOWN and A (START
 //     or B continue). CONTINUE goes on exactly where it was; RETRY starts
 //     the song again from its count-in, the score at 0; QUIT fades back to
-//     the title.
+//     the song select.
 //   - When the music ends, after the last note, the screen fades to the
-//     results: the song, the PERFECT, GOOD and MISS counts, the longest
-//     combo, the accuracy, the score, the grade (S, A, B, C, D) and FULL
-//     COMBO when nothing was missed. START or A goes back to the title.
+//     results, over the stage dimmed: the song, the PERFECT, GOOD and MISS
+//     counts, the longest combo, the accuracy, the score, and the grade (S,
+//     A, B, C, D) as a big letter that drops in; NEW BEST when the score
+//     beats the record (never with AUTO), FULL COMBO when nothing was
+//     missed (the serval dances), SAVE FAILED if the save memory refused.
+//     A or START goes back to the song select. The records and the
+//     calibration survive a power-off.
 //   - SELECT, while playing, shows a readout on the bottom two rows: the
 //     CPU time (the busiest frame of the last 16, and the highest), the
 //     hardware sprites used (and the highest), the counts so far (P, G,
@@ -82,9 +105,11 @@
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
-// into game.c (the screens and the fades), play.c (a song played), judge.c
-// (judging and scoring), songs.c (the song table), art.c (the pictures,
-// drawn at boot) and sound.c.
+// into game.c (the flow and the fades), screens.c (the title, the song
+// select, the results), calibrate.c, play.c (a song played), judge.c
+// (judging, scoring, the calibration's arithmetic), records.c (the saved
+// bests), songs.c (the song table), art.c (the pictures, drawn at boot) and
+// sound.c.
 
 #include "game.h"
 

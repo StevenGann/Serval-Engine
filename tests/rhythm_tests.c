@@ -7,6 +7,7 @@
 #include "test.h"
 
 #include "../examples/rhythm/judge.h"
+#include "../examples/rhythm/records.h"
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -343,10 +344,207 @@ static void play_done_when_all_judged(void) {
     CHECK(play_done(&play));
 }
 
+// The saved bests: each one only when beaten, never by the autoplay; the
+// calibration clamped; a save of another version or size, or holding values
+// this game never writes, read as no records; erasing keeps the calibration.
+static int memcmp_bytes(const void* a, const void* b, unsigned n) {
+    const u8 *x = a, *y = b;
+    for (unsigned i = 0; i < n; i++)
+        if (x[i] != y[i])
+            return x[i] - y[i];
+    return 0;
+}
+
+static bool best_is(const Records* r, int song, int diff, u32 score, u8 grade, u8 fc) {
+    const Best* b = &r->best[song][diff];
+    return b->score == score && b->grade == grade && b->full_combo == fc;
+}
+
+static bool records_empty(const Records* r) {
+    for (int s = 0; s < SONG_COUNT; s++)
+        for (int d = 0; d < DIFF_COUNT; d++)
+            if (!best_is(r, s, d, 0, 0, 0))
+                return false;
+    return r->calibration_ms == 0;
+}
+
+static void calibration_taps(void) {
+    // 120 BPM: 328 samples a tick, a click every 24 ticks (6144 in 24.8).
+    // A tick is 328 / 15768 s = 20.80 ms, so 1/256 tick = 0.08126 ms.
+    const FIXED beat = 24 << 8;
+    s16 ms = 12345;
+    CHECK(calibration_tap_ms(5 * beat, beat, 328, &ms) && ms == 0);          // on a click
+    CHECK(calibration_tap_ms(0, beat, 328, &ms) && ms == 0);                 // on the first
+    CHECK(calibration_tap_ms(5 * beat + 1231, beat, 328, &ms) && ms == 100); // 100.03
+    CHECK(calibration_tap_ms(5 * beat - 1231, beat, 328, &ms) && ms == -100);
+    CHECK(calibration_tap_ms(-1231, beat, 328, &ms) && ms == -100);     // early for the first
+    CHECK(calibration_tap_ms(3 * beat + 6, beat, 328, &ms) && ms == 0); // 0.49 ms
+    CHECK(calibration_tap_ms(3 * beat + 7, beat, 328, &ms) && ms == 1); // 0.57 ms
+    CHECK(calibration_tap_ms(3 * beat - 7, beat, 328, &ms) && ms == -1);
+    // The nearest click: just under half a beat late, just under half early
+    // for the next.
+    CHECK(calibration_tap_ms(2 * beat + beat / 2 - 1, beat, 328, &ms) && ms == 250); // 249.6
+    CHECK(calibration_tap_ms(2 * beat + beat / 2 + 1, beat, 328, &ms) && ms == -250);
+    // Half a beat or more from every click: ignored, *error_ms untouched.
+    ms = 77;
+    CHECK(!calibration_tap_ms(2 * beat + beat / 2, beat, 328, &ms)); // exactly between
+    CHECK(!calibration_tap_ms(-beat / 2, beat, 328, &ms));           // before the first
+    CHECK(!calibration_tap_ms(-beat, beat, 328, &ms));
+    CHECK(!calibration_tap_ms(beat, 0, 328, &ms));
+    CHECK(!calibration_tap_ms(beat, beat, 0, &ms));
+    CHECK(ms == 77);
+    CHECK(calibration_tap_ms(-beat / 2 + 1, beat, 328, &ms) && ms == -250);
+    // Far into a long session the arithmetic holds: an hour of beats.
+    CHECK(calibration_tap_ms(7200 * beat + 1231, beat, 328, &ms) && ms == 100);
+}
+
+static void records_rules(void) {
+    Records r;
+    for (unsigned i = 0; i < sizeof r; i++)
+        ((u8*)&r)[i] = 0x5A;
+    records_clear(&r);
+    CHECK(records_empty(&r));
+    CHECK(records_valid(&r));
+
+    // The first play sets every best (all PERFECT: grade S, full combo).
+    Score clean = {.perfect = 10, .max_combo = 10, .score = 4000};
+    CHECK(records_add(&r, SONG_STRIDE, DIFF_HARD, &clean, false) ==
+          (RECORD_SCORE | RECORD_GRADE | RECORD_FULL_COMBO));
+    CHECK(best_is(&r, SONG_STRIDE, DIFF_HARD, 4000, 'S', 1));
+    CHECK(best_is(&r, SONG_STRIDE, DIFF_EASY, 0, 0, 0)); // the others untouched
+    CHECK(best_is(&r, SONG_CALM, DIFF_HARD, 0, 0, 0));
+    // The same again, or worse: nothing falls.
+    CHECK(records_add(&r, SONG_STRIDE, DIFF_HARD, &clean, false) == 0);
+    Score worse = {.perfect = 5, .good = 2, .miss = 3, .score = 1500};
+    CHECK(records_add(&r, SONG_STRIDE, DIFF_HARD, &worse, false) == 0);
+    CHECK(best_is(&r, SONG_STRIDE, DIFF_HARD, 4000, 'S', 1));
+
+    // Each best on its own: a higher score with a miss keeps the full combo
+    // and the grade; a better grade on a lower score keeps the score.
+    Score missed = {.perfect = 18, .miss = 2, .score = 3000}; // 900: A
+    CHECK(records_add(&r, SONG_CALM, DIFF_EASY, &missed, false) == (RECORD_SCORE | RECORD_GRADE));
+    CHECK(best_is(&r, SONG_CALM, DIFF_EASY, 3000, 'A', 0));
+    Score higher = {.perfect = 10, .good = 5, .miss = 5, .score = 3500}; // 583: D
+    CHECK(records_add(&r, SONG_CALM, DIFF_EASY, &higher, false) == RECORD_SCORE);
+    CHECK(best_is(&r, SONG_CALM, DIFF_EASY, 3500, 'A', 0));
+    Score better = {.perfect = 20, .score = 2000}; // S, full combo, a lower score
+    CHECK(records_add(&r, SONG_CALM, DIFF_EASY, &better, false) ==
+          (RECORD_GRADE | RECORD_FULL_COMBO));
+    CHECK(best_is(&r, SONG_CALM, DIFF_EASY, 3500, 'S', 1));
+    // A full combo of GOODs is still a full combo, and once set stays.
+    Score goods = {.good = 20, .score = 2500}; // 333: D
+    CHECK(records_add(&r, SONG_RUSH, DIFF_EASY, &goods, false) ==
+          (RECORD_SCORE | RECORD_GRADE | RECORD_FULL_COMBO));
+    CHECK(best_is(&r, SONG_RUSH, DIFF_EASY, 2500, 'D', 1));
+    CHECK(records_add(&r, SONG_RUSH, DIFF_EASY, &missed, false) == (RECORD_SCORE | RECORD_GRADE));
+    CHECK(best_is(&r, SONG_RUSH, DIFF_EASY, 3000, 'A', 1));
+    // A first play that scores nothing is still a first: grade D.
+    Score nothing = {.miss = 10};
+    CHECK(records_add(&r, SONG_RUSH, DIFF_HARD, &nothing, false) == (RECORD_SCORE | RECORD_GRADE));
+    CHECK(best_is(&r, SONG_RUSH, DIFF_HARD, 0, 'D', 0));
+    CHECK(records_add(&r, SONG_RUSH, DIFF_HARD, &nothing, false) == 0);
+
+    // The autoplay never sets a record, even on a fresh song.
+    Records before = r;
+    CHECK(records_add(&r, SONG_CALM, DIFF_HARD, &clean, true) == 0);
+    Score huge = {.perfect = 900, .max_combo = 900, .score = 999999};
+    CHECK(records_add(&r, SONG_STRIDE, DIFF_HARD, &huge, true) == 0);
+    // Out of range, or no notes: nothing either.
+    CHECK(records_add(&r, SONG_COUNT, DIFF_EASY, &clean, false) == 0);
+    CHECK(records_add(&r, SONG_CALM, DIFF_COUNT, &clean, false) == 0);
+    Score empty = {0};
+    CHECK(records_add(&r, SONG_CALM, DIFF_HARD, &empty, false) == 0);
+    CHECK(memcmp_bytes(&before, &r, sizeof r) == 0);
+    CHECK(records_valid(&r));
+
+    // What records_valid() refuses.
+    Records bad = r;
+    bad.best[SONG_CALM][DIFF_EASY].grade = 'E';
+    CHECK(!records_valid(&bad));
+    bad = r;
+    bad.best[SONG_CALM][DIFF_HARD].full_combo = 1; // no grade: never played
+    CHECK(!records_valid(&bad));
+    bad = r;
+    bad.best[SONG_CALM][DIFF_EASY].full_combo = 2;
+    CHECK(!records_valid(&bad));
+    bad = r;
+    bad.best[SONG_CALM][DIFF_EASY].reserved[1] = 1;
+    CHECK(!records_valid(&bad));
+    bad = r;
+    bad.reserved = 1;
+    CHECK(!records_valid(&bad));
+    bad = r;
+    bad.calibration_ms = CALIBRATION_MAX_MS + 1;
+    CHECK(!records_valid(&bad));
+    bad.calibration_ms = -CALIBRATION_MAX_MS - 1;
+    CHECK(!records_valid(&bad));
+    bad.calibration_ms = -CALIBRATION_MAX_MS;
+    CHECK(records_valid(&bad));
+
+    // The saved copy. No save: empty.
+    save_erase(RECORDS_SLOT);
+    records_load();
+    CHECK(records_empty(records_get()));
+    CHECK(records_take(SONG_CALM, DIFF_HARD, &clean, false) ==
+          (RECORD_SCORE | RECORD_GRADE | RECORD_FULL_COMBO));
+    CHECK(save_slot_size(RECORDS_SLOT) == sizeof(Records));
+    records_save_calibration(-37);
+    records_load(); // as at the next boot
+    CHECK(best_is(records_get(), SONG_CALM, DIFF_HARD, 4000, 'S', 1));
+    CHECK(records_get()->calibration_ms == -37);
+    CHECK(!records_save_failed());
+    // Nothing fell, or the autoplay: nothing written.
+    Records saved;
+    save_write(RECORDS_SLOT, records_get(), sizeof saved, RECORDS_VERSION);
+    CHECK(records_take(SONG_CALM, DIFF_HARD, &worse, false) == 0);
+    CHECK(records_take(SONG_STRIDE, DIFF_EASY, &clean, true) == 0);
+    save_erase(RECORDS_SLOT); // a write now would show as a save again
+    CHECK(records_take(SONG_CALM, DIFF_HARD, &worse, false) == 0);
+    CHECK(records_take(SONG_STRIDE, DIFF_EASY, &clean, true) == 0);
+    CHECK(save_slot_size(RECORDS_SLOT) == 0);
+    // The calibration is clamped.
+    records_save_calibration(500);
+    CHECK(records_get()->calibration_ms == CALIBRATION_MAX_MS);
+    records_save_calibration(-500);
+    CHECK(records_get()->calibration_ms == -CALIBRATION_MAX_MS);
+    records_load();
+    CHECK(records_get()->calibration_ms == -CALIBRATION_MAX_MS);
+    CHECK(best_is(records_get(), SONG_CALM, DIFF_HARD, 4000, 'S', 1));
+    // Erasing clears the bests, keeps the calibration, and saves.
+    records_erase();
+    CHECK(best_is(records_get(), SONG_CALM, DIFF_HARD, 0, 0, 0));
+    CHECK(records_get()->calibration_ms == -CALIBRATION_MAX_MS);
+    records_load();
+    CHECK(best_is(records_get(), SONG_CALM, DIFF_HARD, 0, 0, 0));
+    CHECK(records_get()->calibration_ms == -CALIBRATION_MAX_MS);
+
+    // Another version, another size or a struct this game never wrote:
+    // empty, and the slot left as it was.
+    records_take(SONG_CALM, DIFF_HARD, &clean, false);
+    save_read(RECORDS_SLOT, &saved, sizeof saved, RECORDS_VERSION);
+    save_write(RECORDS_SLOT, &saved, sizeof saved, RECORDS_VERSION + 1);
+    records_load();
+    CHECK(records_empty(records_get()));
+    CHECK(save_slot_version(RECORDS_SLOT) == RECORDS_VERSION + 1);
+    save_write(RECORDS_SLOT, &saved, sizeof saved - 4, RECORDS_VERSION);
+    records_load();
+    CHECK(records_empty(records_get()));
+    saved.best[SONG_RUSH][DIFF_EASY].grade = 'Z';
+    save_write(RECORDS_SLOT, &saved, sizeof saved, RECORDS_VERSION);
+    records_load();
+    CHECK(records_empty(records_get()));
+    saved.best[SONG_RUSH][DIFF_EASY].grade = 0;
+    save_write(RECORDS_SLOT, &saved, sizeof saved, RECORDS_VERSION);
+    records_load(); // and the same, valid, reads
+    CHECK(best_is(records_get(), SONG_CALM, DIFF_HARD, 4000, 'S', 1));
+    save_erase(RECORDS_SLOT);
+}
+
 TEST_SUITE(rhythm_tests, "rhythm", {"judge_windows", judge_windows},
            {"before_row_zero", before_row_zero}, {"mashing", mashing}, {"close_notes", close_notes},
            {"expire_counts", expire_counts}, {"scoring", scoring}, {"grades", grades},
            {"ms_to_ticks_values", ms_to_ticks_values},
            {"calibration_extremes", calibration_extremes}, {"play_start_resets", play_start_resets},
            {"lanes_past_three", lanes_past_three}, {"windows_change", windows_change},
-           {"note_judged", note_judged}, {"play_done_when_all_judged", play_done_when_all_judged});
+           {"note_judged", note_judged}, {"play_done_when_all_judged", play_done_when_all_judged},
+           {"calibration_taps", calibration_taps}, {"records_rules", records_rules});
