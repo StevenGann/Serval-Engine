@@ -90,9 +90,9 @@
 //     distance reached in km), the three laps with BEST by the fastest, or
 //     NEW RECORD (and a chime) where a saved record fell, the records as
 //     they stand, and "PRESS A" blinking. A fades back to the title.
-//   - START pauses: a blip, "PAUSED", the music and the engine stop and
-//     the picture holds; START again goes on from where it was, with the
-//     blip.
+//   - START pauses: a blip, "PAUSED", the music and the engine's drone
+//     stop (an effect already sounding fades out on its own) and the
+//     picture holds; START again goes on from where it was, with the blip.
 //   - SELECT, in a race, shows a readout on the bottom two rows: the CPU
 //     time of the busiest frame of the last 16 and its highest so far, the
 //     sprites and matrices used, the busiest scanline's sprite time (cycles

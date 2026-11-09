@@ -148,15 +148,7 @@ title = "SAVANNA RUN"
 summary = "A pseudo-3D road racer: one still picture of a road bent line by line with `raster_scroll()`, light and dark stripes rolling toward the player by palette writes alone, a sunset sky swinging with the curves, and a serval at the wheel of a safari jeep against the clock"
 tags = ["effects", "tilemaps", "rotation", "music", "save"]
 level = 3
-# START, then A held from GO: the second lap's sunset, at 290 km/h in the
-# firm left, an acacia and termite mounds beside the road and traffic ahead.
-# The steering was found on the host by replaying race_step(), clear of the
-# road's edges and of the traffic.
-thumbnail = { frame = 4172, keys = [
-    "300:S:2", "488:A:3685",
-    "808:r:20", "908:r:40", "1028:r:40", "1108:l:40", "1228:l:80", "1468:r:80",
-    "1568:r:40", "1688:r:20", "1868:r:40", "1948:l:40", "2028:r:10", "2038:l:160",
-    "2198:r:40", "2318:l:40", "2518:r:20", "2538:l:20", "2638:r:40", "2838:r:10",
-    "3008:r:40", "3088:l:40", "3148:r:10", "3158:l:40", "3218:r:10", "3228:l:40",
-    "3348:r:40", "3708:l:40", "3768:r:80", "3928:l:20",
-] }
+# START, then A held from GO: the late afternoon of lap 1 at 290 km/h, in
+# the long right, a jeep ahead and a rock and acacias by the road; the frames
+# around it look the same.
+thumbnail = { frame = 819, keys = ["300:S:2", "488:A:400"] }
