@@ -34,6 +34,24 @@
 // (a frame that ends within a few cycles of VBlank, too late for its wait to
 // catch that VBlank), the handler mixes it at once, ahead of the DMA reading
 // it but for its first few milliseconds.
+//
+// The music's position (music_position(), docs/audio.md#position) needs
+// Maxmod's internals, read (and one of them set) through its private header
+// core/mas.h (third_party/maxmod/source, a private include directory of the
+// engine's library), as Maxmod itself is never modified: mmLayerMain, the
+// main layer's player state (core/player_types.h), its sampcount (the
+// samples mixed into the tick playing), tickrate (a tick's length in samples,
+// music_set_speed() included), isplaying, speed, bpm, and position, row and
+// tick (the next tick's place, read when that tick starts the next mix).
+// music_play() sets sampcount to tickrate, so that row 0 sounds from the
+// first sample of the next mix (mmFrame() processes a tick once sampcount
+// reaches tickrate, and no Maxmod call resets it: row 0 would start 0 to 1
+// tick into the mix otherwise, by what played before). The ticks themselves
+// are counted from Maxmod's song events (MMCB_SONGTICK, MMCB_SONGFINISHED,
+// MMCB_SONGERROR; mm_types.h), on the main layer. Updating Maxmod means
+// checking those fields and when mmFrame() and mppProcessTick() change them
+// (source/gba/main_gba.c, source/core/mas.c), as for mp_mix_seg and
+// mp_writepos below.
 
 #include "serval/audio.h"
 #include "serval/fixed.h"
@@ -46,6 +64,8 @@
 
 #include "../core/warn.h"
 #include "internal.h"
+
+#include <core/mas.h> // mmLayerMain: Maxmod's private header (see above)
 
 // Maxmod's internals the engine uses (gba/mixer.c, not in maxmod.h): the
 // mixer's half of the double buffer (0 or 0xFF, switched by mmVBlank()), where
@@ -112,6 +132,7 @@ enum {
     W_SPEED_IDLE,
     W_PITCH,
     W_CHANNELS,
+    W_POSITION,
 };
 static u32 warned;
 #define WARN_ONCE(kind, ...)                                                                       \
@@ -130,10 +151,104 @@ static mm_word volume_1024(u32 volume) {
     return (volume << 2) + ((volume + 1) >> 6);
 }
 
+// --- The music's position -------------------------------------------------------
+
+// What music_position() returns, kept by follow() before every mmFrame(): the
+// music's place at the start of the samples mmFrame() mixes, which play from
+// the next VBlank; the game reads it until then, in the frame that VBlank
+// ends. EWRAM: touched about once a frame and once a tick.
+typedef struct {
+    MusicPosition now;
+    u32 ticks;      // main-layer ticks Maxmod processed since music_play()
+    u32 last_tick;  // the MMCB_SONGTICK parameter of the last one: where it was
+    bool started;   // a module played since audio_bank_set()
+    bool following; // now follows Maxmod: from music_play() or music_resume() until the
+                    // first follow() that finds the module stopped, paused or ended
+    bool ended;     // the module played once has ended, or stopped for its channels
+} Position;
+static SERVAL_EWRAM_BSS Position position;
+
+// From music_play() until the first mix: a frame (264 samples) before row 0,
+// which sounds from the first sample of that mix.
+static void position_start(void) {
+    u32 rate = mmLayerMain.tickrate;
+    mmLayerMain.sampcount = (mm_hword)rate; // the next tick, row 0, at once
+    position.ticks = 0;
+    position.last_tick = 0;
+    position.ended = false;
+    position.following = true;
+    position.started = true;
+    position.now = (MusicPosition){
+        .ticks = -(FIXED)((256 * HALF + rate - 1) / rate),
+        .speed = mmLayerMain.speed,
+        .tempo = mmLayerMain.bpm,
+        .tick_samples = (u16)rate,
+    };
+}
+
+// Before every mmFrame(), with the other side kept out (the game's mix() runs
+// inside enter(), and the game can't interrupt the VBlank handler's).
+static void follow(void) {
+    if (!position.following)
+        return;
+    const mpl_layer_information* layer = &mmLayerMain;
+    MusicPosition* now = &position.now;
+    u32 rate = layer->tickrate ? layer->tickrate : 1;
+    u32 where = position.last_tick;
+    FIXED ticks;
+    if (position.ended) {
+        // At the end of its last tick (sampcount runs on, meaningless).
+        ticks = (FIXED)position.ticks * 256;
+    } else {
+        // Into the tick playing: sampcount of its tickrate samples. All of
+        // them when the next tick starts with this mix (sampcount can pass
+        // tickrate once music_set_speed() speeds the music up): then that
+        // tick, whose place Maxmod's position, row and tick already hold.
+        u32 into = layer->sampcount;
+        if (into >= rate) {
+            into = rate;
+            where = (u32)layer->tick << 8 | (u32)layer->row << 16 | (u32)layer->position << 24;
+        }
+        ticks = (FIXED)position.ticks * 256 - 256 + (FIXED)(into * 256 / rate);
+    }
+    // Never back: music_set_speed() slowing the music lengthens the tick
+    // playing, so the part of it played shrinks.
+    if (ticks > now->ticks)
+        now->ticks = ticks;
+    now->order = (u8)(where >> 24);
+    now->row = (u8)(where >> 16);
+    now->tick = (u8)(where >> 8);
+    now->speed = layer->speed;
+    now->tempo = layer->bpm;
+    now->tick_samples = (u16)rate;
+    // A module paused, stopped or ended changes no more: the samples mixed
+    // before this mix were its last, so the position stays where the music
+    // stops being heard (until music_resume() or music_play()).
+    if (!layer->isplaying)
+        position.following = false;
+}
+
+static MusicPosition module_position(const char* function) {
+    (void)function; // for the warning, in debug builds
+    if (!position.started) {
+        WARN_ONCE(W_POSITION,
+                  "%s: no module has played since audio_bank_set(); the position is 0 until "
+                  "music_play()",
+                  function);
+        return (MusicPosition){0};
+    }
+    u16 ime = REG_IME;
+    REG_IME = 0; // the VBlank handler mixes, and follow()s, in a frame that overruns
+    MusicPosition now = position.now;
+    REG_IME = ime;
+    return now;
+}
+
 // --- Timing -------------------------------------------------------------------
 
 // mmFrame(): the effects' and the music's ticks, and the next VBlank's samples.
 static void mix(void) {
+    follow();
     mmFrame();
     last_mixed = (const s8*)mp_writepos - HALF;
     mixed = true;
@@ -183,6 +298,7 @@ static void vblank(void) {
             stats.stale++;
         } else {
             mp_writepos = (mm_addr)playing;
+            follow();
             mmFrame();
             mp_writepos = (mm_addr)(mp_mix_seg ? first + HALF : first);
             stats.late++;
@@ -218,11 +334,20 @@ static void frame_mix(void) {
     }
 }
 
-// Maxmod's song events: a module stopped for using too many channels.
+// Maxmod's song events (inside mmFrame()): a module stopped for using too
+// many channels, or that ended, and every tick a layer processes, with where
+// it was (the layer, tick, row and order-list position, a byte each).
 static mm_word song_event(mm_word message, mm_word param) {
-    (void)param;
     if (message == MMCB_SONGERROR)
         music_failed = true;
+    if ((param & 0xFF) != MM_MAIN)
+        return 0;
+    if (message == MMCB_SONGTICK) {
+        position.ticks++;
+        position.last_tick = param;
+    } else if (message == MMCB_SONGFINISHED || message == MMCB_SONGERROR) {
+        position.ended = true;
+    }
     return 0;
 }
 
@@ -299,6 +424,7 @@ void audio_bank_set(const void* new_bank) {
     bank = new_bank;
     music_on = music_held = false;
     music_failed = false;
+    position = (Position){0};
     for (u32 i = 0; i < EFFECT_SLOTS; i++)
         slots[i].handle = SFX_NONE;
     if (!bank)
@@ -354,6 +480,7 @@ static void play_module(u16 music_id, bool loop) {
     enter();
     mmSetModuleTempo(1024); // speed 100%, before mmStart() reads the module's tempo
     mmStart(music_id, loop ? MM_PLAY_LOOP : MM_PLAY_ONCE);
+    position_start(); // row 0 from the next mix's first sample
     leave();
     music_on = true;
     music_held = false;
@@ -391,6 +518,7 @@ static void resume_module(void) {
         return;
     enter();
     mmResume();
+    position.following = true;
     leave();
     music_held = false;
 }
@@ -420,6 +548,8 @@ static void module_speed(u16 percent) {
     }
     enter();
     mmSetModuleTempo(((u32)percent * 1024 + 50) / 100); // 6.10 fixed point
+    if (position.following && position.ticks == 0)
+        position_start(); // row 0 not played yet: still from the next mix's first sample
     leave();
 }
 
@@ -565,6 +695,7 @@ static const ServalMixerOps maxmod_ops = {
     .music_paused = module_paused,
     .music_set_volume = module_volume,
     .music_set_speed = module_speed,
+    .music_position = module_position,
     .sfx_play = effect_play,
     .sfx_stop = effect_stop,
     .sfx_playing = effect_playing,

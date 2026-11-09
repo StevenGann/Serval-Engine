@@ -118,8 +118,13 @@ if(SERVAL_TARGET_GBA)
     # Maxmod's objects are part of the engine's library; its headers are the
     # engine's business (no public header includes them).
     target_sources(serval PRIVATE $<TARGET_OBJECTS:maxmod>)
+    # Its private headers too (third_party/maxmod/source), for the player's
+    # state that music_position() reads (src/gba/maxmod.c): third-party code,
+    # SYSTEM, so the engine's warnings skip them.
     target_include_directories(serval PRIVATE
         $<TARGET_PROPERTY:maxmod,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_include_directories(serval SYSTEM PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maxmod/source")
     # Game code (serval_add_rom() targets, and libraries linking serval) gets
     # its own sections too, so --gc-sections drops what the game doesn't use.
     target_compile_options(serval INTERFACE -ffunction-sections -fdata-sections)
@@ -167,8 +172,8 @@ elseif(SERVAL_TARGET_WEB)
     # (src/gba/maxmod.c), with the engine's web mixer in place of Maxmod's GBA
     # one (src/web/maxmod_mixer.c, src/web/mixer.c). Maxmod's headers, its
     # internal ones too (the web mixer implements its mixer interface, with
-    # the GBA's types: __GBA__), are third-party code: SYSTEM, so the
-    # engine's warnings skip them.
+    # the GBA's types: __GBA__; music_position() reads the player's state),
+    # are third-party code: SYSTEM, so the engine's warnings skip them.
     target_sources(serval PRIVATE $<TARGET_OBJECTS:maxmod>)
     target_include_directories(serval SYSTEM PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maxmod/include"

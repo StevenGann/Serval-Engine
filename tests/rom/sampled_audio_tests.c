@@ -2,10 +2,11 @@
 // (src/gba/sampled_audio.c, Maxmod): the sound bank (registering, replacing,
 // unregistering, refusing what isn't one), the hardware it claims and the
 // PSG's share it keeps, tracker music (play once or looped, stop, pause and
-// resume, volume, speed and its clamps), effects (handles going stale,
-// priority, volume, pan, pitch and its clamps, loops, sfx_stop_all()), the
-// frames that overrun or skip frame_end(), the mixer's cycles in
-// frame_cpu_cycles(), and its costs, logged.
+// resume, volume, speed and its clamps, and its position: music_position()
+// and music_ticks()), effects (handles going stale, priority, volume, pan,
+// pitch and its clamps, loops, sfx_stop_all()), the frames that overrun or
+// skip frame_end(), the mixer's cycles in frame_cpu_cycles(), and its costs,
+// logged.
 //
 // What plays is checked numerically in the samples Maxmod mixed (the wave
 // buffer DMA feeds Direct Sound from): pitch by counting zero crossings,
@@ -13,7 +14,10 @@
 // bank's modules and samples (tools/make-example-audio.py, set "tests"):
 // tone.mod, one held note, 16 rows of 120 ms (1.92 s, 115 frames), wide.mod,
 // the same with a note on channel 10 at row 4, beep.wav, 0.1 s of a 1000 Hz
-// square wave at 16 kHz, and hum.wav, a looped 500 Hz square wave.
+// square wave at 16 kHz, hum.wav, a looped 500 Hz square wave, and
+// position.mod, a click on every row at 125 BPM (314 samples a tick), speed 6
+// then 3 from row 8 of its second pattern, which jumps back to the first
+// (rows 0-15 of each play; a loop is 168 ticks).
 //
 // Every case unregisters the bank at its end, so the suites after it run
 // without the mixer.
@@ -348,6 +352,346 @@ static void a_module_with_too_many_channels_stops(void) {
     audio_bank_set(NULL);
 }
 
+// --- The music's position ----------------------------------------------------------
+
+#define TICK_125 314 // samples a tick at 125 BPM: 39420 / 125, rounded down to even
+
+// music_ticks() after music_play() and `n` frames at 125 BPM (n >= 1): the
+// position at the start of the block the n-th frame_end() mixed. Row 0
+// sounds from the first sample of the first block mixed after music_play(),
+// so the offset is one block: 264 samples.
+static FIXED ticks_after(u32 n) {
+    return (FIXED)(256u * (n * HALF - HALF) / TICK_125);
+}
+
+static bool position_zero(MusicPosition p) {
+    return p.ticks == 0 && p.order == 0 && p.row == 0 && p.tick == 0 && p.speed == 0 &&
+           p.tempo == 0 && p.tick_samples == 0;
+}
+
+// Where position.mod is at tick `k` since row 0 (it loops every 168 ticks).
+static void position_mod_at(u32 k, u32* order, u32* row, u32* tick, u32* speed) {
+    k %= 168;
+    if (k < 96) {
+        *order = 0, *row = k / 6, *tick = k % 6, *speed = 6;
+    } else if (k < 144) {
+        *order = 1, *row = (k - 96) / 6, *tick = (k - 96) % 6, *speed = 6;
+    } else {
+        *order = 1, *row = 8 + (k - 144) / 3, *tick = (k - 144) % 3, *speed = 3;
+    }
+}
+
+static void music_ticks_exact(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    // Before row 0: a frame (264 samples) before it, below 0.
+    MusicPosition p = music_position();
+    CHECK(p.ticks == -(FIXED)((256 * HALF + TICK_125 - 1) / TICK_125) && p.ticks < 0);
+    CHECK(p.order == 0 && p.row == 0 && p.tick == 0);
+    CHECK(p.speed == 6 && p.tempo == 125 && p.tick_samples == TICK_125);
+    CHECK(music_ticks() == p.ticks);
+    // Row 0's click starts the first mix after music_play(), at its first sample.
+    frames(1);
+    const s8* first = serval_mixer_last();
+    CHECK(first[0] != 0 || first[SIDE] != 0);
+    static const u32 counts[] = {1, 10, 100};
+    u32 done = 1;
+    for (u32 i = 0; i < 3; i++) {
+        frames(counts[i] - done);
+        done = counts[i];
+        p = music_position();
+        CHECK(p.ticks == ticks_after(done) && music_ticks() == p.ticks);
+        u32 order, row, tick, speed;
+        position_mod_at((u32)p.ticks >> 8, &order, &row, &tick, &speed);
+        CHECK(p.order == order && p.row == row && p.tick == tick);
+        CHECK(p.speed == speed && p.tempo == 125 && p.tick_samples == TICK_125);
+    }
+    CHECK(ticks_after(1) == 0 && ticks_after(100) == 21308); // 99 * 264 * 256 / 314
+    audio_bank_set(NULL);
+}
+
+// The first sample of a click (after at least 32 silent ones, on either
+// side) in the last mix, from `from` on; HALF if none. `silent` carries the
+// run of silent samples across mixes.
+static u32 next_click(u32 from, u32* silent) {
+    const s8* half = serval_mixer_last();
+    for (u32 i = from; i < HALF; i++) {
+        if (half[i] == 0 && half[SIDE + i] == 0) {
+            (*silent)++;
+            continue;
+        }
+        bool onset = *silent >= 32;
+        *silent = 0;
+        if (onset)
+            return i;
+    }
+    return HALF;
+}
+
+static void music_ticks_click_alignment(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    // Every row's click, through the speed change and the jump back: each
+    // in the mix during which music_ticks() crosses its row's tick, at the
+    // sample music_ticks() puts it (within 2: the 24.8 value is rounded down).
+    static const u32 loop = 168;
+    u32 rows[64];
+    for (u32 i = 0; i < 64; i++) {
+        u32 r = i % 32;
+        u32 k = r < 16 ? 6 * r : r < 24 ? 96 + 6 * (r - 16) : 144 + 3 * (r - 24);
+        rows[i] = (i / 32) * loop + k;
+    }
+    // After the n-th frame, serval_mixer_last() holds the block that plays
+    // from the next VBlank: from music_ticks() to ticks_after(n + 1).
+    u32 next_row = 0, clicks = 0, misplaced = 0, silent = 32;
+    for (u32 n = 1; n <= 398; n++) { // row 63 sounds in the 397th block, row 64 in the 400th
+        frames(1);
+        FIXED start = music_ticks();
+        FIXED end = ticks_after(n + 1);
+        misplaced += start != ticks_after(n);
+        u32 at = next_click(0, &silent);
+        while (at < HALF) {
+            clicks++;
+            FIXED row = next_row < 64 ? (FIXED)(rows[next_row] * 256) : -1;
+            if (row < start || row >= end) {
+                misplaced++;
+            } else {
+                u32 expected = ((u32)(row - start) * TICK_125 + 255) / 256;
+                if (at + 2 < expected || at > expected + 2)
+                    misplaced++;
+            }
+            next_row++;
+            at = next_click(at + 1, &silent);
+        }
+        // No row crossed without its click.
+        if (next_row < 64 && (FIXED)(rows[next_row] * 256) < end)
+            misplaced++;
+    }
+    CHECK(clicks == 64 && misplaced == 0);
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_pause_freezes(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    frames(50);
+    CHECK(music_ticks() == ticks_after(50));
+    music_pause();
+    // The block mixed before the pause still plays: the position stops at
+    // its end, the start of the first silent block.
+    CHECK(music_ticks() == ticks_after(50));
+    frames(1);
+    FIXED held = music_ticks();
+    CHECK(held == ticks_after(51));
+    frames(200);
+    CHECK(music_ticks() == held && music_position().ticks == held);
+    music_resume();
+    frames(1);
+    CHECK(music_ticks() == held);
+    frames(29); // 30 frames since the resume: as 51 + 29 frames of playing
+    CHECK(music_ticks() == ticks_after(80));
+    // music_set_speed() while paused: the position (tick_samples too) holds
+    // until the music resumes, then counts on at the new speed. Slower, the
+    // tick playing is longer, and the part of it played smaller: the
+    // position holds until the music catches up, never going back.
+    music_pause();
+    frames(1);
+    held = music_ticks();
+    CHECK(held == ticks_after(81) && (held & 255) != 0); // into its tick: it would go back
+    music_set_speed(50);
+    frames(10);
+    MusicPosition p = music_position();
+    CHECK(p.ticks == held && p.tick_samples == TICK_125);
+    music_resume();
+    frames(1);
+    p = music_position();
+    CHECK(p.ticks == held && p.tick_samples == 634);
+    frames(3);
+    CHECK(music_ticks() > held);
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_speed_monotonic(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    frames(20);
+    FIXED last = music_ticks(), fast = 0, slow = 0;
+    bool monotonic = true;
+    music_set_speed(200);
+    for (u32 i = 1; i <= 101; i++) {
+        frames(1);
+        FIXED now = music_ticks();
+        monotonic &= now >= last;
+        last = now;
+        if (i == 1) {
+            CHECK(music_position().tick_samples == 156); // 39420 / 250, rounded down to even
+            fast = now;
+        }
+    }
+    // 100 frames at 156 samples a tick: 26400 * 256 / 156, within a tick.
+    CHECK(near((u32)(last - fast), 43323, 1));
+    music_set_speed(50); // the tick playing grows longer: the position holds
+    for (u32 i = 1; i <= 101; i++) {
+        frames(1);
+        FIXED now = music_ticks();
+        monotonic &= now >= last;
+        last = now;
+        if (i == 1) {
+            CHECK(music_position().tick_samples == 634); // 39420 / 62, rounded down to even
+            slow = now;
+        }
+    }
+    CHECK(near((u32)(last - slow), 10660, 3)); // 26400 * 256 / 634
+    CHECK(monotonic);
+    // music_play() starts again at 100%; music_set_speed() before row 0
+    // sounds keeps row 0 at the first sample of the next mix.
+    music_play(MOD_POSITION, true);
+    CHECK(music_position().tick_samples == TICK_125);
+    music_set_speed(50);
+    CHECK(music_position().tick_samples == 634 && music_ticks() == -(256 * HALF + 633) / 634);
+    frames(1);
+    CHECK(music_ticks() == 0);
+    frames(1);
+    CHECK(music_ticks() == 256 * HALF / 634);
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_loop_monotonic(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    u32 back = 0, last_order = 0, wrong = 0, slow_rows = 0;
+    for (u32 n = 1; n <= 450; n++) { // more than two loops of 199.8 frames
+        frames(1);
+        MusicPosition p = music_position();
+        if (p.ticks != ticks_after(n))
+            wrong++;
+        u32 order, row, tick, speed;
+        position_mod_at((u32)p.ticks >> 8, &order, &row, &tick, &speed);
+        if (p.order != order || p.row != row || p.tick != tick || p.speed != speed)
+            wrong++;
+        slow_rows += p.speed == 3;
+        back += p.order < last_order;
+        last_order = p.order;
+    }
+    CHECK(wrong == 0 && back == 2 && slow_rows > 0);
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_end_freezes(void) {
+    audio_bank_set(test_bank);
+    u32 warnings = debug_warning_count();
+    music_play(MOD_TONE, false); // 16 rows of 6 ticks, then it ends
+    FIXED last = music_ticks();
+    bool monotonic = true;
+    while (music_playing()) {
+        frames(1);
+        monotonic &= music_ticks() >= last;
+        last = music_ticks();
+    }
+    CHECK(monotonic && last < 96 * 256);
+    // The last block it played in still plays: at its end, the module's.
+    frames(1);
+    CHECK(music_ticks() == 96 * 256);
+    MusicPosition p = music_position();
+    CHECK(p.order == 0 && p.row == 15 && p.tick == 5); // the last tick played
+    frames(50);
+    CHECK(music_ticks() == 96 * 256 && !music_playing());
+    // music_stop(): frozen where the music stops being heard.
+    music_play(MOD_POSITION, true);
+    frames(30);
+    music_stop();
+    CHECK(music_ticks() == ticks_after(30));
+    frames(1);
+    CHECK(music_ticks() == ticks_after(31));
+    frames(20);
+    CHECK(music_ticks() == ticks_after(31));
+    CHECK(debug_warning_count() == warnings);
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_reset_on_play(void) {
+    audio_bank_set(test_bank);
+    music_play(MOD_POSITION, true);
+    frames(100);
+    music_play(MOD_POSITION, true);
+    MusicPosition p = music_position();
+    CHECK(p.ticks < 0 && p.order == 0 && p.row == 0 && p.tick == 0);
+    frames(1);
+    CHECK(music_ticks() == 0);
+    frames(9);
+    CHECK(music_ticks() == ticks_after(10));
+    // From a module paused, or ended, alike; and after a new bank.
+    music_pause();
+    frames(5);
+    music_play(MOD_POSITION, true);
+    frames(10);
+    CHECK(music_ticks() == ticks_after(10));
+    music_play(MOD_TONE, false);
+    frames(150);
+    CHECK(!music_playing());
+    music_play(MOD_POSITION, true);
+    frames(10);
+    CHECK(music_ticks() == ticks_after(10));
+    u32 warnings = debug_warning_count();
+    audio_bank_set(test_bank);
+    CHECK(position_zero(music_position()));
+    CHECK(debug_warning_count() - warnings == WARNINGS(1));
+    audio_bank_set(NULL);
+}
+
+static void music_ticks_warnings(void) {
+    // No bank: zeros, one warning for any number of calls of either.
+    audio_bank_set(NULL);
+    u32 warnings = debug_warning_count();
+    bool zero = true;
+    for (u32 i = 0; i < 5; i++)
+        zero &= position_zero(music_position()) && music_ticks() == 0;
+    CHECK(zero && debug_warning_count() - warnings == WARNINGS(1));
+    // Its own: music_play()'s warning is another.
+    music_play(MOD_TONE, true);
+    CHECK(debug_warning_count() - warnings == WARNINGS(2));
+
+    // A bank, but no module played since it was registered: zeros, once.
+    audio_bank_set(test_bank);
+    warnings = debug_warning_count();
+    for (u32 i = 0; i < 5; i++) {
+        frames(1);
+        zero &= position_zero(music_position()) && music_ticks() == 0;
+    }
+    CHECK(zero && debug_warning_count() - warnings == WARNINGS(1));
+    // Played, then stopped: the frozen value, no warning.
+    music_play(MOD_POSITION, true);
+    frames(10);
+    music_stop();
+    frames(5);
+    warnings = debug_warning_count();
+    CHECK(music_ticks() == ticks_after(11) && debug_warning_count() == warnings);
+    audio_bank_set(NULL);
+}
+
+// Frames that overrun, and a stretch without frame_end(), as
+// overruns_keep_the_audio_fed(): the VBlank handler's mixes count as
+// frame_end()'s, so the position stays a function of the VBlanks since
+// music_play().
+static void music_ticks_overrun(void) {
+    audio_bank_set(test_bank);
+    ServalMixerStats before = serval_mixer_stats();
+    music_play(MOD_POSITION, true);
+    frames(1);
+    for (u32 i = 0; i < 10; i++) { // 10 frames of 1.5 VBlanks
+        frame_begin();
+        work(FRAME_CYCLES * 3 / 2);
+        frame_end();
+    }
+    work(FRAME_CYCLES * 20); // 20 VBlanks without frame_end()
+    frames(1);
+    ServalMixerStats after = serval_mixer_stats();
+    u32 mixes = after.mixes - before.mixes;
+    CHECK(after.early - before.early >= 20 && mixes > 40);
+    CHECK(music_ticks() == ticks_after(mixes));
+    audio_bank_set(NULL);
+}
+
 // --- Sampled sound effects --------------------------------------------------------
 
 static void effects_end_and_their_handles_go_stale(void) {
@@ -583,6 +927,7 @@ static u32 half_peak(u32 half) {
 // silent. Four times, so that both halves take turns.
 static void a_half_found_unmixed_is_mixed_late(void) {
     audio_bank_set(test_bank);
+    ServalMixerStats played = serval_mixer_stats();
     music_play(MOD_TONE, false);
     music_set_volume(0);
     frames(1);
@@ -606,7 +951,9 @@ static void a_half_found_unmixed_is_mixed_late(void) {
     CHECK(after.late - before.late == 4 && after.early == before.early);
     CHECK(mixes + 1 >= vblanks && mixes <= vblanks + 1);
     CHECK(after.stale == before.stale && after.misplaced == 0);
-    // The music kept time.
+    // The music kept time, and its position with it (tone.mod is at 125 BPM
+    // too): the late mixes count as any other.
+    CHECK(music_ticks() == ticks_after(after.mixes - played.mixes));
     u32 n = frames_until_silent(400);
     CHECK(n + vblanks + 1 >= 113 && n + vblanks + 1 <= 117);
     music_set_volume(255);
@@ -661,21 +1008,28 @@ static void costs(void) {
     CHECK(serval_mixer_stats().misplaced == 0 && serval_mixer_stats().stale == 0);
 }
 
-TEST_SUITE(gba_sampled_audio_tests, "gba_sampled_audio",
-           {"bank claims the hardware and keeps the PSG",
-            bank_claims_the_hardware_and_keeps_the_psg},
-           {"bad banks are refused", bad_banks_are_refused},
-           {"a new bank stops everything", a_new_bank_stops_everything},
-           {"music plays once or loops", music_plays_once_or_loops},
-           {"music pauses and resumes", music_pauses_and_resumes}, {"music volume", music_volume},
-           {"music speed and its clamps", music_speed_and_its_clamps},
-           {"a module with too many channels stops", a_module_with_too_many_channels_stops},
-           {"effects end and their handles go stale", effects_end_and_their_handles_go_stale},
-           {"effect pitch and its clamps", effect_pitch_and_its_clamps},
-           {"effect volume and pan", effect_volume_and_pan},
-           {"loops play until stopped", loops_play_until_stopped},
-           {"priorities decide who plays", priorities_decide_who_plays},
-           {"overruns keep the audio fed", overruns_keep_the_audio_fed},
-           {"a half found unmixed is mixed late", a_half_found_unmixed_is_mixed_late},
-           {"frame_cpu_cycles counts the mixer", frame_cpu_cycles_counts_the_mixer},
-           {"costs", costs});
+TEST_SUITE(
+    gba_sampled_audio_tests, "gba_sampled_audio",
+    {"bank claims the hardware and keeps the PSG", bank_claims_the_hardware_and_keeps_the_psg},
+    {"bad banks are refused", bad_banks_are_refused},
+    {"a new bank stops everything", a_new_bank_stops_everything},
+    {"music plays once or loops", music_plays_once_or_loops},
+    {"music pauses and resumes", music_pauses_and_resumes}, {"music volume", music_volume},
+    {"music speed and its clamps", music_speed_and_its_clamps},
+    {"a module with too many channels stops", a_module_with_too_many_channels_stops},
+    {"music_ticks exact", music_ticks_exact},
+    {"music_ticks click alignment", music_ticks_click_alignment},
+    {"music_ticks pause freezes", music_ticks_pause_freezes},
+    {"music_ticks speed monotonic", music_ticks_speed_monotonic},
+    {"music_ticks loop monotonic", music_ticks_loop_monotonic},
+    {"music_ticks end freezes", music_ticks_end_freezes},
+    {"music_ticks reset on play", music_ticks_reset_on_play},
+    {"music_ticks warnings", music_ticks_warnings}, {"music_ticks overrun", music_ticks_overrun},
+    {"effects end and their handles go stale", effects_end_and_their_handles_go_stale},
+    {"effect pitch and its clamps", effect_pitch_and_its_clamps},
+    {"effect volume and pan", effect_volume_and_pan},
+    {"loops play until stopped", loops_play_until_stopped},
+    {"priorities decide who plays", priorities_decide_who_plays},
+    {"overruns keep the audio fed", overruns_keep_the_audio_fed},
+    {"a half found unmixed is mixed late", a_half_found_unmixed_is_mixed_late},
+    {"frame_cpu_cycles counts the mixer", frame_cpu_cycles_counts_the_mixer}, {"costs", costs});

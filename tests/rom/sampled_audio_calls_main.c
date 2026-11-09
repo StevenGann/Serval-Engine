@@ -17,6 +17,8 @@ int main(void) {
     music_pause();
     music_resume();
     bool on = music_playing() || music_paused();
+    MusicPosition position = music_position();
+    on = on || position.ticks != 0 || position.tick_samples != 0 || music_ticks() != 0;
     music_stop();
     Sfx sfx = sfx_play(0);
     sfx = sfx_play_ex(1, 200, -64, FX(2), 3);

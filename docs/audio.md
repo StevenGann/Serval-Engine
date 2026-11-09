@@ -165,13 +165,51 @@ On the web the cost doesn't matter: the player, the mixer and Direct Sound take 
 
 **Implemented** (`music_play(u16 music_id, bool loop)`, `music_stop()`, `music_playing()`, `music_pause()`, `music_resume()`, `music_paused()`, `music_set_volume(u8 volume)`, `music_set_speed(u16 percent)`). The calls mirror `psg_music_*()`:
 
-- `music_play()` starts a module (a `MOD_*` number) from its beginning, replacing the one playing, paused or not; `loop` false plays it once, then `music_playing()` turns false. It resets the speed to 100; the volume stays. Without a bank, or with an ID the bank doesn't have, it is ignored with a warning. (Maxmod: `mmStart()` with `MM_PLAY_LOOP` or `MM_PLAY_ONCE`.)
+- `music_play()` starts a module (a `MOD_*` number) from its beginning, replacing the one playing, paused or not; `loop` false plays it once, then `music_playing()` turns false. It resets the speed to 100; the volume stays. Without a bank, or with an ID the bank doesn't have, it is ignored with a warning. (Maxmod: `mmStart()` with `MM_PLAY_LOOP` or `MM_PLAY_ONCE`.) Row 0 sounds from the first sample of the next mix, which plays from the VBlank after the next one ([position](#position)).
 - **Channels:** a module plays at most 8 channels (the engine's fixed setting, [configuration](#configuration)). One that uses more stops when it reaches the first row that does (Maxmod stops it, `MMCB_SONGERROR`), and debug builds warn; `music_playing()` turns false.
 - `music_stop()`; `music_playing()` is true while a module plays, paused or not.
 - `music_pause()` / `music_resume()` hold the music exactly where it is; `music_paused()` tells paused from playing. Pausing with nothing playing, pausing twice and resuming music that isn't paused do nothing; `music_play()`, `music_stop()` and `audio_bank_set()` end a pause. (Maxmod: `mmPause()`, which silences the module's channels and stops its time, and `mmResume()`.) Effects play on.
 - `music_set_volume()`: 0 (silent) to 255 (the default: the module's own volumes), from the module's next tick (at most a few frames), for this module and the next, and across banks. (Maxmod: `mmSetModuleVolume()`, 0-1024.)
 - `music_set_speed()`: percent of the module's tempo, from where it is, pitch unchanged; 0 means 100, and values outside 50-200 are clamped with a warning: Maxmod's tempo factor ranges from 0.5 to 2.0 (`mmSetModuleTempo()`, `0x200`-`0x800` in Q10). Without a module playing it is ignored, with a warning (as `psg_music_set_tempo()`).
 - **Scripts:** SYS calls 17 to 24, the Lua builtins `music_play(id, loop)` to `music_set_speed(percent)` by the same names ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)); a script names the module by its `MOD_*`.
+- **Where it is:** `music_position()` and `music_ticks()` ([below](#position)).
+
+## Position
+
+**Implemented** (`MusicPosition`, `MUSIC_RATE`, `music_position()`, `music_ticks()`; added after the freeze, [api-freeze.md](api-freeze.md#after-the-freeze)). For a game that keeps time with its music: a rhythm game's notes, a beat-synced flash. Counting frames since `music_play()` drifts: Maxmod's ticks don't divide frames, they run a little fast against the nominal tempo (below), `music_pause()` and `music_set_speed()` move them, and an overrunning frame plays a VBlank of music that `frame_count()` misses.
+
+```c
+typedef struct {
+    FIXED ticks;      // 24.8 ticks heard since row 0 of the latest music_play(), at the next VBlank
+    u8 order, row, tick, speed;
+    u16 tempo;        // BPM before music_set_speed()
+    u16 tick_samples; // a tick's length now in mixer samples, music_set_speed() included
+} MusicPosition;
+#define MUSIC_RATE 15768
+MusicPosition music_position(void);
+FIXED music_ticks(void);              // music_position().ticks
+```
+
+- **`ticks`: in the module's own ticks**, `speed` of them a row, so a chart in ticks (or rows times the speed) can't drift from the music, whatever the tempo, the speed changes and `music_set_speed()`. 24.8 fixed point, exact to the sample: after `T` ticks processed (counted from Maxmod's `MMCB_SONGTICK` events) and `S` samples into the tick playing, of `R` a tick, `ticks = 256 × (T − 1) + 256 × S / R`, rounded down.
+- **At the next VBlank:** the position where the music is as the picture the game is drawing starts to show, which is what the speakers play then. `frame_end()` mixes each VBlank's samples a frame ahead ([frame loop](#frame-loop)): the engine notes the position before each mix, at the start of the samples it mixes, and the game reads it during the next frame, when they play from the next VBlank. (Maxmod's own position, `mmGetPosition()`, is a frame further on, names the next tick rather than the one sounding, and jumps back on every loop.)
+- **The start:** `music_play()` makes row 0 sound from the first sample of the next mix. So `ticks` is −264 samples' worth (a frame; −216 at 125 BPM) until the first `frame_end()` after `music_play()`, 0 after it, and `256 × (N × 264 − 264) / R` after N frames: the offset is one block, 264 samples. A count-in before row 0 can use the negative values. Before this API, row 0 started 0 to 1 tick into that mix, by what had played before (Maxmod's sample count carries over from the last module: at boot, a whole tick): every module now starts that much sooner, under a tick (the `jukebox`'s theme, the first module after boot, 314 samples, 19.9 ms).
+- **Never decreases.** It counts on through loops, pattern jumps and breaks (`Bxx`, `Dxx`, `E6x`) while `order` and `row` go back. It stands still while paused, and after `music_stop()` or a module played once ends (at the end of its last tick, a frame after `music_playing()` turns false: the last mix still plays), where the music stops being heard; `music_play()` starts it again from below 0. `music_set_speed()` takes effect from the next mix, in `tick_samples` too; slowing the music down lengthens the tick playing, so the part of it played shrinks: `ticks` holds until the music catches up (a speed change while paused waits for `music_resume()`, as the whole position does). After about 46 hours at 125 BPM it would overflow `FIXED`.
+- **`order`, `row`, `tick`:** the tick sounding then (the one `ticks` is in): its order-list entry, its row in that pattern and its tick in the row; after the end, the last tick played. **`speed`** (ticks a row: `Fxx` below 32, `Axx`) and **`tempo`** (BPM: `Fxx` from 32, `Txx`, before `music_set_speed()`) as the module has them then. **`tick_samples`:** a tick's length in mixer samples, `MUSIC_RATE` (15,768) a second, `music_set_speed()` included.
+- **Ticks are a little short.** Maxmod makes a tick `39420 / tempo` samples (2.5 seconds over the tempo, at the mixer's rate), rounded down to an even number: 314 at 125 BPM, 50.22 ticks a second against ProTracker's 50 (0.43% fast). At 90 BPM 438 (exact), 120 BPM 328 (+0.15%), 140 BPM 280 (+0.56%), 150 BPM 262 (+0.31%). So a chart timed in seconds from the nominal tempo drifts (a quarter of a second a minute at 125 BPM); a chart in ticks doesn't.
+- **Without a bank:** all zeros, and a warning once for `music_position()` and `music_ticks()` between them (its own: `music_play()`'s is another). **With a bank but no module played since it was registered:** all zeros, a warning once. After `music_stop()` or the end, no warning: the frozen position is a results screen's to read.
+- **The same on the web,** sample for sample: the same player and the same mixing ([web](#web)). What differs is the browser's latency, after the page's picture and sound (below).
+
+**What a game adds itself.** The value is one moment, the start of the picture being drawn; the game knows where else it is:
+
+- **Drawing:** screen line Y shows (68 + Y) × 1232 / 1064 samples after that VBlank (the VBlank's 68 lines, then line Y, at 1,232 cycles a line and 1,064 a sample): line 0 79 samples later, line 140 241 (0.9 frame). A note drawn to cross a pad line low on the screen is drawn about a frame ahead: at `ticks` plus one frame's worth, 264 × 256 / `tick_samples`.
+- **Judging input:** `frame_begin()` polls the buttons just after the VBlank before, a frame earlier than `ticks`, and a press comes on average half a frame before the poll that sees it: a press seen this frame happened at about `music_ticks()` − 1.5 frames (± 0.5: input is known to a frame).
+- **Calibration:** a player's offset, measured by tapping along to a steady click and saved with the game, for what the engine can't know: on the web the page's audio queue (it starts once 40 ms are queued, and is trimmed above 150 ms, so it settles between, and can move after a hitch) and the device's output latency on top, a picture shown at the browser's next composite, a TV's display lag, Bluetooth audio (150-300 ms). A time turns into ticks as `ms × MUSIC_RATE × 256 / (1000 × tick_samples)`.
+
+**How** (`src/gba/maxmod.c`): the engine counts the main layer's ticks in the song event handler it already sets, and before each `mmFrame()` (`frame_end()`'s, a call into Maxmod's that mixes as it returns, or the VBlank handler's, early or late) notes the position, from Maxmod's internals: `mmLayerMain`'s `sampcount` (the samples mixed into the tick playing), `tickrate`, `isplaying`, `speed`, `bpm`, and `position`, `row` and `tick` (the next tick's place, when it starts the mix), through Maxmod's private header `core/mas.h` (`third_party/maxmod/source`, a private include directory of the engine's library on the GBA and the web; Maxmod's files are unmodified). `music_play()` sets `sampcount` to `tickrate`, which makes `mmFrame()` process row 0 at once. The position is kept in EWRAM (24 bytes, linked only with a bank: the `jukebox` grows by those and about 750 bytes of ROM; no IWRAM), with one division a mix; the game copies it with interrupts off, since the VBlank handler can mix in a frame that overruns. An update of the vendored Maxmod rechecks those fields, and when `mmFrame()` (`source/gba/main_gba.c`) and `mppProcessTick()` (`source/core/mas.c`) change them, as it rechecks the mixer's internals the engine sets (`third_party/maxmod/VENDORED.md`).
+
+Tested in mGBA (`tests/rom/sampled_audio_tests.c`, on `position.mod`, a click on every row with a speed change and a jump back: [`make-example-audio.py`](../tools/make-example-audio.py)'s `tests` set): `ticks` exact after 1, 10 and 100 frames, every row's click in the mix where `ticks` crosses its row (within 2 samples of where `ticks` puts it), frozen through a pause and exact again after it, never decreasing across `music_set_speed()` and the jump back, frozen at the module's end and after `music_stop()`, reset by `music_play()`, the warnings, and a function of the VBlanks through frames that overrun and halves mixed late.
+
+**Scripts:** not yet (a SYS call for `music_ticks()` is to come; `music_position()`, a struct, stays C's).
 
 ## Sampled sound effects
 
@@ -188,7 +226,7 @@ On the web the cost doesn't matter: the player, the mixer and Direct Sound take 
 
 **Implemented.** Maxmod's wave buffer holds two VBlanks of samples a side (264 at 15,768 Hz, round(rate / 59.737)), in two halves: DMA plays one while the next VBlank's samples are mixed into the other.
 
-- **`frame_end()`**, after the PSG step, calls Maxmod's `mmFrame()`: it runs the effects' and the player's ticks and mixes the next VBlank's samples into the half DMA isn't playing ([frame-loop.md](frame-loop.md#vblank-flush), step 8).
+- **`frame_end()`**, after the PSG step, calls Maxmod's `mmFrame()`: it runs the effects' and the player's ticks and mixes the next VBlank's samples into the half DMA isn't playing ([frame-loop.md](frame-loop.md#vblank-flush), step 8). Just before each `mmFrame()` (this one, or the VBlank handler's), the engine notes the music's [position](#position), the start of what it mixes.
 - **The VBlank interrupt** runs `mmVBlank()` first, which on alternate VBlanks restarts DMA 1 and 2 at the buffer's start or rewinds the write position (`source/gba/mixer.c`); then raster effects' part, if one is on.
 - **`frame_cpu_cycles()` counts the mixer:** `frame_end()` measures `mmFrame()` and adds its cycles to the frame's, which it counts up to the VBlank wait (the mixer runs after it). So `frame_cpu_cycles()` and `frame_cpu_permille()` say what the game and the mixer together take of a frame; the rest of the VBlank flush (copies to VRAM, OAM and palette RAM, the PSG) stays uncounted, as before.
 
@@ -257,6 +295,9 @@ void music_resume(void);
 bool music_paused(void);
 void music_set_volume(u8 volume);                  // 0-255
 void music_set_speed(u16 percent);                 // 50-200; 0: 100
+MusicPosition music_position(void);                // ticks heard at the next VBlank, order, row, ...
+FIXED music_ticks(void);                           // music_position().ticks, 24.8
+#define MUSIC_RATE 15768                           // the mixer's samples a second
 
 // Sampled sound effects
 typedef u16 Sfx;                                   // a handle; SFX_NONE (0): none
@@ -277,6 +318,6 @@ serval_add_soundbank(<target> <name> <files...>)   # modules and WAVs -> <name>.
 Each is additive: new functions, CMake keywords or SYS calls.
 
 - Configuration: the mix rate and channel counts per game.
-- Jingles (Maxmod's second player layer, `mmJingleStart()`), the module's position and song events, changing a playing effect (volume, pan, pitch: `mmEffectVolume()`, `mmEffectPanning()`, `mmEffectRate()`).
+- Jingles (Maxmod's second player layer, `mmJingleStart()`), song events (sync markers: `EFx`/`SFx`), changing a playing effect (volume, pan, pitch: `mmEffectVolume()`, `mmEffectPanning()`, `mmEffectRate()`).
 - Streamed PCM (voice, recorded music; ROM-heavy, ADPCM costs decode time).
 - Interactive music (pattern switching or layering by game state).

@@ -224,6 +224,8 @@ void serval_surface_transform(FIXED out[6]);
 // VM's SYS calls). sampled_audio.c checks for a bank and keeps the volumes
 // set before one (serval_music_volume(), serval_sfx_volume(), 0-255), which
 // audio_bank_set() applies; it clears sampled_audio.c's warnings too.
+// music_position takes the name of the call the game made (music_position or
+// music_ticks), for its warning.
 typedef struct {
     void (*music_play)(u16 music_id, bool loop);
     void (*music_stop)(void);
@@ -233,6 +235,7 @@ typedef struct {
     bool (*music_paused)(void);
     void (*music_set_volume)(u8 volume);
     void (*music_set_speed)(u16 percent);
+    MusicPosition (*music_position)(const char* function);
     Sfx (*sfx_play)(u16 sfx_id, u8 volume, s8 pan, FIXED pitch, u8 priority);
     void (*sfx_stop)(Sfx sfx);
     bool (*sfx_playing)(Sfx sfx);

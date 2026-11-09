@@ -4,7 +4,8 @@
 // a game that calls them without ever registering a bank (every scripted
 // game reaches them through the VM's SYS calls) links none of Maxmod and none
 // of its IWRAM. Without a bank they play nothing (music_play() and sfx_play()
-// warn once); the volumes set before a bank are kept for it.
+// warn once; music_position() and music_ticks() return zeros and warn once
+// between them); the volumes set before a bank are kept for it.
 
 #include "serval/audio.h"
 #include "serval/fixed.h"
@@ -19,7 +20,7 @@ static u8 music_volume_inv;
 static u8 sfx_volume_inv;
 
 #ifdef SERVAL_DEBUG
-enum { W_NO_BANK = 1 << 0, W_NO_MUSIC = 1 << 1 };
+enum { W_NO_BANK = 1 << 0, W_NO_MUSIC = 1 << 1, W_NO_POSITION = 1 << 2 };
 static u32 warned;
 
 void serval_mixer_warnings_reset(void) {
@@ -32,6 +33,10 @@ static void warn_once(u32 kind, const char* function) {
     warned |= kind;
     if (kind == W_NO_BANK)
         SERVAL_WARN("%s: no sound bank is registered (audio_bank_set); nothing plays", function);
+    else if (kind == W_NO_POSITION)
+        SERVAL_WARN("%s: no sound bank is registered (audio_bank_set), so no music plays; the "
+                    "position is 0",
+                    function);
     else
         SERVAL_WARN("%s: no module plays (music_play); ignored, and music_play() starts at 100%% "
                     "anyway",
@@ -91,6 +96,22 @@ void music_set_speed(u16 percent) {
         serval_mixer_ops->music_set_speed(percent);
     else
         WARN_ONCE(W_NO_MUSIC, "music_set_speed");
+}
+
+static MusicPosition position(const char* function) {
+    if (serval_mixer_ops)
+        return serval_mixer_ops->music_position(function);
+    (void)function; // for the warning, in debug builds
+    WARN_ONCE(W_NO_POSITION, function);
+    return (MusicPosition){0};
+}
+
+MusicPosition music_position(void) {
+    return position("music_position");
+}
+
+FIXED music_ticks(void) {
+    return position("music_ticks").ticks;
 }
 
 Sfx sfx_play(u16 sfx_id) {

@@ -80,7 +80,7 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 | --- | --- |
 | Mixer configuration (rate, channels) | New CMake keywords; the audio API works with the fixed defaults (`serval_add_soundbank()`, the CMake function building a bank, came with the implementation) |
 | Sampled audio on the web | Implementation behind the API the GBA implements; until then the web plays nothing and warns once |
-| Jingles, module position and sync events, changing a playing effect; streamed PCM, interactive music | New functions |
+| Jingles and sync events, changing a playing effect; streamed PCM, interactive music | New functions (the module's position came after the freeze, [below](#after-the-freeze)) |
 | Palette sharing (reference-counted banks) | Internal: palette writes are already copy-on-write |
 | Palette cycle and fade helpers | New functions over `sprite_set_colors`, `tileset_set_colors` and `color_mix` |
 | VRAM defragmentation, loading in forced blank | Internal |
@@ -114,6 +114,7 @@ New API added since 1.0.0-rc.1, each additive (a new header or function; nothing
 | Addition | What it is | Why it breaks nothing |
 | --- | --- | --- |
 | The pixel surface: `surface.h` (`surface_begin`, `surface_end`, `surface_pixels`, `surface_flip`, `surface_clear`, `surface_set_colors`, `surface_set_transform`, `SURFACE_W`, `SURFACE_H`; 2026-11-08, [surface.md](surface.md)) | A picture the game draws itself, on the hardware's 8-bit bitmap mode with background 2's affine transform; the engine's first step into 3D, for the `raycaster` example | A new header under a new prefix. A game that never calls `surface_begin()` runs as before: the text, map, tileset and splash calls test one flag more, and `frame_end()` one hook. The hardware it claims while on (display mode 4, `BG2CNT` and background 2's affine registers, the bitmap pages' VRAM) was the engine's already ([core-api.md](core-api.md#hardware-the-engine-uses)) |
+| The music's position: `audio.h`'s `MusicPosition`, `MUSIC_RATE`, `music_position()` and `music_ticks()` (2026-11-09, [audio.md](audio.md#position)) | Where the tracker music is, in the module's ticks heard at the next VBlank, exact to the sample and never decreasing, for a game that keeps time with its music: the `rhythm` example | New names under `audio.h`'s `music_` prefix and a new type. One behaviour changes, by under a tick: `music_play()` now starts row 0 at the first sample of the next mix, where it started 0 to 1 tick into it, by what played before. Games without a bank link none of it; with one, 24 bytes of EWRAM and no IWRAM |
 
 ## Decisions
 

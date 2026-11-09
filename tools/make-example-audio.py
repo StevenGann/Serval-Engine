@@ -36,6 +36,18 @@ SET tests (tests/rom), measurable:
   wave (8 samples high, 8 low: 100 cycles), at half amplitude (64 and 192).
 - hum.wav: looping, 512 samples at 16000 Hz: a 500 Hz square wave (16 high,
   16 low: exactly 16 cycles) at half amplitude, smpl loop 0-512.
+- position.mod: for music_position() and music_ticks(). 4 channels, speed 6,
+  tempo 125 from row 0 of order 0 (F06, F7D): a tick is 314 mixer samples
+  (Maxmod's 39420 / 125, rounded down to even). Instrument 1 is a click: 64
+  samples of a full-amplitude square wave (8 high, 8 low), not looped, about
+  120 mixer samples long on C-2. Channel 1 clicks (C-2) on every row that
+  plays. Order list 0, 1 (patterns 0 and 1), restart position 0. Pattern 0
+  plays rows 0-15 (D00 on row 15): 96 ticks. Pattern 1 plays rows 0-15 too,
+  with speed 3 from its row 8 (F03), and jumps back to order 0 at its row
+  15 (B00): rows 0-7 take 6 ticks, rows 8-15 3, 72 ticks in all. So row r of
+  pattern 0 starts at tick 6r, pattern 1's row r at 96 + 6r (r < 8) or 144 +
+  3(r - 8), and the loop is 168 ticks (52,752 samples, about 199.8 frames),
+  played once or looped alike (B00 never reaches the end of the order list).
 
 MOD notes: ProTracker's octaves 1-3 (C-1 = period 856 ... B-3 = 113); C-2
 plays a sample at 8363 Hz, so an instrument of N samples a cycle sounds at
@@ -470,6 +482,21 @@ def test_module(channels, notes):
     return mod_file("serval test", [test_square()], [p], [0])
 
 
+def position_module():
+    """The music_position() test module (the docstring's position.mod)."""
+    click = Instrument("click", [square(i / 16) for i in range(64)])
+    first, second = Pattern(4), Pattern(4)
+    for row in range(16):
+        first.note(row, 0, 1, C2)
+        second.note(row, 0, 1, C2)
+    first.effect(0, 1, 0xF, 6)
+    first.effect(0, 2, 0xF, 125)
+    first.effect(15, 1, 0xD, 0)
+    second.effect(8, 1, 0xF, 3)
+    second.effect(15, 1, 0xB, 0)
+    return mod_file("serval position", [click], [first, second], [0, 1])
+
+
 def square_wav(half, count):
     return [0.5 if (i // half) % 2 == 0 else -0.5 for i in range(count)]
 
@@ -493,6 +520,7 @@ def tests_set():
         "wide.mod": test_module(10, [(0, 0), (4, 9)]),
         "beep.wav": wav_file(square_wav(8, 1600)),
         "hum.wav": wav_file(square_wav(16, 512), loop=(0, 512)),
+        "position.mod": position_module(),
     }
 
 

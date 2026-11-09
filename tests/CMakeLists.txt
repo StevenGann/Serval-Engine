@@ -200,7 +200,7 @@ if(SERVAL_TARGET_GBA)
                 "-DMAP=$<TARGET_FILE_DIR:serval_sampled_audio_calls>/serval_sampled_audio_calls.map"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/rom/check-no-maxmod.cmake")
     set(test_audio_dir "${CMAKE_CURRENT_BINARY_DIR}/test_audio")
-    set(test_audio tone.mod wide.mod beep.wav hum.wav)
+    set(test_audio tone.mod wide.mod beep.wav hum.wav position.mod)
     list(TRANSFORM test_audio PREPEND "${test_audio_dir}/")
     add_custom_command(
         OUTPUT ${test_audio}
