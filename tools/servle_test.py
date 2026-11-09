@@ -414,6 +414,48 @@ end
                      buttons=[(5, L, 10), (8, SELECT, 1)], files=FILES)
         self.assertNotIn(names().lookup("SND_RESET"), self.sounds(run))
 
+    # --- Motion -------------------------------------------------------------------
+
+    def assert_drawn_on_screen(self, run, frames):
+        """Every sprite alive at each of the frames carries SPRITE_SCREEN: one
+        without it would drift with the camera, which moves only to slide the
+        background's spots, and fall behind the near ones. And a sprite has a
+        scale only with SPRITE_SCALED (the renderer warns about a scale
+        without it, and the runner draws nothing)."""
+        screen, scaled = names().lookup("SPRITE_SCREEN"), names().lookup("SPRITE_SCALED")
+        for frame in frames:
+            entities = run.states[frame][2].values()
+            sprites = [e for e in entities if e["object"] != "MOTION"]
+            self.assertTrue(sprites, frame)
+            for e in sprites:
+                self.assertTrue(e["FLAGS"] & screen, (frame, e["object"], e["FLAGS"]))
+                if not e["FLAGS"] & scaled:
+                    self.assertEqual(e["SCALE"], 0, (frame, e["object"]))
+
+    @needs_runner
+    def test_every_sprite_is_drawn_on_the_screen(self):
+        start = 40
+        buttons, enters, end = timeline(["plant"], start)
+        landed = enters[0] + REVEAL_END
+        # The title's tiles dropping, play, a tile mid-flip, the win's cheer and
+        # confetti.
+        frames = [10, start + 3, enters[0] + REVEAL_END // 2, landed + 30]
+        run = run_vm(source(), frames=landed + 31, start=["GAME"], buttons=buttons,
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
+                     printed=",".join(map(str, frames)))
+        self.assertEqual(run.states[landed + 30][0]["STATE"], STATE_WON)
+        objects = {e["object"] for e in run.states[landed + 30][2].values()}
+        self.assertLessEqual({"TILE", "GLYPH", "CONFETTI", "ARROW", "SERVAL"}, objects)
+        self.assert_drawn_on_screen(run, frames)
+        # A lost round's answer.
+        buttons, enters, end = timeline(["crane"] * 6)
+        lost = enters[-1] + REVEAL_END + 30
+        run = run_vm(source(), frames=lost, start=["GAME"], buttons=buttons,
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
+                     printed=str(lost))
+        self.assertEqual(run.globals["STATE"], STATE_LOST)
+        self.assert_drawn_on_screen(run, [lost])
+
     # --- Size and cleanliness ---------------------------------------------------
 
     def test_blob_fits_the_debug_link(self):

@@ -86,6 +86,8 @@ static const PsgSound sounds[SOUND_COUNT] = {
                    .slide = -2,
                    .slide_size = 3,
                    .frames = 30,
+                   .volume = 10,
+                   .fade = -3,
                    .priority = 3},
 };
 

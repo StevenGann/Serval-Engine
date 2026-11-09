@@ -16,8 +16,9 @@
 
 // --- Palettes ----------------------------------------------------------------
 
-// Colors 1-3 are the same in every palette: the empty slot (frame 0 of the
-// tiles) and the outlines look the same whatever palette a sprite has.
+// Colors 1-3 are the same in every tile and glyph palette: the empty slot
+// (frame 0 of the tiles) and the outlines look the same whatever palette a
+// tile or glyph has. The serval's palette is its own.
 #define OUTLINE COLOR_RGB(23, 11, 40)
 #define SLOT COLOR_RGB(29, 15, 50)
 #define SLOT_EDGE COLOR_RGB(93, 70, 134)
@@ -52,8 +53,8 @@ static const char serval_keys[] = ".KOFPWDHN";
 
 // --- A canvas to draw on, then cut into tiles --------------------------------
 
-// Big enough for the widest picture: the near layer of spots, 96x64. EWRAM:
-// boot-time scratch, on no hot path.
+// Big enough for every picture: the largest are the layers of spots, the far
+// one 80x80 and the near one 96x64. EWRAM: boot-time scratch, on no hot path.
 static u8 canvas[96 * 80] SERVAL_EWRAM_BSS;
 static int canvas_w, canvas_h;
 
@@ -104,9 +105,10 @@ static void draw(const char* const* rows, int count, int x, int y, const char* k
 }
 
 // Outlines everything drawn: transparent pixels next to a drawn one, also
-// diagonally, get `color`.
+// diagonally, get `color`. Its copy of the canvas is the canvas's size, so any
+// picture fits.
 static void outline(int color) {
-    static u8 copy[16 * 16] SERVAL_EWRAM_BSS;
+    static u8 copy[sizeof canvas] SERVAL_EWRAM_BSS;
     for (int i = 0; i < canvas_w * canvas_h; i++)
         copy[i] = canvas[i];
     for (int y = 0; y < canvas_h; y++) {

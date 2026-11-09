@@ -24,12 +24,16 @@
 
 -- Game has no components: main.c runs its room_start handler as a thread
 -- (vm_start). The board's 30 tiles are entities it spawns when play starts;
--- the title's six are tiles too. Drift fades the screen in and drifts the
--- camera, so the background's two layers of spots slide past each other.
+-- the title's six are tiles too. Game plays the rules and turns the tiles
+-- over; Motion, one more thread (the create of an entity Game spawns),
+-- moves everything else that moves, every frame (see Motion, below).
 Game = object {}
 Tile = object { components = C_POS | C_SPR, sprite = SPR_TILE }
+Glyph = object { components = C_POS | C_SPR, sprite = SPR_GLYPH } -- a letter of the cheer
+Arrow = object { components = C_POS | C_SPR, sprite = SPR_ARROW } -- the cursor's two
+Confetti = object { components = C_POS | C_VEL | C_SPR, sprite = SPR_CONFETTI }
 Serval = object { components = C_POS | C_SPR, sprite = SPR_SERVAL }
-Drift = object { components = C_POS }
+Motion = object { components = C_POS }
 
 -- Globals -------------------------------------------------------------------
 
@@ -49,12 +53,37 @@ known = array(26)     -- the best mark each letter has had this round (the strip
 stats = array(4)      -- PLAYED, WON, STREAK, BEST: what the save slot keeps
 unmatched = array(26) -- marking: copies of each letter the guess hasn't matched
 title_tiles = array(6) -- the title's SERVLE
+cheer = array(9)       -- the Glyphs over the board at a round's end
+confetti = array(24)   -- a won round's scraps (none: not thrown, or gone)
 cat = none             -- the serval
+arrow_up = none        -- the cursor's arrows, above and below its cell
+arrow_down = none
 
 local held = 0         -- buttons down when the state began, ignored until released
 local spin_dir = 0     -- Up (1), Down (-1) or neither (0) last frame
 local spin_time = 0    -- frames that direction has been held
 local message_time = 0 -- frames until a message on the strip's row goes
+
+-- What Motion animates. The rules start an effect by setting these; Motion
+-- counts its frames and puts what moved back where it rests at its end.
+local brightness = SCREEN_BRIGHTNESS_MIN -- the screen's, faded up to 0
+local title_time = 0   -- frames since the title's tiles began to drop
+local nudge_tile = 0   -- the cell a spin nudges (1-30; 0: none)
+local nudge_dir = 0    -- -1 up, 1 down
+local nudge_time = 0
+local shake_first = 0  -- the cells shaking, first to last (0: none)
+local shake_last = 0
+local shake_time = 0
+local hop_first = 0    -- the won row's first cell (0: no hop)
+local hop_time = 0
+local cheer_count = 0  -- Glyphs in cheer
+local cheer_palette = 0
+local cheer_time = 0
+local mood = SERVAL_IDLE -- the serval's frame: idle (and blinking), happy or sad
+local mood_time = 0
+local flash_time = 0   -- frames the streak's number still flashes
+local confetti_to_throw = 0 -- scraps still to throw, a few a frame
+local confetti_live = 0     -- scraps thrown and not yet gone
 
 -- Numbers -------------------------------------------------------------------
 
@@ -75,7 +104,8 @@ local STAT_MAX <const> = 999   -- what a statistic's three columns can show
 -- Timing, in frames.
 local REPEAT_DELAY <const> = 16 -- a held Up or Down acts at once, again after this,
 local REPEAT_EVERY <const> = 4  -- then every this many frames
-local REVEAL_STEP <const> = 16  -- between the tiles of a guess showing their marks
+local REVEAL_STEP <const> = 14  -- between the tiles of a guess showing their marks: a flip
+local FLIP_TURN <const> = 6     -- the frame of a flip that shows the mark
 local MESSAGE_TIME <const> = 80 -- "NOT A WORD" on the strip's row
 local PROMPT_DELAY <const> = 90 -- from the last tile landing to A starting the next round
 local BLINK <const> = 60        -- "PRESS START": shown 40 frames, hidden 20
@@ -87,8 +117,16 @@ local TILE_INSET <const> = 4
 
 -- Every sprite is drawn on the screen, not in the world (the camera drifts
 -- only to move the background), and in front of background 1, where the
--- near spots are (art.c).
+-- near spots are (art.c): set_sprite_flags gives every sprite these.
 local DRAW <const> = SPRITE_SCREEN | SPRITE_ABOVE_FOREGROUND
+
+-- Which sprite is in front where they overlap (sys_render_by_depth: higher
+-- in front): a tile that moves rises above its neighbours while it moves.
+local DEPTH_TILE <const> = 0
+local DEPTH_LIFTED <const> = 1
+local DEPTH_ARROW <const> = 2
+local DEPTH_CHEER <const> = 3
+local DEPTH_CONFETTI <const> = 4
 
 -- The title's tiles: the 22x22 tile's top-left of the first, and the step
 -- to the next (sprites at TILE_INSET + 1 up and left of it).
@@ -107,6 +145,30 @@ local DRIFT_X <const> = 8
 local DRIFT_Y <const> = 12
 local FADE_STEP <const> = 1
 
+-- Motion, in frames and pixels (the tables of each move are with Motion,
+-- below). A degree as an angle (65536 a turn).
+local DEGREE <const> = ANGLE_DEG(1)
+local TITLE_STAGGER <const> = 5   -- between the title's tiles starting to drop
+local TITLE_WAVE <const> = 96     -- the title's wave, once up and down
+local ARROW_BOB <const> = 54      -- the cursor's arrows, out and back
+local ARROW_INSET <const> = 4     -- an arrow's 16-pixel sprite, centred on its cell
+local HOP_STAGGER <const> = 5     -- between the won row's tiles starting to hop
+local CHEER_Y <const> = 58        -- the cheer's glyphs, over the board's middle
+local GLYPH_PITCH <const> = 14
+local CHEER_MAX <const> = 9       -- glyphs in the longest cheer, PURRFECT!
+local CHEER_STAGGER <const> = 4   -- between its glyphs starting to drop
+local CHEER_WAVE <const> = 72
+local WAVE_EVERY <const> = 4      -- a wave's height is worked out every this many frames
+local CONFETTI_COUNT <const> = 24 -- the length of confetti
+local CONFETTI_PER_FRAME <const> = 3
+local CONFETTI_EVERY <const> = 4
+local CONFETTI_FALL <const> = 0.2 -- added to a scrap's speed down every CONFETTI_EVERY frames
+local CAT_BLINK_EVERY <const> = 170 -- the idle serval blinks this often,
+local CAT_BLINK_FOR <const> = 8     -- for this long
+local CAT_HOPS <const> = 3          -- a won round: the serval hops this many times
+local FLASH_TIME <const> = 48       -- a won round: the streak's number flashes,
+local FLASH_EVERY <const> = 4       -- on or off for this long
+
 -- The word tables.
 local BUCKETS <const> = 26 * 26 -- by the first two letters
 local ANSWER_FLAG <const> = 0x8000
@@ -119,6 +181,7 @@ local PRESS_ROW <const> = 15
 local RESET_ROW <const> = 16
 local TITLE_STATS_ROW <const> = 17
 local CONTROLS_ROW <const> = 19
+local STREAK_ROW <const> = 2 -- the streak's and won's numbers; best's and played's 3 below
 local LEFT_NUMBER_COL <const> = 2
 local RIGHT_NUMBER_COL <const> = 25
 local ANSWER_COL <const> = 5 -- a lost round's strip: the answer, then the prompt
@@ -140,9 +203,9 @@ function Game:room_start()
   text_set_style_color(MARK_PRESENT, COLOR_RGB(244, 177, 46), shadow)
   text_set_style_color(MARK_CORRECT, COLOR_RGB(86, 224, 140), shadow)
   psg_music_play(SONG_THEME)
-  spawn(Drift, 0, 0)
   cat = spawn(Serval, CAT_TITLE_X, CAT_TITLE_Y)
-  cat.flags = DRAW
+  set_sprite_flags(cat, 0)
+  spawn(Motion, 0, 0)
 
   title()
   spawn_tiles()
@@ -154,36 +217,19 @@ function Game:room_start()
   end
 end
 
--- The screen fades in from black (main.c starts it black), and the camera
--- drifts for ever: the background's layers move with it, the far one at half
--- its speed (art.c); every sprite is drawn on the screen (DRAW), so only the
--- spots move.
-function Drift:create()
-  local level = SCREEN_BRIGHTNESS_MIN
-  local t = 0
-  while true do
-    if level < 0 then
-      level = math.min(level + FADE_STEP, 0)
-      screen_set_brightness(level)
-    end
-    camera_set(t // DRIFT_X, t // DRIFT_Y)
-    t = t + 1
-    wait(1)
-  end
-end
-
 -- The title, until START or A. The frames it waited seed the random numbers,
 -- so every power-on picks different words.
 function title()
   state = STATE_TITLE
   text_clear()
+  -- Motion drops them in one by one: each hidden until its turn.
   for i = 1, 6 do
-    local tile = spawn(Tile, TITLE_X + (i - 1) * TITLE_STEP - TILE_INSET - 1,
-                       TITLE_Y - TILE_INSET - 1)
+    local tile = spawn(Tile, TITLE_X + (i - 1) * TITLE_STEP - TILE_INSET - 1, -CELL)
     tile.frame = TITLE_LETTERS[i]
-    tile.flags = DRAW | (TITLE_MARKS[i] + 1) << 8
+    set_sprite_flags(tile, SPRITE_HIDDEN)
     title_tiles[i] = tile
   end
+  title_time = 0
   text_print_centered(TAGLINE_ROW, "GUESS THE WORD IN SIX TRIES")
   draw_title_stats()
   text_set_style(MARK_ABSENT)
@@ -210,12 +256,17 @@ function title()
   end
   random_seed(frames)
   psg_play(SND_START)
-  for i = 1, 6 do kill(title_tiles[i]) end
+  for i = 1, 6 do
+    kill(title_tiles[i])
+    title_tiles[i] = none
+  end
   cat.x = CAT_PLAY_X
   cat.y = CAT_PLAY_Y
+  brightness = SCREEN_BRIGHTNESS_MIN -- black at once: the board fades in (Motion)
 end
 
--- SERVLE in the marks' colors.
+-- SERVLE in the marks' colors (Motion shows each tile in its mark's palette
+-- as it starts to drop).
 TITLE_LETTERS = { 19, 5, 18, 22, 12, 5 }
 TITLE_MARKS = { MARK_CORRECT, MARK_PRESENT, MARK_ABSENT, MARK_CORRECT, MARK_PRESENT,
                 MARK_CORRECT }
@@ -234,6 +285,7 @@ function start_round()
     answer = pick_answer()
     wait(1) -- the search takes most of a frame's operations
   end
+  clear_round_end()
   for i = 1, 30 do
     letters[i] = 0
     marks[i] = 0
@@ -271,10 +323,12 @@ function finish_round()
     stats[STREAK] = stats[STREAK] + 1
     stats[BEST] = math.max(stats[BEST], stats[STREAK])
     psg_play(SND_WIN)
+    celebrate()
   else
     stats[STREAK] = 0
     psg_play(SND_LOSE)
     show_answer()
+    mourn()
   end
   draw_stats()
   save_write(0, stats, SAVE_VERSION)
@@ -376,6 +430,7 @@ function spin(step)
   letters[i] = letter
   show_tile(i)
   psg_play(SND_TICK)
+  nudge(i, -step) -- Up nudges the tile up, Down down
 end
 
 -- B clears the cursor's cell; if it is already empty, the cell left of it.
@@ -401,6 +456,7 @@ function press_a()
     psg_play(SND_MOVE)
   else
     psg_play(SND_BUZZ)
+    shake(row * 5 + col + 1, row * 5 + col + 1)
   end
 end
 
@@ -415,20 +471,13 @@ function enter_guess()
     psg_play(SND_BUZZ)
     text_print_centered(STRIP_ROW, "NOT A WORD")
     message_time = MESSAGE_TIME
+    shake(row * 5 + 1, row * 5 + 5)
     return
   end
   state = STATE_REVEAL
   message_time = 0
   mark_row()
-  for c = 1, 5 do
-    local i = row * 5 + c
-    wait(REVEAL_STEP)
-    show_tile(i)
-    psg_play(SND_MARK_ABSENT + marks[i] - MARK_ABSENT) -- the sounds are in the marks' order
-    local letter = letters[i]
-    if marks[i] > known[letter] then known[letter] = marks[i] end
-    draw_strip()
-  end
+  for c = 1, 5 do flip_tile(row * 5 + c) end -- REVEAL_STEP frames each
   if guess == answer then
     state = STATE_WON
   elseif row == 5 then
@@ -478,9 +527,11 @@ end
 
 -- Every statistic on screen goes through here: at most 999, right-aligned in
 -- three columns, so a big count never runs out of its place (the save keeps
--- counting).
+-- counting). Numbers are gold (the present mark's text style).
 function print_stat(c, r, value)
+  text_set_style(MARK_PRESENT)
   text_print_number(c, r, math.min(value, STAT_MAX), 3)
+  text_set_style(MARK_NONE)
 end
 
 function draw_title_stats()
@@ -491,40 +542,100 @@ function draw_title_stats()
 end
 
 function draw_stats()
-  print_stat(LEFT_NUMBER_COL, 2, stats[STREAK])
-  print_stat(LEFT_NUMBER_COL, 5, stats[BEST])
-  print_stat(RIGHT_NUMBER_COL, 2, stats[WON])
-  print_stat(RIGHT_NUMBER_COL, 5, stats[PLAYED])
+  print_stat(LEFT_NUMBER_COL, STREAK_ROW, stats[STREAK])
+  print_stat(LEFT_NUMBER_COL, STREAK_ROW + 3, stats[BEST])
+  print_stat(RIGHT_NUMBER_COL, STREAK_ROW, stats[WON])
+  print_stat(RIGHT_NUMBER_COL, STREAK_ROW + 3, stats[PLAYED])
 end
 
 -- The board and text ------------------------------------------------------------
 
+-- The statistics' labels are dim (the absent mark's style), their numbers
+-- gold, under them.
 function draw_play_screen()
   text_clear()
-  text_print(0, 1, "STREAK")
-  text_print(1, 4, "BEST")
-  text_print(25, 1, "WON")
-  text_print(23, 4, "PLAYED")
+  text_set_style(MARK_ABSENT)
+  text_print(0, STREAK_ROW - 1, "STREAK")
+  text_print(1, STREAK_ROW + 2, "BEST")
+  text_print(25, STREAK_ROW - 1, "WON")
+  text_print(23, STREAK_ROW + 2, "PLAYED")
+  text_set_style(MARK_NONE)
   draw_stats()
+end
+
+-- Where a cell's tile rests: its sprite's top-left.
+function tile_x(i)
+  return BOARD_X + (i - 1) % 5 * CELL - TILE_INSET
+end
+
+function tile_y(i)
+  return BOARD_Y + (i - 1) // 5 * CELL - TILE_INSET
 end
 
 function spawn_tiles()
   for i = 1, 30 do
-    local x = BOARD_X + (i - 1) % 5 * CELL - TILE_INSET
-    local y = BOARD_Y + (i - 1) // 5 * CELL - TILE_INSET
-    local tile = spawn(Tile, x, y)
-    tile.flags = DRAW
+    local tile = spawn(Tile, tile_x(i), tile_y(i))
+    set_sprite_flags(tile, 0)
     tiles[i] = tile
   end
 end
 
--- A tile shows its letter (frame 0: empty) in its mark's palette
--- (SPRITE_PALETTE(n) of sprites.h is (n + 1) << 8; PAL_* equal the marks).
+-- Every sprite's flags are written here: DRAW (on the screen, in front of
+-- the near spots) and `f`, a palette, SPRITE_HIDDEN or SPRITE_SCALED.
+function set_sprite_flags(e, f)
+  e.flags = DRAW | f
+end
+
+-- The flags that pick sprite palette n: SPRITE_PALETTE(n) of sprites.h.
+function palette(n)
+  return (n + 1) << 8
+end
+
+-- A tile shows its letter (frame 0: empty) in its mark's palette (PAL_*
+-- equal the marks).
 function show_tile(i)
   local tile = tiles[i]
   tile.frame = letters[i]
-  tile.flags = DRAW | (marks[i] + 1) << 8
+  set_sprite_flags(tile, palette(marks[i]))
 end
+
+-- A tile turns over to show its mark, in REVEAL_STEP frames (FLIP_FRAMES):
+-- it flattens (the squashed frames, still cream), takes its mark's color at
+-- its flattest, with the mark's note, and opens out again a little too far
+-- (FLIP_SCALES) before it settles.
+function flip_tile(i)
+  local tile = tiles[i]
+  tile.depth = DEPTH_LIFTED
+  local mark = MARK_NONE
+  for step = 1, REVEAL_STEP do
+    if step == FLIP_TURN then
+      mark = marks[i]
+      psg_play(SND_MARK_ABSENT + mark - MARK_ABSENT) -- the sounds are in the marks' order
+      local letter = letters[i]
+      if mark > known[letter] then known[letter] = mark end
+      draw_strip()
+    end
+    local frame = FLIP_FRAMES[step]
+    if frame == 0 then frame = letters[i] end
+    tile.frame = frame
+    local scale = FLIP_SCALES[step]
+    if scale == 16 then
+      tile.scale = 0 -- unscaled: a scale without SPRITE_SCALED warns
+      set_sprite_flags(tile, palette(mark))
+    else
+      tile.scale = scale / 16
+      set_sprite_flags(tile, palette(mark) | SPRITE_SCALED)
+    end
+    wait(1)
+  end
+  tile.depth = DEPTH_TILE
+end
+
+-- The flip, a frame per entry: the tile's frame (0: its letter) and its
+-- size in 16ths. The color changes at FLIP_TURN, the flattest frame.
+FLIP_FRAMES = { TILE_SQUASH, TILE_SQUASH, TILE_SQUASH + 1, TILE_SQUASH + 1, TILE_SQUASH + 2,
+                TILE_SQUASH + 2, TILE_SQUASH + 1, TILE_SQUASH, 0, 0, 0, 0, 0, 0 }
+FLIP_SCALES = { 16, 16, 16, 16, 16, 16, 16, 16, 18, 18, 17, 16, 16, 16 }
 
 -- A to Z on the strip's row, each letter in the style of its best mark.
 function draw_strip()
@@ -541,6 +652,328 @@ function show_answer()
   for c = 1, 5 do
     text_print_format(ANSWER_COL + c - 1, STRIP_ROW, "%c", 64 + answer_letter(c))
   end
+end
+
+-- Motion --------------------------------------------------------------------
+--
+-- One thread moves everything that moves but the flips (flip_tile, which the
+-- reveal waits on): a frame of each effect, every frame, after the rules
+-- (Game's thread runs first). An effect the rules haven't started costs a
+-- test. The rules start them: nudge, shake, celebrate, mourn.
+
+function Motion:create()
+  arrow_up = spawn(Arrow, 0, 0)
+  arrow_down = spawn(Arrow, 0, 0)
+  arrow_down.frame = ARROW_DOWN
+  arrow_up.depth = DEPTH_ARROW
+  arrow_down.depth = DEPTH_ARROW
+  local t = 0
+  while true do
+    fade_in()
+    -- The background's layers move with the camera, the far one at half its
+    -- speed (art.c); every sprite is drawn on the screen, so only the spots
+    -- move.
+    camera_set(t // DRIFT_X, t // DRIFT_Y)
+    if title_tiles[1] ~= none then drop_title() end
+    bob_arrows(t)
+    nudge_step()
+    shake_step()
+    hop_step()
+    if cheer_count > 0 then drop_cheer_step() end
+    if confetti_to_throw > 0 then throw_confetti() end
+    if confetti_live > 0 then fall_confetti(t) end
+    move_serval(t)
+    if flash_time > 0 then flash_streak() end
+    t = t + 1
+    wait(1)
+  end
+end
+
+-- The screen comes up from black: at boot (main.c starts it black), and when
+-- the title gives way to the board.
+function fade_in()
+  if brightness < 0 then
+    brightness = math.min(brightness + FADE_STEP, 0)
+    screen_set_brightness(brightness)
+  end
+end
+
+-- The drop: from 60 pixels above, falling past where it rests and settling,
+-- a frame per entry (a CSS cubic-bezier(.3, 1.6, .5, 1), sampled), and the
+-- title's tiles turning from 20 degrees to straight as they fall.
+DROP_Y = { -60, -51, -43, -36, -29, -23, -18, -13, -9, -5, -2, 0, 2, 4, 5, 6, 6, 7, 7, 6, 6, 6,
+           5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 1, 0, 0, 0 }
+DROP_TURN = { -20, -17, -14, -12, -10, -8, -6, -4, -3, -2, -1, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+              2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0 }
+
+-- e, `f` frames (1 on) into its drop to rest_y: then it waves for ever, 2
+-- pixels up and back down every `period` frames. A wave of 2 pixels needs no
+-- more than a new height every WAVE_EVERY frames, which saves the busiest
+-- frames, a won round's, most of its cost.
+function drop_and_wave(e, f, rest_y, period)
+  if f <= #DROP_Y then
+    e.y = rest_y + DROP_Y[f]
+  elseif f % WAVE_EVERY == 0 then
+    e.y = rest_y - 1 + fx_cos((f - #DROP_Y) % period * 65536 // period)
+  end
+end
+
+-- The title: SERVLE's tiles drop in one by one, turning as they fall, then
+-- wave, one after the other.
+function drop_title()
+  title_time = title_time + 1
+  for i = 1, 6 do
+    local f = title_time - (i - 1) * TITLE_STAGGER
+    if f >= 1 then
+      local tile = title_tiles[i]
+      if f == 1 then set_sprite_flags(tile, palette(TITLE_MARKS[i])) end
+      if f <= #DROP_TURN then tile.angle = DROP_TURN[f] * DEGREE end
+      drop_and_wave(tile, f, TITLE_Y - TILE_INSET - 1, TITLE_WAVE)
+    end
+  end
+end
+
+-- The cursor's gold arrows, above and below its cell while a guess is being
+-- typed, bob apart and together.
+function bob_arrows(t)
+  if state ~= STATE_PLAY then
+    set_sprite_flags(arrow_up, SPRITE_HIDDEN)
+    set_sprite_flags(arrow_down, SPRITE_HIDDEN)
+    return
+  end
+  local bob = 1 - fx_cos(t % ARROW_BOB * 65536 // ARROW_BOB) -- 0 to 2 pixels and back
+  local x = BOARD_X + col * CELL + ARROW_INSET
+  local top = BOARD_Y + row * CELL
+  arrow_up.x = x
+  arrow_up.y = math.max(top - 4, 0) - bob
+  arrow_down.x = x
+  arrow_down.y = top + 18 + bob
+  set_sprite_flags(arrow_up, 0)
+  set_sprite_flags(arrow_down, 0)
+end
+
+-- A tile back where it rests, straight, among the others.
+function rest_tile(i)
+  local tile = tiles[i]
+  tile.x = tile_x(i)
+  tile.y = tile_y(i)
+  tile.angle = 0
+  tile.depth = DEPTH_TILE
+end
+
+-- A spin nudges the tile 3 pixels the way it spun, and it springs back.
+NUDGE = { 2, 3, 3, 2, 1, 0, -1, 0 }
+
+function nudge(i, dir)
+  if nudge_tile ~= 0 and nudge_tile ~= i then rest_tile(nudge_tile) end
+  nudge_tile = i
+  nudge_dir = dir
+  nudge_time = 0
+  tiles[i].depth = DEPTH_LIFTED
+end
+
+function nudge_step()
+  if nudge_tile == 0 then return end
+  nudge_time = nudge_time + 1
+  if nudge_time > #NUDGE then
+    rest_tile(nudge_tile)
+    nudge_tile = 0
+  else
+    tiles[nudge_tile].y = tile_y(nudge_tile) + NUDGE[nudge_time] * nudge_dir
+  end
+end
+
+-- A refused guess shakes its row; A on an empty cell shakes that cell.
+SHAKE_X = { 0, -1, -2, -2, -2, -1, 1, 3, 2, 0, -1, -2, -1, 0, 2, 2, 1, 1 }
+
+function shake(first, last)
+  if shake_first ~= 0 then
+    for i = shake_first, shake_last do rest_tile(i) end
+  end
+  shake_first = first
+  shake_last = last
+  shake_time = 0
+end
+
+function shake_step()
+  if shake_first == 0 then return end
+  shake_time = shake_time + 1
+  for i = shake_first, shake_last do
+    if shake_time > #SHAKE_X then
+      tiles[i].x = tile_x(i)
+    else
+      tiles[i].x = tile_x(i) + SHAKE_X[shake_time]
+    end
+  end
+  if shake_time > #SHAKE_X then shake_first = 0 end
+end
+
+-- A won round: the row's tiles hop one after the other, leaning back as they
+-- rise and forward as they land, a frame per entry (pixels and degrees). The
+-- serval hops the same way, upright.
+HOP_Y = { 0, -2, -3, -5, -6, -7, -8, -9, -10, -10, -9, -7, -6, -4, -3, -1, 0, 0, 1, 1, 1, 1,
+          0, 0, 0, 0, 0 }
+HOP_TURN = { 0, -1, -3, -4, -5, -6, -7, -7, -8, -8, -7, -5, -3, -2, 0, 1, 2, 3, 4, 4, 3, 2,
+             2, 1, 1, 0, 0 }
+
+function hop_step()
+  if hop_first == 0 then return end
+  hop_time = hop_time + 1
+  local y = tile_y(hop_first) -- the row's
+  for c = 0, 4 do
+    local f = hop_time - c * HOP_STAGGER
+    if f >= 1 and f <= #HOP_Y then
+      local tile = tiles[hop_first + c]
+      tile.y = y + HOP_Y[f]
+      tile.angle = HOP_TURN[f] * DEGREE
+    elseif f == #HOP_Y + 1 then
+      rest_tile(hop_first + c)
+    end
+  end
+  if hop_time > 4 * HOP_STAGGER + #HOP_Y then hop_first = 0 end
+end
+
+-- The words a won round cheers, by the number of guesses it took: a row of
+-- CHEER_MAX glyph frames each (letters 1-26, GLYPH_BANG '!'), 0 after the end.
+CHEERS = {
+  16, 21, 18, 18, 6, 5, 3, 20, GLYPH_BANG, -- PURRFECT!
+  6, 9, 5, 18, 3, 5, GLYPH_BANG, 0, 0,     -- FIERCE!
+  19, 23, 9, 6, 20, GLYPH_BANG, 0, 0, 0,   -- SWIFT!
+  14, 9, 3, 5, GLYPH_BANG, 0, 0, 0, 0,     -- NICE!
+  3, 12, 15, 19, 5, GLYPH_BANG, 0, 0, 0,   -- CLOSE!
+  16, 8, 5, 23, GLYPH_BANG, 0, 0, 0, 0,    -- PHEW!
+}
+
+-- A won round: the row hops, its cheer drops in, confetti falls, the serval
+-- bounces with happy eyes and the streak's number flashes.
+function celebrate()
+  hop_first = row * 5 + 1
+  hop_time = 0
+  for i = hop_first, hop_first + 4 do tiles[i].depth = DEPTH_LIFTED end
+  local n = 0
+  while n < CHEER_MAX and CHEERS[row * CHEER_MAX + n + 1] ~= 0 do n = n + 1 end
+  for k = 1, n do spawn_glyph(k, n, CHEERS[row * CHEER_MAX + k]) end
+  start_cheer(n, PAL_GOLD)
+  confetti_to_throw = CONFETTI_COUNT
+  set_mood(SERVAL_HAPPY)
+  flash_time = FLASH_TIME
+end
+
+-- A lost round: the answer drops in, in red, and the serval's ears droop.
+function mourn()
+  for k = 1, 5 do spawn_glyph(k, 5, answer_letter(k)) end
+  start_cheer(5, PAL_RED)
+  set_mood(SERVAL_SAD)
+end
+
+-- Glyph k of n, centred over the board, hidden until its drop begins.
+function spawn_glyph(k, n, frame)
+  local g = spawn(Glyph, (SCREEN_W - n * GLYPH_PITCH) // 2 + (k - 1) * GLYPH_PITCH - 1, -CELL)
+  g.frame = frame
+  g.depth = DEPTH_CHEER
+  set_sprite_flags(g, SPRITE_HIDDEN)
+  cheer[k] = g
+end
+
+function start_cheer(n, pal)
+  cheer_count = n
+  cheer_palette = pal
+  cheer_time = 0
+end
+
+-- The cheer's glyphs drop in one by one with a bounce, then wave.
+function drop_cheer_step()
+  cheer_time = cheer_time + 1
+  local f = cheer_time -- frames into glyph k's drop
+  for k = 1, cheer_count do
+    if f < 1 then return end -- this one and the rest haven't started
+    local g = cheer[k]
+    if f == 1 then set_sprite_flags(g, palette(cheer_palette)) end
+    drop_and_wave(g, f, CHEER_Y, CHEER_WAVE)
+    f = f - CHEER_STAGGER
+  end
+end
+
+-- Confetti: scraps of five colors flung over the board, a few a frame,
+-- falling ever faster (sys_movement moves them by their speed), gone below
+-- the screen. Each speeds up every CONFETTI_EVERY frames, a share of them
+-- each frame, so 24 scraps cost a frame no more than 6 do.
+function throw_confetti()
+  for n = 1, CONFETTI_PER_FRAME do
+    local c = spawn(Confetti, random_range(BOARD_X - 10, BOARD_X + 5 * CELL + 2),
+                    random_range(-30, 30))
+    c.frame = random_range(0, CONFETTI_FRAMES - 1)
+    c.vx = random_range(-200, 200) / 256
+    c.vy = random_range(0, 160) / 256
+    c.depth = DEPTH_CONFETTI
+    set_sprite_flags(c, 0)
+    confetti[confetti_to_throw] = c
+    confetti_to_throw = confetti_to_throw - 1
+    confetti_live = confetti_live + 1
+  end
+end
+
+function fall_confetti(t)
+  local k = t % CONFETTI_EVERY + 1
+  while k <= CONFETTI_COUNT do
+    local c = confetti[k]
+    if c ~= none then
+      if c.y > SCREEN_H then
+        kill(c)
+        confetti[k] = none
+        confetti_live = confetti_live - 1
+      else
+        c.vy = c.vy + CONFETTI_FALL
+      end
+    end
+    k = k + CONFETTI_EVERY
+  end
+end
+
+-- The serval: idle it blinks now and then; happy it hops; sad its ears droop.
+function set_mood(m)
+  mood = m
+  mood_time = 0
+  cat.frame = m
+end
+
+function move_serval(t)
+  if mood == SERVAL_IDLE then
+    if t % CAT_BLINK_EVERY < CAT_BLINK_FOR then
+      cat.frame = SERVAL_BLINK
+    else
+      cat.frame = SERVAL_IDLE
+    end
+  elseif mood == SERVAL_HAPPY and mood_time < CAT_HOPS * #HOP_Y then
+    cat.y = CAT_PLAY_Y + HOP_Y[mood_time % #HOP_Y + 1]
+    mood_time = mood_time + 1
+  end
+end
+
+-- A won round's new streak flashes on and off, and stays on.
+function flash_streak()
+  flash_time = flash_time - 1
+  if flash_time % FLASH_EVERY == 0 then
+    if flash_time // FLASH_EVERY % 2 == 0 then
+      print_stat(LEFT_NUMBER_COL, STREAK_ROW, stats[STREAK])
+    else
+      text_clear_area(LEFT_NUMBER_COL, STREAK_ROW, 3, 1)
+    end
+  end
+end
+
+-- The next round: the cheer, the confetti and the serval's mood go.
+function clear_round_end()
+  for k = 1, cheer_count do kill(cheer[k]) end
+  cheer_count = 0
+  for k = 1, CONFETTI_COUNT do
+    if confetti[k] ~= none then kill(confetti[k]) end
+    confetti[k] = none
+  end
+  confetti_live = 0
+  confetti_to_throw = 0
+  set_mood(SERVAL_IDLE)
+  cat.y = CAT_PLAY_Y
 end
 
 -- Lookup --------------------------------------------------------------------
