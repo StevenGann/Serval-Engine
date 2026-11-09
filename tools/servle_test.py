@@ -139,6 +139,18 @@ def unpack(v):
     return "".join(chr(97 + (v >> s & 31)) for s in (20, 15, 10, 5, 0))
 
 
+def two_pass(answer, guess):
+    """The marks of guess against answer by the design's two-pass rule
+    (1 absent, 2 present, 3 correct)."""
+    marks = [3 if g == a else 1 for g, a in zip(guess, answer)]
+    left = [a for g, a in zip(guess, answer) if g != a]
+    for i, g in enumerate(guess):
+        if marks[i] != 3 and g in left:
+            marks[i] = 2
+            left.remove(g)
+    return marks
+
+
 class ServleScriptTest(unittest.TestCase):
     def glob(self, run, name):
         return run.globals[name]
@@ -172,6 +184,36 @@ class ServleScriptTest(unittest.TestCase):
         known = self.array(run, "KNOWN")
         letter = lambda c: known[ord(c) - 97]  # noqa: E731
         self.assertEqual([letter(c) for c in "alcmz"], [3, 3, 1, 1, 0])
+
+    @needs_runner
+    def test_marks_after_a_lost_round(self):
+        # A lost round's last guess leaves the old answer's unused letters
+        # counted; the next round's marks must not see them. Round 1 (answer
+        # PLANT) is lost on its sixth row (the probe moves the cursor there)
+        # with CRANE, which leaves P, L and T unmatched; round 2's answer is
+        # MOUND, and PLANT there has P, L and T absent.
+        probe = """
+Probe = object {}
+function Probe:room_start()
+  repeat wait(1) until state == STATE_PLAY
+  row = 5
+  repeat wait(1) until state == STATE_LOST
+  repeat wait(1) until state == STATE_PLAY
+  answer = %d
+end
+""" % servle_words.pack_word("mound")
+        buttons, enters, _ = timeline(["crane"], start_frame=18)
+        buttons[0] = (5, START, 1)
+        again = enters[0] + 200  # past the reveal and PROMPT_DELAY
+        second, _, end = timeline(["plant"], start_frame=again + 18)
+        buttons += [(again, A, 1)] + second[1:]
+        run = run_vm(source() + probe, frames=end, start=["GAME", "PROBE"], buttons=buttons,
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
+        self.assertEqual(self.array(run, "STATS")[:2], [1, 0])  # round 1 was lost
+        self.assertEqual(unpack(self.glob(run, "ANSWER")), "mound")
+        self.assertEqual(self.array(run, "LETTERS")[:5], [16, 12, 1, 14, 20])
+        self.assertEqual(self.array(run, "MARKS")[:5], two_pass("mound", "plant"))
+        self.assertEqual(self.array(run, "MARKS")[:5], [1, 1, 1, 3, 1])
 
     # --- The dictionary --------------------------------------------------------
 

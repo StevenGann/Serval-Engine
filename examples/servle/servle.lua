@@ -507,7 +507,9 @@ end
 -- while the answer has a copy of it that no earlier letter has matched.
 function mark_row()
   local base = row * 5
-  for c = 1, 5 do unmatched[answer_letter(c)] = 0 end
+  -- Every letter's count, not only the answer's: a lost round's last guess
+  -- leaves its answer's unused letters counted.
+  for letter = 1, 26 do unmatched[letter] = 0 end
   for c = 1, 5 do
     local a = answer_letter(c)
     if letters[base + c] == a then
