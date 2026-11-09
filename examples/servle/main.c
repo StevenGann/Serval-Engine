@@ -19,9 +19,11 @@
 //   - A whole game in the Lua subset, compiled at build time by
 //     serval_add_script (examples/CMakeLists.txt). Two threads: Game (no
 //     entity; main.c starts its room_start handler) plays the title, the
-//     rounds and the reveal as plain sequential code with waits; Motion (the
-//     create handler of an entity Game spawns) runs a frame of every effect
-//     each frame, started by the rules through a few globals. RAM arrays
+//     rounds and the reveal as plain sequential code with waits, turning
+//     the tiles over itself, since the reveal waits on the flips; Motion
+//     (the create handler of an entity Game spawns) runs a frame of every
+//     other effect each frame, started by the rules through a few of the
+//     script's file-level variables. RAM arrays
 //     (the board's letters and marks, the strip's best mark per letter, the
 //     statistics) and ROM arrays (the word tables, the animation curves);
 //     a held-button repeat of the script's own (button_down,
@@ -72,8 +74,9 @@
 //     reuses the lists must carry it
 //
 // What to expect when booting the ROM:
-//   - The Serval Engine splash, a moment of black while the art is built,
-//     then the title fades in over dark plum with darker and lighter spots
+//   - The Serval Engine splash: "made with" and the engine's logo (about 3
+//     seconds; any button skips it once the logo is in), a moment of black
+//     while the art is built, then the title fades in over dark plum with darker and lighter spots
 //     drifting slowly at two speeds: "SERVLE" in six big tiles (green, gold
 //     and slate, the marks' colors) that drop in one by one, tilted, bounce,
 //     straighten and then wave gently; a serval's face, which blinks now and
@@ -94,9 +97,11 @@
 //     row (no wrap), with a blip. B clears the cursor's letter (a low,
 //     falling blip), or, on an empty cell, steps left and clears that one. A
 //     on a full row enters the guess; on a letter it jumps the cursor to the
-//     row's first empty cell; on an empty cell it buzzes and the cell shakes.
+//     row's first empty cell, with the blip; on an empty cell it buzzes and
+//     the cell shakes.
 //   - A guess that isn't in the list: the row shakes, a low buzz, and "NOT A
-//     WORD" over the alphabet for a moment; the row stays as it was.
+//     WORD" in place of the alphabet on the bottom row for a moment; the row
+//     stays as it was.
 //   - An accepted guess: its tiles flip one after another, left to right,
 //     about a quarter of a second each. Each flattens, takes its mark's color
 //     when flattest with a note (low for absent, higher for present, higher

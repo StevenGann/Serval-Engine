@@ -77,7 +77,7 @@ Every gap still open from the sections below, in one place, with the planned API
 Done, in the order they were written:
 
 1. **`platformer`**: the biggest gap between Serval and a typical engine was backgrounds, scrolling and map collision, and a first level in the classic style needs all three.
-2. **Save and high scores** (in `asteroids`; later also `breakout`, `shmup` and `blackjack`): `save.h`.
+2. **Save and high scores** (in `asteroids`; later also `breakout`, `shmup`, `blackjack` and `servle`, the last from a Lua script): `save.h`.
 3. **`breakout`**: pushed for directional contacts and `ecs_count`.
 4. **`shmup`** (written alongside `breakout`): screen-space entities, fixed and self-scrolling layers, paths, cheap per-kind loops.
 5. **`blackjack`**: per-draw palettes, and the sprite gaps (metasprites, scaling, runtime tiles) that a card game or poker roguelike runs into.
