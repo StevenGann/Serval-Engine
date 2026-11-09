@@ -23,9 +23,13 @@
 -- Objects -------------------------------------------------------------------
 
 -- Game has no components: main.c runs its room_start handler as a thread
--- (vm_start). The board's 30 tiles are entities it spawns when play starts.
+-- (vm_start). The board's 30 tiles are entities it spawns when play starts;
+-- the title's six are tiles too. Drift fades the screen in and drifts the
+-- camera, so the background's two layers of spots slide past each other.
 Game = object {}
 Tile = object { components = C_POS | C_SPR, sprite = SPR_TILE }
+Serval = object { components = C_POS | C_SPR, sprite = SPR_SERVAL }
+Drift = object { components = C_POS }
 
 -- Globals -------------------------------------------------------------------
 
@@ -44,6 +48,8 @@ tiles = array(30)     -- the Tile entities
 known = array(26)     -- the best mark each letter has had this round (the strip)
 stats = array(4)      -- PLAYED, WON, STREAK, BEST: what the save slot keeps
 unmatched = array(26) -- marking: copies of each letter the guess hasn't matched
+title_tiles = array(6) -- the title's SERVLE
+cat = none             -- the serval
 
 local held = 0         -- buttons down when the state began, ignored until released
 local spin_dir = 0     -- Up (1), Down (-1) or neither (0) last frame
@@ -79,19 +85,40 @@ local BLINK_OFF <const> = 40
 -- it sits 4 pixels up and left of its 24-pixel cell.
 local TILE_INSET <const> = 4
 
+-- Every sprite is drawn on the screen, not in the world (the camera drifts
+-- only to move the background), and in front of background 1, where the
+-- near spots are (art.c).
+local DRAW <const> = SPRITE_SCREEN | SPRITE_ABOVE_FOREGROUND
+
+-- The title's tiles: the 22x22 tile's top-left of the first, and the step
+-- to the next (sprites at TILE_INSET + 1 up and left of it).
+local TITLE_X <const> = 43
+local TITLE_Y <const> = 16
+local TITLE_STEP <const> = 26
+-- The serval's 48x48 face: on the title, and left of the board in play.
+local CAT_TITLE_X <const> = 96
+local CAT_TITLE_Y <const> = 50
+local CAT_PLAY_X <const> = 6
+local CAT_PLAY_Y <const> = 92
+
+-- The background: the camera moves a pixel right every DRIFT_X frames and
+-- down every DRIFT_Y; the screen fades in from black by FADE_STEP a frame.
+local DRIFT_X <const> = 8
+local DRIFT_Y <const> = 12
+local FADE_STEP <const> = 1
+
 -- The word tables.
 local BUCKETS <const> = 26 * 26 -- by the first two letters
 local ANSWER_FLAG <const> = 0x8000
 local TAIL_MASK <const> = 0x7FFF
 
 -- Text, in cells (30 x 20). The play screen's statistics sit either side of
--- the board (columns 0-6 and 23-29), the title's under its words.
-local TITLE_ROW <const> = 4
-local TAGLINE_ROW <const> = 8
-local PRESS_ROW <const> = 12
-local TITLE_STATS_ROW <const> = 14
+-- the board (columns 0-6 and 23-29), the title's under the serval.
+local TAGLINE_ROW <const> = 13
+local PRESS_ROW <const> = 15
 local RESET_ROW <const> = 16
-local CONTROLS_ROW <const> = 18
+local TITLE_STATS_ROW <const> = 17
+local CONTROLS_ROW <const> = 19
 local LEFT_NUMBER_COL <const> = 2
 local RIGHT_NUMBER_COL <const> = 25
 local ANSWER_COL <const> = 5 -- a lost round's strip: the answer, then the prompt
@@ -105,12 +132,17 @@ function Game:room_start()
   if save_read(0, stats, SAVE_VERSION) ~= SAVE_OK then
     for i = 1, 4 do stats[i] = 0 end
   end
-  -- The four text styles are the four marks, for the alphabet strip.
+  -- The four text styles are the four marks, for the alphabet strip (the
+  -- title borrows two: gold for PRESS START, the muted one for the controls).
   local shadow = COLOR_RGB(23, 11, 40)
-  text_set_style_color(MARK_NONE, COLOR_RGB(255, 241, 207), shadow)
-  text_set_style_color(MARK_ABSENT, COLOR_RGB(90, 81, 128), shadow)
+  text_set_style_color(MARK_NONE, COLOR_RGB(239, 233, 255), shadow)
+  text_set_style_color(MARK_ABSENT, COLOR_RGB(110, 100, 146), shadow)
   text_set_style_color(MARK_PRESENT, COLOR_RGB(244, 177, 46), shadow)
-  text_set_style_color(MARK_CORRECT, COLOR_RGB(62, 194, 112), shadow)
+  text_set_style_color(MARK_CORRECT, COLOR_RGB(86, 224, 140), shadow)
+  psg_music_play(SONG_THEME)
+  spawn(Drift, 0, 0)
+  cat = spawn(Serval, CAT_TITLE_X, CAT_TITLE_Y)
+  cat.flags = DRAW
 
   title()
   spawn_tiles()
@@ -122,15 +154,41 @@ function Game:room_start()
   end
 end
 
+-- The screen fades in from black (main.c starts it black), and the camera
+-- drifts for ever: the background's layers move with it, the far one at half
+-- its speed (art.c); every sprite is drawn on the screen (DRAW), so only the
+-- spots move.
+function Drift:create()
+  local level = SCREEN_BRIGHTNESS_MIN
+  local t = 0
+  while true do
+    if level < 0 then
+      level = math.min(level + FADE_STEP, 0)
+      screen_set_brightness(level)
+    end
+    camera_set(t // DRIFT_X, t // DRIFT_Y)
+    t = t + 1
+    wait(1)
+  end
+end
+
 -- The title, until START or A. The frames it waited seed the random numbers,
 -- so every power-on picks different words.
 function title()
   state = STATE_TITLE
   text_clear()
-  text_print_centered(TITLE_ROW, "SERVLE")
+  for i = 1, 6 do
+    local tile = spawn(Tile, TITLE_X + (i - 1) * TITLE_STEP - TILE_INSET - 1,
+                       TITLE_Y - TILE_INSET - 1)
+    tile.frame = TITLE_LETTERS[i]
+    tile.flags = DRAW | (TITLE_MARKS[i] + 1) << 8
+    title_tiles[i] = tile
+  end
   text_print_centered(TAGLINE_ROW, "GUESS THE WORD IN SIX TRIES")
   draw_title_stats()
+  text_set_style(MARK_ABSENT)
   text_print_centered(CONTROLS_ROW, "UP/DOWN:SPIN A:ENTER B:ERASE")
+  text_set_style(MARK_NONE)
   block_held()
   local frames = 0
   while true do
@@ -141,7 +199,9 @@ function title()
       reset_stats()
     end
     if frames % BLINK == 0 then
+      text_set_style(MARK_PRESENT)
       text_print_centered(PRESS_ROW, "PRESS START")
+      text_set_style(MARK_NONE)
     elseif frames % BLINK == BLINK_OFF then
       text_clear_area(0, PRESS_ROW, 30, 1)
     end
@@ -150,7 +210,15 @@ function title()
   end
   random_seed(frames)
   psg_play(SND_START)
+  for i = 1, 6 do kill(title_tiles[i]) end
+  cat.x = CAT_PLAY_X
+  cat.y = CAT_PLAY_Y
 end
+
+-- SERVLE in the marks' colors.
+TITLE_LETTERS = { 19, 5, 18, 22, 12, 5 }
+TITLE_MARKS = { MARK_CORRECT, MARK_PRESENT, MARK_ABSENT, MARK_CORRECT, MARK_PRESENT,
+                MARK_CORRECT }
 
 function reset_stats()
   for i = 1, 4 do stats[i] = 0 end
@@ -444,7 +512,9 @@ function spawn_tiles()
   for i = 1, 30 do
     local x = BOARD_X + (i - 1) % 5 * CELL - TILE_INSET
     local y = BOARD_Y + (i - 1) // 5 * CELL - TILE_INSET
-    tiles[i] = spawn(Tile, x, y)
+    local tile = spawn(Tile, x, y)
+    tile.flags = DRAW
+    tiles[i] = tile
   end
 end
 
@@ -453,7 +523,7 @@ end
 function show_tile(i)
   local tile = tiles[i]
   tile.frame = letters[i]
-  tile.flags = (marks[i] + 1) << 8
+  tile.flags = DRAW | (marks[i] + 1) << 8
 end
 
 -- A to Z on the strip's row, each letter in the style of its best mark.

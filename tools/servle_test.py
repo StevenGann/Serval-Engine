@@ -24,7 +24,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import servle_words  # noqa: E402
 import svlua  # noqa: E402
-from svlua_test import RUNNER, assemble, header_names, needs_runner, run_vm  # noqa: E402
+from svlua_test import RUNNER, assemble, header_names, needs_runner  # noqa: E402
+from svlua_test import run_vm as run_vm_warning  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "examples", "servle", "servle.lua")
@@ -62,6 +63,21 @@ BLOB_LIMIT = 26000  # the debug link's hot reload (docs/debug-link.md, "The scra
 
 A, B, SELECT, START, RIGHT, LEFT, UP, DOWN, R, L = (1 << n for n in range(10))
 IDLE_AFTER_GUESS = 130
+
+
+# The runner binds no songs (main.c binds the game's one with vm_bind), so the
+# script's psg_music_play warns there. That warning, and no other, may happen:
+# any other one (the operation budget's above all) fails the run.
+UNBOUND_SONG = "SYS psg_music_play: song 0 is not bound"
+
+
+def run_vm(*args, **kw):
+    run = run_vm_warning(*args, warnings=True, **kw)
+    others = [line for line in run.log.splitlines()
+              if line.startswith("serval:") and UNBOUND_SONG not in line]
+    if others:
+        raise AssertionError("the run warned:\n" + run.log)
+    return run
 
 
 def source():

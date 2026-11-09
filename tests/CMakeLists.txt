@@ -514,7 +514,8 @@ else()
     # debug link: the maps serval_add_script() wrote beside the scripts this
     # build compiles (.svmap, and .svdbg for Lua), joined as a debugger joins
     # them and checked against the blobs and listings (docs/lua.md#debug-information).
-    set(_serval_debug_maps consumer fireflies ladder_climber pads soundbank_names svm/fireflies)
+    set(_serval_debug_maps consumer fireflies ladder_climber pads servle soundbank_names
+        svm/fireflies)
     list(TRANSFORM _serval_debug_maps PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
     add_test(NAME debug_maps
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check-debug-maps.py"
@@ -541,6 +542,9 @@ else()
     serval_add_script(serval_api_only_check ../examples/fireflies/fireflies.lua
                       HEADERS ../examples/fireflies/game.h serval/ecs.h serval/core.h
                               serval/sprites.h serval/path.h serval/screen.h)
+    serval_add_script(serval_api_only_check ../examples/servle/servle.lua
+                      HEADERS ../examples/servle/game.h serval/ecs.h serval/core.h
+                              serval/sprites.h serval/screen.h serval/save.h)
     # The jukebox example includes its sound bank's header: the bank is built
     # for this check too (examples/CMakeLists.txt).
     set(jukebox_audio theme.mod calm.mod coin.wav laser.wav boom.wav engine.wav)

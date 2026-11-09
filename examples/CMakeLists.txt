@@ -52,6 +52,15 @@ serval_add_script(fireflies fireflies/fireflies.lua
                           serval/path.h serval/screen.h)
 target_link_libraries(fireflies PRIVATE serval_warnings)
 
+serval_add_rom(servle SOURCES servle/main.c servle/art.c servle/sound.c
+               TITLE "SERVLE" GAME_CODE "SVSL")
+# A five-letter word-guessing game whose rules are all a script in the Lua
+# subset, as fireflies' are; its names in ALL_CAPS come from these headers.
+serval_add_script(servle servle/servle.lua
+                  HEADERS servle/game.h serval/ecs.h serval/core.h serval/sprites.h
+                          serval/screen.h serval/save.h)
+target_link_libraries(servle PRIVATE serval_warnings)
+
 # One scene per screen effect, each in its own file (effects.h).
 serval_add_rom(effects SOURCES
                effects/main.c
@@ -93,7 +102,7 @@ target_link_libraries(bunnymark_bench PRIVATE serval_warnings)
 # Padding and header, no libc.a in the map, no BLX (cmake/ServalRomChecks.cmake).
 if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(hello bunnymark pong asteroids platformer breakout shmup blackjack
-                          fireflies bunnymark_bench)
+                          fireflies servle bunnymark_bench)
     serval_add_rom_checks(effects)
     serval_add_rom_checks(jukebox)
 endif()

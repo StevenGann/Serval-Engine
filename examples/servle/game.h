@@ -51,6 +51,16 @@ enum {
     SPRITE_COUNT
 };
 
+// Frames past the letters (a letter's frame is its code, 1-26).
+#define TILE_SQUASH 27 // SPR_TILE: 27-29, the blank tile ever flatter, for a flip
+#define TILE_FRAMES 30
+#define GLYPH_BANG 27 // SPR_GLYPH: '!'
+#define GLYPH_FRAMES 28
+#define ARROW_UP 0 // SPR_ARROW: pointing up (drawn below the cell), and down
+#define ARROW_DOWN 1
+#define CONFETTI_FRAMES 5 // SPR_CONFETTI: a scrap in each of five colors
+enum { SERVAL_IDLE, SERVAL_BLINK, SERVAL_HAPPY, SERVAL_SAD, SERVAL_FRAMES };
+
 // Sprite palettes: PAL_ABSENT to PAL_CORRECT equal their marks, and PAL_TYPED
 // equals MARK_NONE, so a tile's palette is its mark.
 enum {
@@ -63,6 +73,17 @@ enum {
     PAL_SERVAL,
     PALETTE_COUNT
 };
+
+extern const SpriteAsset* const sprite_table[SPRITE_COUNT];
+extern const SpriteGroup sprite_group;
+// The background: spots on plum, two layers that wrap. The far one moves at
+// half the camera's speed (the script drifts the camera), so they slide past
+// each other.
+extern const Tileset spots_tileset;
+extern const MapLayer spots_far_layer;  // background 3, darker spots
+extern const MapLayer spots_near_layer; // background 1, lighter spots
+
+void art_build(void); // draws the art into EWRAM at boot
 
 // --- Sound (sound.c) -------------------------------------------------------------
 
@@ -80,7 +101,9 @@ enum {
     SND_RESET, // the statistics reset on the title
     SOUND_COUNT
 };
+extern const PsgSound* const sound_table[SOUND_COUNT];
 
 enum { SONG_THEME, SONG_COUNT };
+extern const PsgSong* const songs[SONG_COUNT];
 
 #endif // SERVLE_GAME_H

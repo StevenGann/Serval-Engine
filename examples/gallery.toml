@@ -106,6 +106,13 @@ tags = ["vm", "paths", "animation", "music"]
 level = 4
 thumbnail = { frame = 1180, keys = ["400:r:60", "600:U:40", "800:l:80", "1000:D:30"] }
 
+[examples.servle]
+title = "SERVLE"
+summary = "A five-letter word-guessing game, six tries, with statistics kept in save memory; every rule, the word lists and their lookup are a script in the Lua subset (`servle.lua`)"
+tags = ["vm", "save", "text", "music"]
+level = 4
+thumbnail = { frame = 400, keys = ["200:S:2", "230:U:3", "240:A:2"] }
+
 [examples.effects]
 title = "EFFECTS"
 summary = "The engine's screen effects, a scene each: alpha blending (a see-through waterfall, glowing wisps and halo, blended shadows), palette writes (a fade to dusk, a palette cycle, a hit flash), runtime sprite tiles (card faces composed at run time), streamed sprites (plasma orbs of 32 frames drawn from 8 slots) and raster effects (rippling reflections, a sunset gradient)"
