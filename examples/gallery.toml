@@ -155,9 +155,10 @@ thumbnail = { frame = 819, keys = ["300:S:2", "488:A:400"] }
 
 [examples.rhythm]
 title = "BEAT PAWS"
-summary = "A rhythm game in the making: three original songs and their charts, made from the same notes, played by tracker music that the game asks where it is"
-tags = ["tracker", "text"]
+summary = "A four-lane rhythm game: paw-print notes falling onto pads in time with tracker music, judged against the music's own clock (`music_position()`), three original songs with EASY and HARD charts made from the same notes as the music, a dancing serval, a calibration by tapping, saved bests"
+tags = ["tracker", "sound", "effects", "save"]
 level = 3
-# Provisional (the placeholder screen, the title loop playing); the game's
-# own picture comes with it.
-thumbnail = { frame = 300 }
+# START, DOWN to STRIDE, RIGHT to HARD, R for AUTO, A: ten seconds into the
+# song, notes falling in all four lanes, PERFECT and the combo over the
+# serval; the frames around it look the same.
+thumbnail = { frame = 1110, keys = ["400:S:2", "440:D:2", "450:r:2", "462:R:2", "470:A:2"] }

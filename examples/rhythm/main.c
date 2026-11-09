@@ -35,9 +35,11 @@
 //     one a beat, the serval dancing, a paw print falling onto a pad on
 //     every beat (the pad flashes and sparks as it lands), PRESS START
 //     blinking, and the title music, a cheerful loop at 112 BPM. START or
-//     A goes on, with a click.
-//   - The song select, over the stage dimmed: CALM, STRIDE and RUSH with
-//     their tempos and lengths, a paw beside the one chosen; the
+//     A goes on, with a two-note chime (as every choice made in the menus;
+//     a move between choices ticks).
+//   - The song select, over the stage dimmed: CALM (a relaxed groove,
+//     100 BPM, 1:12), STRIDE (bouncy and funky, 124 BPM, 1:05) and RUSH (a
+//     driving rock beat, 148 BPM, 1:21), a paw beside the one chosen; the
 //     difficulty (EASY or HARD); the best score and grade for it (dashes
 //     before any), and FULL COMBO once played without a miss. The chosen
 //     song plays, looping, and the serval dances to it. UP and DOWN choose
@@ -47,14 +49,14 @@
 //     records (RECORDS ERASED; the calibration stays).
 //   - The calibration: steady clicks at 120 BPM, a timing line across the
 //     top (EARLY to LATE, -200 to +200 ms; a white diamond at 0). Tap A,
-//     B, LEFT or RIGHT on every click: each tap puts a rose diamond on the
-//     line and its error under TAPS n / 16 (LAST +12 MS), and the serval
-//     lifts a paw. After 16 the offset is their median (MEASURED), the
-//     amber diamond, held there until every button has been let go for
-//     half a second (LET GO OF THE BUTTONS). Before the first tap B goes
-//     back. LEFT and RIGHT adjust it (1 ms a press, 4 a repeat
-//     held), A saves it, B leaves the saved one, START taps again (and
-//     stops the tapping early). A positive offset means the presses come
+//     B, LEFT or RIGHT on every click: each tap, silent so that only the
+//     clicks are heard, puts a rose diamond on the line and its error under
+//     TAPS n / 16 (LAST +12 MS), and the serval lifts a paw. After 16 the
+//     offset is their median (MEASURED), the amber diamond, held there until
+//     every button has been let go for half a second (LET GO OF THE
+//     BUTTONS). Before the first tap B goes back. LEFT and RIGHT adjust it
+//     (1 ms a press, 4 a repeat held), A saves it, B leaves the saved one,
+//     START taps again (and stops the tapping early). A positive offset means the presses come
 //     late, as with a TV's lag or wireless audio: the game moves them back.
 //   - The play screen: a dark panel across the top with the song, its
 //     difficulty (and AUTO) and the score (000000), and a groove with a
@@ -67,16 +69,16 @@
 //     and huge ears, dancing: a paw raised on every beat, left then right,
 //     a bob between. The sky, the rails and the spotlight pulse brighter on
 //     each beat.
-//   - The music starts at once. The first bar is a count-in: big 1, 2, 3,
-//     4 over the stage on its beats. Then paw-print notes in the lanes'
-//     colours slide out from under the panel and fall onto the pads,
-//     landing as the music plays them. Pressing a lane's button blips (one
-//     pitch a lane, a C major chord LEFT to A) and lights its pad dimly; a
-//     press on time hits the note: the pad flashes bright, a ring of sparks
-//     opens from it, the note vanishes and PERFECT (gold, within 35 ms) or
-//     GOOD (green, within 80 ms) pops up over the stage, with the combo
-//     under it from 2 hits ("12" over "COMBO"). A note let past is a MISS
-//     (grey), and the combo goes. The score grows with each hit, faster
+//   - The music starts at once. The first bar is a count-in: four
+//     woodblock clicks, and big 1, 2, 3, 4 over the stage on them. Then
+//     paw-print notes in the lanes' colours slide out from under the panel
+//     and fall onto the pads, landing as the music plays them. Pressing a
+//     lane's button blips (one pitch a lane, a C major chord LEFT to A) and
+//     lights its pad dimly; a press on time hits the note: the pad flashes
+//     bright, a ring of sparks opens from it, the note vanishes and PERFECT
+//     (gold, within 35 ms) or GOOD (green, within 80 ms) pops up over the
+//     stage, with the combo under it from 2 hits ("12" over "COMBO"). A
+//     note let past is a MISS (grey), and the combo goes. The score grows with each hit, faster
 //     with the combo (up to twice at 50). A press with no note near does
 //     nothing but the blip.
 //   - With AUTO, the game presses every note itself, in the first frame
@@ -89,12 +91,13 @@
 //     the song again from its count-in, the score at 0; QUIT fades back to
 //     the song select.
 //   - When the music ends, after the last note, the screen fades to the
-//     results, over the stage dimmed: the song, the PERFECT, GOOD and MISS
-//     counts, the longest combo, the accuracy, the score, and the grade (S,
-//     A, B, C, D) as a big letter that drops in; NEW BEST when the score
-//     beats the record, else NEW BEST GRADE for a better grade (never with
-//     AUTO), FULL COMBO when nothing was missed (FIRST FULL COMBO the first
-//     time) (the serval dances), SAVE FAILED if the save memory refused.
+//     results, in silence, over the stage dimmed: the song, the PERFECT,
+//     GOOD and MISS counts, the longest combo, the accuracy, the score, and
+//     the grade (S, A, B, C, D) as a big letter that drops in; NEW BEST when
+//     the score beats the record, else NEW BEST GRADE for a better grade
+//     (never with AUTO), FULL COMBO when nothing was missed (FIRST FULL COMBO
+//     the first time) (the serval dances), SAVE FAILED if the save memory
+//     refused.
 //     A or START goes back to the song select. The records and the
 //     calibration survive a power-off.
 //   - SELECT, while playing, shows a readout on the bottom two rows: the

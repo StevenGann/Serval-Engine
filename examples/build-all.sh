@@ -11,8 +11,8 @@
 #
 # GBA builds need an arm-none-eabi GCC on PATH, or ARM_GNU_TOOLCHAIN set to the
 # toolchain's root directory; web builds need Emscripten (EMSDK set, or emcc
-# on PATH); both need BlocksDS's mmutil for the jukebox's sound bank
-# (SERVAL_MMUTIL set, or mmutil on PATH). Whichever of these this shell lacks
+# on PATH); both need BlocksDS's mmutil for the jukebox's and rhythm's sound
+# banks (SERVAL_MMUTIL set, or mmutil on PATH). Whichever of these this shell lacks
 # is taken from the file tools/setup-dev.sh writes, ~/opt/serval-env.sh
 # (SERVAL_ENV_FILE to use another), so a terminal, IDE or task runner started
 # before setup still works; variables already set are kept. See

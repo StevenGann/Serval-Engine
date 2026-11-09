@@ -15,7 +15,8 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba, raycaster.gba, servle.gba, racer.gba
+#    effects.gba, jukebox.gba, raycaster.gba, servle.gba, racer.gba,
+#    rhythm.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -36,6 +37,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`racer`](../examples/racer/main.c) | Raster effects carrying a whole game: a pseudo-3D road from one still picture, each screen line shifted by its own amount (`raster_scroll()` on a 256-pixel layer that wraps), stripes by palette writes (`tileset_set_colors()`), roadside objects in four sizes shrunk with `sprite_draw_ex()` and sharing their matrices, a time of day mixed at boot (`color_mix`); portable rules tested on the host, an engine drone of held PSG sounds, records in save data |
 | [`raycaster`](../examples/raycaster/main.c) | The pixel surface ([surface.md](surface.md)): a first-person maze game that draws its own picture, a ray and a textured column at a time; fixed-point math without division, hot loops in IWRAM, a picture drawn over two frames, sprites as a HUD over it, menus composed into sprites over the running view |
 | [`servle`](../examples/servle/main.c) | A whole game in a script, effects included: two threads (one plays the rounds as plain code with waits, flips included, one runs every other effect a frame at a time), RAM arrays and ROM arrays (a dictionary packed 2 bytes a word, and its lookup), styled and formatted text, saves and seeding from a script (`vm_use_saves`, `save_read`, `save_write`, `random_seed`), sprites shown in four palettes and squashed, scaled, tilted and lifted through their properties |
+| [`rhythm`](../examples/rhythm/main.c) | Keeping time with tracker music ([audio.md](audio.md#position)): every frame starts from `music_position()`, and the charts are in the module's own ticks, so nothing drifts; the input's and the picture's latencies added as times and turned into ticks (`MUSIC_RATE`, `tick_samples`), a player's calibration on top; judging, scoring and the calibration's arithmetic as portable rules tested on the host, PSG blips over Maxmod's music, palette pulses on the beat, art drawn at boot, records in save data |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 

@@ -42,7 +42,7 @@ jobs:
           cache: pip
           cache-dependency-path: tools/site/requirements.txt
 
-      # The jukebox example's sound bank.
+      # The jukebox and rhythm examples' sound banks.
       - uses: ./.github/actions/setup-mmutil
 
       - name: Build the examples for the web
