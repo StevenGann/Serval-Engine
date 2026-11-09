@@ -503,12 +503,12 @@ void play_begin(u8 song, u8 difficulty, bool autoplay, s16 calibration_ms) {
     start_song();
 }
 
-PlayResult play_frame(void) {
-    if (button_pressed(BUTTON_SELECT))
+PlayResult play_frame(bool input) {
+    if (input && button_pressed(BUTTON_SELECT))
         readout_toggle();
     if (st.paused)
         return pause_frame();
-    if (button_pressed(BUTTON_START)) {
+    if (input && button_pressed(BUTTON_START)) {
         pause_song();
         draw();
         readout_draw();
@@ -523,7 +523,7 @@ PlayResult play_frame(void) {
     FIXED press = press_time();
     if (st.autoplay)
         autoplay(press);
-    else
+    else if (input)
         presses(press);
     st.stopped = music_playing() ? 0 : (u8)int_min(st.stopped + 1, 255);
     // Every note gone by is a MISS (and, should the music stop with notes

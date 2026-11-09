@@ -69,7 +69,7 @@ static const u8 title_lanes[8] = {0, 3, 1, 2, 0, 2, 1, 3};
 #define TITLE_AHEAD 3   // paws in the air: those of the next beats
 #define WORD1_Y 26      // BEAT's and PAWS' middles
 #define WORD2_Y 58
-#define LETTER_STEP 24
+#define LETTER_STEP 22 // the four letters within the stage, clear of the rails
 #define PRESS_ROW 19
 
 static u8 shown_pulse, shown_flash[LANES];
@@ -97,7 +97,8 @@ void title_show(void) {
 static void title_word(const char* w, int y, int beat, int into, u16 palette) {
     for (int i = 0; w[i]; i++) {
         int up = beat >= 0 && (beat & 3) == i ? hop[into] : 0;
-        sprite_draw(SPR_BIG, (u8)art_big_frame(w[i]), STAGE_X - 36 + i * LETTER_STEP, y - up,
+        sprite_draw(SPR_BIG, (u8)art_big_frame(w[i]),
+                    STAGE_X - LETTER_STEP * 3 / 2 + i * LETTER_STEP, y - up,
                     SPRITE_PALETTE(palette));
     }
 }
@@ -339,9 +340,16 @@ void results_show(const SelectChoice* played, const Score* s, u32 fell) {
 
     text_set_style(TEXT_HIGHLIGHT);
     int row = BADGE_ROW;
-    if ((fell & RECORD_SCORE) && s->score > 0) // a first play's 0 is no best to speak of
+    // The bests fall apart (records.h): a new score, else a better grade
+    // (a first play's score of 0 and its D are no bests to speak of), and a
+    // first full combo.
+    if ((fell & RECORD_SCORE) && s->score > 0)
         text_print_centered_in(0, 23, row++, "NEW BEST");
-    if (full_combo)
+    else if ((fell & RECORD_GRADE) && s->score > 0)
+        text_print_centered_in(0, 23, row++, "NEW BEST GRADE");
+    if (fell & RECORD_FULL_COMBO)
+        text_print_centered_in(0, 23, row, "FIRST FULL COMBO");
+    else if (full_combo)
         text_print_centered_in(0, 23, row, "FULL COMBO");
     if (fell && records_save_failed()) {
         text_set_style(2);

@@ -20,6 +20,10 @@
 // them; a save beyond them is not this game's).
 #define CALIBRATION_MAX_MS 200
 
+// The three bests of a song and difficulty are kept apart, each the best of
+// its own: the highest score, the best grade and whether any play was a
+// full combo may come from three different plays (a full combo of GOODs
+// can score less than a run of PERFECTs with one miss).
 typedef struct {
     u32 score;      // the best score
     u8 grade;       // the best grade, 'S' to 'D'; 0: never played

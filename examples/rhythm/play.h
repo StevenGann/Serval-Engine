@@ -29,8 +29,10 @@ typedef enum {
 // the same again.
 void play_begin(u8 song, u8 difficulty, bool autoplay, s16 calibration_ms);
 
-// One frame of it, between frame_begin() and frame_end().
-PlayResult play_frame(void);
+// One frame of it, between frame_begin() and frame_end(). `input` false
+// (during a fade) ignores the buttons: no presses, no pause, no readout;
+// the music, the autoplay and the picture go on.
+PlayResult play_frame(bool input);
 
 // The score of the song played (final after PLAY_FINISHED).
 const Score* play_result(void);

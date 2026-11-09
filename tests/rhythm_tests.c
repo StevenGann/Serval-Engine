@@ -8,6 +8,7 @@
 
 #include "../examples/rhythm/judge.h"
 #include "../examples/rhythm/records.h"
+#include "../src/core/save_internal.h" // a save memory that refuses writes
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -540,6 +541,41 @@ static void records_rules(void) {
     save_erase(RECORDS_SLOT);
 }
 
+// SAVE FAILED: a write the save memory refuses sets records_save_failed(),
+// for a record taken and for an erase, and the next write that works clears
+// it. The engine's save device is swapped for one whose writes fail, the
+// test hook save_tests.c uses too (the example itself never touches it).
+// save.c's warning for it is printed once per run, by save_tests first.
+static bool refuse_write(u32 offset, const u8* src, u32 count) {
+    (void)offset, (void)src, (void)count;
+    return false;
+}
+
+static void records_save_failure(void) {
+    Score clean = {.perfect = 10, .max_combo = 10, .score = 4000};
+    save_erase(RECORDS_SLOT);
+    records_load();
+    SaveDevice refusing = *serval_save_device;
+    refusing.write = refuse_write;
+    const SaveDevice* real = serval_save_device;
+    serval_save_device = &refusing;
+    CHECK(records_take(SONG_RUSH, DIFF_HARD, &clean, false) != 0);
+    CHECK(records_save_failed());
+    CHECK(records_get()->best[SONG_RUSH][DIFF_HARD].score == 4000); // kept until power-off
+    serval_save_device = real;
+    records_save_calibration(12); // a write that works
+    CHECK(!records_save_failed());
+    serval_save_device = &refusing;
+    records_erase();
+    CHECK(records_save_failed());
+    records_save_calibration(13);
+    CHECK(records_save_failed());
+    serval_save_device = real;
+    records_erase();
+    CHECK(!records_save_failed());
+    save_erase(RECORDS_SLOT);
+}
+
 TEST_SUITE(rhythm_tests, "rhythm", {"judge_windows", judge_windows},
            {"before_row_zero", before_row_zero}, {"mashing", mashing}, {"close_notes", close_notes},
            {"expire_counts", expire_counts}, {"scoring", scoring}, {"grades", grades},
@@ -547,4 +583,5 @@ TEST_SUITE(rhythm_tests, "rhythm", {"judge_windows", judge_windows},
            {"calibration_extremes", calibration_extremes}, {"play_start_resets", play_start_resets},
            {"lanes_past_three", lanes_past_three}, {"windows_change", windows_change},
            {"note_judged", note_judged}, {"play_done_when_all_judged", play_done_when_all_judged},
-           {"calibration_taps", calibration_taps}, {"records_rules", records_rules});
+           {"calibration_taps", calibration_taps}, {"records_rules", records_rules},
+           {"records_save_failure", records_save_failure});

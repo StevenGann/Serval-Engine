@@ -6,6 +6,11 @@
 // (calibration_median_ms()), so a stray tap hardly moves it. Then LEFT and
 // RIGHT adjust it, A saves it and B leaves the saved one as it was.
 //
+// The tapping buttons are the adjusting ones, so the result settles first:
+// after the 16th tap the screen shows it and takes no input until every
+// button has been let go for SETTLE_FRAMES, so a player still tapping along
+// can't save, cancel or move it unawares. Before the first tap B leaves.
+//
 // The offset is how much later than the music the player's presses come:
 // a song subtracts it from every press (docs/audio.md#position). The taps
 // make no sound, so that only the clicks are heard; the serval lifts a paw
@@ -25,9 +30,10 @@
 #include "sound.h"
 
 #define TAPS 16
-#define ADJUST_STEP 4 // ms a repeat of LEFT or RIGHT held; a press is 1
+#define ADJUST_STEP 4    // ms a repeat of LEFT or RIGHT held; a press is 1
+#define SETTLE_FRAMES 30 // with no button down, after the 16th tap, before adjusting
 
-enum { TAPPING, ADJUSTING };
+enum { TAPPING, SETTLING, ADJUSTING };
 
 #define LINE_X 120 // the groove's middle, 0 ms; 11 pixels each 20 ms either way
 #define TITLE_ROW 0
@@ -49,6 +55,7 @@ static struct {
     s16 errors[TAPS];
     s16 offset;
     u8 paw, side; // frames left of the serval's paw up, and which
+    u8 settle;    // SETTLING: frames left with no button down
 } cal;
 
 // Signed milliseconds: "+12 MS", "-3 MS", "0 MS".
@@ -78,6 +85,10 @@ static void show_phase(const char* state) {
         text_print_centered(HINT_ROW, "TAP ALONG TO THE CLICKS");
         text_print_centered(HINT_ROW + 1, "WITH A, B, LEFT OR RIGHT");
         text_print_centered(HELP_ROW + 1, "START: STOP TAPPING");
+        if (cal.taps == 0)
+            text_print_centered(HELP_ROW + 2, "B: BACK");
+    } else if (cal.phase == SETTLING) {
+        text_print_centered(HELP_ROW + 1, "LET GO OF THE BUTTONS");
     } else {
         text_print_centered(HELP_ROW, "LEFT RIGHT: ADJUST");
         text_print_centered(HELP_ROW + 1, "A: SAVE   B: CANCEL");
@@ -119,12 +130,15 @@ static void tap(void) {
     if (!calibration_tap_ms(press, BEAT_TICKS << 8, pos.tick_samples, &error))
         return; // before the first click
     cal.errors[cal.taps++] = error;
+    if (cal.taps == 1)
+        text_print_line(0, HELP_ROW + 2, ""); // B taps from now on
     show_taps();
     text_print_centered(LAST_ROW, text_format("LAST %s", ms_text(error)));
     if (cal.taps == TAPS) {
         cal.offset = (s16)int_clamp(calibration_median_ms(cal.errors, TAPS), -CALIBRATION_MAX_MS,
                                     CALIBRATION_MAX_MS);
-        cal.phase = ADJUSTING;
+        cal.phase = SETTLING;
+        cal.settle = SETTLE_FRAMES;
         sound_play(SND_SELECT);
         show_offset();
         show_phase("MEASURED");
@@ -149,12 +163,25 @@ static void draw(void) {
 CalibrateResult calibrate_frame(bool input) {
     CalibrateResult result = CALIBRATE_RUNNING;
     if (input && cal.phase == TAPPING) {
-        if (button_pressed(BUTTON_START)) {
+        if (cal.taps == 0 && button_pressed(BUTTON_B)) {
+            sound_play(SND_SELECT);
+            result = CALIBRATE_CANCELLED;
+        } else if (button_pressed(BUTTON_START)) {
             cal.phase = ADJUSTING;
             sound_play(SND_MOVE);
             show_phase("");
         } else if (button_pressed(tap_buttons)) {
             tap();
+        }
+    } else if (cal.phase == SETTLING) {
+        // Every button let go, then SETTLE_FRAMES more: any button down
+        // starts the wait again.
+        if (button_down(BUTTON_ANY))
+            cal.settle = SETTLE_FRAMES;
+        else if (--cal.settle == 0) {
+            cal.phase = ADJUSTING;
+            button_repeat_reset();
+            show_phase("MEASURED");
         }
     } else if (input) {
         int step = 0;

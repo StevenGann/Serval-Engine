@@ -134,7 +134,7 @@ void game_frame(void) {
             play_draw(); // the picture held through the fade out
             break;
         }
-        switch (play_frame()) {
+        switch (play_frame(input)) {
         case PLAY_FINISHED:
             fade_to(to_results);
             break;

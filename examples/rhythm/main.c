@@ -50,7 +50,9 @@
 //     B, LEFT or RIGHT on every click: each tap puts a rose diamond on the
 //     line and its error under TAPS n / 16 (LAST +12 MS), and the serval
 //     lifts a paw. After 16 the offset is their median (MEASURED), the
-//     amber diamond. LEFT and RIGHT adjust it (1 ms a press, 4 a repeat
+//     amber diamond, held there until every button has been let go for
+//     half a second (LET GO OF THE BUTTONS). Before the first tap B goes
+//     back. LEFT and RIGHT adjust it (1 ms a press, 4 a repeat
 //     held), A saves it, B leaves the saved one, START taps again (and
 //     stops the tapping early). A positive offset means the presses come
 //     late, as with a TV's lag or wireless audio: the game moves them back.
@@ -90,8 +92,9 @@
 //     results, over the stage dimmed: the song, the PERFECT, GOOD and MISS
 //     counts, the longest combo, the accuracy, the score, and the grade (S,
 //     A, B, C, D) as a big letter that drops in; NEW BEST when the score
-//     beats the record (never with AUTO), FULL COMBO when nothing was
-//     missed (the serval dances), SAVE FAILED if the save memory refused.
+//     beats the record, else NEW BEST GRADE for a better grade (never with
+//     AUTO), FULL COMBO when nothing was missed (FIRST FULL COMBO the first
+//     time) (the serval dances), SAVE FAILED if the save memory refused.
 //     A or START goes back to the song select. The records and the
 //     calibration survive a power-off.
 //   - SELECT, while playing, shows a readout on the bottom two rows: the
