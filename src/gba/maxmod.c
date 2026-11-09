@@ -168,18 +168,28 @@ typedef struct {
 } Position;
 static SERVAL_EWRAM_BSS Position position;
 
-// From music_play() until the first mix: a frame (264 samples) before row 0,
-// which sounds from the first sample of that mix.
+// A frame (264 samples) before row 0, in ticks of `rate` samples: from
+// music_play() until the first mix, whose first sample is row 0's.
+static FIXED before_row_0(u32 rate) {
+    return -(FIXED)((256 * HALF + rate - 1) / rate);
+}
+
+// Row 0 from the first sample of the next mix: mmFrame() processes the next
+// tick once sampcount reaches tickrate.
+static void row_0_next(void) {
+    mmLayerMain.sampcount = mmLayerMain.tickrate;
+}
+
 static void position_start(void) {
     u32 rate = mmLayerMain.tickrate;
-    mmLayerMain.sampcount = (mm_hword)rate; // the next tick, row 0, at once
+    row_0_next();
     position.ticks = 0;
     position.last_tick = 0;
     position.ended = false;
     position.following = true;
     position.started = true;
     position.now = (MusicPosition){
-        .ticks = -(FIXED)((256 * HALF + rate - 1) / rate),
+        .ticks = before_row_0(rate),
         .speed = mmLayerMain.speed,
         .tempo = mmLayerMain.bpm,
         .tick_samples = (u16)rate,
@@ -195,10 +205,14 @@ static void follow(void) {
     MusicPosition* now = &position.now;
     u32 rate = layer->tickrate ? layer->tickrate : 1;
     u32 where = position.last_tick;
+    // Held at FIXED's largest whole tick but one: 8,388,606 ticks, about 46
+    // hours at 125 BPM.
+    u32 whole = position.ticks < 0x7FFFFE ? position.ticks : 0x7FFFFE;
     FIXED ticks;
     if (position.ended) {
-        // At the end of its last tick (sampcount runs on, meaningless).
-        ticks = (FIXED)position.ticks * 256;
+        // The nominal end, the end of its last tick, which Maxmod silences
+        // (it stops the module processing that tick; sampcount runs on, meaningless).
+        ticks = (FIXED)(whole * 256);
     } else {
         // Into the tick playing: sampcount of its tickrate samples. All of
         // them when the next tick starts with this mix (sampcount can pass
@@ -209,7 +223,7 @@ static void follow(void) {
             into = rate;
             where = (u32)layer->tick << 8 | (u32)layer->row << 16 | (u32)layer->position << 24;
         }
-        ticks = (FIXED)position.ticks * 256 - 256 + (FIXED)(into * 256 / rate);
+        ticks = (FIXED)(whole * 256 + into * 256 / rate) - 256;
     }
     // Never back: music_set_speed() slowing the music lengthens the tick
     // playing, so the part of it played shrinks.
@@ -298,7 +312,7 @@ static void vblank(void) {
             stats.stale++;
         } else {
             mp_writepos = (mm_addr)playing;
-            follow();
+            follow(); // as before every mmFrame(); unseen: frame_end() notes it again first
             mmFrame();
             mp_writepos = (mm_addr)(mp_mix_seg ? first + HALF : first);
             stats.late++;
@@ -548,8 +562,18 @@ static void module_speed(u16 percent) {
     }
     enter();
     mmSetModuleTempo(((u32)percent * 1024 + 50) / 100); // 6.10 fixed point
-    if (position.following && position.ticks == 0)
-        position_start(); // row 0 not played yet: still from the next mix's first sample
+    if (position.started && !position.ended && position.ticks == 0) {
+        // Row 0 not played yet (paused or not): still from the first sample
+        // of the next mix. The position follows the new speed unless it is
+        // held (paused), and never goes back (a frame is more ticks faster).
+        row_0_next();
+        if (position.following) {
+            FIXED start = before_row_0(mmLayerMain.tickrate);
+            if (start > position.now.ticks)
+                position.now.ticks = start;
+            position.now.tick_samples = mmLayerMain.tickrate;
+        }
+    }
     leave();
 }
 

@@ -79,7 +79,6 @@ Each of these can be added in a 1.x minor without changing anything that exists:
 | Feature | Why adding it later can't break games |
 | --- | --- |
 | Mixer configuration (rate, channels) | New CMake keywords; the audio API works with the fixed defaults (`serval_add_soundbank()`, the CMake function building a bank, came with the implementation) |
-| Sampled audio on the web | Implementation behind the API the GBA implements; until then the web plays nothing and warns once |
 | Jingles and sync events, changing a playing effect; streamed PCM, interactive music | New functions (the module's position came after the freeze, [below](#after-the-freeze)) |
 | Palette sharing (reference-counted banks) | Internal: palette writes are already copy-on-write |
 | Palette cycle and fade helpers | New functions over `sprite_set_colors`, `tileset_set_colors` and `color_mix` |

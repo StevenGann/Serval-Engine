@@ -553,6 +553,29 @@ static void music_ticks_speed_monotonic(void) {
     CHECK(music_ticks() == 0);
     frames(1);
     CHECK(music_ticks() == 256 * HALF / 634);
+    // Faster before row 0: the position doesn't go back (a frame is more
+    // ticks now), and row 0 still starts the next mix.
+    music_play(MOD_POSITION, true);
+    FIXED before = music_ticks();
+    music_set_speed(200);
+    CHECK(music_ticks() == before && music_position().tick_samples == 156);
+    frames(2);
+    CHECK(music_ticks() == 256 * HALF / 156);
+    // Paused before row 0, a frame mixed, then slower while paused: row 0
+    // still starts the first mix after music_resume(), at its first sample.
+    music_play(MOD_POSITION, true);
+    music_pause();
+    frames(1);
+    music_set_speed(50);
+    frames(5);
+    CHECK(music_ticks() == 0);
+    music_resume();
+    frames(1);
+    const s8* first = serval_mixer_last();
+    CHECK(first[0] != 0 || first[SIDE] != 0);
+    CHECK(music_ticks() == 0);
+    frames(1);
+    CHECK(music_ticks() == 256 * HALF / 634 && music_position().tick_samples == 634);
     audio_bank_set(NULL);
 }
 

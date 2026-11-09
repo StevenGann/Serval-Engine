@@ -351,8 +351,12 @@ typedef struct {
     // to the sample. Counts on through loops, pattern jumps and breaks, and
     // speed and tempo changes; never decreases (music_set_speed() slowing
     // the music down holds it until the music catches up); stands still
-    // while paused and after music_stop() or a module played once ends (at
-    // the module's last tick's end), where the music stops being heard.
+    // while paused and after music_stop(), where the music stops being
+    // heard. A module played once ends at its nominal end, its length in
+    // ticks (Maxmod silences its last tick), reached a frame after
+    // music_playing() turns false, since the last mix still plays: a game
+    // ends on reaching the module's known length, or expires everything
+    // at the end. Holds at its largest after about 46 hours at 125 BPM.
     // Below 0 (by a frame) from music_play() until the first frame_end()
     // after it: row 0 sounds from the first sample mixed after
     // music_play(), which plays from the VBlank after the next.
@@ -375,8 +379,11 @@ typedef struct {
 
 // Where the tracker music is (MusicPosition above). Without a sound bank, or
 // with one but no module played since it was registered: all zeros (warns
-// once). After music_stop() or a module's end: where it stopped, as it stays
-// until the next music_play().
+// once). After music_stop(): where the music stops being heard; after a
+// module played once ends, its nominal end (its length; Maxmod silences its
+// last tick), reached a frame after music_playing() turns false (the last
+// mix still plays), so a game ends on reaching that known length rather than
+// on music_playing(). Either stays until the next music_play().
 MusicPosition music_position(void);
 
 // music_position().ticks alone.
