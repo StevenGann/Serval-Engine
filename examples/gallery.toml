@@ -70,7 +70,7 @@ title = "ASTEROIDS"
 summary = "Rotating sprites, wrap-around, many short-lived entities, sound, a saved high-score table with initials entry"
 tags = ["rotation", "physics", "ecs", "sound", "save"]
 level = 3
-thumbnail = { frame = 390, keys = ["200:S:2", "230:r:14", "250:A:200"] }
+thumbnail = { frame = 280, keys = ["200:S:2", "230:r:14", "250:A:200"] }
 
 [examples.breakout]
 title = "PAW BREAKER"

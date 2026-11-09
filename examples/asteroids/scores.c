@@ -90,6 +90,7 @@ static void insert(int rank, int score, const char initials[3]) {
 #define TABLE_ROW 5 // the best score's text row
 
 void scores_draw(int highlight) {
+    text_set_style(TEXT_ACCENT);
     text_print_centered(2, "HIGH SCORES");
     for (int i = 0; i < SCORES_COUNT; i++) {
         const ScoreEntry* e = &table.entries[i];
@@ -123,7 +124,9 @@ static void draw_entry(void) {
         char c = letters[choice[k]];
         shown[k] = c == ' ' ? '_' : c;
     }
+    text_set_style(TEXT_HIGHLIGHT);
     text_print_centered(9, text_format("%c  %c  %c", shown[0], shown[1], shown[2]));
+    text_set_style(TEXT_NORMAL);
     text_print_centered(10, text_format("%c  %c  %c", cursor == 0 ? '^' : ' ',
                                         cursor == 1 ? '^' : ' ', cursor == 2 ? '^' : ' '));
 }
@@ -137,12 +140,16 @@ int entry_begin(int score) {
     // released and pressed again.
     button_repeat_reset();
     text_clear();
+    text_set_style(TEXT_ACCENT);
     text_print_centered(3, "NEW HIGH SCORE");
+    text_set_style(TEXT_NORMAL);
     text_print_centered(5, text_format("SCORE %d   PLACE %d", score, entry_rank + 1));
     text_print_centered(7, "ENTER YOUR INITIALS");
+    text_set_style(TEXT_DIM);
     text_print_centered(13, "UP/DOWN:LETTER");
     text_print_centered(15, "A:NEXT  B:BACK");
     text_print_centered(17, "START:DONE");
+    text_set_style(TEXT_NORMAL);
     draw_entry();
     return entry_rank;
 }

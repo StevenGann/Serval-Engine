@@ -9,10 +9,21 @@
 //     fly off)
 //   - Thrust and drag with sine and cosine (fx_sin, fx_cos, fx_mul)
 //   - Many short-lived entities (bullets, rocks splitting in two, explosion
-//     sparks) created and destroyed every frame, with game components
+//     sparks and chips of rock) created and destroyed every frame, with game
+//     components; their frames chosen by age (sparks cool from white to red)
+//   - Effects that aren't entities: blast rings and exhaust puffs in a small
+//     array of their own, drawn with sprite_draw / sprite_draw_ex (scaled)
 //   - Collisions with body_overlap, using hitboxes smaller than the sprites
 //     (sprite origins center the art on its hitbox)
 //   - Blinking by toggling SPRITE_HIDDEN in spr_flags
+//   - A space backdrop: a starfield map layer that wraps and drifts
+//     (map_load, MAP_LAYER_WRAP, map_set_scroll), stars that twinkle by
+//     changing three background colors every frame (tileset_set_colors,
+//     color_mix), and a sky gradient with a color per scanline
+//     (raster_backdrop), dithered so it shows no bands
+//   - Juice: screen shake by moving the camera (camera_set), flashes and fades
+//     with screen_set_brightness, a title of big sprite letters that bob and
+//     glint (SPRITE_PALETTE draws a letter with a lit-up palette)
 //   - Sound effects: shots, thrust rumble, explosions, a heartbeat that speeds
 //     up as rocks are cleared, and jingles; sound priorities keep gunfire from
 //     cutting a jingle short and the rumble from cutting an explosion short
@@ -23,53 +34,69 @@
 //     the default table for a first boot or a save that can't be used
 //     (scores.c; how a game picks and raises the version is explained there)
 //   - A game split into files: main.c runs the game, scores.c the table and
-//     the initials entry screen
-//   - Text styles (text_set_style): the new entry in the table in yellow;
-//     held-button repeat for the letters (button_repeat, with
-//     button_repeat_reset so UP still held from thrusting doesn't run through
-//     them); counting and listing entities of a kind (ecs_count, ecs_gather)
+//     the initials entry screen, art.h the graphics
+//   - Text styles (text_set_style, text_set_style_color) and the font's drop
+//     shadow (text_set_shadow): gold headings, dim instructions, the new entry
+//     in the table in yellow; held-button repeat for the letters
+//     (button_repeat, with button_repeat_reset so UP still held from
+//     thrusting doesn't run through them); counting and listing entities of a
+//     kind (ecs_count, ecs_gather)
 //
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (a
 //     serval's head beside "SERVAL ENGINE" in chunky gold and cream letters)
 //     fade in on black, a coin-like jingle plays, and they fade out (about 3
 //     seconds; any button skips it once the logo is in).
-//   - Four large brown, cratered rocks drift and spin across a dark blue
-//     screen behind "A S T E R O I D S", "PRESS START" and the controls.
-//   - After START (a rising chime): a silver arrowhead ship in the center,
-//     blinking while it can't be hit, and a wave of large rocks. The top line
-//     shows "SCORE", "WAVE" and "SHIPS" (lives).
-//   - Left and Right turn the ship; Up thrusts (an orange flame and a low
-//     rumble) and the ship drifts on, slowing gently to a stop; A fires yellow
-//     shots ("pew"), up to 4 at a time, in the direction the ship faces.
-//   - Shot rocks burst into sparks with a crunch and split: large into two
-//     medium, medium into two small; small ones vanish. 20, 50 and 100 points.
+//   - The title fades in: deep space, blue at the top, violet in the middle
+//     and blue-green at the bottom, with faint purple nebulae and stars that
+//     twinkle, all drifting slowly. Four large cratered brown rocks drift and
+//     spin across it behind "ASTEROIDS" in big gold-to-red letters that bob
+//     in a wave (a white glint runs along them every few seconds), a blinking
+//     "PRESS START" and the controls in pale blue.
+//   - After START (a rising chime and a white flash): "WAVE 1" in gold for a
+//     moment, a yellow ring closing in on the center where a silver dart of a
+//     ship (red stripes, cyan canopy) appears, blinking while it can't be hit,
+//     and a wave of large rocks. The top line shows "SCORE" (six digits) and
+//     "WAVE"; small ship icons at the top right count the ships left (past 5,
+//     one icon and "x6").
+//   - Left and Right turn the ship; Up thrusts (a flickering flame, a trail of
+//     orange puffs and a low rumble) and the ship drifts on, slowing gently to
+//     a stop; A fires glowing cyan shots ("pew"), up to 4 at a time, in the
+//     direction the ship faces.
+//   - Shot rocks burst with a crunch into sparks (white-hot, cooling to red
+//     embers) and chips of rock, inside a ring of fire that grows and fades;
+//     they split: large into two medium, medium into two small; small ones
+//     vanish. The screen shakes a little for large and medium ones. 20, 50
+//     and 100 points. The rocks come in three shapes of each size.
 //   - A low two-note heartbeat plays throughout, faster as the wave is cleared.
-//   - Hitting a rock destroys the ship in a bigger burst (the rock breaks and
-//     scores as if shot); a new one appears in the center after a moment,
-//     blinking for two seconds. A rising jingle marks an extra ship every
-//     10,000 points.
-//   - Clearing all rocks starts the next wave with one more large rock (up to
-//     14), placed away from the ship.
-//   - With no ships left: "GAME OVER" with a falling tune. If the score
-//     doesn't make the high-score table, START plays again, and after 10
+//   - Hitting a rock destroys the ship: a white flash, a big ring of fire, a
+//     burst of sparks and a hard shake (the rock breaks and scores as if
+//     shot); a new ship appears in the center after a moment, blinking for two
+//     seconds. A rising jingle marks an extra ship every 10,000 points.
+//   - Clearing all rocks starts the next wave ("WAVE 2", ...) with one more
+//     large rock (up to 14), placed away from the ship.
+//   - With no ships left: "GAME OVER" in gold with a falling tune. If the
+//     score doesn't make the high-score table, START plays again, and after 10
 //     seconds the attract mode comes back.
 //   - If it does: after 2 seconds (or START), "NEW HIGH SCORE" with a rising
-//     jingle, the score, its place, and three letters "A  A  A" with a caret
-//     under the one being changed. UP and DOWN cycle it through A-Z, '.' and
-//     space (shown as '_'), with a short blip, repeating while held (UP still
-//     held from thrusting does nothing until released and pressed again); A or
-//     RIGHT moves to the next letter, B or LEFT back (a lower blip). A on the
-//     last letter, or START at any time, confirms with a two-note chime: the
-//     table is saved and shown with the new entry in yellow.
-//   - The attract mode alternates every 5 seconds between the title and the
-//     "HIGH SCORES" table: places 1 to 10, initials and scores. On a first
-//     boot it holds made-up players (SRV 5000 down to MAX 400). The table
-//     survives power-off: in mGBA, in the .sav file next to the ROM.
+//     jingle, the score, its place, and three yellow letters "A  A  A" with a
+//     caret under the one being changed. UP and DOWN cycle it through A-Z, '.'
+//     and space (shown as '_'), with a short blip, repeating while held (UP
+//     still held from thrusting does nothing until released and pressed
+//     again); A or RIGHT moves to the next letter, B or LEFT back (a lower
+//     blip). A on the last letter, or START at any time, confirms with a
+//     two-note chime: the table is saved and shown with the new entry in
+//     yellow.
+//   - The attract mode alternates every 5 seconds, fading through black,
+//     between the title and the "HIGH SCORES" table: places 1 to 10, initials
+//     and scores. On a first boot it holds made-up players (SRV 5000 down to
+//     MAX 400). The table survives power-off: in mGBA, in the .sav file next
+//     to the ROM.
 //   - For demos: on the title or the table, hold L and R and press SELECT to
 //     erase the saved table. A falling tone plays, and the default table
 //     shows with "HIGH SCORES RESET" under it.
-//   - START pauses and resumes.
+//   - START pauses (the screen dims, "PAUSED"; the stars still twinkle) and
+//     resumes.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //
@@ -77,149 +104,8 @@
 
 #include "serval/serval.h"
 
+#include "art.h"
 #include "scores.h"
-
-// --- Assets ------------------------------------------------------------------
-
-enum {
-    SPR_SHIP, // frame 0: coasting; frame 1: thrusting (flame)
-    SPR_ROCK_LARGE,
-    SPR_ROCK_MEDIUM,
-    SPR_ROCK_SMALL,
-    SPR_BULLET,
-    SPR_SPARK,
-    SPRITE_COUNT
-};
-enum { PAL_SHIP, PAL_ROCK, PAL_BULLET, PAL_SPARK, PALETTE_COUNT };
-
-// Pixel art, 4 bits per pixel, generated by a script from shapes: the ship is
-// a shaded arrowhead facing right (rotation turns it), the rocks lumpy
-// circles lit from the top left, with craters. Colors: 1 base, 2 highlight,
-// 3 shadow, 4 outline, 5 cockpit, 6-7 flame. The ship, for example:
-//
-//   ...K............
-//   ...KKK..........
-//   ....KHKK........
-//   ....KBBBKKK.....
-//   .....KBBBBSKK...
-//   .....KBBBCCSSKK.     (nose at the right)
-//   .....KBBSCCKK...
-//   ....KBBSKKK.....
-//   ....KBKK........
-//   ...KKK..........
-//   ...K............
-static const u32 ship_tiles[64] = {
-    0x00000000, 0x00000000, 0x00004000, 0x00444000, 0x44240000, 0x11140000, 0x11400000, 0x11400000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000444, 0x00044311, 0x04433551,
-    0x11400000, 0x31140000, 0x44140000, 0x00444000, 0x00004000, 0x00000000, 0x00000000, 0x00000000,
-    0x00044553, 0x00000444, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00004000, 0x00444000, 0x44240000, 0x11140000, 0x11400670, 0x11406667,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000444, 0x00044311, 0x04433551,
-    0x11406667, 0x31140670, 0x44140000, 0x00444000, 0x00004000, 0x00000000, 0x00000000, 0x00000000,
-    0x00044553, 0x00000444, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-static const u32 rock_large_tiles[128] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x40000000, 0x14400000, 0x21240000, 0x12124000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000442, 0x00004121, 0x00041112,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x44000000, 0x22400000, 0x22400000, 0x22400000, 0x12400000, 0x24000000, 0x14000000,
-    0x21212444, 0x12121222, 0x11212122, 0x11121212, 0x11112121, 0x11111212, 0x11111121, 0x11111112,
-    0x00411111, 0x04111111, 0x41111111, 0x31111111, 0x13111111, 0x31311111, 0x13331111, 0x31233111,
-    0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000043, 0x00000041, 0x00000433, 0x00000433,
-    0x24000000, 0x14000000, 0x14000000, 0x14000000, 0x14000000, 0x14000000, 0x14000000, 0x40000000,
-    0x11111111, 0x11111111, 0x11111111, 0x31111111, 0x13111111, 0x31311111, 0x13131331, 0x31313231,
-    0x33131311, 0x33313131, 0x33331313, 0x33333131, 0x33333313, 0x23333331, 0x33333333, 0x33333333,
-    0x00000433, 0x00000433, 0x00000433, 0x00000043, 0x00000004, 0x00000004, 0x00000004, 0x00000004,
-    0x40000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x33131311, 0x44313134, 0x00444440, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x43333333, 0x43333334, 0x04444440, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-static const u32 rock_medium_tiles[32] = {
-    0x00000000, 0x00000000, 0x00000000, 0x44400000, 0x13344400, 0x12322400, 0x11114000, 0x11114000,
-    0x00000000, 0x00000000, 0x00004440, 0x00041114, 0x00041133, 0x00043123, 0x00041311, 0x00043131,
-    0x11114000, 0x31140000, 0x13140000, 0x31340000, 0x33140000, 0x44400000, 0x00000000, 0x00000000,
-    0x00043313, 0x00042331, 0x00042333, 0x00044333, 0x00000433, 0x00000044, 0x00000000, 0x00000000,
-};
-
-static const u32 rock_small_tiles[8] = {
-    0x00000000, 0x00044400, 0x00043400, 0x04411140, 0x04331140, 0x00433140, 0x00044400, 0x00000000,
-};
-
-static const u32 bullet_tiles[8] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00022000, 0x00022000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// A spark: a small cross, bright yellow-white in the middle, orange arms.
-static const u32 spark_tiles[8] = {
-    0x00000000, 0x00000000, 0x00002000, 0x00021200, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
-};
-static const u16 palettes[PALETTE_COUNT][16] = {
-    [PAL_SHIP] = {0, COLOR_RGB(200, 210, 225), COLOR_RGB(255, 255, 255), COLOR_RGB(120, 130, 160),
-                  COLOR_RGB(40, 45, 70), COLOR_RGB(80, 220, 255), COLOR_RGB(255, 170, 40),
-                  COLOR_RGB(255, 240, 120)},
-    [PAL_ROCK] = {0, COLOR_RGB(150, 120, 95), COLOR_RGB(200, 175, 140), COLOR_RGB(95, 72, 58),
-                  COLOR_RGB(50, 38, 32), 0, 0, 0},
-    [PAL_BULLET] = {0, 0, COLOR_RGB(255, 255, 160), 0, 0, 0, 0, 0},
-    [PAL_SPARK] = {0, COLOR_RGB(255, 245, 170), COLOR_RGB(255, 140, 40)},
-};
-
-// Sprites are drawn centered on their hitboxes (body_w x body_h, smaller than
-// the art so near misses stay misses): origin = (sprite size - hitbox) / 2.
-#define SHIP_SIZE 16
-#define SHIP_HITBOX 10
-
-static const SpriteAsset sprites[SPRITE_COUNT] = {
-    [SPR_SHIP] = {.size = SPRITE_16x16,
-                  .frame_count = 2,
-                  .tiles = ship_tiles,
-                  .palette_slot = PAL_SHIP,
-                  .origin_x = 3,
-                  .origin_y = 3},
-    [SPR_ROCK_LARGE] = {.size = SPRITE_32x32,
-                        .tiles = rock_large_tiles,
-                        .palette_slot = PAL_ROCK,
-                        .origin_x = 4,
-                        .origin_y = 4},
-    [SPR_ROCK_MEDIUM] = {.size = SPRITE_16x16,
-                         .tiles = rock_medium_tiles,
-                         .palette_slot = PAL_ROCK,
-                         .origin_x = 2,
-                         .origin_y = 2},
-    [SPR_ROCK_SMALL] = {.size = SPRITE_8x8,
-                        .tiles = rock_small_tiles,
-                        .palette_slot = PAL_ROCK,
-                        .origin_x = 1,
-                        .origin_y = 1},
-    [SPR_BULLET] = {.size = SPRITE_8x8,
-                    .tiles = bullet_tiles,
-                    .palette_slot = PAL_BULLET,
-                    .origin_x = 3,
-                    .origin_y = 3},
-    [SPR_SPARK] = {.size = SPRITE_8x8,
-                   .tiles = spark_tiles,
-                   .palette_slot = PAL_SPARK,
-                   .origin_x = 3,
-                   .origin_y = 3},
-};
-
-static const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
-    [SPR_SHIP] = &sprites[SPR_SHIP],
-    [SPR_ROCK_LARGE] = &sprites[SPR_ROCK_LARGE],
-    [SPR_ROCK_MEDIUM] = &sprites[SPR_ROCK_MEDIUM],
-    [SPR_ROCK_SMALL] = &sprites[SPR_ROCK_SMALL],
-    [SPR_BULLET] = &sprites[SPR_BULLET],
-    [SPR_SPARK] = &sprites[SPR_SPARK],
-};
-
-static const SpriteGroup asteroids_group = {
-    .palettes = &palettes[0][0],
-    .sprite_count = SPRITE_COUNT,
-    .palette_count = PALETTE_COUNT,
-};
 
 // --- Sounds ------------------------------------------------------------------
 
@@ -348,6 +234,10 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
 #define C_BULLET C_GAME(1)
 #define C_SPARK C_GAME(2)
 
+// Hitboxes are smaller than the art, so near misses stay misses; the sprites'
+// origins (art.h) center the art on them.
+#define SHIP_HITBOX 10
+
 #define TURN_SPEED ANGLE_DEG(4) // per frame
 #define THRUST (FX_ONE / 12)    // pixels per frame per frame
 #define MAX_SPEED FX(3)
@@ -367,9 +257,11 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
 // Each wave has one more large rock, up to MAX_WAVE_ROCKS, so that everything
 // fits in the engine's 128 entities. Worst case: 14 large rocks split into
 // 56 small ones; 1 ship and 4 bullets; sparks: 16 from the ship plus 6 per
-// broken rock, and while sparks last (20 frames) at most 8 rocks break (the 4
-// shots in flight, 3 more fired every 8 frames, 1 hit by the ship), so 64.
-// 56 + 1 + 4 + 64 = 125.
+// broken rock (sparks and chips together), and while sparks last (20 frames)
+// at most 8 rocks break (the 4 shots in flight, 3 more fired every 8 frames,
+// 1 hit by the ship), so 64. 56 + 1 + 4 + 64 = 125. (The effects below are
+// not entities; drawn last, they are the ones the hardware's 128 sprites
+// leave out in such a crowd.)
 #define MAX_WAVE_ROCKS 14
 
 // TITLE is the attract mode, alternating between two pages; NEW_HIGH_SCORE
@@ -402,9 +294,10 @@ static int beat_timer, beat_phase;
 static int wave_shots; // shots it took to clear the wave when it started
 static u16 spin;       // shared rock rotation: every rock uses spin or -spin
 static Page page;
-static int page_timer; // TITLE: frames left on this page; GAME_OVER: frames shown
-static int rank;       // the last game's place in the high-score table, or -1
-static int highlight;  // the table entry to mark (the newest), or -1
+static int page_timer;   // TITLE: frames left on this page; GAME_OVER: frames shown
+static int rank;         // the last game's place in the high-score table, or -1
+static int highlight;    // the table entry to mark (the newest), or -1
+static int banner_timer; // PLAYING: frames left showing "WAVE n"
 
 // --- Helpers -----------------------------------------------------------------
 
@@ -437,16 +330,179 @@ static void destroy_all(u32 components) {
     }
 }
 
-// A burst of sparks flying out from (x, y) in random directions.
-static void spawn_sparks(FIXED x, FIXED y, int count) {
+// A burst flying out from (x, y) in random directions: `count` pieces, the
+// first `chips` of them chips of rock (slower), the rest sparks. Both are
+// C_SPARK entities: they only differ in their sprite.
+static void spawn_sparks(FIXED x, FIXED y, int count, int chips) {
     for (int k = 0; k < count; k++) {
+        bool chip = k < chips;
         u16 dir = (u16)random_u32();
-        FIXED speed = FX_ONE / 2 + random_range(0, FX(2));
-        u32 i = spawn(C_SPARK, SPR_SPARK, 2, x, y, fx_mul(fx_cos(dir), speed),
+        FIXED speed =
+            chip ? FX_ONE / 4 + random_range(0, FX_ONE) : FX_ONE / 2 + random_range(0, FX(2));
+        u32 i = spawn(C_SPARK, chip ? SPR_DEBRIS : SPR_SPARK, 2, x, y, fx_mul(fx_cos(dir), speed),
                       fx_mul(fx_sin(dir), speed));
-        if (i < MAX_ENT)
+        if (i < MAX_ENT) {
             life[i] = (u8)random_range(SPARK_LIFE_MIN, SPARK_LIFE_MAX);
+            spr_frame[i] = chip ? (u8)random_range(0, 1) : 0;
+        }
     }
+}
+
+// --- Effects -----------------------------------------------------------------
+
+// Blast rings and exhaust puffs are only for show: no hitbox, no physics, and
+// nothing to keep track of. So they are not entities, which stay free for the
+// game (see MAX_WAVE_ROCKS), but a small array of their own, moved and drawn
+// with sprite_draw() every frame.
+typedef enum {
+    EFFECT_NONE,
+    EFFECT_RING,    // a rock's blast: SPR_RING growing, 3 frames per step
+    EFFECT_RING_IN, // the ship arriving: SPR_RING shrinking
+    EFFECT_BLAST,   // the ship's blast: SPR_RING at twice the size
+    EFFECT_PUFF,    // exhaust: a spark cooling from yellow to red
+} EffectKind;
+
+typedef struct {
+    FIXED x, y, vx, vy; // center, on the playfield, and speed
+    u8 kind;            // EffectKind
+    u8 age, length;     // frames shown so far, of length
+} Effect;
+
+#define MAX_EFFECTS 24
+static Effect effects[MAX_EFFECTS] SERVAL_EWRAM_BSS; // in EWRAM: IWRAM is scarce
+
+// Starts an effect, unless all MAX_EFFECTS are showing (then it is skipped:
+// nobody misses one puff of smoke).
+static void add_effect(EffectKind kind, FIXED x, FIXED y, FIXED vx, FIXED vy, int length) {
+    for (int k = 0; k < MAX_EFFECTS; k++) {
+        if (effects[k].kind == EFFECT_NONE) {
+            effects[k] = (Effect){x, y, vx, vy, (u8)kind, 0, (u8)length};
+            return;
+        }
+    }
+}
+
+static void update_effects(void) {
+    for (int k = 0; k < MAX_EFFECTS; k++) {
+        Effect* e = &effects[k];
+        if (e->kind == EFFECT_NONE)
+            continue;
+        if (++e->age >= e->length) {
+            e->kind = EFFECT_NONE;
+            continue;
+        }
+        e->x += e->vx;
+        e->y += e->vy;
+    }
+}
+
+// Drawn after sys_render, so behind the rocks and the ship. sprite_draw()
+// takes screen positions: the camera (shaking, see shake_screen) comes off.
+static void draw_effects(void) {
+    for (int k = 0; k < MAX_EFFECTS; k++) {
+        const Effect* e = &effects[k];
+        int x = fx_to_int(e->x) - camera_x(), y = fx_to_int(e->y) - camera_y();
+        switch (e->kind) {
+        case EFFECT_RING:
+            sprite_draw(SPR_RING, e->age / 3, x, y, 0);
+            break;
+        case EFFECT_RING_IN:
+            sprite_draw(SPR_RING, 4 - e->age / 3, x, y, 0);
+            break;
+        case EFFECT_BLAST:
+            sprite_draw_ex(SPR_RING, e->age / 4, x, y, 0, FX(2), FX(2), 0);
+            break;
+        case EFFECT_PUFF: // spark frames 1-3: yellow, orange, red
+            sprite_draw(SPR_SPARK, 1 + e->age * 3 / e->length, x - 1, y - 1, 0);
+            break;
+        }
+    }
+}
+
+// Screen shake: the camera jumps around by a few pixels, less as it calms
+// down. Without a map on the playfield the camera only moves what is drawn:
+// the entities (sys_render draws them at their position minus the camera),
+// the effects and, at half the distance, the starfield (its scroll_factor).
+// The text layer stays put, so the score doesn't shake.
+static int shake; // frames left
+
+static void shake_screen(int frames) {
+    shake = int_max(shake, frames);
+}
+
+static void update_camera(void) {
+    int amount = (shake + 3) / 4; // pixels
+    if (shake > 0)
+        shake--;
+    camera_set(random_range(-amount, amount), random_range(-amount, amount));
+}
+
+// Fades and flashes: the screen's brightness steps toward a target by one
+// level a frame. A flash sets it high and lets it come back down to 0.
+static int brightness, brightness_target;
+
+static void flash_screen(int level) {
+    brightness = level;
+    brightness_target = 0;
+}
+
+static void update_brightness(void) {
+    if (brightness < brightness_target)
+        brightness++;
+    else if (brightness > brightness_target)
+        brightness--;
+    screen_set_brightness(brightness);
+}
+
+// --- The sky -----------------------------------------------------------------
+
+// Behind the stars: a backdrop color per scanline (raster_backdrop), from
+// deep blue at the top through violet to a dark blue-green at the bottom. The
+// table is made once at boot; the engine reads it every frame.
+//
+// The screen has 32 levels of red, green and blue: too few for a gradient
+// this dark and gentle, which would show as bands. So the lines dither: each
+// adds 0, 4, 2 or 6 (by turns) to the 8-bit color before COLOR_RGB drops its
+// 3 low bits, and a color between two levels shows as lines of both, mixed in
+// the right proportion.
+static Color sky[SCREEN_H] SERVAL_EWRAM_BSS;
+
+typedef struct {
+    u8 r, g, b;
+} Rgb;
+
+static const Rgb sky_top = {6, 6, 26}, sky_middle = {28, 12, 50}, sky_bottom = {8, 28, 50};
+
+static Color sky_line(const Rgb* from, const Rgb* to, int step, int steps, int dither) {
+    return COLOR_RGB(from->r + (to->r - from->r) * step / steps + dither,
+                     from->g + (to->g - from->g) * step / steps + dither,
+                     from->b + (to->b - from->b) * step / steps + dither);
+}
+
+static void sky_begin(void) {
+    static const u8 dither[4] = {0, 4, 2, 6};
+    const int half = SCREEN_H / 2;
+    for (int y = 0; y < SCREEN_H; y++) {
+        sky[y] = y < half ? sky_line(&sky_top, &sky_middle, y, half, dither[y % 4])
+                          : sky_line(&sky_middle, &sky_bottom, y - half, half, dither[y % 4]);
+    }
+    raster_backdrop(sky);
+    tileset_load(&star_tileset);
+    map_load(&star_layer);
+}
+
+// The starfield drifts slowly (map_set_scroll, counting on: the layer wraps),
+// and three of its colors swell and fade out of step, so stars twinkle.
+static void update_sky(void) {
+    u32 t = frame_count();
+    map_set_scroll(3, (int)(t / 6), (int)(t / 14));
+    Color colors[3];
+    for (int k = 0; k < 3; k++) {
+        FIXED swell = fx_sin((u16)(t * (300 + 110 * k) + k * ANGLE_DEG(120))); // -1 to 1
+        u32 amount = (u32)(160 + fx_mul(swell, 96));                           // 64 to 256
+        colors[k] = color_mix(star_palette[1], star_palette[STAR_TWINKLE_COLOR + k], amount);
+    }
+    tileset_set_colors(STAR_TWINKLE_COLOR, colors, 3);
 }
 
 // --- Ship --------------------------------------------------------------------
@@ -458,11 +514,15 @@ static void spawn_ship(void) {
     ship = entity_at(i);
     ship_angle = ANGLE_DEG(-90); // facing up
     ship_timer = INVULNERABLE_FRAMES;
+    add_effect(EFFECT_RING_IN, FX(SCREEN_W / 2), FX(SCREEN_H / 2), 0, 0, 15);
 }
 
 static void destroy_ship(void) {
     u32 i = entity_index(ship);
-    spawn_sparks(center_x(i), center_y(i), 16);
+    spawn_sparks(center_x(i), center_y(i), 16, 0);
+    add_effect(EFFECT_BLAST, center_x(i), center_y(i), 0, 0, 20);
+    flash_screen(8);
+    shake_screen(20);
     entity_destroy(ship);
     ship = ENTITY_NONE;
     psg_play(SND_SHIP_EXPLODE);
@@ -503,10 +563,18 @@ static void control_ship(void) {
     spr_angle[i] = ship_angle; // the art faces right, which is angle 0
 
     bool thrusting = button_down(BUTTON_UP);
-    spr_frame[i] = thrusting ? 1 : 0;
+    // Thrusting, the flame flickers: frames 1 and 2 by turns.
+    spr_frame[i] = thrusting ? (u8)(1 + frame_count() / 2 % 2) : 0;
     if (thrusting) {
-        vel_x[i] += fx_mul(fx_cos(ship_angle), THRUST);
-        vel_y[i] += fx_mul(fx_sin(ship_angle), THRUST);
+        FIXED dx = fx_cos(ship_angle), dy = fx_sin(ship_angle);
+        vel_x[i] += fx_mul(dx, THRUST);
+        vel_y[i] += fx_mul(dy, THRUST);
+        // Exhaust: a puff every other frame from the nozzles, blown backward.
+        if (frame_count() % 2 == 0) {
+            FIXED spread = random_range(-FX_ONE / 4, FX_ONE / 4);
+            add_effect(EFFECT_PUFF, center_x(i) - dx * 7, center_y(i) - dy * 7,
+                       vel_x[i] - dx + fx_mul(dy, spread), vel_y[i] - dy - fx_mul(dx, spread), 12);
+        }
         if (--rumble_timer <= 0) {
             psg_play(SND_THRUST); // a low rumble, renewed while the button is held
             rumble_timer = 8;
@@ -541,6 +609,7 @@ static void spawn_rock(int size, FIXED x, FIXED y) {
     u32 i = spawn(C_BODY | C_ROCK, rock_sprites[size], rock_hitbox[size], x, y,
                   fx_mul(fx_cos(dir), speed), fx_mul(fx_sin(dir), speed));
     if (i < MAX_ENT) {
+        spr_frame[i] = (u8)random_range(0, 2); // one of three shapes
         rock_size[i] = (u8)size;
         rock_spin[i] = random_range(0, 1) ? 1 : -1;
     }
@@ -594,12 +663,21 @@ static void add_score(int points) {
     }
 }
 
-// Splits (or, when small, removes) the rock in slot r, with sparks and sound.
+// A rock's blast: a ring of 5, 3 or 2 steps (large to small), and a shake for
+// the bigger ones.
+static const u8 blast_length[3] = {15, 9, 6};
+static const u8 blast_shake[3] = {8, 4, 0};
+
+// Splits (or, when small, removes) the rock in slot r, with sparks, chips of
+// rock, a blast and sound.
 static void break_rock(u32 r) {
     int size = rock_size[r];
     FIXED x = center_x(r), y = center_y(r);
     entity_destroy(entity_at(r));
-    spawn_sparks(x, y, 6 - 2 * size);
+    int pieces = 6 - 2 * size;
+    spawn_sparks(x, y, pieces, pieces / 2);
+    add_effect(EFFECT_RING, x, y, 0, 0, blast_length[size]);
+    shake_screen(blast_shake[size]);
     psg_play(rock_sounds[size]);
     add_score(rock_points[size]);
     if (size < 2) {
@@ -610,7 +688,9 @@ static void break_rock(u32 r) {
 
 // --- Systems -----------------------------------------------------------------
 
-// Spins rocks (sharing two rotation angles) and ages bullets and sparks.
+// Spins rocks (sharing two rotation angles), ages bullets and sparks, and
+// picks their frames: a shot's glow pulses; a spark cools as its life runs
+// out, from white-hot (frame 0) to a red ember (frame 3).
 static void update_objects(void) {
     spin = (u16)(spin + ANGLE_DEG(2));
     ECS_FOR_EACH(i, C_ROCK) {
@@ -619,11 +699,16 @@ static void update_objects(void) {
     ECS_FOR_EACH(i, C_BULLET) {
         if (--life[i] == 0)
             entity_destroy(entity_at(i));
+        else
+            spr_frame[i] = life[i] / 2 % 2;
     }
     ECS_FOR_EACH(i, C_SPARK) {
         if (--life[i] == 0)
             entity_destroy(entity_at(i));
+        else if (spr_id[i] == SPR_SPARK)
+            spr_frame[i] = life[i] > 15 ? 0 : life[i] > 10 ? 1 : life[i] > 5 ? 2 : 3;
     }
+    update_effects();
 }
 
 // Bullets and the ship against the rocks. The rocks are listed once
@@ -672,8 +757,26 @@ static void update_heartbeat(void) {
 
 // --- Screens -----------------------------------------------------------------
 
+#define BANNER_ROW 6     // "WAVE n", above the ship
+#define BANNER_FRAMES 90 // how long it shows
+#define HUD_SHIP_ICONS 5 // ships left drawn as icons; more show as a number
+
+// The top line: the score and the wave in text, the ships left as small ship
+// sprites at the right end.
 static void draw_hud(void) {
-    text_print_line(0, 0, text_format(" SCORE %-6d WAVE %-3d SHIPS %d", score, wave, ships));
+    text_print_line(0, 0, text_format(" SCORE %06d   WAVE %d", score, wave));
+    int icons = ships > HUD_SHIP_ICONS ? 1 : ships;
+    for (int k = 0; k < icons; k++)
+        sprite_draw(SPR_LIFE, 0, SCREEN_W - 11 - 9 * k, 1, 0);
+    if (ships > HUD_SHIP_ICONS)
+        text_print(25, 0, text_format("x%d", ships));
+}
+
+static void show_wave_banner(void) {
+    text_set_style(TEXT_ACCENT);
+    text_print_centered(BANNER_ROW, text_format("WAVE %d", wave));
+    text_set_style(TEXT_NORMAL);
+    banner_timer = BANNER_FRAMES;
 }
 
 static void start_game(void) {
@@ -688,9 +791,11 @@ static void start_game(void) {
     beat_timer = 30;
     state = PLAYING;
     text_clear();
+    flash_screen(6);
     psg_play(SND_START);
     spawn_ship();
     spawn_wave(FIRST_WAVE_ROCKS);
+    show_wave_banner();
 }
 
 static void update_playing(void) {
@@ -701,6 +806,8 @@ static void update_playing(void) {
     check_collisions();
     update_heartbeat();
 
+    if (banner_timer > 0 && --banner_timer == 0)
+        text_print_line(0, BANNER_ROW, "");
     if (!entity_alive(ship) && --ship_timer <= 0) {
         if (ships > 0) {
             spawn_ship();
@@ -709,7 +816,10 @@ static void update_playing(void) {
             page_timer = 0;
             rank = scores_rank(score);
             psg_play(SND_GAME_OVER);
+            text_print_line(0, BANNER_ROW, "");
+            text_set_style(TEXT_ACCENT);
             text_print_centered(9, "GAME OVER");
+            text_set_style(TEXT_NORMAL);
             if (rank < 0)
                 text_print_centered(11, "PRESS START");
         }
@@ -717,26 +827,60 @@ static void update_playing(void) {
     if (ecs_count(C_ROCK) == 0) {
         wave++;
         spawn_wave(FIRST_WAVE_ROCKS - 1 + wave);
+        show_wave_banner();
     }
-    draw_hud();
 }
 
 // --- Attract mode, game over and high scores --------------------------------
+
+// The title: big letters (SPR_LETTER, one frame per letter of LOGO_GLYPHS),
+// each bobbing on its own beat of a sine wave, with a glint running along the
+// word now and then: one letter at a time drawn in the PAL_GLINT palette
+// (SPRITE_PALETTE), the same art lit up.
+#define LOGO_TEXT "ASTEROIDS"
+#define LOGO_SPACING 17 // pixels from letter to letter
+#define LOGO_Y 18
+
+static int glyph_frame(char c) {
+    for (int k = 0; LOGO_GLYPHS[k]; k++) {
+        if (LOGO_GLYPHS[k] == c)
+            return k;
+    }
+    return 0;
+}
+
+static void draw_logo(void) {
+    int count = (int)sizeof LOGO_TEXT - 1;
+    int left = (SCREEN_W - count * LOGO_SPACING) / 2;
+    u32 t = frame_count();
+    int glint = (int)(t % 150) / 4 - 2; // the letter lit up: none for most of the time
+    for (int k = 0; k < count; k++) {
+        int bob = fx_to_int(2 * fx_sin((u16)(t * ANGLE_DEG(3) + k * ANGLE_DEG(40))));
+        sprite_draw(SPR_LETTER, (u8)glyph_frame(LOGO_TEXT[k]), left + k * LOGO_SPACING,
+                    LOGO_Y + bob, k == glint ? SPRITE_PALETTE(PAL_GLINT) : 0);
+    }
+}
+
+#define PRESS_START_ROW_TITLE 9
+#define PRESS_START_ROW_SCORES 18
+#define PAGE_FADE 16 // frames of fading out at the end of a page, and in at the start
 
 // Attract mode: the title or the high-score table, shown for some frames.
 static void show_page(Page p, int frames) {
     state = TITLE;
     page = p;
     page_timer = frames;
+    brightness_target = 0; // fading in, if the last page faded out
     text_clear();
     if (p == PAGE_TITLE) {
-        text_print_centered(6, "A S T E R O I D S");
-        text_print_centered(10, "PRESS START");
+        text_print_centered(PRESS_START_ROW_TITLE, "PRESS START");
+        text_set_style(TEXT_DIM);
         text_print_centered(13, "LEFT/RIGHT:TURN  UP:THRUST");
         text_print_centered(15, "A:FIRE  START:PAUSE");
+        text_set_style(TEXT_NORMAL);
     } else {
         scores_draw(highlight);
-        text_print_centered(18, "PRESS START");
+        text_print_centered(PRESS_START_ROW_SCORES, "PRESS START");
     }
 }
 
@@ -754,10 +898,20 @@ static void update_title(bool start) {
         psg_play(SND_RESET);
         return;
     }
+    // "PRESS START" blinks: on for 40 frames, off for 20.
+    if (page_timer % 60 == 0 || page_timer % 60 == 20) {
+        int row = page == PAGE_TITLE ? PRESS_START_ROW_TITLE : PRESS_START_ROW_SCORES;
+        text_print_centered(row, page_timer % 60 == 0 ? "" : "PRESS START");
+    }
+    // Fading out to the next page: black (16 steps down) as the page ends.
+    if (page_timer == PAGE_FADE + 1)
+        brightness_target = SCREEN_BRIGHTNESS_MIN;
     if (--page_timer == 0) {
         highlight = -1; // the newest entry is marked only the first time
         show_page(page == PAGE_TITLE ? PAGE_SCORES : PAGE_TITLE, PAGE_FRAMES);
     }
+    if (page == PAGE_TITLE)
+        draw_logo();
 }
 
 // After "GAME OVER": the initials entry screen if the score made the table
@@ -804,16 +958,25 @@ int main(void) {
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&asteroids_group);
     psg_table_set(sound_table, SOUND_COUNT);
-    screen_set_backdrop(COLOR_RGB(5, 5, 16));
     physics_set_wrap(true, true);
+    sky_begin();
+
+    // Text: pale blue-white with a dark shadow, readable over stars and
+    // rocks; TEXT_ACCENT (gold) for headings, TEXT_DIM for instructions.
+    text_set_color(COLOR_RGB(232, 238, 255), COLOR_RGB(12, 8, 32));
+    text_set_shadow(true);
+    text_set_style_color(TEXT_ACCENT, COLOR_RGB(255, 200, 80), COLOR_RGB(64, 20, 32));
+    text_set_style_color(TEXT_DIM, COLOR_RGB(140, 160, 214), COLOR_RGB(12, 8, 32));
 
     scores_load();
     rank = highlight = -1;
     spawn_wave(FIRST_WAVE_ROCKS); // drifting behind the title
     show_page(PAGE_TITLE, PAGE_FRAMES);
+    brightness = SCREEN_BRIGHTNESS_MIN; // fading in from the splash's black
 
     for (;;) {
         frame_begin();
+        update_brightness();
         bool start = button_pressed(BUTTON_START);
         switch (state) {
         case TITLE:
@@ -833,6 +996,7 @@ int main(void) {
         case PLAYING:
             if (start) {
                 state = PAUSED;
+                brightness_target = -6; // dimmed while paused
                 psg_play(SND_PAUSE);
                 text_print_centered(9, "PAUSED");
             } else {
@@ -842,12 +1006,21 @@ int main(void) {
         case PAUSED:
             if (start) {
                 state = PLAYING;
+                brightness_target = 0;
                 psg_play(SND_PAUSE);
                 text_print_line(0, 9, "");
             }
             break;
         }
+        if (state == PLAYING || state == PAUSED)
+            draw_hud();
+        if (state != PAUSED)
+            update_camera();
+        update_sky();
+        // Sprites drawn first are in front: the title and the HUD's ships
+        // (above), the entities, then the effects behind them.
         sys_render();
+        draw_effects();
         frame_end();
     }
 }

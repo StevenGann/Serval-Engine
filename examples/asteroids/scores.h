@@ -9,6 +9,11 @@
 
 #define SCORES_COUNT 10 // entries in the table
 
+// The game's text styles (text_set_style), beside TEXT_NORMAL and
+// TEXT_HIGHLIGHT (the newest entry); main.c gives them their colors.
+#define TEXT_ACCENT 2 // headings
+#define TEXT_DIM 3    // instructions
+
 // Reads the table from save data, or sets up the default one (first boot, or
 // the save can't be used). Call once at boot.
 void scores_load(void);
