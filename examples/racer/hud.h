@@ -2,8 +2,8 @@
 #define RACER_HUD_H
 
 // What the race shows over the road: the clock, the lap and the speed at
-// the top, messages in the middle, the countdown's big numbers, PAUSED, and
-// the SELECT readout at the bottom.
+// the top, messages in the middle, the countdown's big numbers, PAUSED,
+// FINISH or TIME UP, and the SELECT readout at the bottom.
 
 #include "track.h"
 
@@ -18,8 +18,9 @@ void hud_reset(void);
 // lines (`second` may be NULL).
 void hud_message(const char* first, const char* second);
 
-// A message that stays until the next hud_reset() (FINISH, TIME UP).
-void hud_message_hold(const char* first);
+// Takes the message down (the race is over: FINISH or TIME UP comes down
+// where it is).
+void hud_message_clear(void);
 
 // A frame of the race on: the message's time runs down. Not called while
 // paused, so a paused message keeps its time.
@@ -29,6 +30,12 @@ void hud_step(void);
 // countdown's numbers and GO (`since_go`: frames since GO, counted only while
 // racing), and PAUSED while `paused`.
 void hud_draw(const Race* r, u32 since_go, bool paused);
+
+// FINISH (or, `finished` false, TIME UP) in the big letters, centred across
+// the screen, its top at y. hud_word_drop() is its y `frames` after it
+// came up: dropped in from above the screen onto the sky, with a bounce.
+void hud_word_draw(bool finished, int y);
+int hud_word_drop(u32 frames);
 
 // The SELECT readout: turns it on or off, and while on, shows the last
 // frame's CPU load and sprite counts on the bottom rows (and has the engine

@@ -331,8 +331,11 @@ static const u16 obj_palettes[OBJ_PALETTE_COUNT][16] = {
                      JEEP_REST, COLOR_RGB(220, 208, 168), COLOR_RGB(176, 160, 120)},
     // The logo and the countdown: a dark outline and shadow, then yellow at
     // the top of the letters down to red at their foot.
+    // A glint of near white along each letter's top edges and a deep red
+    // along its feet give the letters some depth.
     [PAL_LOGO] = {0, COLOR_RGB(56, 20, 36), COLOR_RGB(255, 250, 190), COLOR_RGB(255, 222, 96),
-                  COLOR_RGB(255, 180, 60), COLOR_RGB(246, 128, 48), COLOR_RGB(214, 72, 44)},
+                  COLOR_RGB(255, 180, 60), COLOR_RGB(246, 128, 48), COLOR_RGB(214, 72, 44),
+                  COLOR_RGB(255, 255, 244), COLOR_RGB(150, 40, 40)},
 };
 
 // --- Time of day ---------------------------------------------------------------------------
@@ -789,9 +792,9 @@ static const char* const truck_half[64] = {
     "..KTTTTTTTTTTTTTTTTTK...........", "...KKKKKKKKKKKKKKKKK............",
 };
 
-// The logo's and the countdown's letters, 5x7, '#' set. Only the ones they
-// use.
-static const char font_chars[] = "SAVNRUGO123";
+// The big letters (the logo, the countdown, FINISH and TIME UP), 5x7, '#'
+// set. Only the ones they use.
+static const char font_chars[] = "SAVNRUGO123FIHTMEP";
 static const char* const font[][7] = {
     {".###.", "#...#", "#....", ".###.", "....#", "#...#", ".###."}, // S
     {".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"}, // A
@@ -804,10 +807,19 @@ static const char* const font[][7] = {
     {"..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."}, // 1
     {".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"}, // 2
     {"####.", "....#", "....#", ".###.", "....#", "....#", "####."}, // 3
+    {"#####", "#....", "#....", "####.", "#....", "#....", "#...."}, // F
+    {".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."}, // I
+    {"#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"}, // H
+    {"#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."}, // T
+    {"#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"}, // M
+    {"#####", "#....", "#....", "####.", "#....", "#....", "#####"}, // E
+    {"####.", "#...#", "#...#", "####.", "#....", "#....", "#...."}, // P
 };
 #define FONT_SCALE 4                  // each font pixel 4x4 screen pixels
 #define FONT_ADVANCE (6 * FONT_SCALE) // a letter and the gap after it
 #define LOGO_GRADIENT 5               // PAL_LOGO colours 2-6, top to foot
+#define LOGO_GLINT 7                  // PAL_LOGO: a letter's top edges, lit
+#define LOGO_SHADE 8                  // PAL_LOGO: a letter's feet, in shadow
 
 // --- Painting -----------------------------------------------------------------------------
 
@@ -903,18 +915,21 @@ static u32* pack(const u8* pixels, int pitch, int x0, int y0, int w, int h, u32*
 _Static_assert(ROAD_SIZE_CLASSES == 4, "OBJECT_TILES counts four size classes");
 
 // Every frame's tiles: the jeep 160, the logo 160, the countdown 80 (three
-// digits of 32x32 and GO in 64x32), the dust 8, the objects 398: 806.
+// digits of 32x32 and GO in 64x32), FINISH and TIME UP 192, the dust 8, the
+// objects 398: 998.
 // art_build() counts what it packs into obj_tiles_used, which stays at this.
 #define JEEP_TILES (JEEP_FRAMES * JEEP_W * JEEP_H / 64)
 #define DUST_TILES (DUST_FRAMES * DUST_SIDE * DUST_SIDE / 64)
-#define LETTER_TILES (LOGO_FRAMES * 64 * 32 / 64 + 3 * 32 * 32 / 64 + 64 * 32 / 64)
+#define LETTER_TILES                                                                               \
+    (LOGO_FRAMES * 64 * 32 / 64 + 3 * 32 * 32 / 64 + 64 * 32 / 64 +                                \
+     WORDS * WORD_PIECES * 64 * 32 / 64)
 #define OBJECTS_TILES                                                                              \
     (OBJECT_TILES(ACACIA_W, ACACIA_H) + OBJECT_TILES(MOUND_W, MOUND_H) +                           \
      OBJECT_TILES(ROCK_W, ROCK_H) + OBJECT_TILES(SIGN_W, SIGN_H) +                                 \
      OBJECT_TILES(GIRAFFE_W, GIRAFFE_H) + OBJECT_TILES(POST_W, POST_H) +                           \
      OBJECT_TILES(BANNER_W, BANNER_H) + OBJECT_TILES(JEEP_W, JEEP_H) +                             \
      OBJECT_TILES(TRUCK_W, TRUCK_H))
-#define OBJ_TILE_MAX 832
+#define OBJ_TILE_MAX 1024
 _Static_assert(JEEP_TILES + LETTER_TILES + DUST_TILES + OBJECTS_TILES <= OBJ_TILE_MAX,
                "the sprites' art outgrows obj_tiles: raise OBJ_TILE_MAX (1,024 at most)");
 _Static_assert(OBJ_TILE_MAX <= 1024, "sprite tiles: 1,024 at most (the hardware's 32 KB)");
@@ -1139,8 +1154,13 @@ static u32* build_dust(u32* out) {
 
 // Text in the big letters onto the canvas, its top-left at (x0, y0): each
 // letter yellow at the top to red at its foot.
+// A space is half a letter wide.
 static void letters(const char* s, int x0, int y0) {
     for (; *s; s++, x0 += FONT_ADVANCE) {
+        if (*s == ' ') {
+            x0 -= FONT_ADVANCE / 2;
+            continue;
+        }
         int g = 0;
         while (font_chars[g] != *s)
             g++;
@@ -1151,9 +1171,21 @@ static void letters(const char* s, int x0, int y0) {
     }
 }
 
-// Around every letter on the canvas: a dark outline, and a shadow two
-// pixels down and right.
+// Around every letter on the canvas: a glint along its top edges and a
+// shade along its feet, a dark outline, and a shadow two pixels down and
+// right.
 static void letters_outline(void) {
+    for (int y = 0; y < CANVAS_H; y++) {
+        for (int x = 0; x < CANVAS_W; x++) {
+            u8* p = &canvas[y * CANVAS_W + x];
+            if (!*p)
+                continue;
+            if (y == 0 || !p[-CANVAS_W])
+                *p = LOGO_GLINT;
+            else if (y == CANVAS_H - 1 || !p[CANVAS_W])
+                *p = LOGO_SHADE;
+        }
+    }
     for (int y = 0; y < CANVAS_H; y++) {
         for (int x = 0; x < CANVAS_W; x++) {
             if (canvas[y * CANVAS_W + x])
@@ -1198,7 +1230,19 @@ static u32* build_letters(u32* out) {
         out = pack(canvas, CANVAS_W, f * 32, 0, 32, 32, out);
     sprite(SPR_DIGIT, 32, 32, 3, PAL_LOGO, digits);
     sprite(SPR_GO, 64, 32, 1, PAL_LOGO, out);
-    return pack(canvas, CANVAS_W, 0, 32, 64, 32, out);
+    out = pack(canvas, CANVAS_W, 0, 32, 64, 32, out);
+    // The race's last words: FINISH over three pieces, TIME UP (its space
+    // half a letter wide) over three more.
+    canvas_clear();
+    letters("FINISH", (192 - WORD_W(6)) / 2 + 1, 1);
+    letters("TIME UP", (192 - WORD_W(6) - FONT_ADVANCE / 2) / 2 + 1, 33);
+    letters_outline();
+    const u32* words = out;
+    for (int w = 0; w < WORDS; w++)
+        for (int p = 0; p < WORD_PIECES; p++)
+            out = pack(canvas, CANVAS_W, p * 64, w * 32, 64, 32, out);
+    sprite(SPR_WORDS, 64, 32, WORDS * WORD_PIECES, PAL_LOGO, words);
+    return out;
 }
 
 static void build_sprites(void) {

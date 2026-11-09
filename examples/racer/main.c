@@ -37,7 +37,15 @@
 //     road, crashes, bumps, traffic, checkpoints, laps, records; no division
 //     in a frame (tables built at boot)
 //   - Art drawn at boot from ASCII pictures and pixel functions (art.c):
-//     tiles kept once, the road's right half the left half flipped
+//     tiles kept once, the road's right half the left half flipped; the big
+//     letters (the logo, the countdown, FINISH, TIME UP) a 5x7 font blown
+//     up, shaded, lit along their top edges and outlined
+//   - Effects on the whole picture (game.c, hud.c): fades and white flashes
+//     by screen_set_brightness(); the road and the sky dimmed behind the
+//     results and PAUSED by alpha blending with no colour from behind
+//     (screen_set_blend(), the text layer left out, so the text stays
+//     bright); the countdown's numbers popping in and GO flying off,
+//     sprite_draw_ex() in a few steps of scale
 //   - Sound on the tone generators (sound.c): an engine drone of 16 held
 //     sounds on the wave channel, stepping with the speed (a playing tone's
 //     pitch can't change), a looping race tune, jingles and effects by
@@ -55,12 +63,15 @@
 //     jeep, seen from behind with the serval's spotted head over the
 //     driver's seat, leaning into the curves. "PRESS START" blinks; under
 //     it BEST RACE and BEST LAP ("--'--"--" until a race sets them). A
-//     short jingle plays once. START or A fades to a race.
+//     short jingle plays once. The logo's letters are shaded yellow to red,
+//     with a pale glint along their tops. START or A fades to a race.
 //   - The race starts in the late afternoon, on the start line. Top left:
 //     LAP 1/3 and the race's time; in the middle TIME and the seconds left
-//     (34); top right the speed in KM/H. Big 3, 2, 1 over the sky with low
-//     beeps and the engine idling, then GO with a high beep, and the race
-//     tune starts. The pedals and the steering do nothing before GO.
+//     (34), red for the last ten; top right the speed in KM/H; the labels
+//     orange, the numbers white. Big 3, 2, 1 over the sky, each popping in
+//     at twice its size, with low beeps and the engine idling, then GO with
+//     a high beep and a white flash, and the race tune starts; GO grows
+//     away after a second. The pedals and the steering do nothing before GO.
 //   - A accelerates (290 KM/H in about four seconds), B brakes (the tail
 //     lights light up), with neither the jeep coasts down slowly. LEFT and
 //     RIGHT steer, faster the faster the jeep goes, not at all at a
@@ -71,8 +82,8 @@
 //     and dust from the wheels.
 //   - Off the road the speed falls to a third, the jeep jolts, dust flies
 //     and a low rumble plays. Hitting an acacia, a mound, a rock, a sign or
-//     a giraffe off the road is a crash: a crunch and a falling tone, the
-//     picture shakes, the jeep spins three times, slowing, and vanishes,
+//     a giraffe off the road is a crash: a crunch and a falling tone, a
+//     white flash, the picture shakes, the jeep spins three times, slowing, and vanishes,
 //     and a second and a half after the crash it is back in the middle of
 //     the road at rest. The clock runs on.
 //   - Traffic: other safari jeeps and trucks, slower, in both lanes, far
@@ -81,19 +92,22 @@
 //     speed. One that catches up with a slow jeep waits behind it.
 //   - Checkpoints: a chequered banner on two posts, at the start line and
 //     halfway round. Each adds 25 seconds: "+25" in the middle of the
-//     screen and a jingle; at the start line "LAP 2" or "FINAL LAP" and a
-//     longer jingle. Lap 2 turns to sunset and lap 3 to dusk, the colours
+//     screen and a jingle; at the start line "LAP 2" or "FINAL LAP", a
+//     flash and a longer jingle. Lap 2 turns to sunset and lap 3 to dusk, the colours
 //     changing over about two seconds.
 //   - The clock reaching 0 is TIME UP, with a falling phrase; the end of
-//     lap 3 is FINISH, with a fanfare. The picture stops, then the results
-//     come up over the road: the race's time (or, after TIME UP, the
-//     distance reached in km), the three laps with BEST by the fastest, or
-//     NEW RECORD (and a chime) where a saved record fell, the records as
-//     they stand, and "PRESS A" blinking. A or START fades back to the
-//     title.
-//   - START pauses: a blip, "PAUSED", the music and the engine's drone
-//     stop (an effect already sounding fades out on its own) and the
-//     picture holds; START again goes on from where it was, with the blip.
+//     lap 3 is FINISH, with a fanfare: the picture stops and the word drops
+//     in from the top in big letters and bounces on the sky. Then it rises
+//     to the top, the road and the sky dim (the jeep and everything on the
+//     road gone), and the results come up under it: the race's time (or,
+//     after TIME UP, the distance reached in km), the three laps with BEST
+//     by the fastest, or NEW RECORD (and a chime) where a saved record
+//     fell, the records as they stand, and "PRESS A" blinking at the
+//     bottom. A or START fades back to the title.
+//   - START pauses: a blip, the picture holds and dims under a bright
+//     "PAUSED" and HUD, and the music and the engine's drone stop (an
+//     effect already sounding fades out on its own); START again goes on
+//     from where it was, at full brightness, with the blip.
 //   - SELECT, in a race, shows a readout on the bottom two rows: the CPU
 //     time of the busiest frame of the last 16 and its highest so far, the
 //     sprites and matrices used, the busiest scanline's sprite time (cycles

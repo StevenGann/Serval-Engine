@@ -88,6 +88,7 @@ enum {
     SPR_LOGO,  // 64x32: LOGO_FRAMES pieces of "SAVANNA RUN"
     SPR_DIGIT, // 32x32: "1", "2", "3" (frame n - 1 is n)
     SPR_GO,    // 64x32: "GO"
+    SPR_WORDS, // 64x32: WORD_PIECES pieces of "FINISH", then of "TIME UP"
     SPR_DUST,  // 16x16: a puff of dust, DUST_THICK then DUST_THIN
     SPR_OBJECTS,
     SPRITE_COUNT = SPR_OBJECTS + OBJECTS * ROAD_SIZE_CLASSES,
@@ -118,6 +119,12 @@ enum { DUST_THICK, DUST_THIN, DUST_FRAMES };
 // The logo: SAVANNA in three 64x32 pieces side by side, RUN in two under
 // them; LOGO_W wide in all, drawn by screens.c.
 enum { LOGO_SA, LOGO_VAN, LOGO_NA, LOGO_RU, LOGO_UN, LOGO_FRAMES };
+
+// The race's last words in the big letters, each WORD_PIECES 64x32 pieces
+// side by side (WORD_PIECES * 64 wide): frame WORD_FINISH * WORD_PIECES + p
+// is piece p of FINISH.
+enum { WORD_FINISH, WORD_TIME_UP, WORDS };
+#define WORD_PIECES 3
 
 // The sprite group's palettes. The first TINTED_PALETTES take the time of
 // day. The jeep braking (its tail lights lit) is drawn with

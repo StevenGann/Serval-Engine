@@ -6,8 +6,12 @@
 
 #include "track.h"
 
-// The engine's third text style, light red (text.h): SAVE FAILED.
+// The engine's third text style, light red (text.h): SAVE FAILED, and the
+// last seconds of the clock.
 #define STYLE_WARNING 2
+// The fourth, set by game_init() to a sunlit orange: labels (LAP, TIME,
+// KM/H, BEST RACE ...), so the numbers beside them stand out.
+#define STYLE_LABEL 3
 
 // The title: clears the text and shows the records. title_draw() each
 // frame (`frames` since the title came up): the logo and PRESS START

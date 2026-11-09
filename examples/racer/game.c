@@ -13,13 +13,18 @@
 // every frame, and the music and the drone stop until it goes on. Each
 // screen starts its own sound: the title its jingle once; a race the
 // engine idling and the countdown's beeps, then the race tune from GO.
-// When the race is over, FINISH or TIME UP holds over the stopped picture
-// with its fanfare or phrase, then the results come up over it; the
-// records are taken (and saved, if one fell) as they do. A or START goes
-// back to the title.
+// When the race is over, FINISH or TIME UP drops in over the stopped
+// picture with its fanfare or phrase, then rises to the top while the
+// picture dims and the results come up under it; the records are taken
+// (and saved, if one fell) as they do. A or START goes back to the title.
 //
 // Everything is loaded once at boot, under a black screen, so changing
-// screens is a fade of the brightness and some text.
+// screens is a fade of the brightness and some text. Two more effects of
+// the whole picture: a white flash (the brightness again) for a crash, GO
+// and a new lap; and a dimming of the road and the sky behind the results
+// and PAUSED (alpha blending with no colour from behind, so a layer shows
+// at a fraction of its brightness; the text layer isn't blended, so the
+// text stays bright).
 
 #include "game.h"
 
@@ -37,6 +42,11 @@
 #define ENDING_FRAMES 150   // FINISH or TIME UP over the stopped race, then the results
 #define TITLE_SPEED FX(2)   // the title's cruise, track units a frame: 110 km/h
 #define TITLE_START FX(160) // where it starts: ten segments past the start line
+#define FLASH_STEP 2        // a flash's brightness fades this much a frame
+#define FLASH_CRASH 12      // a crash's flash
+#define FLASH_GO 8          // GO's, and a new lap's
+#define DIM_MAX 9           // dimmed by 9/16 (to 7/16), a sixteenth a frame
+#define WORD_RISE 2         // FINISH or TIME UP rises to the results' top, pixels a frame
 
 // The game's own events, beside race_step()'s RACE_EV_* bits (the low ones).
 #define EV_COUNT (1u << 16)  // a number of the countdown came up (3, 2, 1)
@@ -59,6 +69,10 @@ static u32 races;         // races started since boot
 static int brightness = SCREEN_BRIGHTNESS_MIN;
 static int fade = 1; // 1 fading in, -1 fading out, 0 neither
 static void (*after_fade)(void);
+static int flash;       // a white flash's brightness, on top of the fade's
+static int dim;         // the picture behind the results or PAUSED: 0 to DIM_MAX
+static u32 fell;        // the records that fell, for the results
+static bool results_up; // ... and the results text is up
 
 // Fades to black, then calls next() to set up the next screen under the
 // black, and fades that in.
@@ -79,7 +93,25 @@ static void run_fade(void) {
             after_fade();
         }
     }
-    screen_set_brightness(brightness);
+    screen_set_brightness(brightness + flash);
+    flash = int_max(flash - FLASH_STEP, 0);
+}
+
+// Dims the road and the sky (and, while paused, the sprites; behind the
+// results only FINISH or TIME UP is a sprite, and it stays bright) toward
+// DIM_MAX behind the results and PAUSED, and undims at once otherwise: each
+// layer blends with what is behind it at a weight of 0, so it shows at
+// (16 - dim) / 16 of its brightness. Blending waits while the brightness
+// isn't 0 (a fade, a flash).
+static void run_dim(void) {
+    bool dimmed = state == PAUSED || state == RESULTS;
+    dim = dimmed ? int_min(dim + 1, DIM_MAX) : 0;
+    u32 top = LAYER_PLAYFIELD | LAYER_BACKGROUND | (state == PAUSED ? LAYER_SPRITES : 0);
+    u32 bottom = LAYER_PLAYFIELD | LAYER_BACKGROUND | LAYER_BACKDROP;
+    if (dim)
+        screen_set_blend(top, bottom, (u32)(16 - dim), 0);
+    else
+        screen_set_blend(0, 0, 0, 0);
 }
 
 // The driving buttons held this frame, as race_step() takes them.
@@ -97,7 +129,7 @@ static u16 held_buttons(void) {
 static void show_ending(void) {
     state = ENDING;
     screen_frames = 0;
-    hud_message_hold(race.finished ? "FINISH" : "TIME UP");
+    hud_message_clear();
 }
 
 // Everything that happens, in one place: race_step()'s RACE_EV_* bits and
@@ -110,6 +142,7 @@ static void events(u32 ev) {
     if (ev & EV_COUNT)
         sound_play(SND_COUNT);
     if (ev & RACE_EV_GO) {
+        flash = FLASH_GO;
         sound_play(SND_GO);
         sound_tune(TUNE_RACE);
     }
@@ -117,6 +150,7 @@ static void events(u32 ev) {
         const char* lap =
             race.lap == RACE_LAPS - 1 ? "FINAL LAP" : text_format("LAP %d", race.lap + 1);
         hud_message(lap, text_format("+%u", race.last_bonus / 60));
+        flash = FLASH_GO;
         sound_play(SND_LAP);
     } else if (ev & RACE_EV_CHECKPOINT) {
         hud_message(text_format("+%u", race.last_bonus / 60), NULL);
@@ -125,6 +159,7 @@ static void events(u32 ev) {
     if (ev & RACE_EV_BUMP)
         sound_play(SND_BUMP);
     if (ev & RACE_EV_CRASH) {
+        flash = FLASH_CRASH;
         sound_play(SND_CRASH);
         sound_play(SND_CRASH_TONE);
     }
@@ -198,20 +233,23 @@ static void start_race(void) {
     sound_quiet();
 }
 
+// The results: FINISH or TIME UP rises to the top as the picture dims,
+// then the text comes up under it (results_frame()).
 static void show_results(void) {
     state = RESULTS;
     screen_frames = 0;
     hud_readout_off();
-    u32 fell = records_take(&race);
-    results_show(&race, fell);
+    text_clear();
+    results_up = false;
+    fell = records_take(&race);
     events(fell ? EV_RECORD : 0);
 }
 
 // The race's picture: the road, the HUD, the jeep, then everything in front
 // of it, nearest first. `running`: a frame of racing (not paused, not over),
-// so the sky and the time of day move on. Behind the results only the road,
-// the sky and the jeep stay: the text must read, and the scenery, traffic
-// and the checkpoints' white checks would be under it.
+// so the sky and the time of day move on. Behind the results only the road
+// and the sky stay, dimmed: the text must read, and the jeep, the scenery,
+// traffic and the checkpoints' white checks would be under it.
 static void draw_race(bool running) {
     road_frame(&road, &savanna, race.distance, race.lateral);
     if (state != PAUSED) {
@@ -220,13 +258,12 @@ static void draw_race(bool running) {
     }
     int shake = state == RACE || state == PAUSED ? view_shake(&race) : 0;
     view_draw(&road, shake);
-    if (state != RESULTS)
+    if (state != RESULTS) {
         hud_draw(&race, since_go, state == PAUSED);
-    jeep_draw_race(&race, &road, shake);
-    if (state != RESULTS)
+        jeep_draw_race(&race, &road, shake);
         dust_draw(&road, shake);
-    if (state != RESULTS)
         objects_draw(&savanna, &road, race.distance, race.traffic, race.traffic_count, shake);
+    }
     hud_readout_draw();
 }
 
@@ -256,15 +293,31 @@ static void race_frame(void) {
 }
 
 static void ending_frame(void) {
+    hud_word_draw(race.finished, hud_word_drop(screen_frames));
     if (++screen_frames == ENDING_FRAMES)
         show_results();
     draw_race(false);
 }
 
 static void results_frame(void) {
-    if (!fade && (button_pressed(BUTTON_A) || button_pressed(BUTTON_START)))
-        fade_to(show_title);
-    results_draw(screen_frames++);
+    // The word rises from where it landed to the top; then the text.
+    int y = int_max(hud_word_drop(ENDING_FRAMES) - (int)screen_frames * WORD_RISE, 0);
+    hud_word_draw(race.finished, y);
+    if (y == 0 && !results_up) {
+        results_up = true;
+        results_show(&race, fell);
+    }
+    if (results_up) {
+        if (!fade && (button_pressed(BUTTON_A) || button_pressed(BUTTON_START))) {
+            // Off with the text, and on from the dimmed picture's
+            // brightness to black, without a jump.
+            text_clear();
+            brightness = -dim;
+            fade_to(show_title);
+        }
+        results_draw(screen_frames);
+    }
+    screen_frames++;
     draw_race(false);
 }
 
@@ -276,12 +329,14 @@ void game_init(void) {
     art_build();
     view_init();
     text_set_shadow(true); // text reads over the bright sky
+    text_set_style_color(STYLE_LABEL, COLOR_RGB(255, 186, 96), COLOR_RGB(0, 0, 0));
     // Each text style builds its glyphs the first time it is used (tens of
     // thousands of cycles): use them all now, under the black, not in the
     // middle of a race.
     text_clear();
     text_set_style(TEXT_HIGHLIGHT);
     text_set_style(STYLE_WARNING);
+    text_set_style(STYLE_LABEL);
     text_set_style(TEXT_NORMAL);
     records_load();
     sound_init();
@@ -305,4 +360,5 @@ void game_frame(void) {
         results_frame();
         break;
     }
+    run_dim();
 }
