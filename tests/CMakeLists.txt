@@ -497,6 +497,12 @@ else()
     add_test(NAME svlua_tool
         COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
                 "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svlua_test.py")
+    # servle's game script (examples/servle/servle.lua) run on the VM by
+    # svlua_runner with scripted buttons: the marking rule, the word lookup,
+    # the controls, a round's flow, the statistics and their save.
+    add_test(NAME servle_script
+        COMMAND "${CMAKE_COMMAND}" -E env "SERVAL_SVLUA_RUNNER=$<TARGET_FILE:svlua_runner>"
+                "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/servle_test.py")
     # docs/lua.md "Testing": the programs in svlua/diff/ run under real Lua
     # (Lua 5.4 built with LUA_32BITS, named by SERVAL_LUA32 when the test
     # runs; tools/setup-dev.sh --with-lua32) and compiled on the VM, frame by
