@@ -89,6 +89,7 @@ local mood_time = 0
 local flash_time = 0   -- frames the streak's number still flashes
 local confetti_to_throw = 0 -- scraps still to throw, a few a frame
 local confetti_live = 0     -- scraps thrown and not yet gone
+local cursor_at = -1        -- the cell the ring and arrows are around (0-29; -1: hidden)
 
 -- Numbers -------------------------------------------------------------------
 
@@ -293,6 +294,7 @@ function start_round()
     wait(1) -- the search takes most of a frame's operations
   end
   clear_round_end()
+  wait(1) -- the board next: a round's start is spread over three frames,
   for i = 1, 30 do
     letters[i] = 0
     marks[i] = 0
@@ -302,6 +304,7 @@ function start_round()
   row = 0
   col = 0
   message_time = 0
+  wait(1) -- the strip last: each well inside a frame's operations
   draw_strip()
   state = STATE_PLAY
 end
@@ -689,6 +692,7 @@ function Motion:create()
   cursor = spawn(Cursor, 0, 0)
   cursor.frame = TILE_CURSOR
   cursor.depth = DEPTH_CURSOR
+  show_cursor(SPRITE_HIDDEN) -- cursor_at's -1: shown when a guess is typed
   local t = 0
   while true do
     fade_in()
@@ -760,27 +764,37 @@ end
 -- only 2 pixels apart, so the arrows sit on the gap between them, over the
 -- ring and the tile's edge, reaching the neighbouring rows' tiles only with
 -- their dark outline, and bob in towards the letter, never over the
--- neighbours; on the top row the up arrow stops at the screen's edge.
+-- neighbours; on the top row the up arrow stops at the screen's edge. They
+-- are moved and shown only when the cursor's cell changes or the typing
+-- starts or stops, and the bob, like the waves, every WAVE_EVERY frames.
 function bob_arrows(t)
-  if state ~= STATE_PLAY then
-    set_sprite_flags(arrow_up, SPRITE_HIDDEN)
-    set_sprite_flags(arrow_down, SPRITE_HIDDEN)
-    set_sprite_flags(cursor, SPRITE_HIDDEN)
+  local at = -1
+  if state == STATE_PLAY then at = row * 5 + col end
+  if at ~= cursor_at then
+    cursor_at = at
+    if at < 0 then
+      show_cursor(SPRITE_HIDDEN)
+      return
+    end
+    cursor.x = tile_x(at + 1)
+    cursor.y = tile_y(at + 1)
+    local x = BOARD_X + col * CELL + ARROW_INSET
+    arrow_up.x = x
+    arrow_down.x = x
+    show_cursor(palette(PAL_GOLD))
+  elseif at < 0 or t % WAVE_EVERY ~= 0 then
     return
   end
-  local i = row * 5 + col + 1
-  cursor.x = tile_x(i)
-  cursor.y = tile_y(i)
   local bob = 1 - fx_cos(t % ARROW_BOB * 65536 // ARROW_BOB) -- 0 to 2 pixels and back
-  local x = BOARD_X + col * CELL + ARROW_INSET
   local top = BOARD_Y + row * CELL -- the cell's top
-  arrow_up.x = x
   arrow_up.y = math.max(top - 3 + bob, 0.0)
-  arrow_down.x = x
   arrow_down.y = top + CELL - 5 - bob
-  set_sprite_flags(arrow_up, palette(PAL_GOLD))
-  set_sprite_flags(arrow_down, palette(PAL_GOLD))
-  set_sprite_flags(cursor, palette(PAL_GOLD))
+end
+
+function show_cursor(f)
+  set_sprite_flags(arrow_up, f)
+  set_sprite_flags(arrow_down, f)
+  set_sprite_flags(cursor, f)
 end
 
 -- A tile back where it rests, straight, among the others.

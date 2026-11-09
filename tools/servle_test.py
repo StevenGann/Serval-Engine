@@ -62,6 +62,10 @@ REVEAL_MAX = 120  # the design's bound on REVEAL_END
 BLOB_LIMIT = 26000  # the debug link's hot reload (docs/debug-link.md, "The scratch")
 
 A, B, SELECT, START, RIGHT, LEFT, UP, DOWN, R, L = (1 << n for n in range(10))
+# Frames a round's start spends before play reads input on the frame after
+# START (or the A that starts the next round), the answer's pick not counted:
+# start_round's waits, which spread clearing the board over frames.
+ROUND_START = 2
 IDLE_AFTER_GUESS = 130
 
 
@@ -101,7 +105,7 @@ def timeline(guesses, start_frame=5):
     guess, the frames of the A presses that enter them, and the frame the
     last guess's idle frames end."""
     buttons = [(start_frame, START, 1)]
-    t = start_frame + 2
+    t = start_frame + 2 + ROUND_START
     enters = []
     for word in guesses:
         for c in word:
@@ -132,6 +136,19 @@ def play(guesses, answer=None, start_frame=5, extra=(), frames=None, probe=""):
     run = run_vm(source() + probe, frames=frames or end, start=["GAME"], buttons=buttons,
                  set_=set_, files=FILES)
     run.enters, run.end = enters, end
+    return run
+
+
+def after_start(buttons, frames, answer="plant", printed=()):
+    """The game with START on frame 5, the answer preset, and buttons, a
+    frame count and frames to print given as if play read input from frame
+    6: each is moved ROUND_START frames later."""
+    late = [(frame + ROUND_START, button, length) for frame, button, length in buttons]
+    run = run_vm(source(), frames=frames + ROUND_START, start=["GAME"],
+                 buttons=[(5, START, 1)] + late,
+                 set_={"ANSWER": servle_words.pack_word(answer)}, files=FILES,
+                 printed=",".join(str(f + ROUND_START) for f in printed) or "last")
+    run.late = ROUND_START
     return run
 
 
@@ -234,12 +251,7 @@ end
 
     @needs_runner
     def test_a_on_empty_cell_and_b(self):
-        src = source()
-        set_ = {"ANSWER": servle_words.pack_word("plant")}
-
-        def run_with(buttons, frames):
-            return run_vm(src, frames=frames, start=["GAME"], buttons=[(5, START, 1)] + buttons,
-                          set_=set_, files=FILES)
+        run_with = after_start
 
         # A on the empty first cell: a buzz, the cursor stays.
         run = run_with([(8, A, 1)], 12)
@@ -266,15 +278,12 @@ end
 
     @needs_runner
     def test_spin_wraps_and_repeats(self):
-        src = source()
-
         def letter(buttons, frames):
-            run = run_vm(src, frames=frames, start=["GAME"], buttons=[(5, START, 1)] + buttons,
-                         set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
-            return self.array(run, "LETTERS")[0]
+            return self.array(after_start(buttons, frames), "LETTERS")[0]
 
         self.assertEqual(letter([(8, DOWN, 1)], 10), 26)  # empty, Down: Z
         self.assertEqual(letter([(8, DOWN, 1), (11, UP, 1)], 13), 1)  # Z, Up: A
+        self.assertEqual(letter([(8, UP, 1), (11, DOWN, 1)], 13), 26)  # A, Down: Z
         self.assertEqual(letter([(8, UP, 17 + 4 * 3)], 8 + 17 + 4 * 3 + 2), 5)  # five steps: E
         self.assertEqual(letter([(8, UP, 17 + 4 * 3 - 1)], 8 + 17 + 4 * 3 + 2), 4)  # a frame less
 
@@ -305,6 +314,32 @@ end
         self.assertIn(names().lookup("SND_WIN"), self.sounds(run))
 
     @needs_runner
+    def test_confetti_falls_and_goes(self):
+        # With sys_movement, as main.c runs it: a won round's confetti falls
+        # off the screen and is killed within 120 frames, and the next round
+        # starts with the entities the round before the win had.
+        buttons, enters, _ = timeline(["plant"])
+        landed = enters[0] + REVEAL_END
+        gone = landed + 120
+        again = gone + 5
+        after = again + 10
+        frames = [enters[0], landed + 20, gone, after]
+        run = run_vm(source(), frames=after, start=["GAME"], buttons=buttons + [(again, A, 1)],
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
+                     movement=True, printed=",".join(map(str, frames)))
+
+        def objects(frame):
+            return [e["object"] for e in run.states[frame][2].values()]
+
+        self.assertEqual(run.states[landed + 20][0]["STATE"], STATE_WON)
+        self.assertIn("CONFETTI", objects(landed + 20))
+        self.assertEqual(run.states[gone][0]["STATE"], STATE_WON)
+        self.assertNotIn("CONFETTI", objects(gone))
+        self.assertEqual(run.states[gone][0]["CONFETTI_LIVE"], 0)
+        self.assertEqual(run.states[after][0]["STATE"], STATE_PLAY)
+        self.assertEqual(len(objects(after)), len(objects(enters[0])))
+
+    @needs_runner
     def test_loss_after_six(self):
         run = play(["crane"] * 6, answer="plant")
         self.assertEqual(self.glob(run, "STATE"), STATE_LOST)
@@ -316,7 +351,7 @@ end
     def test_next_round_clears_and_picks(self):
         buttons, _, end = timeline(["plant"])
         again = end + 100
-        run = run_vm(source(), frames=again + 3, start=["GAME"], buttons=buttons + [(again, A, 1)],
+        run = run_vm(source(), frames=again + 3 + ROUND_START, start=["GAME"], buttons=buttons + [(again, A, 1)],
                      set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
         self.assertEqual((self.glob(run, "STATE"), self.glob(run, "ROW"), self.glob(run, "COL")),
                          (STATE_PLAY, 0, 0))
@@ -330,7 +365,7 @@ end
         src = source()
         picked = []
         for frame in (5, 6, 7, 30, 200):
-            run = run_vm(src, frames=frame + 3, start=["GAME"], buttons=[(frame, START, 1)],
+            run = run_vm(src, frames=frame + 3 + ROUND_START, start=["GAME"], buttons=[(frame, START, 1)],
                          files=FILES)
             self.assertEqual(self.glob(run, "STATE"), STATE_PLAY)
             word = unpack(self.glob(run, "ANSWER"))
@@ -430,11 +465,7 @@ end
         # Up held while the cursor moves on (A's jump to the first empty cell,
         # Right) and let go several frames later: the cell the cursor moved to
         # stays empty, and Up must be let go before it spins again.
-        def run_with(buttons, frames):
-            return run_vm(source(), frames=frames, start=["GAME"],
-                          buttons=[(5, START, 1)] + buttons,
-                          set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
-
+        run_with = after_start
         # Up from frame 10: A, then B on its first repeat; A jumps to col 1
         # while Up is down until frame 30, past the next repeat.
         run = run_with([(10, UP, 21), (28, A, 1)], 36)
@@ -453,6 +484,35 @@ end
         run = run_vm(source(), frames=10, start=["GAME"], files=FILES)  # warns: run_vm fails
         self.assertEqual(self.glob(run, "STATE"), STATE_TITLE)
         self.assertEqual(self.array(run, "STATS"), [0, 0, 0, 0])
+
+    def run_with_save(self, cells, version):
+        """The game booted with save slot 0 holding `cells` at `version`,
+        written by a probe that runs before Game's room_start."""
+        probe = """
+Probe = object {}
+probe_data = array(%d)
+function Probe:room_start()
+%s  save_write(0, probe_data, %d)
+end
+""" % (len(cells), "".join("  probe_data[%d] = %d\n" % (i, v) for i, v in enumerate(cells, 1)),
+       version)
+        return run_vm(source() + probe, frames=10, start=["PROBE", "GAME"], files=FILES)
+
+    @needs_runner
+    def test_save_is_read_at_boot(self):
+        run = self.run_with_save([9, 5, 2, 4], 1)
+        self.assertEqual(self.glob(run, "STATE"), STATE_TITLE)
+        self.assertEqual(self.array(run, "STATS"), [9, 5, 2, 4])
+        row = script_const("TITLE_STATS_ROW")  # the streak, then the best
+        self.assertEqual([c for c in run.calls_of("TEXT_PRINT_NUMBER") if c[1] == row],
+                         [(12, row, 2, 3), (22, row, 4, 3)])
+
+    @needs_runner
+    def test_save_of_another_version_or_size_starts_at_zero(self):
+        for cells, version in (([9, 5, 2, 4], 2), ([9, 5, 2], 1), ([9, 5, 2, 4, 1], 1)):
+            with self.subTest(cells=cells, version=version):
+                run = self.run_with_save(cells, version)
+                self.assertEqual(self.array(run, "STATS"), [0, 0, 0, 0])
 
     @needs_runner
     def test_counter_display_clamps(self):
@@ -497,6 +557,63 @@ end
                 if not e["FLAGS"] & scaled:
                     self.assertEqual(e["SCALE"], 0, (frame, e["object"]))
 
+    def assert_cursor(self, run, frame, cell):
+        """At the frame, the gold ring and the two arrows are around the
+        board's cell (row, col), or hidden when cell is None."""
+        n = names()
+        hidden, gold = n.lookup("SPRITE_HIDDEN"), (n.lookup("PAL_GOLD") + 1) << 8
+        entities = run.states[frame][2].values()
+        ring = [e for e in entities if e["object"] == "CURSOR"]
+        arrows = [e for e in entities if e["object"] == "ARROW"]
+        self.assertEqual((len(ring), len(arrows)), (1, 2), frame)
+        if cell is None:
+            for e in ring + arrows:
+                self.assertTrue(e["FLAGS"] & hidden, (frame, e["object"]))
+            return
+        x = n.lookup("BOARD_X") + cell[1] * n.lookup("CELL")
+        top = n.lookup("BOARD_Y") + cell[0] * n.lookup("CELL")
+        inset, arrow_inset = script_const("TILE_INSET"), script_const("ARROW_INSET")
+        for e in ring + arrows:
+            self.assertFalse(e["FLAGS"] & hidden, (frame, e["object"]))
+            self.assertEqual(e["FLAGS"] & 0xF00, gold, (frame, e["object"]))
+        self.assertEqual((ring[0]["X"] // 256, ring[0]["Y"] // 256),
+                         (x - inset, top - inset), (frame, cell))
+        up, down = sorted(arrows, key=lambda e: e["Y"])
+        self.assertEqual((up["X"] // 256, down["X"] // 256), (x + arrow_inset,) * 2, (frame, cell))
+        # Each bobs up to 2 pixels in towards the cell: the up arrow from 3
+        # pixels above its top (never above the screen), the down one from 5
+        # above its bottom.
+        self.assertTrue(max(top - 3, 0) <= up["Y"] / 256 <= max(top - 1, 0), (frame, cell, up["Y"]))
+        bottom = top + n.lookup("CELL")
+        self.assertTrue(bottom - 7 <= down["Y"] / 256 <= bottom - 5, (frame, cell, down["Y"]))
+
+    @needs_runner
+    def test_cursor_follows_every_move(self):
+        # Right, Left, Up then A's jump to the first empty cell, B on an empty
+        # cell stepping left; the title shows none.
+        moves = [(8, RIGHT, 1), (12, LEFT, 1), (16, UP, 1), (18, A, 1), (22, B, 1), (26, RIGHT, 1)]
+        checks = [(9, (0, 1)), (13, (0, 0)), (17, (0, 0)), (19, (0, 1)), (23, (0, 0)),
+                  (27, (0, 1)), (40, (0, 1)), (41, (0, 1)), (42, (0, 1)), (43, (0, 1))]
+        run = after_start(moves, 44, printed=[f for f, _ in checks])
+        for frame, cell in checks:
+            self.assert_cursor(run, frame + run.late, cell)
+        title = run_vm(source(), frames=4, start=["GAME"], files=FILES)
+        self.assert_cursor(title, 4, None)
+        # Hidden during a reveal, then on the next row's first cell; hidden in
+        # a won round, then on the new round's first cell.
+        buttons, enters, end = timeline(["crane", "plant"])
+        landed = [e + REVEAL_END for e in enters]
+        again = landed[1] + PROMPT_DELAY + 10
+        new_round = again + ROUND_START + 2
+        frames = [enters[0] + 1, landed[0] - 1, landed[0] + 1, enters[1] - 1, enters[1] + 1,
+                  landed[1] + 50, again - 1, new_round]
+        run = run_vm(source(), frames=new_round, start=["GAME"], buttons=buttons + [(again, A, 1)],
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
+                     printed=",".join(map(str, frames)))
+        self.assertEqual(run.states[new_round][0]["STATE"], STATE_PLAY)
+        for frame, cell in zip(frames, [None, None, (1, 0), (1, 4), None, None, None, (0, 0)]):
+            self.assert_cursor(run, frame, cell)
+
     @needs_runner
     def test_every_sprite_is_drawn_on_the_screen(self):
         start = 40
@@ -505,12 +622,13 @@ end
         # The title's tiles dropping, play (the cursor's ring and arrows), a tile
         # mid-flip, the win's tiles hopping and tilted under the dropping cheer
         # and the confetti, and the win a little later.
-        frames = [10, start + 3, enters[0] + REVEAL_END // 2, landed + 10, landed + 30]
+        play_frame = start + 3 + ROUND_START
+        frames = [10, play_frame, enters[0] + REVEAL_END // 2, landed + 10, landed + 30]
         run = run_vm(source(), frames=landed + 31, start=["GAME"], buttons=buttons,
                      set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
                      printed=",".join(map(str, frames)))
         self.assertEqual(run.states[landed + 10][0]["STATE"], STATE_WON)
-        self.assertIn("CURSOR", {e["object"] for e in run.states[start + 3][2].values()})
+        self.assertIn("CURSOR", {e["object"] for e in run.states[play_frame][2].values()})
         busy = run.states[landed + 10][2].values()
         self.assertLessEqual({"TILE", "GLYPH", "CONFETTI", "ARROW", "SERVAL"},
                              {e["object"] for e in busy})
