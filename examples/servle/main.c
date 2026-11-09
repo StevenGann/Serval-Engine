@@ -5,9 +5,10 @@
 // Rules: the answer is a five-letter word; you have six guesses, and each
 // must be in the accepted-guess list (6,455 words; the answers are 1,508
 // common ones among them), or it is refused and the row stays editable.
-// Each letter of an entered guess is marked correct (green: right letter,
-// right place), present (gold: in the word, another place) or absent
-// (slate). Repeated letters by the usual two-pass rule: first every correct
+// Each letter of an entered guess is marked correct (amber, the serval's coat,
+// with dark spots: right letter, right place), present (sky blue, with one
+// small cross in its top-right corner: in the word, another place) or absent
+// (dim plum). Repeated letters by the usual two-pass rule: first every correct
 // letter, then, left to right, a letter is present only while the answer
 // still has a copy of it that no earlier letter has matched (answer ABBEY,
 // guess BABES: present, present, correct, correct, absent). Guessing the
@@ -59,7 +60,8 @@
 //     sys_movement. Every sprite is in screen space (SPRITE_SCREEN), so the
 //     camera, which the script drifts slowly, moves only the background: two
 //     wrapping map layers of spots, the far one at half speed
-//     (scroll_factor). Brightness fades from the script
+//     (scroll_factor), over a backdrop that is a color per line
+//     (raster_backdrop: a dithered gradient). Brightness fades from the script
 //   - Music (PsgSong, bound to the script with vm_bind) and sound effects
 //     with priorities: the effects on square 1, which the tune leaves free
 //   - The C side's small role, what Studio Advance generates as C for a
@@ -76,19 +78,22 @@
 // What to expect when booting the ROM:
 //   - The Serval Engine splash: "made with" and the engine's logo (about 3
 //     seconds; any button skips it once the logo is in), a moment of black
-//     while the art is built, then the title fades in over dark plum with
-//     darker and lighter spots drifting slowly at two speeds: "SERVLE" in six
-//     big tiles (green, gold and slate, the marks' colors) that drop in one by
-//     one, tilted, bounce, straighten and then wave gently; a serval's face,
-//     which blinks now and then; "GUESS THE WORD IN SIX TRIES", a blinking gold
-//     "PRESS START", the saved STREAK and BEST (0 and 0 on a first boot), and
+//     while the art is built, then the title fades in over a plum dusk (deep
+//     at the top, warmer and redder at the bottom, finely striped where it
+//     blends) with lighter spots drifting slowly at two speeds: "SERVLE" in
+//     six big bevelled tiles (amber, sky blue and dim plum, the marks' colors)
+//     that drop in one by one, tilted, bounce, straighten and then wave
+//     gently; a serval's face, which blinks now and then; "GUESS THE WORD IN
+//     SIX TRIES", a blinking amber "PRESS START", the saved STREAK and BEST (0
+//     and 0 on a first boot, in amber), and
 //     the controls, "UP/DOWN:SPIN A:ENTER B:ERASE". A light tune plays and
 //     loops ("Spot the Word", G major, about 34 seconds): a square-wave melody
 //     over a soft bass on the wave channel and a quiet noise hi-hat.
 //   - START (or A): a rising three-note chime; the screen cuts to black and
-//     the board fades in: 5 x 6 empty slots in the middle, STREAK and BEST
-//     at the left with the serval below them, WON and PLAYED at the right,
-//     and the alphabet A to Z along the bottom. The cursor's cell has a gold
+//     the board fades in: 5 x 6 empty slots, sunken wells, in the middle,
+//     STREAK and BEST at the left with the serval below them, WON and PLAYED
+//     at the right, and the alphabet A to Z along the bottom. A typed letter
+//     is a cream tile. The cursor's cell has a gold
 //     ring, with gold arrows above and below that bob. The tune goes on.
 //   - UP/DOWN spin the letter in the cursor's cell to the next or previous
 //     letter, wrapping (from an empty cell UP gives A and DOWN gives Z); held,
@@ -113,8 +118,9 @@
 //     cheer drops in letter by letter with a bounce and then waves, over the
 //     row below the word (over the fifth row after a win on the sixth): by
 //     the number of guesses, "PURRFECT!", "FIERCE!", "SWIFT!", "NICE!",
-//     "CLOSE!" or "PHEW!". Confetti in five colors falls over the board, a
-//     rising four-note fanfare plays, the serval's eyes turn happy and it
+//     "CLOSE!" or "PHEW!". Confetti in five colors and shapes (squares,
+//     streamers, diamonds, stars) falls over the board, a rising four-note
+//     fanfare plays, the serval's eyes turn happy and it
 //     hops three times, and the new STREAK flashes; WON and PLAYED count up
 //     (and BEST, when the streak passes it). After a second and a half,
 //     "A:PLAY AGAIN" along the bottom: A starts a new round with a new word
@@ -150,7 +156,7 @@ int main(void) {
     tileset_load(&spots_tileset);
     map_load(&spots_far_layer);
     map_load(&spots_near_layer);
-    screen_set_backdrop(COLOR_RGB(43, 23, 70)); // plum, behind the spots
+    raster_backdrop(backdrop_colors); // a plum dusk behind the spots, a color per line
     // The text's colors are the script's: its four styles are the marks'.
     text_set_shadow(true);
     vm_use_saves(); // the script keeps its statistics in save slot 0

@@ -7,6 +7,9 @@
 // One set of tile pictures shows every state of a cell: the palettes PAL_TYPED
 // to PAL_CORRECT give the same art each state's face, letter and outline
 // colors, and the script picks one per tile (SPRITE_PALETTE in its flags).
+// Even the marks' badges are drawn on every letter tile: the correct mark's
+// spots and the present mark's cross have colors of their own only in those
+// palettes, and are the face's color in the others.
 //
 // Sprite VRAM, in 8x8 tiles (1,024 in all): the board's tiles 31 frames of 16
 // (496), the cheer's glyphs 28 of 4 (112), the serval 4 frames of 64 (256),
@@ -16,33 +19,53 @@
 
 // --- Palettes ----------------------------------------------------------------
 
-// Colors 1-3 are the same in every tile and glyph palette: the empty slot
-// (frame 0 of the tiles) and the outlines look the same whatever palette a
-// tile or glyph has. The serval's palette is its own.
+// Colors 1-3 and 15 are the same in every tile and glyph palette: the empty
+// slot (frame 0 of the tiles) and the outlines look the same whatever palette
+// a tile or glyph has. The serval's palette is its own.
 #define OUTLINE COLOR_RGB(23, 11, 40)
-#define SLOT COLOR_RGB(29, 15, 50)
-#define SLOT_EDGE COLOR_RGB(93, 70, 134)
+#define SLOT COLOR_RGB(33, 18, 56)
+#define SLOT_EDGE COLOR_RGB(98, 74, 140)
+#define SLOT_DARK COLOR_RGB(16, 7, 30) // the slot's inner shadow, top and left
 enum { C_OUTLINE = 1, C_SLOT, C_SLOT_EDGE, C_FACE, C_INK, C_CONFETTI };
+// After the confetti's five: a face's bevel (light along its top, shade along
+// its bottom and under the letter), the marks' badges, the slot's shadow.
+enum { C_LIGHT = 11, C_SHADE, C_SPOTS, C_DOT, C_SLOT_DARK };
 
 // The confetti's five colors (PAL_GOLD and PAL_RED alike), C_CONFETTI on.
 #define CONFETTI_COLORS                                                                            \
-    COLOR_RGB(244, 177, 46), COLOR_RGB(62, 194, 112), COLOR_RGB(255, 143, 143),                    \
-        COLOR_RGB(127, 212, 255), COLOR_RGB(255, 241, 207)
+    COLOR_RGB(255, 170, 60), COLOR_RGB(96, 206, 244), COLOR_RGB(255, 132, 160),                    \
+        COLOR_RGB(255, 241, 207), COLOR_RGB(190, 150, 255)
 
-#define TILE_PALETTE(face, ink) {0, OUTLINE, SLOT, SLOT_EDGE, (face), (ink)}
+// The marks' colors: the serval's own amber for a letter in its place (with
+// the coat's dark spots), sky blue for one elsewhere in the word (with a
+// small cross), a dusky plum that sinks into the background for one not in
+// it. A palette's badges are its face color where the mark has none.
+#define TILE_PALETTE(face, ink, light, shade, spots, dot)                                          \
+    {0, OUTLINE, SLOT, SLOT_EDGE, (face),  (ink),   0,     0,                                      \
+     0, 0,       0,    (light),   (shade), (spots), (dot), SLOT_DARK}
+#define TYPED_FACE COLOR_RGB(255, 241, 207)
+#define ABSENT_FACE COLOR_RGB(72, 58, 104)
+#define PRESENT_FACE COLOR_RGB(84, 190, 236)
+#define CORRECT_FACE COLOR_RGB(246, 158, 46)
 
 static const u16 palettes[PALETTE_COUNT][16] = {
     // A tile's face and letter, in each of its states.
-    [PAL_TYPED] = TILE_PALETTE(COLOR_RGB(255, 241, 207), COLOR_RGB(43, 23, 70)),
-    [PAL_ABSENT] = TILE_PALETTE(COLOR_RGB(90, 81, 128), COLOR_RGB(214, 207, 238)),
-    [PAL_PRESENT] = TILE_PALETTE(COLOR_RGB(244, 177, 46), COLOR_RGB(61, 37, 0)),
-    [PAL_CORRECT] = TILE_PALETTE(COLOR_RGB(62, 194, 112), COLOR_RGB(5, 50, 26)),
+    [PAL_TYPED] = TILE_PALETTE(TYPED_FACE, COLOR_RGB(43, 23, 70), COLOR_RGB(255, 255, 244),
+                               COLOR_RGB(222, 198, 160), TYPED_FACE, TYPED_FACE),
+    [PAL_ABSENT] = TILE_PALETTE(ABSENT_FACE, COLOR_RGB(168, 156, 206), COLOR_RGB(98, 84, 134),
+                                COLOR_RGB(52, 40, 80), ABSENT_FACE, ABSENT_FACE),
+    [PAL_PRESENT] = TILE_PALETTE(PRESENT_FACE, COLOR_RGB(12, 38, 74), COLOR_RGB(176, 234, 255),
+                                 COLOR_RGB(42, 132, 192), PRESENT_FACE, COLOR_RGB(16, 64, 124)),
+    [PAL_CORRECT] = TILE_PALETTE(CORRECT_FACE, COLOR_RGB(66, 28, 0), COLOR_RGB(255, 214, 128),
+                                 COLOR_RGB(196, 104, 24), COLOR_RGB(150, 72, 16), CORRECT_FACE),
     // The cheer's glyphs, the arrows (C_FACE gold) and the confetti; a lost
-    // round's answer in red.
-    [PAL_GOLD] = {0, OUTLINE, SLOT, SLOT_EDGE, COLOR_RGB(255, 212, 94), COLOR_RGB(61, 37, 0),
-                  CONFETTI_COLORS},
-    [PAL_RED] = {0, OUTLINE, SLOT, SLOT_EDGE, COLOR_RGB(255, 143, 143), COLOR_RGB(61, 37, 0),
-                 CONFETTI_COLORS},
+    // round's answer in red. Their C_SHADE is the glyphs' lower half.
+    [PAL_GOLD] = {0, OUTLINE, SLOT, SLOT_EDGE, COLOR_RGB(255, 218, 100), COLOR_RGB(61, 37, 0),
+                  CONFETTI_COLORS, COLOR_RGB(255, 246, 200), COLOR_RGB(240, 150, 40), 0, 0,
+                  SLOT_DARK},
+    [PAL_RED] = {0, OUTLINE, SLOT, SLOT_EDGE, COLOR_RGB(255, 150, 150), COLOR_RGB(61, 37, 0),
+                 CONFETTI_COLORS, COLOR_RGB(255, 222, 222), COLOR_RGB(220, 72, 96), 0, 0,
+                 SLOT_DARK},
     // The serval: K outline, O ear fur, F face fur, P inner ear, W muzzle,
     // D spots, H the eyes' glint, N nose.
     [PAL_SERVAL] = {0, OUTLINE, COLOR_RGB(226, 162, 58), COLOR_RGB(238, 176, 68),
@@ -259,9 +282,59 @@ static void box(int x0, int y0, int w, int h, int fill, int edge, bool shadow) {
     }
 }
 
+// Recolors the inside of a box drawn by box(): the face's pixels on its row
+// `y` (counted from the box's top) take `color`, the rounded corners left as
+// they are.
+static void box_row(int x0, int y0, int w, int y, int color) {
+    for (int x = 2; x < w - 2; x++)
+        put(x0 + x, y0 + y, color);
+}
+
+// A tile's face: the box, lit along its top row and shaded along its bottom
+// two, so it stands up from the board.
+static void face(int x0, int y0, int h) {
+    box(x0, y0, TILE_SIZE, h, C_FACE, C_OUTLINE, true);
+    if (h >= 6) {
+        box_row(x0, y0, TILE_SIZE, 1, C_LIGHT);
+        box_row(x0, y0, TILE_SIZE, h - 2, C_SHADE);
+    }
+    if (h >= 10)
+        box_row(x0, y0, TILE_SIZE, h - 3, C_SHADE);
+}
+
 // The tile flattened to `h` rows about its middle, without its letter.
 static void squashed_tile(int h) {
-    box(TILE_LEFT, TILE_TOP + (TILE_SIZE - h) / 2, TILE_SIZE, h, C_FACE, C_OUTLINE, true);
+    face(TILE_LEFT, TILE_TOP + (TILE_SIZE - h) / 2, h);
+}
+
+// The marks' badges, in the margins the letter leaves (x 2-4 and 18-20, a
+// tile's own pixels): the correct mark's spots, a serval's coat, irregular
+// on purpose, and the present mark's small cross in the top-right corner.
+// Each is the face's color in the other palettes.
+typedef struct {
+    u8 x, y, w, h;
+} Badge;
+static const Badge coat_spots[] = {{2, 3, 3, 2},  {2, 9, 2, 3},   {3, 15, 2, 2},
+                                   {18, 4, 2, 3}, {19, 10, 2, 2}, {18, 15, 2, 2}};
+static const Badge dot = {17, 2, 3, 3};
+
+// A badge is a rectangle, its corners cut when it is 3 pixels or more each way.
+static void badge(const Badge* b, int color) {
+    for (int y = 0; y < b->h; y++) {
+        for (int x = 0; x < b->w; x++) {
+            bool corner = (x == 0 || x == b->w - 1) && (y == 0 || y == b->h - 1);
+            if (!(corner && b->w >= 3 && b->h >= 3))
+                put(TILE_LEFT + b->x + x, TILE_TOP + b->y + y, color);
+        }
+    }
+}
+
+// The empty slot: a well, its inside shadowed along the top and left.
+static void slot(void) {
+    box(TILE_LEFT, TILE_TOP, TILE_SIZE, TILE_SIZE, C_SLOT, C_SLOT_EDGE, false);
+    box_row(TILE_LEFT, TILE_TOP, TILE_SIZE, 1, C_SLOT_DARK);
+    for (int y = 2; y < TILE_SIZE - 2; y++)
+        put(TILE_LEFT + 1, TILE_TOP + y, C_SLOT_DARK);
 }
 
 #define SQUASH_HEIGHTS 3
@@ -406,6 +479,15 @@ static void serval_frame(int frame) {
 // 16x8 frame. ARROW_UP points up; ARROW_DOWN is the same picture upside down.
 static const char* const arrow[5] = {"...##...", "..####..", ".######.", "########", "########"};
 
+// The confetti's scraps, 5x5, one per color: a square, a streamer each way, a
+// diamond, a star.
+static const char* const confetti[CONFETTI_FRAMES][5] = {
+    {".....", ".###.", ".###.", ".###.", "....."},
+    {".....", "#....", ".###.", "....#", "....."},
+    {"..#..", "..#..", "..#..", "..#..", "....."},
+    {"..#..", ".###.", "#####", ".###.", "..#.."},
+    {"..#..", ".#.#.", "#...#", ".#.#.", "..#.."}};
+
 // --- Sprites ---------------------------------------------------------------------
 
 #define TILE_TILES 16   // 32x32
@@ -462,13 +544,20 @@ static void build_sprites(void) {
     u32* out = obj_tiles;
     // T_TILE: the empty slot, the letters, the squashed blank tile, the ring.
     canvas_begin(32, 32);
-    box(TILE_LEFT, TILE_TOP, TILE_SIZE, TILE_SIZE, C_SLOT, C_SLOT_EDGE, false);
+    slot();
     out = canvas_pack(out);
     for (int letter = 1; letter <= 26; letter++) {
         canvas_begin(32, 32);
-        box(TILE_LEFT, TILE_TOP, TILE_SIZE, TILE_SIZE, C_FACE, C_OUTLINE, true);
-        // The letter in the middle of the tile: 5 pixels from its sides, 4
-        // from its top and bottom.
+        face(TILE_LEFT, TILE_TOP, TILE_SIZE);
+        for (u32 i = 0; i < sizeof coat_spots / sizeof coat_spots[0]; i++)
+            badge(&coat_spots[i], C_SPOTS);
+        badge(&dot, C_DOT);
+        // The letter in the middle of the tile, 5 pixels from its sides and
+        // 4 from its top and bottom, pressed in: shade a pixel below it.
+        for (int y = 0; y < FONT_H; y++)
+            for (int x = 0; x < FONT_W; x++)
+                if (font_ink(letter, x, y))
+                    put(TILE_LEFT + 5 + x, TILE_TOP + 5 + y, C_SHADE);
         for (int y = 0; y < FONT_H; y++)
             for (int x = 0; x < FONT_W; x++)
                 if (font_ink(letter, x, y))
@@ -484,7 +573,8 @@ static void build_sprites(void) {
     cursor_ring();
     out = canvas_pack(out);
     // T_GLYPH: frame 0 empty, then the letters and '!' in C_FACE (gold or
-    // red, by the palette), outlined.
+    // red, by the palette), lit along the top and deeper in the lower half,
+    // outlined.
     canvas_begin(16, 16);
     out = canvas_pack(out);
     for (int g = 1; g < GLYPH_FRAMES; g++) {
@@ -492,7 +582,7 @@ static void build_sprites(void) {
         for (int y = 0; y < FONT_H; y++)
             for (int x = 0; x < FONT_W; x++)
                 if (font_ink(g, x, y))
-                    put(2 + x, 1 + y, C_FACE);
+                    put(2 + x, 1 + y, y < 2 ? C_LIGHT : y >= FONT_H - 5 ? C_SHADE : C_FACE);
         outline(C_OUTLINE);
         out = canvas_pack(out);
     }
@@ -506,12 +596,14 @@ static void build_sprites(void) {
         outline(C_OUTLINE);
         out = canvas_pack(out);
     }
-    // T_CONFETTI: a 3x3 scrap in each color, in the middle of its 8x8.
+    // T_CONFETTI: a scrap in each color and shape, in the middle of its 8x8.
     for (int f = 0; f < CONFETTI_FRAMES; f++) {
         canvas_begin(8, 8);
-        for (int y = 3; y < 6; y++)
-            for (int x = 3; x < 6; x++)
-                put(x, y, C_CONFETTI + f);
+        draw(confetti[f], 5, 2, 2, ".#");
+        for (int y = 2; y < 7; y++)
+            for (int x = 2; x < 7; x++)
+                if (get(x, y))
+                    put(x, y, C_CONFETTI + f);
         out = canvas_pack(out);
     }
     // T_SERVAL
@@ -530,18 +622,23 @@ static void build_sprites(void) {
 // two slide past each other. Background 1 is in front of sprites drawn
 // normally: the script draws every sprite with SPRITE_ABOVE_FOREGROUND.
 // Background 2, the playfield, stays empty, as a playfield would clamp the
-// camera to its map (map.h, camera_set). Plum is the backdrop (main.c).
+// camera to its map (map.h, camera_set). Behind them, the backdrop: a
+// gradient, a color per line (backdrop_colors, below).
 
 enum { BG_FAR = 1, BG_NEAR }; // their colors in background palette 0
-static const u16 spot_colors[16] = {0, COLOR_RGB(61, 34, 96), COLOR_RGB(70, 39, 102)};
+static const u16 spot_colors[16] = {0, COLOR_RGB(68, 38, 104), COLOR_RGB(82, 46, 116)};
 
 // A spot: an oval of radii (rx, ry) about (x, y), in pixels.
 typedef struct {
     u8 x, y, rx, ry;
 } Spot;
 
-static const Spot far_spots[] = {{22, 20, 14, 9}, {58, 50, 9, 12}, {40, 70, 7, 6}};
-static const Spot near_spots[] = {{30, 40, 8, 11}, {70, 14, 12, 7}};
+// A serval's coat rather than polka dots: spots of mixed sizes, some in
+// pairs that run into each other, scattered unevenly.
+static const Spot far_spots[] = {{22, 20, 11, 7}, {31, 26, 6, 5}, {60, 50, 7, 10}, {40, 70, 6, 5},
+                                 {70, 12, 4, 4},  {8, 52, 5, 6},  {52, 30, 3, 3},  {14, 76, 3, 2}};
+static const Spot near_spots[] = {
+    {30, 40, 6, 8}, {36, 47, 4, 4}, {70, 14, 9, 5}, {80, 50, 3, 3}, {10, 8, 3, 4}};
 
 #define FAR_W 5 // metatiles: 80x80 pixels
 #define FAR_H 5
@@ -628,8 +725,32 @@ const MapLayer spots_near_layer = {
     .flags = MAP_LAYER_WRAP,
 };
 
+// Behind the spots, a dusk: the backdrop runs from deep plum at the top of
+// the screen to a warmer, redder plum at the bottom, a color per line
+// (raster_backdrop, main.c). A color has 32 levels per channel, so a gentle
+// gradient would show bands: a channel between two levels takes the upper
+// one on some lines and the lower one on others, by an ordered pattern of
+// four lines, and the eye mixes them.
+Color backdrop_colors[SCREEN_H] SERVAL_EWRAM_BSS;
+
+static void build_backdrop(void) {
+    static const u8 top[3] = {30, 16, 56}, bottom[3] = {62, 26, 74};
+    static const u8 threshold[4] = {1, 5, 3, 7}; // of the 8 steps between levels
+    for (int y = 0; y < SCREEN_H; y++) {
+        int c[3];
+        for (int i = 0; i < 3; i++) {
+            int v = top[i] + (bottom[i] - top[i]) * y / (SCREEN_H - 1);
+            c[i] = (v & ~7) + ((v & 7) >= threshold[y & 3] ? 8 : 0);
+        }
+        backdrop_colors[y] = COLOR_RGB(c[0], c[1], c[2]);
+    }
+}
+
 void art_build(void) {
     build_sprites();
-    build_spots(far_spots, 3, FAR_W, FAR_H, BG_FAR, T_FAR, far_metatiles, far_cells);
-    build_spots(near_spots, 2, NEAR_W, NEAR_H, BG_NEAR, T_NEAR, near_metatiles, near_cells);
+    build_spots(far_spots, sizeof far_spots / sizeof far_spots[0], FAR_W, FAR_H, BG_FAR, T_FAR,
+                far_metatiles, far_cells);
+    build_spots(near_spots, sizeof near_spots / sizeof near_spots[0], NEAR_W, NEAR_H, BG_NEAR,
+                T_NEAR, near_metatiles, near_cells);
+    build_backdrop();
 }

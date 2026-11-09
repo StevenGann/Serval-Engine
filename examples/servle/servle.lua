@@ -204,12 +204,14 @@ function Game:room_start()
     for i = 1, 4 do stats[i] = 0 end
   end
   -- The four text styles are the four marks, for the alphabet strip (the
-  -- title borrows two: gold for PRESS START, the muted one for the controls).
+  -- title borrows two: amber for PRESS START, the muted one for the controls;
+  -- the statistics' numbers are amber too). The marks' colors are art.c's:
+  -- amber in place, sky blue elsewhere, a dim plum not in the word.
   local shadow = COLOR_RGB(23, 11, 40)
   text_set_style_color(MARK_NONE, COLOR_RGB(239, 233, 255), shadow)
-  text_set_style_color(MARK_ABSENT, COLOR_RGB(110, 100, 146), shadow)
-  text_set_style_color(MARK_PRESENT, COLOR_RGB(244, 177, 46), shadow)
-  text_set_style_color(MARK_CORRECT, COLOR_RGB(86, 224, 140), shadow)
+  text_set_style_color(MARK_ABSENT, COLOR_RGB(116, 100, 156), shadow)
+  text_set_style_color(MARK_PRESENT, COLOR_RGB(110, 210, 250), shadow)
+  text_set_style_color(MARK_CORRECT, COLOR_RGB(255, 178, 66), shadow)
   psg_music_play(SONG_THEME)
   cat = spawn(Serval, CAT_TITLE_X, CAT_TITLE_Y)
   set_sprite_flags(cat, 0)
@@ -253,7 +255,7 @@ function title()
       reset_stats()
     end
     if frames % BLINK == 0 then
-      text_set_style(MARK_PRESENT)
+      text_set_style(MARK_CORRECT)
       text_print_centered(PRESS_ROW, "PRESS START")
       text_set_style(MARK_NONE)
     elseif frames % BLINK == BLINK_OFF then
@@ -549,9 +551,9 @@ end
 
 -- Every statistic on screen goes through here: at most 999, right-aligned in
 -- three columns, so a big count never runs out of its place (the save keeps
--- counting). Numbers are gold (the present mark's text style).
+-- counting). Numbers are amber (the correct mark's text style).
 function print_stat(c, r, value)
-  text_set_style(MARK_PRESENT)
+  text_set_style(MARK_CORRECT)
   text_print_number(c, r, math.min(value, STAT_MAX), 3)
   text_set_style(MARK_NONE)
 end
@@ -573,7 +575,7 @@ end
 -- The board and text ------------------------------------------------------------
 
 -- The statistics' labels are dim (the absent mark's style), their numbers
--- gold, under them.
+-- amber, under them.
 function draw_play_screen()
   text_clear()
   text_set_style(MARK_ABSENT)

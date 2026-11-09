@@ -84,6 +84,9 @@ extern const Tileset spots_tileset;
 extern const MapLayer spots_far_layer;  // background 3, darker spots
 extern const MapLayer spots_near_layer; // background 1, lighter spots
 
+// The backdrop behind the spots, a color per screen line, for raster_backdrop.
+extern Color backdrop_colors[SCREEN_H];
+
 void art_build(void); // draws the art into EWRAM at boot
 
 // --- Sound (sound.c) -------------------------------------------------------------
