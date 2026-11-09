@@ -31,8 +31,10 @@ lower-case five-letter a-z words of english-words.N and american-words.N
 (guesses also british-words.N), answers from sizes up to 35 less a word ending
 in "s" whose first four letters are a word in sizes up to 60, guesses from
 sizes up to 70. The checked-in lists are those candidates curated by hand
-afterwards (obscure, archaic, abbreviated, proper-noun-like, crude and
-offensive entries removed), so they are not reproducible from SCOWL alone.
+afterwards, so they are not reproducible from SCOWL alone: the answers lost
+obscure, archaic, abbreviated, proper-noun-like, crude and offensive entries;
+the guesses lost only slurs (crude, vulgar and insulting words stay guesses,
+never answers: the game only accepts what the player typed).
 """
 
 import argparse

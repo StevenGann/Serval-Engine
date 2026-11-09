@@ -3,7 +3,7 @@
 // a script in the Lua subset (servle.lua); C only boots it.
 //
 // Rules: the answer is a five-letter word; you have six guesses, and each
-// must be in the accepted-guess list (6,365 words; the answers are 1,508
+// must be in the accepted-guess list (6,455 words; the answers are 1,508
 // common ones among them), or it is refused and the row stays editable.
 // Each letter of an entered guess is marked correct (green: right letter,
 // right place), present (gold: in the word, another place) or absent
