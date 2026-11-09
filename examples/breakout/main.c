@@ -4,38 +4,45 @@
 // Demonstrates:
 //   - Bricks as entities (84 on the first level), each a 16x8 body and sprite.
 //     body_hit_side() tells which side of a brick the ball hit, so it bounces
-//     off that side; a grid of the bricks' slots narrows the test to the
-//     bricks around the ball and tells shared faces from exposed ones
-//     (play.c explains why bricks aren't map cells here, and what that would
-//     have changed)
-//   - Engine physics for the balls and capsules (sys_physics: bounds inside
-//     the frame, the bottom edge open so a missed ball falls out; gravity for
-//     the capsules, none for the balls with body_gravity; body_contact for
-//     the walls a ball bounced off and what left through the bottom) and a
-//     paddle whose velocity sys_movement applies, so body_hit_side() sees it
-//     move
+//     off that side; a grid of the bricks' slots narrows the test to the bricks
+//     around the ball and tells shared faces from exposed ones (play.c explains
+//     why bricks aren't map cells here, and what that would have changed)
+//   - Engine physics for the balls and capsules (sys_physics: bounds inside the
+//     frame, the bottom edge open so a missed ball falls out; gravity for the
+//     capsules, none for the balls with body_gravity; body_contact for the
+//     walls a ball bounced off and what left through the bottom) and a paddle
+//     whose velocity sys_movement applies, so body_hit_side() sees it move
 //   - A constant ball speed: directions are angles (fx_sin, fx_cos), every
 //     bounce mirrors the angle, and no bounce leaves the ball flatter than 25
-//     degrees: no horizontal loops. The speed limit keeps the ball from
-//     jumping over a brick.
-//   - Game components (C_GAME) with their own arrays, ecs_count() (bricks
-//     left to break, balls in play, capsules falling) and ecs_free_count()
-//     (effects only while there is room)
+//     degrees: no horizontal loops. The speed limit keeps the ball from jumping
+//     over a brick.
+//   - Game components (C_GAME) with their own arrays, ecs_count() (bricks left
+//     to break, balls in play, capsules falling) and ecs_free_count() (effects
+//     only while there is room)
 //   - Animated sprites (sys_animate with frame_times): capsules glint, broken
 //     bricks leave dust that plays once (SPRITE_ASSET_ANIM_ONCE)
 //   - One sprite drawn with different palettes (SPRITE_PALETTE: eight brick
-//     colors and a white hit flash, the paddle's glow)
+//     colors and a white hit flash, dust in its brick's colors, the paddle's
+//     glow and its flash on a bounce, gold, silver and bronze medals)
+//   - Sprites drawn by hand with sprite_draw: the title's logo (letters on a
+//     sine wave), the balls' trails and the message banner, these two
+//     semi-transparent (SPRITE_BLEND over screen_set_blend's layers)
+//   - Sprite layers: a level's bricks drop in behind the playfield
+//     (SPRITE_BEHIND_PLAYFIELD), out from under the top pipe
 //   - A paddle wider than any hardware sprite: a metasprite of 16x8 pieces,
-//     drawn, recolored and depth-sorted as one entity, with a wider
-//     metasprite after a power-up
-//   - Draw order by depth (sys_render_by_depth with spr_depth): balls in
-//     front of the paddle, the paddle in front of capsules, capsules in front
-//     of the bricks
+//     drawn, recolored and depth-sorted as one entity, with a wider metasprite
+//     after a power-up
+//   - Draw order by depth (sys_render_by_depth with spr_depth): balls in front
+//     of the paddle, the paddle in front of capsules, capsules in front of the
+//     bricks
 //   - Map layers as backgrounds (map.h): a pipe frame on background 2 and a
 //     wrapping pattern of serval spots on background 3, in each level's colors
+//   - A raster effect (raster_backdrop): a gradient, a backdrop color per line,
+//     shows through the pattern; it flashes red when a ball is lost and gold
+//     when a level is cleared
 //   - Screen fades between title, levels and the score table
 //     (screen_set_brightness); text with a drop shadow, text_print_centered,
-//     a text style to highlight the new score in the table
+//     text styles: the HUD's labels, the new score in the table
 //   - Music (PsgSong): an original looping tune on all three tone generators,
 //     paused with the game; a fanfare played once per cleared level; sound
 //     effects over it with priorities (a jingle isn't cut short by bricks)
@@ -47,45 +54,54 @@
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
 //     3 seconds; any button skips it once the logo is in).
-//   - The title fades in: a dark navy background of serval spots inside a
-//     grey pipe frame, "P A W   B R E A K E R", an arch of colored, silver
-//     and gold bricks, an orange spotted paddle with a ball bobbing over it, a
-//     blinking "PRESS START" and the controls. The top row shows the best
-//     score. Every 5 seconds it switches to "BEST SCORES": five scores with
-//     the level each reached (made-up ones on a first boot).
-//   - START: a rising chime, a fade to level 1, "STRIPES": six rows of
-//     purple, blue, green, yellow, orange and red bricks. The tune starts (A
-//     minor, about 27 seconds, looping). The top row shows the score, the
-//     best score, the level and a paw print per life (3 to start).
+//   - The title fades in: serval spots over a navy gradient (darker at the top)
+//     inside a grey pipe frame; the logo, "PAW" in big orange letters with dark
+//     spots over "BREAKER", each letter gently bobbing on a wave; "A SERVAL
+//     BRICK BREAKER", an arch of colored, silver and gold bricks, a blinking
+//     "PRESS START", the controls and an orange spotted paddle with a ball
+//     bobbing over it. The top row shows the best score. Every 5 seconds it
+//     switches to "BEST SCORES": five scores with the level each reached
+//     (made-up ones on a first boot), gold, silver and bronze medals by the
+//     first three, and the arch of bricks under them.
+//   - START: a rising chime, a fade to level 1, "STRIPES": six rows of purple,
+//     blue, green, yellow, orange and red bricks drop in from under the top
+//     pipe, from the middle out (under a second). "LEVEL 1: STRIPES" and "A:
+//     LAUNCH" sit on a see-through dark band with light edges. The tune starts
+//     (A minor, about 27 seconds, looping). The top row shows the score, "HI"
+//     and the best score, "LV" and the level (the labels in gold) and a paw
+//     print per life (3 to start).
 //   - The ball waits on the paddle: Left/Right move the paddle (and the ball
-//     with it); A launches it with a rising blip (after 4 seconds it goes by
-//     itself). It bounces off the frame (a low tick) and the paddle (a
-//     blip): the farther from the paddle's center it lands, the more it
-//     angles away, up to 60 degrees from vertical.
+//     with it); once the bricks have landed, A launches it with a rising blip
+//     (after 4 seconds it goes by itself). A moving ball leaves a faint two-dot
+//     trail; the paddle lights up for a moment at each bounce. It bounces off
+//     the frame (a low tick) and the paddle (a blip): the farther from the
+//     paddle's center it lands, the more it angles away, up to 60 degrees from
+//     vertical.
 //   - A brick breaks with a blip pitched by its color (red lowest, purple
-//     highest: 10 to 60 points) and a puff of dust. Silver bricks crack on the
-//     first hit (a hiss, a white flash) and break on the second (100 points);
-//     gold bricks never break (a metallic clank, a white flash). The ball
-//     speeds up a little every 8 bricks.
-//   - Some broken bricks drop a glinting capsule that falls with gravity;
-//     catch it with the paddle (an arpeggio, 100 points): W (blue) widens the
-//     paddle, M (purple) splits the ball into three, S (orange) slows the
-//     ball, C (green) makes the paddle glow cyan and catch the ball (A
-//     releases it, or it goes by itself after 2.5 seconds), and a heart (red,
-//     rarer) adds a life (a jingle; at most 5).
-//   - Missing the last ball: a falling tone, a paw print goes, and a new ball
-//     waits on a normal paddle. With no lives left: "GAME OVER" and a sad tune;
-//     a score that makes the table is saved and marked "NEW BEST SCORE: #n",
-//     then after a fade the table shows it in yellow.
-//   - Breaking the last breakable brick: "LEVEL CLEAR!", a fanfare, 1000
-//     bonus points, and a fade to the next level: 2 "THE SERVAL" (a serval's
-//     head with silver ears and gold eyes, teal background), 3 "FORTRESS"
-//     (gold walls to get around, plum), 4 "DIAMOND" (rust), then level 1's
-//     layout again with a faster ball.
-//   - START pauses ("PAUSED", a tick, the music stops) and resumes (the tune
-//     carries on where it stopped).
-//   - For demos: on the title, hold L and R and press SELECT to erase the
-//     saved table ("SCORES RESET", a falling tone).
+//     highest: 10 to 60 points) and a puff of dust in its colors. Silver bricks
+//     crack on the first hit (a hiss, a white flash) and break on the second
+//     (100 points); gold bricks never break (a metallic clank, a white flash).
+//     The ball speeds up a little every 8 bricks.
+//   - Some broken bricks drop a glinting capsule that falls with gravity; catch
+//     it with the paddle (an arpeggio, 100 points): W (blue) widens the paddle,
+//     M (purple) splits the ball into three, S (orange) slows the ball, C
+//     (green) makes the paddle glow cyan and catch the ball (A releases it, or
+//     it goes by itself after 2.5 seconds), and a heart (red, rarer) adds a
+//     life (a jingle; at most 5).
+//   - Missing the last ball: a falling tone, the background flashes red, a paw
+//     print goes, and a new ball waits on a normal paddle. With no lives left:
+//     "GAME OVER" and a sad tune; a score that makes the table is saved and
+//     marked "NEW BEST SCORE: #n", then after a fade the table shows it in
+//     yellow.
+//   - Breaking the last breakable brick: the background flashes gold, "LEVEL
+//     CLEAR!", a fanfare, 1000 bonus points, and a fade to the next level: 2
+//     "THE SERVAL" (a serval's head with silver ears and gold eyes, teal
+//     background), 3 "FORTRESS" (gold walls to get around, plum), 4 "DIAMOND"
+//     (rust), then level 1's layout again with a faster ball.
+//   - START pauses ("PAUSED" on the band, a tick, the music stops) and resumes
+//     (the tune carries on where it stopped).
+//   - For demos: on the title, hold L and R and press SELECT to erase the saved
+//     table ("SCORES RESET", a falling tone).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, L = A,
 //   R = S, START = Enter, SELECT = Backspace.)
 //

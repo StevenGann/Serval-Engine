@@ -65,6 +65,7 @@
 #define SERVE_HOLD 240             // frames a served ball waits before launching itself
 #define CATCH_HOLD 150             // frames a caught ball waits
 #define FLASH_FRAMES 6             // a hit brick that didn't break shows white
+#define PADDLE_FLASH_FRAMES 6      // the paddle lights up when a ball bounces off it
 #define POWER_CHANCE 6             // one broken brick in this many drops a capsule...
 #define MAX_POWERS 2               // ...while fewer than this many are falling
 #define POWER_MAX_FALL (FX(3) / 2) // pixels per frame (the game's gravity is in game.c)
@@ -74,6 +75,12 @@ enum { DEPTH_BRICK, DEPTH_POWER, DEPTH_PADDLE, DEPTH_BALL };
 // Effects (dust) are only created while this many entity slots are free, so
 // bricks, balls and capsules always fit.
 #define FREE_SLOTS_FOR_EFFECTS 8
+// A level's bricks drop into place at its start, row by row and from the
+// middle out: each waits DROP_DELAY frames per row (and per two columns from
+// the middle), then falls for DROP_FRAMES. Balls wait until all have landed.
+#define DROP_FRAMES 14
+#define DROP_DELAY 2
+#define DROP_END (DROP_FRAMES + DROP_DELAY * (BRICK_ROWS + BRICK_COLS / 2))
 
 // --- State -------------------------------------------------------------------
 
@@ -85,6 +92,8 @@ static FIXED ball_speed;
 static int bricks_broken; // this level, for the speed-ups
 static int hold_timer;    // frames until held balls launch themselves
 static int last_dir = 1;  // the paddle's last direction, for a ball held at its center
+static int paddle_flash;  // frames the paddle stays lit after a bounce
+static int drop_timer;    // frames since the level began, while its bricks drop in
 
 // Game component arrays (one entry per entity slot), as ecs.h suggests.
 static u8 brick_kind[MAX_ENT];
@@ -214,6 +223,7 @@ static void remove_flying(void) {
     }
 }
 
+// A broken brick's dust, in the brick's colors.
 static void spawn_burst(u32 brick) {
     if (ecs_free_count() < FREE_SLOTS_FOR_EFFECTS)
         return;
@@ -223,6 +233,7 @@ static void spawn_burst(u32 brick) {
     pos_y[i] = pos_y[brick];
     spr_id[i] = SPR_BURST;
     spr_depth[i] = DEPTH_BRICK;
+    spr_flags[i] = SPRITE_PALETTE(brick_info[brick_kind[brick]].palette);
 }
 
 static void spawn_power(u32 brick) {
@@ -265,12 +276,12 @@ void play_start_level(int level) {
             u32 mask = C_POS | C_SPR | C_BRICK | (kind == BRICK_GOLD ? 0 : C_BREAKABLE);
             u32 i = entity_index(entity_create(mask));
             pos_x[i] = FX(FIELD_LEFT + c * BRICK_W);
-            pos_y[i] = FX(BRICKS_TOP + r * BRICK_H);
+            pos_y[i] = FX(-BRICK_H); // above the screen: drop_bricks() brings it in
             body_w[i] = BRICK_W;
             body_h[i] = BRICK_H;
             spr_id[i] = SPR_BRICK;
             spr_frame[i] = brick_info[kind].frame;
-            spr_flags[i] = SPRITE_PALETTE(brick_info[kind].palette);
+            spr_flags[i] = SPRITE_BEHIND_PLAYFIELD | SPRITE_PALETTE(brick_info[kind].palette);
             brick_kind[i] = (u8)kind;
             brick_hits[i] = brick_info[kind].hits;
             brick_flash[i] = 0;
@@ -286,7 +297,23 @@ void play_start_level(int level) {
     paddle = entity_index(entity_create(C_POS | C_VEL | C_SPR));
     spr_depth[paddle] = DEPTH_PADDLE;
     bricks_broken = 0;
+    drop_timer = 0;
     play_serve();
+}
+
+// Moves the bricks down into place at the level's start (only their
+// pictures: no ball is in play until they have landed). Each falls with a
+// constant pull, from far enough up to land at the speed it would have had.
+static void drop_bricks(void) {
+    drop_timer++;
+    ECS_FOR_EACH(i, C_BRICK) {
+        int r = brick_row[i], c = brick_col[i];
+        int from_middle = int_abs(2 * c - (BRICK_COLS - 1)) / 4;
+        int left = DROP_FRAMES - (drop_timer - DROP_DELAY * (r + from_middle)); // frames to go
+        left = int_clamp(left, 0, DROP_FRAMES);
+        int y = BRICKS_TOP + r * BRICK_H - left * left * 3 / 4;
+        pos_y[i] = FX(int_max(y, -BRICK_H));
+    }
 }
 
 void play_serve(void) {
@@ -294,6 +321,7 @@ void play_serve(void) {
     paddle_w = PADDLE_W_NORMAL;
     spr_id[paddle] = SPR_PADDLE;
     catching = false;
+    paddle_flash = 0;
     pos_x[paddle] = FX((SCREEN_W - paddle_w) / 2);
     pos_y[paddle] = FX(PADDLE_Y);
     vel_x[paddle] = 0;
@@ -525,12 +553,16 @@ static void collide_bricks(u32 b) {
         ball_dull[b]++;
 }
 
+// Each brick's palette (white for a few frames after a hit). While they drop
+// in, the bricks are drawn behind the playfield, so they come out from under
+// the top pipe.
 static void update_brick_flashes(void) {
+    u16 layer = drop_timer < DROP_END ? SPRITE_BEHIND_PLAYFIELD : 0;
     ECS_FOR_EACH(i, C_BRICK) {
         if (brick_flash[i] > 0)
             brick_flash[i]--;
         spr_flags[i] =
-            SPRITE_PALETTE(brick_flash[i] ? PAL_FLASH : brick_info[brick_kind[i]].palette);
+            layer | SPRITE_PALETTE(brick_flash[i] ? PAL_FLASH : brick_info[brick_kind[i]].palette);
     }
 }
 
@@ -572,6 +604,7 @@ static void collide_paddle(u32 b) {
             set_angle(b, paddle_angle(offset));
             psg_play(SND_PADDLE);
         }
+        paddle_flash = PADDLE_FLASH_FRAMES;
         return;
     }
     // Knocked aside by an end: away from the paddle, still falling.
@@ -607,7 +640,9 @@ static void after_physics(u32 b) {
 
 PlayResult play_update(void) {
     control_paddle();
-    if (button_pressed(BUTTON_A) || (play_holding_ball() && --hold_timer <= 0))
+    if (drop_timer < DROP_END)
+        drop_bricks(); // and the ball waits on the paddle meanwhile
+    else if (button_pressed(BUTTON_A) || (play_holding_ball() && --hold_timer <= 0))
         launch();
     ECS_FOR_EACH(b, C_BALL) {
         if (!ball_held[b])
@@ -655,13 +690,32 @@ PlayResult play_update(void) {
     return PLAY_ON;
 }
 
+// Each moving ball's trail: two afterimages along its way, one and two
+// frames' movement back, semi-transparent. Drawn after the entities, so
+// behind them.
+static void draw_trails(void) {
+    ECS_FOR_EACH(b, C_BALL) {
+        if (ball_held[b])
+            continue;
+        for (int k = 1; k <= 2; k++) {
+            int x = fx_to_int(pos_x[b] - vel_x[b] * k), y = fx_to_int(pos_y[b] - vel_y[b] * k);
+            sprite_draw(SPR_TRAIL, (u8)(k - 1), x, y, SPRITE_BLEND);
+        }
+    }
+}
+
 void play_draw(void) {
     // The paddle glows (cyan spots) while it catches balls: every piece of
-    // its metasprite drawn with PAL_CATCH.
-    spr_flags[paddle] = catching ? SPRITE_PALETTE(PAL_CATCH) : 0;
+    // its metasprite drawn with PAL_CATCH. A bounce lights it up for a moment.
+    if (paddle_flash > 0)
+        paddle_flash--;
+    spr_flags[paddle] = catching       ? SPRITE_PALETTE(PAL_CATCH)
+                        : paddle_flash ? SPRITE_PALETTE(PAL_PADDLE_HIT)
+                                       : 0;
     // Bricks, dust, capsules, the paddle and balls, higher depths in front.
     // With four depths the sort is one pass over a few buckets (about 4,500
     // cycles for 90 sprites over sys_render's slot order, which would put the
     // balls, created after the bricks, behind them).
     sys_render_by_depth();
+    draw_trails();
 }

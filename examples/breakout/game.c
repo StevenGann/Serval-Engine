@@ -1,6 +1,6 @@
 // Screens and states: the title and the score table, levels with their
-// intro, pause, a lost ball, level clear and game over, the HUD, and the
-// fades between screens.
+// intro, pause, a lost ball, level clear and game over, the HUD, the
+// backdrop's gradient and its flashes, and the fades between screens.
 
 #include "game.h"
 
@@ -24,8 +24,16 @@ typedef enum { PAGE_TITLE, PAGE_SCORES } Page;
 #define LOST_FRAMES 75
 #define CLEAR_FRAMES 150
 #define GAME_OVER_FRAMES 180
+// Messages: two lines on rows 13 and 15, or one on row 14 (PAUSED, between
+// the level's two), on a band from y = 100 to 131.
 #define MESSAGE_ROW 13 // below the lowest bricks, above the paddle
-#define PAUSE_ROW 16
+#define PAUSE_ROW 14
+#define BANNER_Y 100
+#define SCORES_ROW 3      // "BEST SCORES"; the scores from 2 rows below
+#define LOGO_Y 10         // the title's "PAW"; "BREAKER" under it
+#define ARCH_Y 70         // the bricks on the title...
+#define ARCH_Y_SCORES 104 // ...and on the score table
+#define FLASH_FADE 16     // per frame, of 256: a flash of the backdrop lasts 16 frames
 
 static State state;
 static Page page;
@@ -37,6 +45,52 @@ static bool intro_shown; // the level's name is on screen until the first launch
 static int brightness = SCREEN_BRIGHTNESS_MIN;
 static bool fading_out;
 static void (*next_screen)(void);
+static int style; // the level style shown: its pattern and gradient
+static int flash; // how far the backdrop is mixed toward flash_color (0-256)
+static Color flash_color;
+static Color backdrop[SCREEN_H] SERVAL_EWRAM_BSS; // raster_backdrop's table, a color per line
+
+// --- Backdrop ----------------------------------------------------------------
+
+// Fills the backdrop table with the style's gradient, mixed toward the
+// flash's color while one is on. The colors go up in half steps of the
+// hardware's 5-bit channels, alternate lines rounding the half up or down,
+// so the bands between the few shades of a dark gradient blur together.
+static void build_backdrop(void) {
+    Color top = backdrop_gradients[style][0], bottom = backdrop_gradients[style][1];
+    if (flash > 0) {
+        top = color_mix(top, flash_color, (u32)flash);
+        bottom = color_mix(bottom, flash_color, (u32)flash);
+    }
+    int channel_top[3], step[3];
+    for (int c = 0; c < 3; c++) {
+        int a = (top >> (5 * c)) & 31, b = (bottom >> (5 * c)) & 31;
+        channel_top[c] = a << 17; // in 1/65536ths of half a step
+        step[c] = ((b - a) << 17) / (SCREEN_H - 1);
+    }
+    for (int y = 0; y < SCREEN_H; y++) {
+        Color color = 0;
+        for (int c = 0; c < 3; c++) {
+            int halves = (channel_top[c] + step[c] * y) >> 16;
+            color |= (Color)(((halves + (y & 1)) >> 1) << (5 * c));
+        }
+        backdrop[y] = color;
+    }
+}
+
+// Lights the backdrop up in a color, fading back over FLASH_FADE frames.
+static void flash_backdrop(Color color) {
+    flash_color = color;
+    flash = 200;
+    build_backdrop();
+}
+
+static void update_flash(void) {
+    if (flash > 0) {
+        flash = int_max(flash - FLASH_FADE, 0);
+        build_backdrop();
+    }
+}
 
 // --- Fades -------------------------------------------------------------------
 
@@ -76,14 +130,19 @@ void add_life(void) {
     psg_play(SND_LIFE_UP);
 }
 
-// The top row: score, best score and level as text, lives as paw prints
-// (sprites above the text layer).
+// The top row: score, best score and level as text (the labels in the
+// HUD_LABEL style), lives as paw prints (sprites above the text layer).
+#define HUD_LABEL 2
 static void draw_hud(void) {
     if (hud_dirty) {
         hud_dirty = false;
-        text_print_line(
-            0, 0,
-            text_format(" %06d  HI %06d  L%d", score, int_max(score, scores_best()), level + 1));
+        text_print_line(0, 0, text_format(" %06d", score));
+        text_print(12, 0, text_format("%06d", int_max(score, scores_best())));
+        text_print(22, 0, text_format("%d", level + 1));
+        text_set_style(HUD_LABEL);
+        text_print(9, 0, "HI");
+        text_print(20, 0, "LV");
+        text_set_style(TEXT_NORMAL);
     }
     for (int i = 0; i < lives; i++)
         sprite_draw(SPR_PAW, 0, SCREEN_W - 8 - 9 * (MAX_LIVES - i), 0, SPRITE_ABOVE_HUD);
@@ -92,9 +151,13 @@ static void draw_hud(void) {
 // --- Screens -----------------------------------------------------------------
 
 // The frame and a level style's pattern behind it (loaded at black).
-static void show_background(int style) {
+static void show_background(int s) {
+    style = s % LEVEL_STYLES;
+    flash = 0;
     map_load(&frame_layer);
-    map_load(&pattern_layers[style % LEVEL_STYLES]);
+    map_load(&pattern_layers[style]);
+    build_backdrop();
+    raster_backdrop(backdrop);
 }
 
 static void show_page(Page p, int frames) {
@@ -102,13 +165,12 @@ static void show_page(Page p, int frames) {
     page_timer = frames;
     text_clear();
     text_print_centered(0, text_format("HI %06d", scores_best()));
-    if (p == PAGE_TITLE) {
-        text_print_centered(4, "P A W   B R E A K E R");
-        text_print_centered(6, "A SERVAL BRICK BREAKER");
+    if (p == PAGE_TITLE) { // the logo is sprites (draw_title_art)
+        text_print_centered(7, "A SERVAL BRICK BREAKER");
         text_print_centered(14, "LEFT/RIGHT:MOVE  A:LAUNCH");
         text_print_centered(15, "START:PAUSE");
     } else {
-        scores_draw(4, new_rank);
+        scores_draw(SCORES_ROW, new_rank);
     }
 }
 
@@ -121,8 +183,32 @@ static void show_title(void) {
               new_rank >= 0 ? NEW_SCORE_FRAMES : PAGE_FRAMES);
 }
 
-// Decoration on the title page: an arch of bricks (title page only), the
-// paddle and a ball.
+// The title's logo: "PAW" in big letters over "BREAKER", each letter riding
+// a slow wave (a sine of the time and its place in the line).
+static void draw_logo(void) {
+    static const u8 paw[] = {SPR_LOGO_BIG_P, SPR_LOGO_BIG_A, SPR_LOGO_BIG_W};
+    static const u8 breaker[] = {SPR_LOGO_B, SPR_LOGO_R, SPR_LOGO_E, SPR_LOGO_A,
+                                 SPR_LOGO_K, SPR_LOGO_E, SPR_LOGO_R};
+    u16 t = (u16)(frame_count() * 0x0300);
+    for (int i = 0; i < 3; i++) {
+        int bob = fx_to_int(fx_sin((u16)(t + i * 0x2000)) * 2);
+        sprite_draw(paw[i], 0, SCREEN_W / 2 - 46 + i * 30, LOGO_Y + bob, 0);
+    }
+    for (int i = 0; i < 7; i++) {
+        int bob = fx_to_int(fx_sin((u16)(t + 0x6000 + i * 0x1800)) * 2);
+        sprite_draw(breaker[i], 0, SCREEN_W / 2 - 56 + i * 16, LOGO_Y + 28 + bob, 0);
+    }
+}
+
+// The score table's medals, by the three best scores' place numbers.
+static void draw_medals(void) {
+    static const u8 medal[3] = {PAL_GOLD, PAL_SILVER, PAL_BRONZE};
+    for (int i = 0; i < 3; i++)
+        sprite_draw(SPR_MEDAL, 0, 28, (SCORES_ROW + 2 + i) * 8, SPRITE_PALETTE(medal[i]));
+}
+
+// Decoration on the title and the score table: the logo (title page) or the
+// medals, an arch of bricks, the paddle and a ball.
 static void draw_title_art(void) {
     static const u8 arch[2][10] = {
         {PAL_PURPLE, PAL_BLUE, PAL_GREEN, PAL_YELLOW, PAL_ORANGE, PAL_RED, PAL_ORANGE, PAL_YELLOW,
@@ -130,13 +216,18 @@ static void draw_title_art(void) {
         {PAL_SILVER, PAL_RED, PAL_RED, PAL_GOLD, PAL_GOLD, PAL_GOLD, PAL_GOLD, PAL_RED, PAL_RED,
          PAL_SILVER},
     };
-    for (int r = 0; r < 2 && page == PAGE_TITLE; r++) {
+    if (page == PAGE_TITLE)
+        draw_logo();
+    else
+        draw_medals();
+    int arch_y = page == PAGE_TITLE ? ARCH_Y : ARCH_Y_SCORES;
+    for (int r = 0; r < 2; r++) {
         for (int c = 0; c < 10; c++) {
             u8 color = arch[r][c];
             u8 frame = color == PAL_SILVER ? BRICK_FRAME_SILVER
                        : color == PAL_GOLD ? BRICK_FRAME_GOLD
                                            : BRICK_FRAME_PLAIN;
-            sprite_draw(SPR_BRICK, frame, 40 + c * BRICK_W, 72 + r * BRICK_H,
+            sprite_draw(SPR_BRICK, frame, 40 + c * BRICK_W, arch_y + r * BRICK_H,
                         SPRITE_PALETTE(color));
         }
     }
@@ -178,7 +269,7 @@ static void next_level(void) {
 }
 
 static void clear_messages(void) {
-    for (int row = MESSAGE_ROW; row <= PAUSE_ROW; row++)
+    for (int row = MESSAGE_ROW; row <= MESSAGE_ROW + 2; row++)
         text_print_line(0, row, "");
 }
 
@@ -227,12 +318,14 @@ static void update_playing(void) {
         lives--;
         hud_dirty = true;
         psg_play(SND_BALL_LOST);
+        flash_backdrop(COLOR_RGB(150, 20, 40));
         break;
     case PLAY_CLEARED:
         state = CLEARED;
         timer = CLEAR_FRAMES;
         add_score(CLEAR_BONUS);
         psg_music_play(&clear_song);
+        flash_backdrop(COLOR_RGB(255, 230, 160));
         text_print_centered(MESSAGE_ROW, "LEVEL CLEAR!");
         text_print_centered(MESSAGE_ROW + 2, text_format("BONUS %d", CLEAR_BONUS));
         break;
@@ -248,11 +341,14 @@ static void game_over(void) {
     timer = GAME_OVER_FRAMES;
     psg_music_stop();
     psg_play(SND_GAME_OVER);
-    text_print_centered(MESSAGE_ROW, "GAME OVER");
     // Saved now, at a pause: the table shows it after the fade.
     new_rank = scores_add(score, level + 1);
-    if (new_rank >= 0)
+    if (new_rank >= 0) {
+        text_print_centered(MESSAGE_ROW, "GAME OVER");
         text_print_centered(MESSAGE_ROW + 2, text_format("NEW BEST SCORE: #%d", new_rank + 1));
+    } else {
+        text_print_centered(MESSAGE_ROW + 1, "GAME OVER");
+    }
 }
 
 static void update_state(void) {
@@ -308,17 +404,35 @@ void game_init(void) {
     physics_set_gravity(0, FX_ONE / 16);
     physics_set_contacts(true);
     text_set_shadow(true); // white text stays readable over the pattern
+    text_set_style_color(HUD_LABEL, COLOR_RGB(255, 200, 90), COLOR_RGB(0, 0, 0));
+    // Only SPRITE_BLEND sprites (top 0) blend: the message banner and the
+    // balls' trails, half and half with whatever background is behind them.
+    screen_set_blend(0, LAYER_PLAYFIELD | LAYER_BACKGROUND | LAYER_BACKDROP, 8, 8);
     scores_load();
     show_title();
+}
+
+// The band behind the messages, while there are any: the level's name, pause,
+// level clear and game over. Drawn after the game's sprites, so behind them,
+// and semi-transparent: four 64x32 sprites across the field.
+static void draw_banner(void) {
+    static const u8 xs[4] = {FIELD_LEFT, FIELD_LEFT + 64, FIELD_LEFT + 128, FIELD_RIGHT - 64};
+    bool messages = intro_shown || state == PAUSED || state == CLEARED || state == GAME_OVER;
+    if (!messages)
+        return;
+    for (int i = 0; i < 4; i++)
+        sprite_draw(SPR_BANNER, 0, xs[i], BANNER_Y, SPRITE_BLEND);
 }
 
 void game_frame(void) {
     if (!update_fade()) // fading out: the game waits
         update_state();
+    update_flash();
     if (state == TITLE) {
         draw_title_art();
     } else {
         draw_hud();
         play_draw();
+        draw_banner();
     }
 }

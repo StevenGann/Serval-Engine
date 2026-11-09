@@ -41,8 +41,19 @@ enum {
     SPR_CAPSULE_SLOW,
     SPR_CAPSULE_CATCH,
     SPR_CAPSULE_LIFE,
-    SPR_BURST, // a broken brick's dust (plays once)
-    SPR_PAW,   // a life on the HUD
+    SPR_BURST,      // a broken brick's dust (plays once)
+    SPR_PAW,        // a life on the HUD
+    SPR_TRAIL,      // a moving ball's afterimages (frame 0 nearer, 1 farther)
+    SPR_BANNER,     // the band behind messages (64x32, drawn semi-transparent)
+    SPR_MEDAL,      // by the three best scores
+    SPR_LOGO_BIG_P, // the title's logo: "PAW" (32x32 letters)...
+    SPR_LOGO_BIG_A,
+    SPR_LOGO_BIG_W,
+    SPR_LOGO_B, // ...over "BREAKER" (16x16)
+    SPR_LOGO_R,
+    SPR_LOGO_E,
+    SPR_LOGO_A,
+    SPR_LOGO_K,
     SPRITE_COUNT
 };
 enum { BRICK_FRAME_PLAIN, BRICK_FRAME_SILVER, BRICK_FRAME_CRACKED, BRICK_FRAME_GOLD };
@@ -64,6 +75,8 @@ enum {
     PAL_BALL,
     PAL_PADDLE,
     PAL_CATCH,
+    PAL_PADDLE_HIT,
+    PAL_BRONZE, // the third best score's medal
     PALETTE_COUNT
 };
 #define BURST_LAST_FRAME 3 // blank: the dust is gone
@@ -77,6 +90,7 @@ extern const Tileset tileset;
 extern const MapLayer frame_layer;
 #define LEVEL_STYLES 4
 extern const MapLayer pattern_layers[LEVEL_STYLES];
+extern const Color backdrop_gradients[LEVEL_STYLES][2]; // top and bottom colors
 
 // --- Levels (levels.c) -------------------------------------------------------
 
