@@ -15,7 +15,7 @@ cmake --preset gba-debug
 cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba, raycaster.gba, servle.gba
+#    effects.gba, jukebox.gba, raycaster.gba, servle.gba, racer.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -33,6 +33,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`blackjack`](../examples/blackjack/main.c) | A card game: cards composed of several sprites and rotated as one, a flip made of animation frames, tweens with easing and springs, banners and number pops, art built at boot, a scrolling background without a playfield, a round as a sequence of steps, save data |
 | [`fireflies`](../examples/fireflies/main.c) | Scripting: a small game whose logic is all a script in the Lua subset ([lua.md](lua.md)), compiled at build time to bytecode for the VM ([vm.md](vm.md)): objects with event handlers (`create`, `step`, `collision`, `destroy`, `anim_end`, `room_start`), waits, fields; and the little C a game made in Studio Advance keeps: the frame loop, the collision pair the VM tests (`vm_collide`), a restart |
 | [`effects`](../examples/effects/main.c) | Screen effects, a scene each: alpha blending (`screen_set_blend`, `SPRITE_BLEND`: a see-through foreground, glows, shadows) and how a brightness fade pauses it; runtime sprite tiles (`sprite_set_tiles`: card faces composed when dealt); a game made of scenes in their own files, art drawn at boot |
+| [`racer`](../examples/racer/main.c) | Raster effects carrying a whole game: a pseudo-3D road from one still picture, each screen line shifted by its own amount (`raster_scroll()` on a 256-pixel layer that wraps), stripes by palette writes (`tileset_set_colors()`), roadside objects in four sizes shrunk with `sprite_draw_ex()` and sharing their matrices, a time of day mixed at boot (`color_mix`); portable rules tested on the host, an engine drone of held PSG sounds, records in save data |
 | [`raycaster`](../examples/raycaster/main.c) | The pixel surface ([surface.md](surface.md)): a first-person maze game that draws its own picture, a ray and a textured column at a time; fixed-point math without division, hot loops in IWRAM, a picture drawn over two frames, sprites as a HUD over it, text screens and the surface in one game |
 | [`servle`](../examples/servle/main.c) | A whole game in a script, effects included: two threads (one plays the rounds as plain code with waits, flips included, one runs every other effect a frame at a time), RAM arrays and ROM arrays (a dictionary packed 2 bytes a word, and its lookup), styled and formatted text, saves and seeding from a script (`vm_use_saves`, `save_read`, `save_write`, `random_seed`), sprites shown in four palettes and squashed, scaled, tilted and lifted through their properties |
 

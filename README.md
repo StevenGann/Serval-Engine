@@ -62,6 +62,7 @@ Later, with no API yet (each can be added without breaking games): palette shari
 | [`jukebox`](examples/jukebox/main.c) | Tracker music and sampled sound effects from a sound bank: two original modules to switch, pause and resume, their volume and speed, and effects with a pan, a pitch, a priority and a loop, played from a Lua script (`pads.lua`), beside PSG blips; the frame's CPU time, the mixer's included, on screen |
 | [`raycaster`](examples/raycaster/main.c) | "Wisp Warren", a first-person maze game in the manner of the early 1990s' texture-mapped shooters, drawn by the game itself on the pixel surface: textured walls that darken with distance, sliding doors, a key and a locked door, wisps that chase and strike, a HUD of sprites, a title and a choice of difficulty; a ray per column in 16.16 fixed point with no division, 30 pictures a second on the GBA |
 | [`servle`](examples/servle/main.c) | A five-letter word-guessing game, six tries, whose rules, effects and word lists are all a script in the Lua subset (`servle.lua`): letter tiles that spin, flip and hop, a cheer, confetti and a serval that reacts, a dictionary of 6,455 words packed into ROM arrays with its lookup, styled and formatted text, statistics saved from the script, a tune on the tone generators |
+| [`racer`](examples/racer/main.c) | "Savanna Run", a pseudo-3D road racer in the manner of the 1980s' arcade racers: one still picture of a straight road bent line by line with `raster_scroll()`, light and dark stripes rolling toward the player by palette writes alone, a sky that swings with the curves and turns from afternoon to sunset to dusk lap by lap, acacias, giraffes and traffic drawn in four sizes and shrunk with `sprite_draw_ex()`, three laps against a clock that checkpoints extend, an engine drone that follows the speed, the best race and lap saved |
 
 Each example's `main.c` starts by describing what it demonstrates and what you should see and hear. Planned examples, and the engine gaps each would expose, are in [docs/examples-roadmap.md](docs/examples-roadmap.md). `examples/build-all.sh` builds them all into `examples/roms/`, and with Emscripten set up also as web pages into `examples/html/`.
 
@@ -77,7 +78,7 @@ cmake --preset gba-release
 cmake --build --preset gba-release
 # -> build/gba-release/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
-#    effects.gba, jukebox.gba, raycaster.gba, servle.gba
+#    effects.gba, jukebox.gba, raycaster.gba, servle.gba, racer.gba
 ```
 
 Open the `.gba` files in mGBA or any GBA emulator. With [Emscripten](https://emscripten.org/) installed, `cmake --preset web-release && cmake --build --preset web-release` builds the same examples as web pages (`build/web-release/examples/*.html`). A game is its own CMake project that adds the engine (a release archive or a checkout) with `add_subdirectory()` and builds its ROM with `serval_add_rom()` (and compiles Lua scripts with `serval_add_script()`); see [docs/getting-started.md](docs/getting-started.md) to make your own game and [docs/development.md](docs/development.md) for tests.
