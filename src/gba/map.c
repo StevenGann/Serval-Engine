@@ -98,6 +98,7 @@ enum {
     W_SET_RANGE,
     W_SET_DATA,
     W_SET_FULL,
+    W_SURFACE,
 };
 static u32 warned;
 #define WARN_ONCE(kind, ...)                                                                       \
@@ -111,7 +112,21 @@ static u32 warned;
 #define WARN_ONCE(kind, ...) ((void)0)
 #endif
 
+// surface: the pixel surface's pages are the tileset's and the map layers'
+// VRAM, so tilesets and layers are refused while it is on (map_load() asks
+// here too).
+bool serval_map_blocked(void) {
+    if (!serval_surface_on)
+        return false;
+    WARN_ONCE(W_SURFACE,
+              "map: tilesets and map layers can't be loaded or changed while the pixel surface "
+              "is on (surface.h), which uses their video memory; nothing is loaded");
+    return true;
+}
+
 bool tileset_load(const Tileset* tileset) {
+    if (serval_map_blocked())
+        return false;
     if (!serval_plausible_pointer(tileset)) {
         WARN_ONCE(W_POINTER, "tileset_load: the tileset pointer is NULL or not valid");
         return false;
@@ -173,6 +188,8 @@ bool tileset_load(const Tileset* tileset) {
 
 void tileset_set_tiles(u16 first, const u32* tiles, u16 count) {
     if (count == 0)
+        return;
+    if (serval_map_blocked())
         return;
     if ((u32)first + count > tileset_tiles) {
         WARN_ONCE(W_SET_RANGE,

@@ -37,7 +37,7 @@ Set per group, in `SpriteGroup.flags`; a sprite has no residency of its own (bit
 
 ## VRAM allocation
 
-Tiles are bump-allocated from tile 0 in load order, and each group's palettes take the next free OBJ palette banks. Nothing is freed one group at a time: memory goes back by [marks](#marks) or all at once (`sprite_groups_reset()`, `sprite_table_set()`).
+Tiles are bump-allocated from tile 0 in load order, and each group's palettes take the next free OBJ palette banks. Nothing is freed one group at a time: memory goes back by [marks](#marks) or all at once (`sprite_groups_reset()`, `sprite_table_set()`). While the [pixel surface](surface.md) is on, tiles are allocated from tile 512 (512 tiles in all): the hardware shows no sprite tile below it in bitmap modes, and the surface's second page lies under tiles 0-431. `surface_begin()` and `surface_end()` unload every group, as `sprite_groups_reset()` does.
 
 ```
 OBJ VRAM tile 0 ─────────────────────────────────────────── tile 1023

@@ -41,6 +41,9 @@ static TILE* const obj_tiles = (TILE*)MEM_VRAM_OBJ;
 
 static u16 next_tile;
 static u8 next_palette_bank;
+// surface: the tile groups load from after a reset: 0, or 512 while the pixel
+// surface is on (serval_sprite_floor_set()).
+static u16 tile_floor;
 
 // Everything sprite_draw needs for a loaded sprite, resolved once at load
 // time so drawing is a lookup and a few ORs. frame_count is 0 while the sprite
@@ -184,12 +187,12 @@ static EWRAM_BSS u32 last_mark;   // the last serial handed out
 _Static_assert(MAX_MARKS < 256, "SpriteDraw.segment is a u8");
 
 void sprite_groups_reset(void) {
-    next_tile = 0;
+    next_tile = tile_floor;
     next_palette_bank = 0;
     memset32(sprite_draws, 0, sizeof(sprite_draws) / 4);
     // A new serial for segment 0, so marks from before the reset are stale.
     top_segment = 0;
-    segments[0] = (Segment){.mark = ++last_mark};
+    segments[0] = (Segment){.mark = ++last_mark, .first_tile = tile_floor};
     serval_sprite_tiles_reset(); // sprite tiles: drop every queued copy
     serval_stream_reset();       // streaming: and the slots of streamed groups
 #ifdef SERVAL_DEBUG
@@ -200,6 +203,11 @@ void sprite_groups_reset(void) {
     warned_scale_flag = false;
     warned_scale = false;
 #endif
+}
+
+void serval_sprite_floor_set(u32 tile) {
+    tile_floor = (u16)tile;
+    sprite_groups_reset();
 }
 
 u32 sprite_groups_mark(void) {
@@ -461,8 +469,9 @@ bool sprite_group_load(const SpriteGroup* group) {
         return false;
     u32 free_end = serval_stream_floor(); // streaming: streamed groups' slots are above it
     if (next_tile + (u32)tiles > free_end) {
+        // surface: the pixel surface leaves groups tiles 512-1023 (tile_floor)
         SERVAL_WARN("sprite_group_load: needs %u tiles, but only %u of %u are free", tiles,
-                    free_end - next_tile, OBJ_TILE_COUNT);
+                    free_end - next_tile, OBJ_TILE_COUNT - tile_floor);
         return false;
     }
     if (next_palette_bank + group->palette_count > OBJ_PALETTE_BANKS) {

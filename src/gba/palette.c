@@ -20,6 +20,7 @@
 
 #include "serval/map.h"
 #include "serval/sprites.h"
+#include "serval/surface.h"
 
 #include <tonc.h>
 
@@ -41,6 +42,9 @@ enum {
     W_SPRITE_RANGE,
     W_BG_COLORS,
     W_BG_RANGE,
+    W_SURFACE_OFF,
+    W_SURFACE_COLORS,
+    W_SURFACE_RANGE,
 };
 static u32 warned;
 #define WARN_ONCE(kind, ...)                                                                       \
@@ -143,6 +147,32 @@ void tileset_set_colors(u32 index, const Color* colors, u32 count) {
     if (!serval_plausible_pointer(colors)) {
         WARN_ONCE(W_BG_COLORS,
                   "tileset_set_colors: the colors pointer is NULL or not valid; nothing changes");
+        return;
+    }
+    if (index == 0) // raster: the backdrop, which raster_backdrop()'s end puts back
+        serval_backdrop = colors[0];
+    write(index, colors, count);
+}
+
+// surface: the pixel surface's colors: all 256 of the background palette,
+// the text layer's bank included (there is no text layer while it is on).
+void surface_set_colors(u32 index, const Color* colors, u32 count) {
+    if (count == 0)
+        return;
+    if (!serval_surface_on) {
+        WARN_ONCE(W_SURFACE_OFF,
+                  "surface_set_colors: the surface is not on (surface_begin()); nothing changes");
+        return;
+    }
+    if (count > 256 || index > 256 - count) {
+        WARN_ONCE(W_SURFACE_RANGE,
+                  "surface_set_colors(%u, ..., %u): the surface has colors 0-255; nothing changes",
+                  index, count);
+        return;
+    }
+    if (!serval_plausible_pointer(colors)) {
+        WARN_ONCE(W_SURFACE_COLORS,
+                  "surface_set_colors: the colors pointer is NULL or not valid; nothing changes");
         return;
     }
     if (index == 0) // raster: the backdrop, which raster_backdrop()'s end puts back

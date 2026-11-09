@@ -75,6 +75,7 @@ NAV = [
         ("audio", "Audio"),
         ("frame-loop", "Frame loop"),
         ("runtime-systems", "Other runtime systems"),
+        ("surface", "Pixel surface"),
         ("vm", "Bytecode VM"),
         ("lua", "Scripting in Lua"),
         ("debug-link", "Debug link"),

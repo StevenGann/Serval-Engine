@@ -233,6 +233,8 @@ bool map_load(const MapLayer* layer) {
                   layer->bg, layer->flags);
         return false;
     }
+    if (serval_map_blocked()) // surface: no map layers while the pixel surface is on
+        return false;
 #ifdef SERVAL_DEBUG
     check_cells(layer);
     if (layer->bg == 2)

@@ -39,6 +39,12 @@ void (*serval_raster_prepare_hook)(void); // raster:
 void (*serval_raster_commit_hook)(void);  // raster:
 Color serval_backdrop;                    // raster:
 bool serval_backdrop_raster;              // raster:
+// surface: the pixel surface (surface.c): whether it is on, its VBlank step
+// (NULL while it is off) and the text layer's way to be told its video
+// memory is gone (text.c sets it once the layer is set up).
+bool serval_surface_on;
+void (*serval_surface_commit_hook)(void);
+void (*serval_text_lost_hook)(void);
 
 // maxmod: tracker music and sampled sound effects (maxmod.c): the
 // mixer, NULL until audio_bank_set(); whether frame_end() is waiting for
@@ -163,6 +169,8 @@ void frame_end(void) {
         serval_palette_hooks->flush();
     if (serval_map_commit_hook)
         serval_map_commit_hook();
+    if (serval_surface_commit_hook) // surface: with step 6, the page flip and the transform
+        serval_surface_commit_hook();
     serval_blend_apply();          // blending: step 7, the blend registers
     if (serval_raster_commit_hook) // raster: line 0's value, and DMA 0 restarted
         serval_raster_commit_hook();
