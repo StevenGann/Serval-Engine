@@ -42,6 +42,17 @@ typedef enum {
 #define FADE_STEP 2     // brightness per frame: 8 frames from black to normal
 #define GLINT_PERIOD 64 // frames between glints sweeping over the bonus blocks
 #define GLINT_STEP 4    // frames each step of the glint shows
+// The title's logo drops in from above the screen and bounces to rest here
+// (screen y of its top), falling LOGO_GRAVITY pixels per frame faster.
+#define LOGO_REST_Y 18
+#define LOGO_GRAVITY (FX_ONE / 2)
+// The band behind a stage card's (and game over's) text: its middle line,
+// half its height, and how far its edges' glow fades out to black.
+#define BAND_MIDDLE 76
+#define BAND_HALF 32
+#define BAND_GLOW 24
+#define GAME_OVER_COLOR COLOR_RGB(96, 16, 24)
+#define SKY_HORIZON_Y 120 // a stage's sky reaches its backdrop's color here
 
 const StageDef* stage;
 static int stage_index;      // in stages[]
@@ -56,6 +67,11 @@ static int brightness = SCREEN_BRIGHTNESS_MIN; // the title fades in from black
 static bool fading_out;
 static void (*next_screen)(void); // shown once the fade out reaches black
 static int title_stage;           // the stage START begins with, picked with SELECT
+static FIXED logo_y, logo_vy;     // the title's logo, dropping in
+// The backdrop's color on each line of the screen while a raster effect
+// shows it (backdrop_gradient, backdrop_band): in EWRAM, as it is read only
+// once a frame, by frame_end().
+static SERVAL_EWRAM_BSS Color backdrop_lines[SCREEN_H];
 int cam_x, cam_y;
 int camera_stop_x;
 
@@ -140,16 +156,63 @@ static void fade_to(void (*show)(void)) {
 // waits meanwhile.
 static bool update_fade(void) {
     if (fading_out) {
-        brightness = int_max(brightness - FADE_STEP, SCREEN_BRIGHTNESS_MIN);
+        // The next screen is set up a frame after the screen went black, not
+        // in the frame that darkens it: setting up writes VRAM at once, which
+        // would show for a frame on the last, not quite black, picture.
         if (brightness == SCREEN_BRIGHTNESS_MIN) {
             fading_out = false;
             next_screen();
         }
+        brightness = int_max(brightness - FADE_STEP, SCREEN_BRIGHTNESS_MIN);
     } else {
         brightness = int_min(brightness + FADE_STEP, 0);
     }
     screen_set_brightness(brightness);
     return fading_out;
+}
+
+// --- Backdrops ---------------------------------------------------------------
+
+// A raster effect gives the backdrop a color per line (raster_backdrop):
+// the backdrop shows wherever the layers have color 0, so a sky shades from
+// deep blue overhead to pale at the horizon behind the clouds and hills
+// without a tile of its own. The colors are mixed once, on a black screen
+// (color_mix costs about 140 cycles a color), and the table stays in RAM
+// for frame_end() to copy each frame.
+
+void backdrop_gradient(Color top, Color bottom, int bottom_y) {
+    for (int y = 0; y < SCREEN_H; y++)
+        backdrop_lines[y] = color_mix(top, bottom, (u32)int_min(y * 256 / bottom_y, 256));
+    raster_backdrop(backdrop_lines);
+}
+
+// A black screen with a band of `color` across its middle, behind the text,
+// edged with a light line and glowing out into the black above and below.
+static void backdrop_band(Color color) {
+    const Color black = COLOR_RGB(0, 0, 0);
+    Color edge = color_mix(color, COLOR_RGB(255, 255, 255), 96);
+    for (int y = 0; y < SCREEN_H; y++) {
+        int d = int_abs(y - BAND_MIDDLE); // lines from the middle
+        Color c = black;
+        if (d < BAND_HALF)
+            c = color;
+        else if (d < BAND_HALF + 2)
+            c = edge;
+        else if (d < BAND_HALF + 2 + BAND_GLOW)
+            c = color_mix(color, black, (u32)(128 + (d - BAND_HALF - 2) * 128 / BAND_GLOW));
+        backdrop_lines[y] = c;
+    }
+    raster_backdrop(backdrop_lines);
+}
+
+// A stage's backdrop: its sky, or one color (raster_clear: the effect ends,
+// and screen_set_backdrop()'s color, which its effects hook may pulse, shows).
+static void show_stage_backdrop(void) {
+    screen_set_backdrop(stage->backdrop);
+    if (stage->sky_top)
+        backdrop_gradient(stage->sky_top, stage->backdrop, SKY_HORIZON_Y);
+    else
+        raster_clear();
 }
 
 // --- HUD and animated tiles ---------------------------------------------------
@@ -229,23 +292,46 @@ static void show_title(void) {
     map_unload(1);
     map_unload(2);
     map_unload(3);
-    load_stage(0); // the title shows the first stage's start
+    load_stage(0);                   // the title shows the first stage's start...
+    sprite_group_load(&title_group); // ...and the logo (released with the stage's group)
+    logo_y = FX(-LOGO_H);
+    logo_vy = 0;
     time_left = stage->time;
-    screen_set_backdrop(stage->backdrop);
+    show_stage_backdrop();
     level_show();
     cam_x = 0;
     cam_y = CAMERA_REST_Y;
     camera_set(cam_x, cam_y);
     player_big = false;
     player_spawn(start_mx * TILE + 2, (start_my + 1) * TILE);
+    // The logo is sprites (draw_logo), so the text keeps out of its way:
+    // PRESS START under it, the best score and the stage, and the controls
+    // at the bottom, on the earth.
     text_clear();
-    text_print_centered(5, "S E R V A L   D A S H");
-    text_print_centered(13, "A:JUMP  B:RUN  START:PAUSE");
-    text_print_centered(15, text_format("BEST %06d", (int)progress.best_score));
+    text_print_centered(19, "A:JUMP  B:RUN  START:PAUSE");
+    text_print_centered(13, text_format("BEST %06d", (int)progress.best_score));
     if (title_stage >= progress.reached)
         title_stage = 0;
     if (progress.reached > 1)
-        text_print_centered(17, text_format("SELECT: STAGE %s", stages[title_stage]->name));
+        text_print_centered(14, text_format("SELECT: STAGE %s", stages[title_stage]->name));
+}
+
+// The logo drops in and bounces, each bounce a third as high, then rests.
+static void update_logo(void) {
+    logo_vy += LOGO_GRAVITY;
+    logo_y += logo_vy;
+    if (logo_y >= FX(LOGO_REST_Y)) {
+        logo_y = FX(LOGO_REST_Y);
+        logo_vy = logo_vy > FX(2) ? -logo_vy / 3 : 0;
+    }
+}
+
+// The logo's six 64x32 pieces, side by side, in front of the foreground.
+static void draw_logo(void) {
+    int x = (SCREEN_W - LOGO_W) / 2, y = fx_to_int(logo_y);
+    for (int f = 0; f < LOGO_FRAMES_X * LOGO_FRAMES_Y; f++)
+        sprite_draw(SPR_LOGO, (u8)f, x + f % LOGO_FRAMES_X * 64, y + f / LOGO_FRAMES_X * 32,
+                    SPRITE_ABOVE_FOREGROUND);
 }
 
 // SELECT on the title: the next stage reached, back to the first after the
@@ -254,11 +340,13 @@ static void select_stage(void) {
     if (progress.reached < 2)
         return;
     title_stage = (title_stage + 1) % progress.reached;
-    text_print_centered(17, text_format("SELECT: STAGE %s", stages[title_stage]->name));
+    text_print_centered(14, text_format("SELECT: STAGE %s", stages[title_stage]->name));
     psg_play(SND_PAUSE);
 }
 
-// A black screen with the stage and the lives left, before (re)starting.
+// Before (re)starting: the stage's name and title on a band of its color
+// across a black screen, and the serval running in place beside the lives
+// left (draw_stage_card).
 static void show_stage_card(void) {
     state = STAGE_CARD;
     state_timer = CARD_FRAMES;
@@ -267,18 +355,30 @@ static void show_stage_card(void) {
     map_unload(1);
     map_unload(2);
     map_unload(3);
-    screen_set_backdrop(COLOR_RGB(0, 0, 0));
     load_stage(stage_index); // also rebuilds the level after a lost life
+    backdrop_band(stage->card_color);
     text_clear();
-    text_print_centered(8, text_format("STAGE %s", stage->name));
-    text_print_centered(11, text_format("x %d", lives));
+    text_print_centered(6, text_format("STAGE %s", stage->name));
+    // The title in a light tint of the band's color: text style 2's.
+    text_set_style_color(2, color_mix(stage->card_color, COLOR_RGB(255, 255, 255), 200),
+                         COLOR_RGB(0, 0, 0));
+    text_set_style(2);
+    text_print_centered(8, stage->title);
+    text_set_style(TEXT_NORMAL);
+    text_print(15, 11, text_format("x %d", lives));
     progress_update(); // a stage reached for the first time, a best score
+}
+
+// The serval at twice its size, running in place left of the lives.
+static void draw_stage_card(void) {
+    u8 frame = (state_timer / 6) % 2 ? SERVAL_RUN2 : SERVAL_RUN1;
+    sprite_draw_ex(SPR_SERVAL_SMALL, frame, 15 * 8 - 26, 11 * 8 - 4, 0, FX(2), FX(2), 0);
 }
 
 static void start_level(void) {
     state = PLAYING;
     text_clear();
-    screen_set_backdrop(stage->backdrop);
+    show_stage_backdrop();
     level_show();
     int mx = checkpoint_reached ? checkpoint_mx : start_mx;
     int my = checkpoint_reached ? checkpoint_my : start_my;
@@ -319,6 +419,7 @@ static void show_ending(void) {
     map_unload(2);
     map_unload(3);
     screen_set_backdrop(COLOR_RGB(0, 0, 0));
+    raster_clear(); // the ending may set its own (backdrop_gradient)
     text_clear();
     progress_update();
     if (stage->ending_start)
@@ -350,9 +451,13 @@ static void game_over(void) {
     map_unload(1);
     map_unload(2);
     map_unload(3);
-    screen_set_backdrop(COLOR_RGB(0, 0, 0));
+    backdrop_band(GAME_OVER_COLOR);
     text_clear();
-    text_print_centered(9, "GAME OVER");
+    text_set_style_color(2, COLOR_RGB(255, 150, 140), COLOR_RGB(0, 0, 0)); // light red
+    text_set_style(2);
+    text_print_centered(8, "GAME OVER");
+    text_set_style(TEXT_NORMAL);
+    text_print_centered(10, text_format("SCORE %06d", score));
     psg_play(SND_GAME_OVER);
     progress_update();
 }
@@ -486,7 +591,9 @@ static void update_goal_tally(void) {
     } else if (++state_timer > 60) {
         state = STAGE_CLEAR;
         state_timer = CLEAR_FRAMES;
+        text_set_style(TEXT_HIGHLIGHT);
         text_print_centered(7, "STAGE CLEAR!");
+        text_set_style(TEXT_NORMAL);
         text_print_centered(9, text_format("SCORE %d", score));
         psg_play(SND_ONE_UP);
     }
@@ -542,10 +649,14 @@ static void update_state(void) {
     bool start = button_pressed(BUTTON_START);
     switch (state) {
     case TITLE:
-        if ((++state_timer / 30) % 2)
-            text_print_centered(9, "PRESS START");
-        else
-            text_print_line(0, 9, "");
+        update_logo();
+        if ((++state_timer / 30) % 2) {
+            text_set_style(TEXT_HIGHLIGHT);
+            text_print_centered(11, "PRESS START");
+            text_set_style(TEXT_NORMAL);
+        } else {
+            text_print_line(0, 11, "");
+        }
         if (start)
             start_game();
         else if (button_pressed(BUTTON_SELECT))
@@ -614,8 +725,10 @@ void game_frame(void) {
 
     // Drawing: the HUD icons, the serval and everything else, the banner.
     if (state == STAGE_CARD) {
-        sprite_draw(SPR_HUD_SERVAL, 0, 12 * 8, 11 * 8, 0);
+        draw_stage_card();
     } else if (state != GAME_OVER && state != ENDING) {
+        if (state == TITLE)
+            draw_logo();
         draw_hud();
         player_update_sprite(state == GOAL_SLIDE);
         sys_render();

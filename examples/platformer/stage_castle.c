@@ -450,6 +450,7 @@ static void ending_start(void) {
     ending.serval_x = -TILE;
     ending.home = false;
     screen_set_backdrop(NIGHT_SKY);
+    backdrop_gradient(NIGHT_SKY_TOP, NIGHT_HORIZON, ENDING_GROUND_Y - 8);
     camera_set(0, 0);
     map_load(&ending_far_layer);
     map_load(&ending_near_layer);
@@ -497,6 +498,8 @@ static bool ending_update(void) {
 
 const StageDef stage_castle = {
     .name = "1-4",
+    .title = "THE CASTLE",
+    .card_color = COLOR_RGB(100, 30, 22),
     .text = level_text,
     .screens = sizeof level_text / sizeof level_text[0] / 13,
     .height = 13,

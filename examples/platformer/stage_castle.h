@@ -99,8 +99,12 @@ extern const u32 star_tiles[STAR_FRAMES][STAR_TILE_COUNT * 8];
 // The hall's dark air, and the lava's glow it pulses toward.
 #define CASTLE_BACKDROP COLOR_RGB(30, 8, 10)
 #define CASTLE_GLOW COLOR_RGB(96, 26, 12)
-// The ending's night sky, and where the den's opening is on that screen.
+// The ending's night sky (the backdrop: NIGHT_SKY, shaded from near black
+// overhead to a glow over the horizon, backdrop_gradient), and where the
+// den's opening is on that screen.
 #define NIGHT_SKY COLOR_RGB(16, 22, 56)
+#define NIGHT_SKY_TOP COLOR_RGB(4, 6, 22)
+#define NIGHT_HORIZON COLOR_RGB(40, 46, 100)
 #define ENDING_GROUND_Y 128
 #define ENDING_DEN_X 150
 

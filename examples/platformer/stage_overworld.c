@@ -258,6 +258,8 @@ static u16 cell(char c, int mx, int my, u16* front) {
 
 const StageDef stage_overworld = {
     .name = "1-1",
+    .title = "THE GRASSLAND",
+    .card_color = COLOR_RGB(30, 84, 52),
     .text = level_text,
     .screens = sizeof level_text / sizeof level_text[0] / 13,
     .height = 13,
@@ -267,7 +269,8 @@ const StageDef stage_overworld = {
     .metatile_count = OW_MT_COUNT,
     .bonus_tile = OW_BONUS_TILE,
     .far_layer = &overworld_far_layer,
-    .backdrop = COLOR_RGB(100, 168, 252), // the sky
+    .backdrop = COLOR_RGB(100, 168, 252), // the sky at the horizon...
+    .sky_top = COLOR_RGB(40, 104, 220),   // ...and overhead
     .sprites = &overworld_group,
     .walker_sprite = SPR_BEETLE,
     .walker_flat_sprite = SPR_BEETLE_FLAT,

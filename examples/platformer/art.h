@@ -1,6 +1,6 @@
 // Graphics every stage shares (art.c): the serval, gems, the fish, the goal
-// banner, sparkles, HUD icons, bouncing blocks and brick debris, and the
-// sprite table. Also the numbers every stage's art (art_<name>.c) follows:
+// banner, sparkles, dust, HUD icons, bouncing blocks and brick debris, the
+// title's logo, and the sprite table. Also the numbers every stage's art (art_<name>.c) follows:
 // sprite IDs, palette slots, shared metatiles and tags.
 
 #ifndef PLATFORMER_ART_H
@@ -27,11 +27,14 @@ enum {
     SPR_HUD_GEM, // 8x8 HUD icons
     SPR_HUD_SERVAL,
     SPR_HUD_CLOCK,
+    SPR_DUST, // 16x8, a puff kicked up by the serval's feet (animated, once)
     SPR_GLOBAL_COUNT,
     // In every stage's group rather than the global one: their colors are
     // the stage's (its palette slot PAL_STAGE_BLOCKS).
     SPR_BLOCK = SPR_GLOBAL_COUNT, // a bouncing block: BLOCK_FRAME_*
     SPR_DEBRIS,                   // 8x8, tumbling (animated: frame_order, flipped)
+    // In title_group, loaded only while the title shows.
+    SPR_LOGO, // "SERVAL DASH": LOGO_FRAMES_X x LOGO_FRAMES_Y frames of 64x32
     SPR_SHARED_COUNT
 };
 #define STAGE_SPRITES 24
@@ -54,6 +57,14 @@ enum { PAL_SERVAL, PAL_GEM, PAL_FISH, PALETTE_COUNT };
 
 extern const SpriteAsset* const sprite_table[SPRITE_COUNT];
 extern const SpriteGroup global_group;
+// The title's logo, 192x64 pixels: too big for one hardware sprite, so it is
+// six frames of SPR_LOGO, frame (row * LOGO_FRAMES_X + column), drawn side by
+// side. Its group is loaded after the title's stage group and goes with it.
+#define LOGO_FRAMES_X 3
+#define LOGO_FRAMES_Y 2
+#define LOGO_W (LOGO_FRAMES_X * 64)
+#define LOGO_H (LOGO_FRAMES_Y * 32)
+extern const SpriteGroup title_group;
 
 // Each stage's own sprites, in its block of IDs (art_<name>.c).
 extern const SpriteAsset overworld_sprites[STAGE_SPRITES];

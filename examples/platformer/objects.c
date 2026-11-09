@@ -1,6 +1,6 @@
 // Everything in the level besides the serval that every stage has: enemies
 // that walk (beetles) or hop (frogs), the fish, gems popping out of blocks,
-// bouncing blocks, brick debris and sparkles. A stage's own objects are its
+// bouncing blocks, brick debris, sparkles and dust. A stage's own objects are its
 // hooks' (stage_<name>.c), which can use the helpers here.
 
 #include "game.h"
@@ -23,6 +23,7 @@
 #define KNOCKED_FRAMES 70
 #define GEM_POP_FRAMES 26
 #define SPARKLE_FRAMES 16
+#define DUST_FRAMES 18    // its animation's length (dust_times, art.c)
 #define DESPAWN_BEHIND 48 // pixels left of the screen
 
 // Per-entity game data, beside the engine's component pools.
@@ -148,6 +149,10 @@ void enemy_squash(u32 i) {
     if (++stomp_combo == 8)
         add_life();
     psg_play(SND_STOMP);
+    // A puff of dust out to each side, pressed out from under the stomp.
+    int feet = fx_to_int(pos_y[i]) + body_h[i];
+    spawn_dust(center_x(i) - 6, feet, -FX_ONE / 2, -FX_ONE / 8);
+    spawn_dust(center_x(i) + 6, feet, FX_ONE / 2, -FX_ONE / 8);
     if (!walker)
         spawn_sparkle(center_x(i) - 4, fx_to_int(pos_y[i]));
 }
@@ -333,4 +338,18 @@ void spawn_sparkle(int x, int y) {
     u32 i = object_create(C_ANIM | C_SPARKLE, SPR_SPARKLE, x, y);
     if (i < MAX_ENT)
         obj_timer[i] = SPARKLE_FRAMES;
+}
+
+// Dust plays its four frames once (SPRITE_ASSET_ANIM_ONCE) as it drifts, and
+// is gone after the last: an effect like a sparkle (C_SPARKLE). Its art's
+// bottom row is empty, so the puff sits on y. It is drawn in front of the
+// foreground, so tall grass doesn't hide it.
+void spawn_dust(int x, int y, FIXED vx, FIXED vy) {
+    u32 i = object_create(C_VEL | C_ANIM | C_SPARKLE, SPR_DUST, x - 8, y - 7);
+    if (i < MAX_ENT) {
+        spr_flags[i] = SPRITE_ABOVE_FOREGROUND;
+        vel_x[i] = vx;
+        vel_y[i] = vy;
+        obj_timer[i] = DUST_FRAMES;
+    }
 }

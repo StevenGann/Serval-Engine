@@ -45,8 +45,9 @@ enum { SPAWN_BIRD = SPAWN_STAGE, SPAWN_BURRS };
 
 // The bonus block's first tile in the tileset.
 #define TT_BONUS_TILE 1
-// The daytime sky.
+// The daytime sky: pale over the haze (the backdrop), deeper overhead.
 #define TT_BACKDROP COLOR_RGB(130, 196, 246)
+#define TT_SKY_TOP COLOR_RGB(64, 136, 228)
 
 extern const Tileset treetops_tileset;
 extern const Metatile treetops_metatiles[TT_MT_COUNT];

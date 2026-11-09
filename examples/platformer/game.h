@@ -28,7 +28,9 @@ typedef struct {
 // what every stage does. stage_<name>.c defines one; game.c plays them in
 // order (stages[]). The hooks are optional (NULL: nothing to do).
 typedef struct {
-    const char* name; // "1-1": the stage card and the HUD show "STAGE 1-1"
+    const char* name;  // "1-1": the stage card and the HUD show "STAGE 1-1"
+    const char* title; // "GRASSLAND": the stage card shows it under its name
+    Color card_color;  // the band of color behind the stage card's text
 
     // The level, written as text: `screens` screens of 16 columns by
     // `height` rows (at most LEVEL_MAX_CELLS cells in all), one row after
@@ -46,6 +48,10 @@ typedef struct {
     u16 bonus_tile;            // the bonus block's first tile in the tileset (its glint)
     const MapLayer* far_layer; // background 3 (parallax), or NULL for none
     Color backdrop;            // what shows where no layer draws
+    // A stage under the open sky: the sky's color at the top of the screen,
+    // shading line by line into the backdrop's further down (game.c's
+    // backdrop_gradient). 0: the backdrop is one color.
+    Color sky_top;
     // Its sprite group: SPR_BLOCK, SPR_DEBRIS and its own sprites, loaded
     // after the global group's mark when the stage starts.
     const SpriteGroup* sprites;
@@ -194,6 +200,9 @@ void spawn_fish(int mx, int my);
 void spawn_bump(int mx, int my, u8 frame, u16 final_metatile);
 void spawn_debris(int mx, int my);
 void spawn_sparkle(int x, int y);
+// A puff of dust at world (x, y) (the middle of its bottom edge: feet on the
+// ground), drifting by (vx, vy) pixels per frame (FIXED).
+void spawn_dust(int x, int y, FIXED vx, FIXED vy);
 void knock_enemies_on(int mx, int my); // enemies on top of a block hit from below
 
 // --- Game (game.c) -----------------------------------------------------------
@@ -205,6 +214,10 @@ void add_gem(void);
 void add_life(void);
 void start_goal(void);      // the serval caught the goal pole
 void goal_start_exit(void); // the serval walks into the exit, ending the stage
+// The backdrop line by line (raster_backdrop): `top` at the top of the
+// screen, shading evenly into `bottom` down to line `bottom_y`, `bottom`
+// below it. Stays until the next screen: a sky behind a stage's layers.
+void backdrop_gradient(Color top, Color bottom, int bottom_y);
 
 // Camera position in world pixels (follows the serval, never back left).
 extern int cam_x, cam_y;
@@ -264,7 +277,7 @@ extern const PsgSound castle_sounds[STAGE_SOUNDS];
 #define C_GEM_POP C_GAME(3)
 #define C_BUMP C_GAME(4)
 #define C_DEBRIS C_GAME(5)
-#define C_SPARKLE C_GAME(6)
+#define C_SPARKLE C_GAME(6)  // a sparkle or a puff of dust: gone when its obj_timer runs out
 #define C_SQUASHED C_GAME(7) // a stomped enemy, flat for a moment
 #define C_KNOCKED C_GAME(8)  // an enemy knocked out from below, on its back
 #define C_STAGE(n) C_GAME(9 + (n))

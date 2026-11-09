@@ -282,6 +282,8 @@ static void effects(void) {
 
 const StageDef stage_underground = {
     .name = "1-2",
+    .title = "THE CAVES",
+    .card_color = COLOR_RGB(52, 34, 92),
     .text = level_text,
     .screens = sizeof level_text / sizeof level_text[0] / 13,
     .height = 13,

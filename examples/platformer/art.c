@@ -8,8 +8,9 @@
 // each 8x8 tile, matching flipped copies too (the screen entries' flip bits).
 //
 // What every stage shares: the serval, gems, the fish, the goal banner,
-// sparkles, HUD icons, bouncing blocks and brick debris, the bonus block's
-// glint, and the sprite table. Each stage's own art is in its art_<name>.c.
+// sparkles, dust, HUD icons, bouncing blocks and brick debris, the bonus
+// block's glint, the title's logo, and the sprite table. Each stage's own art
+// is in its art_<name>.c.
 
 #include "game.h"
 
@@ -316,6 +317,37 @@ static const u32 debris_tiles[8] = {
     0x00000000, 0x00111100, 0x01334410, 0x01233410, 0x01223310, 0x00111100, 0x00000000, 0x00000000,
 };
 
+// A puff of dust kicked up by the serval's feet (landing, skidding, jumping)
+// and by a stomp: four frames of 16x8, played once (SPRITE_ASSET_ANIM_ONCE),
+// in the serval's cream and light tan (w, l).
+//   ................  ................  ................  ................
+//   ................  ................  ....ww....ww....  ...w........w...
+//   ................  .....www.ww.....  ...wwwl..wwwl...  ..wl........wl..
+//   ................  ....wwwwwwwl....  ...lwll..lwll...  ................
+//   ......wwww......  ...wwwwwwwwwl...  ....ll....ll....  ................
+//   .....wwwwwl.....  ...lwwwwwwwll...  ................  ................
+//   .....lwwwll.....  ....lllllll.....  ................  ................
+//   ................  ................  ................  ................
+static const u32 dust_tiles[64] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x55000000, 0x55500000, 0x55400000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000055, 0x00000455, 0x00000445, 0x00000000,
+    0x00000000, 0x00000000, 0x55500000, 0x55550000, 0x55555000, 0x55554000, 0x44440000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000550, 0x00004555, 0x00045555, 0x00044555, 0x00000444, 0x00000000,
+    0x00000000, 0x00550000, 0x04555000, 0x04454000, 0x00440000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00005500, 0x00045550, 0x00044540, 0x00004400, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00005000, 0x00004500, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00050000, 0x00450000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+// The title's logo: six 64x32 frames (LOGO_FRAMES_X x LOGO_FRAMES_Y, art.h),
+// the picture in logo_tiles.inc's comments. Chunky letters with rounded
+// corners and a solid depth below them: "SERVAL" in the serval's gold and
+// orange, with its spots, and "DASH" in red, leaning forward, with speed
+// lines trailing behind it.
+static const u32 logo_tiles[LOGO_FRAMES_X * LOGO_FRAMES_Y * 32 * 8] = {
+#include "logo_tiles.inc"
+};
+
 static const u16 sprite_palettes[PALETTE_COUNT][16] = {
     [PAL_SERVAL] = {0, COLOR_RGB(44, 26, 22), COLOR_RGB(190, 104, 36), COLOR_RGB(236, 156, 56),
                     COLOR_RGB(252, 208, 128), COLOR_RGB(255, 250, 236), COLOR_RGB(58, 36, 30),
@@ -333,6 +365,7 @@ static const u16 sprite_palettes[PALETTE_COUNT][16] = {
 static const u8 gem_spin_times[4] = {3, 3, 3, 3};
 static const u8 sparkle_times[2] = {4, 4};
 static const u8 debris_times[4] = {4, 4, 4, 4};
+static const u8 dust_times[4] = {3, 4, 5, 6}; // DUST_FRAMES (objects.c) in all
 
 // Animation sequences for sys_animate: frames to show, some flipped, so that
 // mirror images of a frame need no tiles of their own.
@@ -372,6 +405,11 @@ static const SpriteAsset sprites[SPR_SHARED_COUNT] = {
     [SPR_HUD_GEM] = {.size = SPRITE_8x8, .tiles = hud_gem_tiles, .palette_slot = PAL_GEM},
     [SPR_HUD_SERVAL] = {.size = SPRITE_8x8, .tiles = hud_serval_tiles},
     [SPR_HUD_CLOCK] = {.size = SPRITE_8x8, .tiles = hud_clock_tiles},
+    [SPR_DUST] = {.size = SPRITE_16x8,
+                  .tiles = dust_tiles,
+                  .frame_count = 4,
+                  .frame_times = dust_times,
+                  .flags = SPRITE_ASSET_ANIM_ONCE},
     // In each stage's group, with its colors (palette slot PAL_STAGE_BLOCKS).
     [SPR_BLOCK] = {.size = SPRITE_16x16,
                    .tiles = block_tiles,
@@ -383,6 +421,10 @@ static const SpriteAsset sprites[SPR_SHARED_COUNT] = {
                     .frame_order = debris_tumble,
                     .order_length = 4,
                     .palette_slot = PAL_STAGE_BLOCKS},
+    // In title_group, with its own palette.
+    [SPR_LOGO] = {.size = SPRITE_64x32,
+                  .tiles = logo_tiles,
+                  .frame_count = LOGO_FRAMES_X * LOGO_FRAMES_Y},
 };
 
 // Every sprite ID: the shared sprites, then each stage's block of
@@ -410,8 +452,10 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_HUD_GEM] = &sprites[SPR_HUD_GEM],
     [SPR_HUD_SERVAL] = &sprites[SPR_HUD_SERVAL],
     [SPR_HUD_CLOCK] = &sprites[SPR_HUD_CLOCK],
+    [SPR_DUST] = &sprites[SPR_DUST],
     [SPR_BLOCK] = &sprites[SPR_BLOCK],
     [SPR_DEBRIS] = &sprites[SPR_DEBRIS],
+    [SPR_LOGO] = &sprites[SPR_LOGO],
     STAGE_SPRITE_IDS(STAGE_OVERWORLD, overworld_sprites),
     STAGE_SPRITE_IDS(STAGE_UNDERGROUND, underground_sprites),
     STAGE_SPRITE_IDS(STAGE_TREETOPS, treetops_sprites),
@@ -423,6 +467,36 @@ const SpriteGroup global_group = {
     .palettes = &sprite_palettes[0][0],
     .sprite_count = SPR_GLOBAL_COUNT,
     .palette_count = PALETTE_COUNT,
+};
+
+// The logo's colors (the legend in logo_tiles.inc): its outline, "SERVAL"
+// from pale gold to deep orange with its depth and spots, "DASH" from pink to
+// dark red with its depth, and the glints and speed lines.
+static const u16 logo_palette[16] = {
+    0,
+    COLOR_RGB(44, 26, 22),    // K: the outline, the serval's
+    COLOR_RGB(255, 244, 184), // h
+    COLOR_RGB(252, 210, 96),  // g
+    COLOR_RGB(244, 160, 48),  // o
+    COLOR_RGB(214, 112, 32),  // O
+    COLOR_RGB(140, 60, 26),   // x: depth
+    COLOR_RGB(82, 44, 28),    // s: spots
+    COLOR_RGB(255, 168, 136), // H
+    COLOR_RGB(236, 80, 56),   // r
+    COLOR_RGB(196, 44, 40),   // R
+    COLOR_RGB(112, 22, 34),   // X: depth
+    COLOR_RGB(255, 255, 255), // w: glints, speed lines
+    COLOR_RGB(196, 226, 255), // p: speed lines
+};
+static const u16 title_ids[1] = {SPR_LOGO};
+
+// The title's sprites: loaded after the stage's group while the title shows,
+// and released with it when the first stage's card loads (load_stage).
+const SpriteGroup title_group = {
+    .sprite_ids = title_ids,
+    .palettes = logo_palette,
+    .sprite_count = 1,
+    .palette_count = 1,
 };
 
 // --- Backgrounds --------------------------------------------------------------

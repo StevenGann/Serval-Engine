@@ -14,11 +14,15 @@
 //     music, and hooks for its own objects, hazards, screen effects and
 //     drawing; stage cards and progression from one to the next
 //   - Sprites loaded in layers: the global group (the serval, gems, the fish,
-//     the banner, sparkles, HUD icons), then a mark (sprite_groups_mark),
-//     then the stage's group (its enemies, and the bouncing block and debris
-//     in its colors), released to the mark when the next stage loads
-//     (sprite_groups_release). One sprite table and one sound table hold
-//     every stage's IDs, each stage a block of its own.
+//     the banner, sparkles, dust, HUD icons), then a mark
+//     (sprite_groups_mark), then the stage's group (its enemies, and the
+//     bouncing block and debris in its colors), released to the mark when
+//     the next stage loads (sprite_groups_release). On the title a third
+//     group follows the stage's, the logo, and goes with it. One sprite table
+//     and one sound table hold every stage's IDs, each stage a block of its
+//     own.
+//   - A logo bigger than a hardware sprite: 192x64 pixels as six 64x32
+//     frames of one sprite, drawn side by side, dropping in and bouncing
 //   - Tiled backgrounds from 16x16 metatiles (map.h): one tileset per stage,
 //     shared by up to three map layers. The playfield on background 2 is
 //     wider and a little taller than the screen (1-1: 224 x 13 metatiles),
@@ -56,14 +60,24 @@
 //     frame is picked by the game (running, jumping, skidding), and it blinks
 //     with SPRITE_HIDDEN
 //   - Many short-lived entities with game components: popping gems, bouncing
-//     blocks drawn as sprites, brick debris, sparkles; enemies created only as
-//     they come into view and destroyed once far behind
+//     blocks drawn as sprites, brick debris, sparkles, and puffs of dust
+//     kicked up by the serval's feet and by stomps (an animation played once,
+//     SPRITE_ASSET_ANIM_ONCE, drawn in front of the foreground,
+//     SPRITE_ABOVE_FOREGROUND); enemies created only as they come into view
+//     and destroyed once far behind
 //   - Sprites drawn by hand (sprite_draw) next to sys_render: the goal banner
 //     and HUD icons above the text layer (SPRITE_ABOVE_HUD); a fish rising out
 //     of a block behind the playfield (SPRITE_BEHIND_PLAYFIELD)
 //   - Screen fades between title, stage card, stage, game over and stage
-//     clear (screen_set_brightness)
-//   - HUD text with a drop shadow (text_set_shadow), text_print_centered
+//     clear (screen_set_brightness), the next screen set up only once the
+//     screen is black
+//   - A backdrop color per line (raster_backdrop): skies shading from deep
+//     blue overhead to pale at the horizon behind the layers (StageDef's
+//     sky_top), and on the stage cards and game over a band of color across
+//     the black, mixed with color_mix into a table in RAM
+//   - HUD text with a drop shadow (text_set_shadow), text_print_centered;
+//     text styles (text_set_style, text_set_style_color) for PRESS START,
+//     STAGE CLEAR!, GAME OVER and each stage card's title
 //   - Music (PsgSong): an original looping tune per stage on all three tone
 //     generators, sped up where it is when time runs low
 //     (psg_music_set_tempo), paused and resumed with the game
@@ -157,24 +171,36 @@
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
 //     3 seconds; any button skips it once the logo is in).
-//   - The title fades in: the start of stage 1-1 under a blue sky, rolling
-//     green hills and pale blue mountains behind, white clouds, an orange
-//     spotted serval on the grass, "S E R V A L   D A S H", a blinking "PRESS
-//     START", the controls and the best score saved ("BEST 000000" on a first
-//     boot). The top row is the HUD: score, gems (blue gem icon), "STAGE
-//     1-1", time (clock icon) and lives (serval head icon). All text has a
-//     dark drop shadow, so it stays readable over the clouds.
+//   - The title fades in: the start of stage 1-1 under a blue sky (deep blue
+//     at the top, paler toward the horizon), rolling green hills and pale
+//     blue mountains behind, white clouds, an orange spotted serval on the
+//     grass. The logo drops in from the top and bounces to rest: "SERVAL" in
+//     big chunky gold-to-orange letters with dark spots, and under it "DASH"
+//     in red, leaning forward, with white speed lines behind it. Below it a
+//     blinking yellow "PRESS START" and the best score saved ("BEST 000000"
+//     on a first boot); the controls along the bottom, on the earth. The top
+//     row is the HUD: score, gems (blue gem icon), "STAGE 1-1", time (clock
+//     icon) and lives (serval head icon). All text has a dark drop shadow,
+//     so it stays readable over the clouds.
 //   - Once a later stage has been reached, the title also shows "SELECT:
-//     STAGE 1-1": SELECT steps through the stages reached (a tick), back to
-//     1-1 after the last, and START begins with the one shown (the HUD shows
-//     it too). A game started there has the usual 3 lives and no score.
-//   - START: a rising chime, a fade to a black "STAGE 1-1" card with the lives
-//     left, then a fade into the stage and its music. The countdown starts
-//     at 300 and ticks down a little faster than once a second. Sound effects
-//     take over a channel of the tune for a moment.
+//     STAGE 1-1" under the best score: SELECT steps through the stages
+//     reached (a tick), back to 1-1 after the last, and START begins with the
+//     one shown (the HUD shows it too). A game started there has the usual 3
+//     lives and no score.
+//   - START: a rising chime, a fade to the stage card: a band of the stage's
+//     color across a black screen (green for 1-1, violet 1-2, teal 1-3, dark
+//     red 1-4), edged with light lines, with "STAGE 1-1", the stage's title
+//     under it in a light tint of the band ("THE GRASSLAND", "THE CAVES",
+//     "THE TREETOPS", "THE CASTLE"), and the serval twice its size running in
+//     place beside the lives left ("x 3"). Then a fade into the stage and its
+//     music. The countdown starts at 300 and ticks down a little faster than
+//     once a second. Sound effects take over a channel of the tune for a
+//     moment.
 //   - Left/Right walk, B held runs faster, A jumps (higher when running;
 //     letting go of A early makes a short hop). Turning around at speed skids.
-//     Up and Down climb ladders.
+//     Up and Down climb ladders. Puffs of cream dust: one left behind on a
+//     jump, one to each side on a hard landing, a trail ahead of the feet
+//     while skidding, and one to each side of a stomped enemy.
 //     The far layer scrolls at half speed behind the playfield. The camera
 //     follows to the right only (you can't walk back off the left edge) and
 //     rises a little when you climb high.
@@ -197,17 +223,19 @@
 //   - Losing a life: the music stops, the serval hops up and falls off the
 //     screen to a sad tune, then a fade to the stage's card; past the
 //     stage's checkpoint (about 40% of the way) the stage restarts there.
-//     With no lives left: "GAME OVER", then the title.
+//     With no lives left: "GAME OVER" in light red and the score, on a dark
+//     red band like a stage card's, then the title.
 //   - At the end of a stage the serval walks into the den or the exit with a
 //     short fanfare, the time left counts into the score with ticks (50 per
-//     unit), "STAGE CLEAR!" appears with a jingle and the score, and after a
-//     few seconds the next stage's card fades in. Lives, score, gems and the
-//     serval's size carry over; time starts again at 300.
+//     unit), "STAGE CLEAR!" appears in yellow with a jingle and the score,
+//     and after a few seconds the next stage's card fades in. Lives, score,
+//     gems and the serval's size carry over; time starts again at 300.
 //   - START pauses ("PAUSED", a tick; the music stops) and resumes (a tick;
 //     the music carries on from where it stopped).
 //   - The classic cheat code during a stage, or paused, skips to the next stage (a jingle).
 //   Stage 1-1, the overworld:
-//   - Grassland under a blue sky with hills and clouds, tall grass and
+//   - Grassland under a blue sky (deep overhead, pale at the horizon) with
+//     hills and clouds, tall grass and
 //     flowers in front of the serval, and a bouncy tune in F major (melody,
 //     bass and drums) that loops about every 26 seconds, sped up from 150 to
 //     180 beats per minute when time runs low.
@@ -249,7 +277,8 @@
 //   - At the end a stone staircase climbs to a timbered opening in the rock
 //     wall, with daylight and green hills beyond; walking in ends the stage.
 //   Stage 1-3, the treetops:
-//   - High in a forest under a pale blue sky with white clouds, the forest's
+//   - High in a forest under a blue sky, paling toward the haze, with white
+//     clouds, the forest's
 //     crowns far below in a blue-green haze, scrolling at half speed. The
 //     serval starts on a great tree's mossy top and jumps from canopy to
 //     canopy: leafy crowns with pink blossoms on brown trunks that branch
@@ -313,6 +342,7 @@
 //     with the fanfare.
 //   After the last stage:
 //   - "STAGE CLEAR!" and the score, then a fade to the savanna at night: a
+//     sky from near black overhead to a dim blue glow at the horizon, a
 //     full moon, twinkling stars, an acacia on a rise and under it a mound
 //     with a dark opening, the serval's den. A gentle tune in E flat plays
 //     once. The serval runs in from the left and into its den, and a "z" over
@@ -328,7 +358,8 @@
 // stage runs in is game.c (states, HUD, camera, goal, stage select and
 // saving), level.c (building the level, blocks, gems, hazards), player.c,
 // objects.c (enemies, items, effects), art.c (shared graphics, converted
-// from ASCII pixel art) and sound.c (shared sound effects). Each stage is
+// from ASCII pixel art; the title's logo in logo_tiles.inc) and sound.c
+// (shared sound effects). Each stage is
 // stage_<name>.c (its level and hooks), art_<name>.c, sound_<name>.c and
 // stage_<name>.h: overworld (1-1), underground (1-2), treetops (1-3) and
 // castle (1-4, with boss.c).

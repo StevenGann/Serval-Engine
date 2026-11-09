@@ -28,6 +28,9 @@
 #define TRANSFORM_FRAMES 48
 #define DEATH_HOP_DELAY 30
 #define DEATH_FRAMES 180
+// Dust (spawn_dust): landing at least this fast, and every few frames of a skid.
+#define DUST_LANDING_SPEED FX(3)
+#define SKID_DUST_FRAMES 5
 
 u32 player;
 bool player_big;
@@ -40,8 +43,11 @@ static int input_dir;  // direction held this frame
 static int run_phase;  // distance run, for the run animation
 static int mode_timer;
 static bool fell;
-static bool climbing;   // on a ladder: no gravity, the D-pad moves it up and down
-static int climb_phase; // distance climbed, for the climbing animation
+static bool climbing;    // on a ladder: no gravity, the D-pad moves it up and down
+static int climb_phase;  // distance climbed, for the climbing animation
+static bool airborne;    // off the floor after the last move...
+static FIXED fall_speed; // ...and falling this fast before this one: a landing's dust
+static int skid_frames;  // frames skidding, for its dust
 
 int player_center_x(void) {
     return fx_to_int(pos_x[player]) + PLAYER_W / 2;
@@ -70,6 +76,12 @@ void player_spawn(int x, int y) {
     player_hidden = false;
     facing = 1;
     climbing = false;
+    airborne = false;
+}
+
+// A puff of dust at the serval's feet, dx pixels from their middle.
+static void kick_dust(int dx, FIXED vx, FIXED vy) {
+    spawn_dust(player_center_x() + dx, fx_to_int(pos_y[player]) + body_h[player], vx, vy);
 }
 
 // Moves v toward 0 by at most step.
@@ -149,9 +161,13 @@ void player_control(void) {
     else if (button_down(BUTTON_LEFT) && !button_down(BUTTON_RIGHT))
         input_dir = -1;
 
+    bool skidding = false;
     if (input_dir != 0) {
         if (on_floor && v != 0 && (v > 0) != (input_dir > 0)) {
-            v += input_dir * SKID_DECEL; // skidding
+            v += input_dir * SKID_DECEL; // skidding, its feet kicking up dust ahead
+            skidding = true;
+            if (skid_frames++ % SKID_DUST_FRAMES == 0)
+                kick_dust(v > 0 ? 4 : -4, v / 4, -FX_ONE / 4);
         } else {
             FIXED accel = !on_floor ? AIR_ACCEL : run ? RUN_ACCEL : WALK_ACCEL;
             FIXED faster = v + input_dir * accel;
@@ -166,13 +182,17 @@ void player_control(void) {
         v = slow_down(v, FRICTION);
     }
     vel_x[i] = v;
+    if (!skidding)
+        skid_frames = 0;
 
     if (on_floor && button_pressed(BUTTON_A)) {
         vel_y[i] = int_abs(v) > WALK_MAX + FX_ONE / 4 ? -RUN_JUMP_SPEED : -JUMP_SPEED;
         psg_play(player_big ? SND_JUMP_BIG : SND_JUMP);
+        kick_dust(0, -v / 4, 0); // left behind where it pushed off
     }
     if (vel_y[i] < 0 && !button_down(BUTTON_A))
         vel_y[i] += JUMP_RELEASE_GRAVITY;
+    fall_speed = vel_y[i];
 }
 
 // The cell the serval's head hit: the one above the middle of the head, or
@@ -197,6 +217,13 @@ void player_after_move(void) {
         pos_x[i] = FX(cam_x);
         vel_x[i] = int_max(vel_x[i], 0);
     }
+    // A hard landing kicks up dust to both sides.
+    bool on_floor = body_contact[i] & MAP_CONTACT_FLOOR;
+    if (on_floor && airborne && fall_speed >= DUST_LANDING_SPEED) {
+        kick_dust(-5, -FX_ONE / 2, -FX_ONE / 8);
+        kick_dust(5, FX_ONE / 2, -FX_ONE / 8);
+    }
+    airborne = !on_floor && !climbing;
     int x = fx_to_int(pos_x[i]), y = fx_to_int(pos_y[i]);
     level_collect_gems(x, y, PLAYER_W, body_h[i]);
     if (player_invulnerable > 0)

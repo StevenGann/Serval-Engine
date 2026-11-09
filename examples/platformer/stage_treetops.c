@@ -386,6 +386,8 @@ static void after_move(void) {
 
 const StageDef stage_treetops = {
     .name = "1-3",
+    .title = "THE TREETOPS",
+    .card_color = COLOR_RGB(22, 78, 92),
     .text = level_text,
     .screens = sizeof level_text / sizeof level_text[0] / 13,
     .height = 13,
@@ -396,6 +398,7 @@ const StageDef stage_treetops = {
     .bonus_tile = TT_BONUS_TILE,
     .far_layer = &treetops_far_layer,
     .backdrop = TT_BACKDROP,
+    .sky_top = TT_SKY_TOP,
     .sprites = &treetops_group,
     .walker_sprite = SPR_CATERPILLAR,
     .walker_flat_sprite = SPR_CATERPILLAR_FLAT,
