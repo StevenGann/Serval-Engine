@@ -17,8 +17,11 @@ missing). The tables, as the script reads them (letters a to z are 0 to 25):
                    b = first * 26 + second; the last is the guess count
     WORD_TAILS     one per guess, sorted by bucket then tail:
                    third << 10 | fourth << 5 | fifth, bit 15 set for an answer
-    ANSWER_STARTS  677 numbers: answers in the buckets before bucket b
-    ANSWER_COUNT, GUESS_COUNT
+    ANSWER_STARTS  677 numbers: answers in the buckets before bucket b;
+                   the last is the answer count
+
+They are top-level arrays without `local`, so the script's code above the
+block, which ends the script, can use them (#WORD_TAILS is the guess count).
 
 `derive SCOWL_FINAL_DIR OUT_DIR` writes candidate lists from the `final/`
 directory of SCOWL 2020.12.07
@@ -138,7 +141,7 @@ def nth_answer(t, k):
 
 
 def _numbers(name, values):
-    lines = ["local %s = {" % name]
+    lines = ["%s = {" % name]
     for i in range(0, len(values), 10):
         lines.append("  " + ", ".join(str(v) for v in values[i:i + 10]) + ",")
     lines.append("}")
@@ -150,8 +153,6 @@ def render_block(t):
     out += _numbers("WORD_STARTS", t.starts)
     out += _numbers("WORD_TAILS", t.tails)
     out += _numbers("ANSWER_STARTS", t.answer_starts)
-    out.append("local ANSWER_COUNT <const> = %d" % t.answer_starts[-1])
-    out.append("local GUESS_COUNT <const> = %d" % t.starts[-1])
     out.append(END)
     return "\n".join(out) + "\n"
 

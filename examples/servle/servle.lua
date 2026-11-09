@@ -7,13 +7,14 @@
 -- else is here: the title, the rules, the controls, the marking, the word
 -- lists and their lookup, the statistics and their save.
 --
--- The word lists come last but for their lookup, packed into three tables by
+-- The script ends with the word lists, packed into three tables by
 -- tools/servle_words.py from examples/servle/words/answers.txt and
 -- guesses.txt (the lists' source of truth) between two marker lines: edit the
 -- text files and run `tools/servle_words.py pack`, never the block. Each word
 -- is packed in 15 bits: the guesses are sorted and bucketed by their first two
 -- letters (WORD_STARTS), and WORD_TAILS holds the last three letters of each,
 -- with bit 15 set if the word may be an answer (ANSWER_STARTS counts those).
+-- They are top-level arrays (no `local`), so the code above them sees them.
 --
 -- Names in ALL_CAPS that this file doesn't define come from the game's C
 -- headers: game.h and the engine's core.h, ecs.h, save.h, screen.h and
@@ -231,10 +232,13 @@ end
 
 -- A button down when a state begins (the A that left the title, an Up held
 -- through a reveal) does nothing until it is released and pressed again:
--- block_held notes those, update_held (every frame) forgets each released
--- one, and pressed and down read the others only.
+-- block_held notes those (and forgets the last spin), update_held (every
+-- frame) forgets each released one, and pressed and down read the others
+-- only.
 function block_held()
   held = 0
+  spin_dir = 0 -- and a spin starts afresh: an Up let go in a reveal is over
+  spin_time = 0
   local b = 1
   while b <= BUTTON_ANY do
     if button_down(b) then held = held | b end
@@ -469,8 +473,65 @@ function show_answer()
   end
 end
 
+-- Lookup --------------------------------------------------------------------
+
+-- The tables are at the end of the script. ANSWER_STARTS and WORD_STARTS have
+-- an entry per bucket and one more, the count of all answers or guesses
+-- (#WORD_TAILS is the guess count too).
+local ANSWER_TOTAL <const> = BUCKETS + 1 -- ANSWER_STARTS[ANSWER_TOTAL]: the answer count
+
+-- Is a packed word in the guesses? Its first two letters are its bucket; a
+-- binary search of the bucket's tails finds the last three.
+function is_word(word)
+  local b = (word >> 20) * 26 + (word >> 15 & 31)
+  local tail = word & TAIL_MASK
+  local lo = WORD_STARTS[b + 1]
+  local hi = WORD_STARTS[b + 2] - 1
+  while lo <= hi do
+    local mid = (lo + hi) // 2
+    local v = WORD_TAILS[mid + 1] & TAIL_MASK
+    if v == tail then return true end
+    if v < tail then
+      lo = mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  return false
+end
+
+-- An answer, every one as likely as the others.
+function pick_answer()
+  return nth_answer(random_range(1, ANSWER_STARTS[ANSWER_TOTAL]))
+end
+
+-- The k-th answer (1 to the answer count) in the list's order, packed: the
+-- bucket is the last one with fewer than k answers before it, then a count
+-- of the flagged words in it.
+function nth_answer(k)
+  local lo = 0
+  local hi = BUCKETS - 1
+  while lo < hi do
+    local mid = (lo + hi + 1) // 2
+    if ANSWER_STARTS[mid + 1] < k then
+      lo = mid
+    else
+      hi = mid - 1
+    end
+  end
+  local seen = ANSWER_STARTS[lo + 1]
+  for i = WORD_STARTS[lo + 1] + 1, WORD_STARTS[lo + 2] do
+    local tail = WORD_TAILS[i]
+    if tail & ANSWER_FLAG ~= 0 then
+      seen = seen + 1
+      if seen == k then return lo // 26 << 20 | lo % 26 << 15 | tail & TAIL_MASK end
+    end
+  end
+  return 0 -- not reached: every k has its word
+end
+
 -- BEGIN GENERATED WORDS (tools/servle_words.py pack): do not edit
-local WORD_STARTS = {
+WORD_STARTS = {
   0, 1, 27, 45, 66, 71, 78, 99, 100, 109,
   109, 111, 153, 177, 211, 212, 232, 233, 267, 286,
   298, 313, 322, 331, 337, 339, 346, 429, 429, 429,
@@ -540,7 +601,7 @@ local WORD_STARTS = {
   6358, 6358, 6359, 6359, 6359, 6365, 6365, 6365, 6365, 6365,
   6365, 6365, 6365, 6365, 6365, 6365, 6365,
 }
-local WORD_TAILS = {
+WORD_TAILS = {
   11528, 64, 32842, 179, 580, 583, 33380, 33944, 1491, 4108,
   4452, 4722, 7633, 41060, 8338, 11409, 12526, 47204, 14572, 47667,
   47763, 47780, 53828, 21106, 21305, 25164, 57938, 552, 4641, 7299,
@@ -1179,7 +1240,7 @@ local WORD_TAILS = {
   1171, 11335, 13394, 13458, 13522, 13528, 15864, 19730, 14968, 13323,
   13443, 13458, 14595, 14738, 17675,
 }
-local ANSWER_STARTS = {
+ANSWER_STARTS = {
   0, 0, 10, 14, 21, 21, 23, 28, 29, 30,
   30, 30, 49, 56, 63, 63, 68, 68, 76, 79,
   81, 83, 85, 91, 91, 91, 92, 108, 108, 108,
@@ -1249,60 +1310,4 @@ local ANSWER_STARTS = {
   1508, 1508, 1508, 1508, 1508, 1508, 1508, 1508, 1508, 1508,
   1508, 1508, 1508, 1508, 1508, 1508, 1508,
 }
-local ANSWER_COUNT <const> = 1508
-local GUESS_COUNT <const> = 6365
 -- END GENERATED WORDS
-
--- Lookup --------------------------------------------------------------------
-
--- Below the tables: a top-level local is seen only by the code after it.
-
--- Is a packed word in the guesses? Its first two letters are its bucket; a
--- binary search of the bucket's tails finds the last three.
-function is_word(word)
-  local b = (word >> 20) * 26 + (word >> 15 & 31)
-  local tail = word & TAIL_MASK
-  local lo = WORD_STARTS[b + 1]
-  local hi = WORD_STARTS[b + 2] - 1
-  while lo <= hi do
-    local mid = (lo + hi) // 2
-    local v = WORD_TAILS[mid + 1] & TAIL_MASK
-    if v == tail then return true end
-    if v < tail then
-      lo = mid + 1
-    else
-      hi = mid - 1
-    end
-  end
-  return false
-end
-
--- An answer, every one as likely as the others.
-function pick_answer()
-  return nth_answer(random_range(1, ANSWER_COUNT))
-end
-
--- The k-th answer (1 to ANSWER_COUNT) in the list's order, packed: the
--- bucket is the last one with fewer than k answers before it, then a count
--- of the flagged words in it.
-function nth_answer(k)
-  local lo = 0
-  local hi = BUCKETS - 1
-  while lo < hi do
-    local mid = (lo + hi + 1) // 2
-    if ANSWER_STARTS[mid + 1] < k then
-      lo = mid
-    else
-      hi = mid - 1
-    end
-  end
-  local seen = ANSWER_STARTS[lo + 1]
-  for i = WORD_STARTS[lo + 1] + 1, WORD_STARTS[lo + 2] do
-    local tail = WORD_TAILS[i]
-    if tail & ANSWER_FLAG ~= 0 then
-      seen = seen + 1
-      if seen == k then return lo // 26 << 20 | lo % 26 << 15 | tail & TAIL_MASK end
-    end
-  end
-  return 0 -- not reached: every k has its word
-end

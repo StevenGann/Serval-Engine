@@ -76,8 +76,12 @@ class ServleWordsTest(unittest.TestCase):
     def test_render_block(self):
         text = servle_words.render_block(tables)
         self.assertIn("WORD_STARTS", text)
-        self.assertIn("local ANSWER_COUNT <const> = %d" % len(answers), text)
-        self.assertIn("local GUESS_COUNT <const> = %d" % len(guesses), text)
+        self.assertIn("\nWORD_STARTS = {\n", text)
+        self.assertIn("\nWORD_TAILS = {\n", text)
+        self.assertIn("\nANSWER_STARTS = {\n", text)
+        self.assertNotIn("local", text)  # code above the block must see the tables
+        self.assertIn(" %d,\n}\n" % len(guesses), text.split("WORD_TAILS")[0])  # WORD_STARTS ends
+        self.assertTrue(text.rstrip().endswith(" %d,\n}\n%s" % (len(answers), servle_words.END)))
         self.assertTrue(text.startswith(servle_words.BEGIN))
         self.assertTrue(text.rstrip().endswith(servle_words.END))
 

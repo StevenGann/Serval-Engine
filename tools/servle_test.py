@@ -17,6 +17,7 @@ script are skipped).
 """
 
 import os
+import re
 import sys
 import unittest
 
@@ -37,10 +38,26 @@ FILES = [os.path.join(ROOT, "examples", "servle", "game.h")] + [
 ANSWERS = servle_words.load_words(os.path.join(WORDS, "answers.txt"))
 GUESSES = set(servle_words.load_words(os.path.join(WORDS, "guesses.txt")))
 
+
+
+def script_const(name):
+    """A `local NAME <const> = number` of servle.lua, so the timing the tests
+    compute with follows the script's."""
+    with open(SCRIPT, encoding="utf-8") as f:
+        m = re.search(r"^local %s <const> = (\d+)" % name, f.read(), re.M)
+    assert m, "servle.lua has no constant %s" % name
+    return int(m.group(1))
+
+
 # The script's own numbers (servle.lua), as the tests compute with them.
 STATE_TITLE, STATE_PLAY, STATE_REVEAL, STATE_WON, STATE_LOST = range(5)
-REPEAT_DELAY, REPEAT_EVERY = 16, 4
-REVEAL_MAX = 120  # frames from the A that enters a guess to input accepted again
+REPEAT_DELAY, REPEAT_EVERY = script_const("REPEAT_DELAY"), script_const("REPEAT_EVERY")
+# Frames from the A that enters a guess to its last tile landing (the reveal's
+# end: input is read again on the next frame), and from there to A starting
+# the next round. Change REVEAL_END with the reveal's shape.
+REVEAL_END = 5 * script_const("REVEAL_STEP")
+PROMPT_DELAY = script_const("PROMPT_DELAY")
+REVEAL_MAX = 120  # the design's bound on REVEAL_END
 BLOB_LIMIT = 26000  # the debug link's hot reload (docs/debug-link.md, "The scratch")
 
 A, B, SELECT, START, RIGHT, LEFT, UP, DOWN, R, L = (1 << n for n in range(10))
@@ -309,10 +326,46 @@ end
 
     @needs_runner
     def test_input_ignored_during_reveal(self):
+        self.assertLessEqual(REVEAL_END, REVEAL_MAX)
         enter = timeline(["plant"])[1][0]
-        run = play(["plant"], answer="plant", extra=[(enter + 10, A, 1), (enter + 60, A, 1)])
+        landed = enter + REVEAL_END  # the last tile lands: the round is won
+        frames = landed + PROMPT_DELAY + 20
+        # A during the reveal, and once more just before A is taken: neither
+        # is kept for later, so the result stays on screen.
+        presses = [(enter + 10, A, 1), (enter + REVEAL_END // 2, A, 1),
+                   (landed - 1, A, 1), (landed + PROMPT_DELAY - 1, A, 1)]
+        run = play(["plant"], answer="plant", extra=presses, frames=frames)
         self.assertEqual(self.glob(run, "STATE"), STATE_WON)
+        self.assertEqual(self.glob(run, "ANSWER"), servle_words.pack_word("plant"))
         self.assertEqual(self.array(run, "STATS")[0], 1)
+        # The run is long enough to see a skip: A when it is taken starts the
+        # next round.
+        run = play(["plant"], answer="plant", extra=[(landed + PROMPT_DELAY, A, 1)],
+                   frames=frames)
+        self.assertEqual(self.glob(run, "STATE"), STATE_PLAY)
+
+    @needs_runner
+    def test_spin_starts_fresh_after_a_reveal(self):
+        # The last letter's Up is still held when A enters the guess (in the
+        # gap between its repeats, so it doesn't change the letter) and let
+        # go during the reveal; a one-frame Up on the first frame input is
+        # read again must give A in the new row's first cell at once.
+        buttons = timeline(["crane"])[0]
+        (t0, up, length), (enter, a, _) = buttons[-2], buttons[-1]
+        self.assertEqual((up, a, enter), (UP, A, t0 + length + 2))  # e: Up five steps
+        enter = t0 + length + 1  # A one frame earlier, Up held through it
+        spin_time = enter - t0
+        self.assertNotEqual((spin_time - REPEAT_DELAY) % REPEAT_EVERY, 0)  # no step at the A
+        # Nor where a spin carried on from it would step: a stale one would miss the press.
+        self.assertNotEqual((spin_time + 1 - REPEAT_DELAY) % REPEAT_EVERY, 0)
+        buttons[-2:] = [(t0, UP, spin_time + 2), (enter, A, 1)]
+        first = enter + REVEAL_END + 1
+        run = run_vm(source(), frames=first + 2, start=["GAME"],
+                     buttons=buttons + [(first, UP, 1)],
+                     set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
+        self.assertEqual(self.array(run, "LETTERS")[:5], [3, 18, 1, 14, 5])
+        self.assertEqual((self.glob(run, "ROW"), self.glob(run, "STATE")), (1, STATE_PLAY))
+        self.assertEqual(self.array(run, "LETTERS")[5], 1)
 
     @needs_runner
     def test_blank_save_starts_at_zero(self):
