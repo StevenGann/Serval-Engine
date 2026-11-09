@@ -288,7 +288,7 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | --- | --- | --- |
 | `hello` | 9,640 bytes | 14,844 bytes |
 | `effects` | 11,804 bytes | 17,532 bytes |
-| `racer` | 12,520 bytes | 18,264 bytes |
+| `racer` | 12,528 bytes | 18,272 bytes |
 | `jukebox` | 13,768 bytes | 14,156 bytes |
 | `servle` | 14,000 bytes | 19,976 bytes |
 | `raycaster` | 15,816 bytes | 25,128 bytes |
@@ -301,7 +301,7 @@ IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shad
 | `platformer` | 21,364 bytes | 26,988 bytes |
 | `breakout` | 21,872 bytes | 27,708 bytes |
 
-At `b7c86d4`, before the sound features, the release builds were 4-24 bytes larger (`hello` 9,660, `breakout` 21,884): the wave channel moved the PSG's voices to EWRAM, and Maxmod's hooks add 8 bytes. At `8801ead`, the API freeze's last code change, they were 56-96 bytes smaller (`hello` 9,564, `breakout` 21,800): kinematic bodies and the planned features since (below). At `01fd31b` the release builds were within 300 bytes of `8801ead`'s. `platformer`'s row was measured again when it grew to four stages (it was 21,328 and 26,592 bytes): its spawn list moved to EWRAM, beside the level's cells and the map layers it now builds there, and the stages' code and data add almost nothing to IWRAM. `servle` was measured when it was added, with `main` at `6cdbaf5` merged in, and `racer` when it was added, at `51f7706` (its raster effect's loop and the PSG's music player included; its tables and pictures are in EWRAM). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
+At `b7c86d4`, before the sound features, the release builds were 4-24 bytes larger (`hello` 9,660, `breakout` 21,884): the wave channel moved the PSG's voices to EWRAM, and Maxmod's hooks add 8 bytes. At `8801ead`, the API freeze's last code change, they were 56-96 bytes smaller (`hello` 9,564, `breakout` 21,800): kinematic bodies and the planned features since (below). At `01fd31b` the release builds were within 300 bytes of `8801ead`'s. `platformer`'s row was measured again when it grew to four stages (it was 21,328 and 26,592 bytes): its spawn list moved to EWRAM, beside the level's cells and the map layers it now builds there, and the stages' code and data add almost nothing to IWRAM. `servle` was measured when it was added, with `main` at `6cdbaf5` merged in, and `racer` when it was added (its raster effect's loop and the PSG's music player included; its tables and pictures are in EWRAM). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
 
 Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `2a3f5a1`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 
