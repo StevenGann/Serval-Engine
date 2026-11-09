@@ -23,12 +23,11 @@
 //     the tiles over itself, since the reveal waits on the flips; Motion
 //     (the create handler of an entity Game spawns) runs a frame of every
 //     other effect each frame, started by the rules through a few of the
-//     script's file-level variables. RAM arrays
-//     (the board's letters and marks, the strip's best mark per letter, the
-//     statistics) and ROM arrays (the word tables, the animation curves);
-//     a held-button repeat of the script's own (button_down,
-//     button_pressed), and a button still held when the state changes
-//     ignored until it is released
+//     script's file-level variables. RAM arrays (the board's letters and
+//     marks, the strip's best mark per letter, the statistics) and ROM
+//     arrays (the word tables, the animation curves); a held-button repeat
+//     of the script's own (button_down, button_pressed), and a button still
+//     held when the state changes ignored until it is released
 //   - Styled and formatted text from a script: the four text styles are the
 //     four marks (text_set_style_color), so the alphabet strip shows each
 //     letter in the color of its best mark; scripts have no strings, so a
@@ -68,23 +67,24 @@
 //     from ASCII pictures (art.c), the sound and song tables (sound.c), the
 //     numbers both sides name (game.h), vm_load, vm_bind, vm_start and the
 //     frame loop. No game rule is in C
-//   - The word lists come from SCOWL 2020.12.07 (Kevin Atkinson's word
-//     lists, wordlist.aspell.net), curated by hand; its notice, which covers
-//     these lists only, is third_party/licenses/scowl.txt. A game that
-//     reuses the lists must carry it
+//   - The word lists are a modified selection from SCOWL 2020.12.07 (Kevin
+//     Atkinson's word lists, wordlist.aspell.net), curated by hand; its
+//     notice, which covers these lists only, is
+//     third_party/licenses/scowl.txt. A game that reuses the lists must
+//     carry it
 //
 // What to expect when booting the ROM:
 //   - The Serval Engine splash: "made with" and the engine's logo (about 3
 //     seconds; any button skips it once the logo is in), a moment of black
-//     while the art is built, then the title fades in over dark plum with darker and lighter spots
-//     drifting slowly at two speeds: "SERVLE" in six big tiles (green, gold
-//     and slate, the marks' colors) that drop in one by one, tilted, bounce,
-//     straighten and then wave gently; a serval's face, which blinks now and
-//     then; "GUESS THE WORD IN SIX TRIES", a blinking gold "PRESS START",
-//     the saved STREAK and BEST (0 and 0 on a first boot), and the controls,
-//     "UP/DOWN:SPIN A:ENTER B:ERASE". A light tune plays and loops ("Spot
-//     the Word", G major, about 34 seconds): a square-wave melody over a
-//     soft bass on the wave channel and a quiet noise hi-hat.
+//     while the art is built, then the title fades in over dark plum with
+//     darker and lighter spots drifting slowly at two speeds: "SERVLE" in six
+//     big tiles (green, gold and slate, the marks' colors) that drop in one by
+//     one, tilted, bounce, straighten and then wave gently; a serval's face,
+//     which blinks now and then; "GUESS THE WORD IN SIX TRIES", a blinking gold
+//     "PRESS START", the saved STREAK and BEST (0 and 0 on a first boot), and
+//     the controls, "UP/DOWN:SPIN A:ENTER B:ERASE". A light tune plays and
+//     loops ("Spot the Word", G major, about 34 seconds): a square-wave melody
+//     over a soft bass on the wave channel and a quiet noise hi-hat.
 //   - START (or A): a rising three-note chime; the screen cuts to black and
 //     the board fades in: 5 x 6 empty slots in the middle, STREAK and BEST
 //     at the left with the serval below them, WON and PLAYED at the right,
@@ -151,7 +151,7 @@ int main(void) {
     map_load(&spots_far_layer);
     map_load(&spots_near_layer);
     screen_set_backdrop(COLOR_RGB(43, 23, 70)); // plum, behind the spots
-    text_set_color(COLOR_RGB(255, 241, 207), COLOR_RGB(23, 11, 40));
+    // The text's colors are the script's: its four styles are the marks'.
     text_set_shadow(true);
     vm_use_saves(); // the script keeps its statistics in save slot 0
     vm_bind(&(VmBindings){.psg_songs = songs, .psg_song_count = SONG_COUNT});

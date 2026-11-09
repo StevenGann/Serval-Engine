@@ -8,7 +8,7 @@ Verbatim license texts of third-party code compiled into game ROMs, and into web
 | [maxmod.txt](maxmod.txt) | Maxmod | ISC | `blocksds/maxmod` @ `a797317` (`v1.24.0-blocks`), `COPYING` (also in `third_party/maxmod/`) |
 | [emscripten.txt](emscripten.txt) | Emscripten runtime (web builds only) | MIT (or University of Illinois/NCSA) | Emscripten 6.0.11 (`a001454`), `LICENSE` |
 | [musl.txt](musl.txt) | musl libc routines Emscripten links (web builds only) | MIT | Emscripten 6.0.11 (`a001454`), `system/lib/libc/musl/COPYRIGHT` |
-| [scowl.txt](scowl.txt) | SCOWL word lists (`examples/servle` only, not the engine or other games) | SCOWL's own permissive terms (MIT-style, with public domain sources) | SCOWL 2020.12.07, `README` copyright section |
+| [scowl.txt](scowl.txt) | SCOWL word lists (`examples/servle` only, not the engine or other games) | SCOWL's own permissive terms (MIT-style, with public domain sources), with the notices of the sources it includes: WordNet's (Princeton University) and, through VarCon, Ispell's (whose clause 3 asks that modified versions be marked as such: the example's lists are) | SCOWL 2020.12.07, `README` copyright section |
 
 Maxmod comes from BlocksDS ([docs/audio.md](https://github.com/StevenGann/Serval-Engine/blob/main/docs/audio.md#maxmod-blocksds)), vendored in `third_party/maxmod/` (its `VENDORED.md`). A ROM links it only if the game calls tracker music or sampled sound effects, so only such a game owes its notice.
 

@@ -13,10 +13,10 @@
 // --- The script blob (servle.lua) -----------------------------------------------
 
 // Generated at build time by tools/svlua.py and tools/svm.py: OBJ_* (GAME,
-// TILE), G_* (ANSWER, ROW, COL, STATE and the script's other globals), their
-// counts, and the blob itself: servle_script and servle_script_size. Game runs
-// as a thread with no entity (main.c starts its room_start handler); the
-// script spawns the board's tiles.
+// TILE and the script's six other objects), G_* (ANSWER, ROW, COL, STATE and
+// its other globals), their counts, and the blob itself: servle_script and
+// servle_script_size. Game runs as a thread with no entity (main.c starts its
+// room_start handler); the script spawns every other object's entities.
 #include "servle_script.h"
 
 // --- Marks ---------------------------------------------------------------------
@@ -57,7 +57,7 @@ enum {
 #define TILE_FRAMES 31
 #define GLYPH_BANG 27 // SPR_GLYPH: '!'
 #define GLYPH_FRAMES 28
-#define ARROW_UP 0 // SPR_ARROW: pointing up (drawn below the cell), and down
+#define ARROW_UP 0 // SPR_ARROW: pointing up (drawn above the cell), and down (below)
 #define ARROW_DOWN 1
 #define CONFETTI_FRAMES 5 // SPR_CONFETTI: a scrap in each of five colors
 enum { SERVAL_IDLE, SERVAL_BLINK, SERVAL_HAPPY, SERVAL_SAD, SERVAL_FRAMES };

@@ -59,7 +59,8 @@ REPEAT_DELAY, REPEAT_EVERY = script_const("REPEAT_DELAY"), script_const("REPEAT_
 REVEAL_END = 5 * script_const("REVEAL_STEP")
 PROMPT_DELAY = script_const("PROMPT_DELAY")
 REVEAL_MAX = 120  # the design's bound on REVEAL_END
-BLOB_LIMIT = 26000  # the debug link's hot reload (docs/debug-link.md, "The scratch")
+BLOB_LIMIT = 26000  # the example's bound, inside what the debug link hot reloads (about
+                    # 26 KB: docs/debug-link.md, "The scratch")
 
 A, B, SELECT, START, RIGHT, LEFT, UP, DOWN, R, L = (1 << n for n in range(10))
 # Frames a round's start spends before play reads input on the frame after
