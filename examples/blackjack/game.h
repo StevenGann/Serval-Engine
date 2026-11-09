@@ -74,19 +74,22 @@ enum {
     SPR_NARROW_BOTTOM, //   (flip); no hardware sprite is 16x64
     SPR_EDGE_TOP,      // 8x32 over 8x16: the card edge-on (flip)
     SPR_EDGE_BOTTOM,
-    SPR_INDEX,     // 8x16: rank over a small suit, frame = (rank - 1) * 4 + suit
-    SPR_PIP,       // 16x16: the big suit in the middle of number cards
-    SPR_ACE,       // 32x32: the ace's bigger, chunkier suit
-    SPR_COURT,     // 16x16: crown, tiara, plumed cap; frames COURT_*
-    SPR_CHIP,      // 16x16: a chip seen from the side, frames CHIP_* (denominations)
-    SPR_DIGIT,     // 8x16: outlined digits and signs, frames DIGIT_*; colors DIGITS_*
-    SPR_LETTER,    // 16x16: banner letters, frames from letter_frame(); colors LETTERS_*
-    SPR_BUTTON,    // 32x16: action buttons, frames BTN_*; greyed with PAL_BUTTON_OFF
-    SPR_SPARK,     // 8x8: a twinkling star (plays once)
-    SPR_CONFETTI,  // 8x8: a tumbling paper chip, frames per color
-    SPR_FACE,      // metasprite: a face-up card, frame = (rank - 1) * 4 + suit; built at boot
-    SPR_FACE_GLOW, //   the same with its base in PAL_GLOW (a winning hand)
-    SPR_FLIP,      // metasprite: the two-piece narrow flip steps, frames FLIP_*
+    SPR_INDEX,      // 8x16: rank over a small suit, frame = (rank - 1) * 4 + suit
+    SPR_PIP,        // 16x16: the big suit in the middle of number cards
+    SPR_ACE,        // 32x32: the ace's bigger, chunkier suit
+    SPR_COURT,      // 16x16: crown, tiara, plumed cap; frames COURT_*
+    SPR_CHIP,       // 16x16: a chip seen from the side, frames CHIP_* (denominations)
+    SPR_DIGIT,      // 8x16: outlined digits and signs, frames DIGIT_*; colors DIGITS_*
+    SPR_LETTER,     // 16x16: banner letters, frames from letter_frame(); colors LETTERS_*
+    SPR_BUTTON,     // 32x16: action buttons, frames BTN_*; greyed with PAL_BUTTON_OFF
+    SPR_SPARK,      // 8x8: a twinkling star (plays once)
+    SPR_CONFETTI,   // 8x8: a tumbling paper chip, frames per color
+    SPR_FACE,       // metasprite: a face-up card, frame = (rank - 1) * 4 + suit; built at boot
+    SPR_FACE_GLOW,  //   the same with its base in PAL_GLOW (a winning hand)
+    SPR_FLIP,       // metasprite: the two-piece narrow flip steps, frames FLIP_*
+    SPR_PRINT_PART, // 32x32: a fifth of the table's printed lettering
+    SPR_PRINT,      // metasprite: the lettering whole (160x32, five parts)
+    SPR_RING,       // 32x16: the betting circle printed on the felt
     SPRITE_COUNT
 };
 
@@ -129,6 +132,7 @@ enum {
     PAL_BUTTON,
     PAL_BUTTON_OFF,
     PAL_FX,
+    PAL_PRINT, // the gold print on the felt, drawn see-through (SPRITE_BLEND)
     PALETTE_COUNT
 };
 
@@ -190,6 +194,12 @@ void chips_draw(void);
 // color: LETTERS_*.
 void banner_show(const char* text, int center_x, int y, u16 color);
 void banner_clear(void);
+bool banner_showing(void);
+
+// What is printed on the felt, behind everything else on the table: the
+// betting circle under the bet's chips, and (with `lettering`) the house
+// rules along an arc between the dealer's cards and the player's.
+void felt_draw(bool lettering);
 
 // Rising "+150" / "-50" pops.
 void pop_number(int value, int center_x, int y);

@@ -34,6 +34,11 @@
 //   - Palette variants of the same tiles (SPRITE_PALETTE): a gold outline
 //     for a winning hand, shadows, greyed buttons, gold and red digits and
 //     banner letters
+//   - Alpha blending (screen_set_blend, SPRITE_BLEND): the cards' shadows
+//     darken the felt under them instead of covering it, and the table's
+//     print (the house rules along an arc, the betting circle) is gold ink
+//     the felt shows through. The lettering, five 32x32 sprites, is one
+//     metasprite, drawn into a canvas at boot and bent into its arc there
 //   - Entities for sparks (sys_animate, SPRITE_ASSET_ANIM_ONCE) and confetti
 //     (sys_movement, tumbling through four shared rotation angles)
 //   - A swirling background: two map layers of marbled paint computed at boot
@@ -63,10 +68,14 @@
 //     a blinking "PRESS START", the bankroll and best bankroll, and the house
 //     rules. A slow swing tune plays (F major, about 38 seconds, looping): a
 //     muted lead over a round, plucked upright bass and a brushed ride.
-//   - START: a rising chime and a fade to the table, green swirling felt.
-//     Top left: the bankroll (1000 chips on a first boot). Top right: the
-//     shoe, a pile of card backs that thins as it empties. "PLACE YOUR BET"
-//     with the bet in gold and its chips in the middle: LEFT/RIGHT change it
+//   - START: a rising chime and a fade to the table, green swirling felt
+//     printed in faint gold, as casino felt is: "BLACKJACK PAYS 3 TO 2" and
+//     "DEALER STANDS ON ALL 17S" over a double rule, along an arc across the
+//     middle (hidden while a banner's letters are up), and a betting circle
+//     under the bet's chips. Top left: the bankroll (1000 chips on a first
+//     boot). Top right: the shoe, a pile of card backs that thins as it
+//     empties. "PLACE YOUR BET" with the bet in gold and its chips in their
+//     circle in the middle: LEFT/RIGHT change it
 //     by 10, UP/DOWN by 50 (held, they repeat; one still held from the round
 //     or the title does nothing until pressed again), each step with a chip
 //     clink and the new chips dropping onto the pile (button_repeat,
@@ -75,7 +84,7 @@
 //   - The deal: the chips slide to the bet's place at the left, the bankroll
 //     counts down in red, and four cards hiss out of the shoe one after the
 //     other, tilted as they fly, overshooting a little and wobbling as they
-//     land with a thump: yours face up (each flips over in the air with a
+//     land with a thump, casting soft shadows: yours face up (each flips over in the air with a
 //     click), the dealer's second face down. Totals appear beside each hand
 //     as cards land: "1/11" or "7/17" for soft hands, gold at 21, red when
 //     bust. Under an ace or a ten the dealer's hole card lifts and wobbles for

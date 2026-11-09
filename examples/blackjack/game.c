@@ -272,17 +272,17 @@ static void show_title(void) {
     chips_set(0, STACK_X, STACK_Y, 0);
     load_table_background(&title_tileset);
     text_clear();
-    banner_show("BLACKJACK", SCREEN_W / 2, 12, LETTERS_GOLD);
-    text_print_centered(5, "A SERVAL ENGINE CARD TABLE");
+    banner_show("BLACKJACK", SCREEN_W / 2, 10, LETTERS_GOLD);
+    text_print_centered(4, "A SERVAL ENGINE CARD TABLE");
     text_print_centered(15, text_format("BANK %u   BEST %u", bankroll.bank, bankroll.best));
     text_print_centered(17, "6 DECKS * BLACKJACK PAYS 3:2");
-    text_print_centered(18, "DEALER STANDS ON ALL 17S");
+    text_print_centered(19, "DEALER STANDS ON ALL 17S");
     // A fan of three cards, dealt from below the screen.
     static const u8 fan[3] = {CARD(RANK_ACE, SUIT_SPADES), CARD(RANK_KING, SUIT_HEARTS),
                               CARD(RANK_JACK, SUIT_DIAMONDS)};
     for (int i = 0; i < 3; i++) {
         title_ids[i] = table_deal_from(fan[i], 104, SCREEN_H + 8, 72 + i * 32,
-                                       54 + (i == 1 ? -4 : 2), true, 10 + i * 8);
+                                       48 + (i == 1 ? -4 : 2), true, 10 + i * 8);
         table_set_angle(title_ids[i], (i - 1) * 10);
     }
     psg_music_play(&lounge_song);
@@ -779,7 +779,7 @@ static void update_title(void) {
     for (int i = 0; i < 3; i++)
         table_set_angle(title_ids[i], (i - 1) * 10 + (i == 1 ? -sway : sway));
     if (bank_save_failed())
-        text_print_centered(19, "(COULD NOT SAVE)");
+        text_print_centered(19, "(COULD NOT SAVE)"); // in the second rule's place
 }
 
 // --- Frame -------------------------------------------------------------------
@@ -792,6 +792,10 @@ void game_init(void) {
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprite_group);
     text_set_shadow(true);
+    // See-through sprites (SPRITE_BLEND: the cards' shadows, the felt's
+    // print) over the two background layers: 7/16 of their color, 9/16 of
+    // the felt's. The shadows' color is nearly black, so they darken it.
+    screen_set_blend(0, LAYER_PLAYFIELD | LAYER_BACKGROUND, 7, 9);
     button_repeat_set(REPEAT_DELAY, REPEAT_RATE); // the bet: a little quicker than the default
     bank_load();
     shown_bank = (int)bankroll.bank;
@@ -832,6 +836,8 @@ void game_frame(void) {
             buttons_draw(actions, 4, selected, enabled_actions(), pressed);
     }
     table_draw();
-    if (state != TITLE)
+    if (state != TITLE) {
         draw_shoe();
+        felt_draw(!banner_showing()); // a banner's letters take the lettering's place
+    }
 }

@@ -423,6 +423,13 @@ void banner_clear(void) {
         banners[i].used = false;
 }
 
+bool banner_showing(void) {
+    for (int i = 0; i < BANNERS; i++)
+        if (banners[i].used)
+            return true;
+    return false;
+}
+
 // Each letter pops in 3 frames after the one before: it drops in from above,
 // overshoots, bounces and settles, wobbling (angles rounded to 4 degrees, so
 // all letters share a handful of rotation matrices); then the word waves.
@@ -591,14 +598,16 @@ static void draw_card(const TableCard* c, u16 angle) {
 }
 
 // The shadow: full width, or 24 pixels early and late in a flip (none
-// while the card is narrower).
+// while the card is narrower). Drawn see-through (SPRITE_BLEND; game.c sets
+// the weights), it darkens the felt under it rather than covering it; while
+// the screen fades, blending pauses and it shows in PAL_SHADOW's flat color.
 static void draw_shadow(const TableCard* c) {
     Base base = card_base(c);
     if (base.width < 24)
         return;
     sprite_draw(SPR_CARD, base.width == 32 ? CF_FACE : CF_FACE_24,
                 fx_to_int(c->x) + SHADOW_DX + c->lift / 2, fx_to_int(c->y) - 8 + SHADOW_DY,
-                SPRITE_PALETTE(PAL_SHADOW));
+                SPRITE_PALETTE(PAL_SHADOW) | SPRITE_BLEND);
 }
 
 static u16 card_angle(const TableCard* c) {
@@ -622,6 +631,19 @@ void table_update(void) {
     for (int i = 0; i < POPS; i++)
         if (pops[i].used && ++pops[i].age >= POP_FRAMES)
             pops[i].used = false;
+}
+
+// The print on the felt (art.c), see-through like the shadows: the betting
+// circle under the bet's chips, wherever they are, and the lettering
+// between the dealer's cards and the player's. Drawn last, so that it is
+// behind everything, and the first sprites dropped if a busy frame runs out.
+#define PRINT_X 128 // the lettering's center
+#define PRINT_Y 82
+
+void felt_draw(bool lettering) {
+    sprite_draw(SPR_RING, 0, stack.x - 8, stack.y - 12, SPRITE_BLEND);
+    if (lettering)
+        sprite_draw(SPR_PRINT, 0, PRINT_X, PRINT_Y, SPRITE_BLEND);
 }
 
 // Front to back: banners and pops (above the text layer), sparks, flying

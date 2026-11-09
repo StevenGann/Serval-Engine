@@ -22,16 +22,16 @@
 //     (SPR_ACE 32x32) on aces, an emblem (SPR_COURT) on jacks, queens and
 //     kings, which are printed on golden paper (a frame of their own).
 //
-// That's 582 tiles (18 KB) for all sprites, cards included: the colored
-// variants (gold-outlined cards, shadows, greyed buttons, gold and red digits
-// and letters) are the same tiles drawn with another palette
-// (SPRITE_PALETTE). The cost is
-// paid in hardware sprites (4 per face-up card, 128 in all) and, for a tilted
-// card, in the per-scanline sprite budget: a rotated sprite takes the
-// double-size box and twice the cycles per pixel, so table.c tilts at most a
-// few cards at once. The alternatives: drawing cards into background tiles
-// (cheap in sprites, but cards could only sit on the 8-pixel grid, not slide,
-// tilt or overlap freely), or composing each dealt card's face into its own
+// That's 670 tiles (21 KB) for all sprites, cards and the felt's print
+// included: the colored variants (gold-outlined cards, shadows, greyed
+// buttons, gold and red digits and letters) are the same tiles drawn with
+// another palette (SPRITE_PALETTE). The cost is paid in hardware sprites (4
+// per face-up card, 128 in all) and, for a tilted card, in the per-scanline
+// sprite budget: a rotated sprite takes the double-size box and twice the
+// cycles per pixel, so table.c tilts at most a few cards at once. The
+// alternatives: drawing cards into background tiles (cheap in sprites, but
+// cards could only sit on the 8-pixel grid, not slide, tilt or overlap
+// freely), or composing each dealt card's face into its own
 // VRAM tiles at runtime (one sprite per card, 24 tiles each: about 40 cards on
 // screen; the engine has no API to write sprite tiles after loading a group).
 //
@@ -115,6 +115,9 @@ static const u16 palettes[PALETTE_COUNT][16] = {
     [PAL_FX] = {0, COLOR_RGB(255, 255, 255), COLOR_RGB(255, 240, 120), COLOR_RGB(246, 170, 40),
                 COLOR_RGB(255, 100, 170), COLOR_RGB(90, 230, 255), COLOR_RGB(110, 240, 130),
                 COLOR_RGB(190, 120, 255)},
+    // The felt's print: 1 gold. Drawn see-through (SPRITE_BLEND), so the felt
+    // shows through it, as through ink.
+    [PAL_PRINT] = {0, COLOR_RGB(255, 236, 168)},
 };
 
 // --- Tile buffers ------------------------------------------------------------
@@ -135,7 +138,10 @@ static const u16 palettes[PALETTE_COUNT][16] = {
 #define T_BUTTON (T_LETTER + LETTER_COUNT * 4) // BTN_COUNT frames of 8
 #define T_SPARK (T_BUTTON + BTN_COUNT * 8)
 #define T_CONFETTI (T_SPARK + SPARK_FRAMES)
-#define OBJ_TILES (T_CONFETTI + CONFETTI_COLORS)
+#define T_PRINT (T_CONFETTI + CONFETTI_COLORS) // PRINT_PARTS frames of 16
+#define PRINT_PARTS 5
+#define T_RING (T_PRINT + PRINT_PARTS * 16) // 8 tiles
+#define OBJ_TILES (T_RING + 8)
 
 static u32 obj_tiles[OBJ_TILES * 8] SERVAL_EWRAM_BSS;
 
@@ -153,7 +159,8 @@ static u32 bg_tiles[BG_TILES * 8] SERVAL_EWRAM_BSS;
 
 // Scratch buffers for building art at boot: EWRAM, since IWRAM is too small
 // for them in Debug builds and they are not on any hot path.
-static u8 canvas[64 * 64] SERVAL_EWRAM_BSS;
+#define CANVAS_MAX (160 * 32) // the felt's lettering is the biggest picture
+static u8 canvas[CANVAS_MAX] SERVAL_EWRAM_BSS;
 static int canvas_w, canvas_h;
 
 static void canvas_begin(int w, int h) {
@@ -174,20 +181,26 @@ static void put(int x, int y, int c) {
         canvas[y * canvas_w + x] = (u8)c;
 }
 
-// Cuts the canvas into 4bpp tiles at `out`, row by row (1D mapping, as
-// sprite frames are laid out). Returns the end.
-static u32* canvas_pack(u32* out) {
-    for (int ty = 0; ty < canvas_h / 8; ty++) {
-        for (int tx = 0; tx < canvas_w / 8; tx++) {
+// Cuts a w x h part of the canvas, from (left, top), into 4bpp tiles at
+// `out`, row by row (1D mapping, as sprite frames are laid out). Returns the
+// end.
+static u32* canvas_pack_part(u32* out, int left, int top, int w, int h) {
+    for (int ty = 0; ty < h / 8; ty++) {
+        for (int tx = 0; tx < w / 8; tx++) {
             for (int y = 0; y < 8; y++) {
                 u32 word = 0;
                 for (int x = 0; x < 8; x++)
-                    word |= (u32)get(tx * 8 + x, ty * 8 + y) << (4 * x);
+                    word |= (u32)get(left + tx * 8 + x, top + ty * 8 + y) << (4 * x);
                 *out++ = word;
             }
         }
     }
     return out;
+}
+
+// The whole canvas as one frame.
+static u32* canvas_pack(u32* out) {
+    return canvas_pack_part(out, 0, 0, canvas_w, canvas_h);
 }
 
 static int hex(char c) {
@@ -219,7 +232,7 @@ static void blit(const char* const* rows, int w, int h, int x, int y, int ink, c
 // with nothing of the shape below or to the right turn `dark`, those with
 // nothing above or to the left turn `light`.
 static void bevel(int base, int dark, int light) {
-    static u8 copy[64 * 64] SERVAL_EWRAM_BSS;
+    static u8 copy[CANVAS_MAX] SERVAL_EWRAM_BSS;
     for (int i = 0; i < canvas_w * canvas_h; i++)
         copy[i] = canvas[i];
     for (int y = 0; y < canvas_h; y++) {
@@ -241,7 +254,7 @@ static void bevel(int base, int dark, int light) {
 // Outlines everything drawn: transparent pixels next to (or, with
 // `diagonal`, also diagonally next to) a drawn one get `color`.
 static void outline(int color, bool diagonal) {
-    static u8 copy[64 * 64] SERVAL_EWRAM_BSS;
+    static u8 copy[CANVAS_MAX] SERVAL_EWRAM_BSS;
     for (int i = 0; i < canvas_w * canvas_h; i++)
         copy[i] = canvas[i];
     for (int y = 0; y < canvas_h; y++) {
@@ -711,29 +724,33 @@ static void build_letters(void) {
     }
 }
 
-// Tiny 3x5 capitals for the button labels.
-static const char tiny_letters[] = "ABDEHILNOPSTU";
+// Tiny 3x5 capitals for the button labels (and the felt's print).
+static const char tiny_letters[] = "ABDEHILNOPSTUR17";
 static const char* const tiny_font[][5] = {
     {"###", "#.#", "###", "#.#", "#.#"}, {"##.", "#.#", "##.", "#.#", "##."},
     {"##.", "#.#", "#.#", "#.#", "##."}, {"###", "#..", "##.", "#..", "###"},
     {"#.#", "#.#", "###", "#.#", "#.#"}, {"###", ".#.", ".#.", ".#.", "###"},
     {"#..", "#..", "#..", "#..", "###"}, {"#.#", "###", "###", "###", "#.#"},
     {"###", "#.#", "#.#", "#.#", "###"}, {"###", "#.#", "###", "#..", "#.."},
-    {"###", "#..", "###", "..#", "###"}, {"###", ".#.", ".#.", ".#.", ".#."},
-    {"#.#", "#.#", "#.#", "#.#", "###"},
+    {".##", "#..", ".#.", "..#", "##."}, {"###", ".#.", ".#.", ".#.", ".#."},
+    {"#.#", "#.#", "#.#", "#.#", "###"}, {"##.", "#.#", "##.", "#.#", "#.#"},
+    {".#.", "##.", ".#.", ".#.", "###"}, {"###", "..#", ".#.", ".#.", ".#."},
 };
 
-static void tiny_print(const char* s, int x, int y, int color) {
-    for (; *s; s++, x += 4) {
-        for (int i = 0; tiny_letters[i]; i++) {
-            if (tiny_letters[i] != *s)
-                continue;
-            for (int py = 0; py < 5; py++)
-                for (int px = 0; px < 3; px++)
-                    if (tiny_font[i][py][px] == '#')
-                        put(x + px, y + py, color);
-        }
+static void tiny_glyph(char c, int x, int y, int color) {
+    for (int i = 0; tiny_letters[i]; i++) {
+        if (tiny_letters[i] != c)
+            continue;
+        for (int py = 0; py < 5; py++)
+            for (int px = 0; px < 3; px++)
+                if (tiny_font[i][py][px] == '#')
+                    put(x + px, y + py, color);
     }
+}
+
+static void tiny_print(const char* s, int x, int y, int color) {
+    for (; *s; s++, x += 4)
+        tiny_glyph(*s, x, y, color);
 }
 
 // Buttons: a rounded slab with a darker side under it, lit on top, and a
@@ -795,6 +812,84 @@ static void build_fx(void) {
     }
 }
 
+// --- The felt's print ---------------------------------------------------------
+//
+// Casino tables have their rules printed on the felt, in arcs around the
+// dealer. Here: "BLACKJACK PAYS 3 TO 2" in the banner font at its own size
+// (bold), the dealer's rule in the tiny font under it and a double rule,
+// drawn straight and then bent into a shallow arc (each column of pixels
+// moved down along a parabola). 160x32 pixels: five 32x32 sprites as one
+// metasprite. And the betting circle, a ring of the same gold. table.c draws
+// both see-through (SPRITE_BLEND), behind everything else on the table.
+
+#define PRINT_W (PRINT_PARTS * 32)
+#define PRINT_SAG 7 // how much lower the middle of the arc is than its ends
+
+// The figures the big line needs, in the banner font's 5x7 style.
+static const char print_figures[] = "23";
+static const char* const print_figure_art[][7] = {
+    {".###.", "#...#", "....#", "..##.", ".#...", "#....", "#####"}, // 2
+    {"####.", "....#", "....#", ".###.", "....#", "....#", "####."}, // 3
+};
+
+static void print_glyph(char c, int x, int y) {
+    const char* const* art = 0;
+    int frame = letter_frame(c);
+    if (frame >= 0)
+        art = font5x7[frame];
+    for (int i = 0; print_figures[i]; i++)
+        if (print_figures[i] == c)
+            art = print_figure_art[i];
+    if (art)
+        for (int bold = 0; bold < 2; bold++) // each stroke two pixels wide
+            blit(art, 5, 7, x + bold, y, 1, 0);
+}
+
+static void build_print(void) {
+    static const char big[] = "BLACKJACK PAYS 3 TO 2";
+    static const char small[] = "DEALER STANDS ON ALL 17S";
+    canvas_begin(PRINT_W, 32);
+    int left = (PRINT_W - ((int)sizeof big - 1) * 7 + 1) / 2;
+    for (int i = 0; big[i]; i++)
+        print_glyph(big[i], left + i * 7, 0);
+    left = (PRINT_W - ((int)sizeof small - 1) * 4 + 1) / 2;
+    tiny_print(small, left, 10, 1);
+    // The double rule, a dot at each end.
+    for (int x = 5; x < PRINT_W - 5; x++) {
+        put(x, 17, 1);
+        if (x > 9 && x < PRINT_W - 10)
+            put(x, 19, 1);
+    }
+    for (int k = 0; k < 4; k++) {
+        put(1 + (k & 1), 17 + (k >> 1), 1);
+        put(PRINT_W - 3 + (k & 1), 17 + (k >> 1), 1);
+    }
+    // The bend: column x moves down by the arc's depth there, 0 at the ends.
+    for (int x = 0; x < PRINT_W; x++) {
+        int d = 2 * x + 1 - PRINT_W;
+        int sag = PRINT_SAG - PRINT_SAG * d * d / (PRINT_W * PRINT_W);
+        for (int y = 31; y >= 0; y--)
+            put(x, y, y >= sag ? get(x, y - sag) : 0);
+    }
+    for (int part = 0; part < PRINT_PARTS; part++)
+        canvas_pack_part(obj_tiles + (T_PRINT + part * 16) * 8, part * 32, 0, 32, 32);
+
+    // The betting circle: an ellipse 30 x 14, two pixels thick, and a thin
+    // one inside it.
+    canvas_begin(32, 16);
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 32; x++) {
+            // The distance from the middle in radii, squared, x 256: 256 on
+            // the outer ellipse.
+            int dx = 2 * x - 31, dy = 2 * y - 15;
+            int r = dx * dx * 256 / (30 * 30) + dy * dy * 256 / (14 * 14);
+            if ((r <= 256 && r >= 170) || (r <= 120 && r >= 92))
+                put(x, y, 1);
+        }
+    }
+    canvas_pack(obj_tiles + T_RING * 8);
+}
+
 // --- Sprites -----------------------------------------------------------------
 
 // Whole cards as metasprites, placed by their centers about the card's
@@ -846,6 +941,15 @@ static void build_face_pieces(void) {
         }
     }
 }
+
+// The felt's lettering, five parts side by side about its center.
+static const SpritePiece print_pieces[PRINT_PARTS] = {
+    {.x = -64, .sprite = SPR_PRINT_PART, .frame = 0},
+    {.x = -32, .sprite = SPR_PRINT_PART, .frame = 1},
+    {.x = 0, .sprite = SPR_PRINT_PART, .frame = 2},
+    {.x = 32, .sprite = SPR_PRINT_PART, .frame = 3},
+    {.x = 64, .sprite = SPR_PRINT_PART, .frame = 4},
+};
 
 static const u8 spark_times[SPARK_FRAMES] = {4, 4, 5, 6};
 
@@ -926,6 +1030,14 @@ static const SpriteAsset sprites[SPRITE_COUNT] = {
                   .piece_count = 2,
                   .frame_count = 3,
                   .flags = SPRITE_ASSET_METASPRITE},
+    [SPR_PRINT_PART] = {.size = SPRITE_32x32,
+                        .tiles = obj_tiles + T_PRINT * 8,
+                        .frame_count = PRINT_PARTS,
+                        .palette_slot = PAL_PRINT},
+    [SPR_PRINT] = {.pieces = print_pieces,
+                   .piece_count = PRINT_PARTS,
+                   .flags = SPRITE_ASSET_METASPRITE},
+    [SPR_RING] = {.size = SPRITE_32x16, .tiles = obj_tiles + T_RING * 8, .palette_slot = PAL_PRINT},
 };
 
 const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
@@ -947,6 +1059,9 @@ const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     [SPR_FACE] = &sprites[SPR_FACE],
     [SPR_FACE_GLOW] = &sprites[SPR_FACE_GLOW],
     [SPR_FLIP] = &sprites[SPR_FLIP],
+    [SPR_PRINT_PART] = &sprites[SPR_PRINT_PART],
+    [SPR_PRINT] = &sprites[SPR_PRINT],
+    [SPR_RING] = &sprites[SPR_RING],
 };
 
 const SpriteGroup sprite_group = {
@@ -1037,24 +1152,26 @@ static void build_metatiles(Metatile* m, int first_tile) {
 }
 
 // Background colors: 1-5 the paint, dark to light; 6 the veil, between
-// them, so it shimmers rather than shouts.
+// them, so it shimmers rather than shouts. The shades are close together:
+// the paint should read as the texture of the felt, quieter than the cards
+// and the print on it.
 static const u16 table_bg[16] = {
     0,
-    COLOR_RGB(10, 36, 34),
-    COLOR_RGB(14, 48, 44),
-    COLOR_RGB(18, 62, 54),
-    COLOR_RGB(26, 78, 64),
-    COLOR_RGB(36, 96, 76),
-    COLOR_RGB(30, 84, 70),
+    COLOR_RGB(12, 60, 46),
+    COLOR_RGB(16, 70, 52),
+    COLOR_RGB(20, 80, 58),
+    COLOR_RGB(26, 90, 64),
+    COLOR_RGB(34, 102, 72),
+    COLOR_RGB(30, 96, 68),
 };
 static const u16 title_bg[16] = {
     0,
-    COLOR_RGB(28, 10, 44),
-    COLOR_RGB(44, 14, 64),
-    COLOR_RGB(66, 22, 86),
-    COLOR_RGB(96, 30, 106),
-    COLOR_RGB(136, 46, 122),
-    COLOR_RGB(110, 40, 118),
+    COLOR_RGB(38, 14, 56),
+    COLOR_RGB(50, 18, 70),
+    COLOR_RGB(64, 24, 84),
+    COLOR_RGB(80, 30, 98),
+    COLOR_RGB(100, 38, 112),
+    COLOR_RGB(90, 34, 106),
 };
 
 const Tileset table_tileset = {
@@ -1090,6 +1207,7 @@ void art_build(void) {
     build_letters();
     build_buttons();
     build_fx();
+    build_print();
 
     for (int i = 0; i < 1024; i++)
         sines[i] = (s16)fx_sin((u16)(i << 6));
