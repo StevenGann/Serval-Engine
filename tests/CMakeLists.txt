@@ -486,6 +486,11 @@ else()
     # as the script does them, the lists' sizes, and the generated block.
     add_test(NAME servle_words_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/servle_words_test.py")
+    # The rhythm example's songs and charts (tools/make-example-audio.py's
+    # rhythm set): every chart note on a note of its module, the lengths and
+    # tempos, and what makes a chart playable.
+    add_test(NAME rhythm_charts_tool
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/rhythm_charts_test.py")
     # The sound bank builder (tools/soundbank.py): mmutil's names, what it
     # refuses (a sample named "none" among them), and a whole bank with the
     # mmutil serval_add_soundbank() found.
@@ -568,6 +573,23 @@ else()
     # vm sound: the jukebox's main.c includes its script's header
     serval_add_script(serval_api_only_check ../examples/jukebox/pads.lua
                       HEADERS "${CMAKE_CURRENT_BINARY_DIR}/jukebox_bank.h" serval/core.h)
+    # The rhythm example includes its sound bank's header and its charts,
+    # made beside it (examples/CMakeLists.txt).
+    set(rhythm_audio rhythm_title.mod rhythm_calibrate.mod rhythm_calm.mod rhythm_stride.mod
+        rhythm_rush.mod)
+    list(TRANSFORM rhythm_audio PREPEND "${CMAKE_CURRENT_BINARY_DIR}/rhythm_audio/")
+    add_custom_command(
+        OUTPUT ${rhythm_audio} "${CMAKE_CURRENT_BINARY_DIR}/rhythm_charts.h"
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+                rhythm "${CMAKE_CURRENT_BINARY_DIR}/rhythm_audio"
+                --header-dir "${CMAKE_CURRENT_BINARY_DIR}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+        COMMENT "Making Beat Paws' songs and charts"
+        VERBATIM)
+    serval_add_soundbank(serval_api_only_check rhythm_bank ${rhythm_audio})
+    target_sources(serval_api_only_check PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rhythm_charts.h")
+    target_include_directories(serval_api_only_check PRIVATE
+        "${PROJECT_SOURCE_DIR}/examples/rhythm")
     # lz77: the platformer's castle and consumer include their LZ77 data's
     # headers (examples/CMakeLists.txt, consumer/CMakeLists.txt).
     serval_add_lz77(serval_api_only_check castle_lz77 ../examples/platformer/castle_tiles.inc

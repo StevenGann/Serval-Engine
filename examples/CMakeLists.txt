@@ -105,6 +105,27 @@ serval_add_rom(racer SOURCES racer/main.c racer/game.c racer/screens.c racer/hud
                TITLE "SAVANNA RUN" GAME_CODE "SVRR")
 target_link_libraries(racer PRIVATE serval_warnings)
 
+# BEAT PAWS, a rhythm game. Its songs and their charts are made at build time
+# from the same notes by tools/make-example-audio.py's rhythm set (original,
+# synthesized): the modules, built into rhythm_bank.c and rhythm_bank.h, and
+# rhythm_charts.h beside the bank's header.
+serval_add_rom(rhythm SOURCES rhythm/main.c TITLE "BEAT PAWS" GAME_CODE "SVBP")
+target_link_libraries(rhythm PRIVATE serval_warnings)
+target_include_directories(rhythm PRIVATE rhythm)
+set(rhythm_audio rhythm_title.mod rhythm_calibrate.mod rhythm_calm.mod rhythm_stride.mod
+    rhythm_rush.mod)
+list(TRANSFORM rhythm_audio PREPEND "${CMAKE_CURRENT_BINARY_DIR}/rhythm_audio/")
+add_custom_command(
+    OUTPUT ${rhythm_audio} "${CMAKE_CURRENT_BINARY_DIR}/rhythm_charts.h"
+    COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+            rhythm "${CMAKE_CURRENT_BINARY_DIR}/rhythm_audio"
+            --header-dir "${CMAKE_CURRENT_BINARY_DIR}"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tools/make-example-audio.py"
+    COMMENT "Making Beat Paws' songs and charts"
+    VERBATIM)
+serval_add_soundbank(rhythm rhythm_bank ${rhythm_audio})
+target_sources(rhythm PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rhythm_charts.h")
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -118,4 +139,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(jukebox)
     serval_add_rom_checks(raycaster)
     serval_add_rom_checks(racer)
+    serval_add_rom_checks(rhythm)
 endif()

@@ -152,3 +152,12 @@ level = 3
 # the long right, a jeep ahead and a rock and acacias by the road; the frames
 # around it look the same.
 thumbnail = { frame = 819, keys = ["300:S:2", "488:A:400"] }
+
+[examples.rhythm]
+title = "BEAT PAWS"
+summary = "A rhythm game in the making: three original songs and their charts, made from the same notes, played by tracker music that the game asks where it is"
+tags = ["tracker", "text"]
+level = 3
+# Provisional (the placeholder screen, the title loop playing); the game's
+# own picture comes with it.
+thumbnail = { frame = 300 }

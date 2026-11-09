@@ -6,7 +6,7 @@ synthesized by this script (waveforms, envelopes and noise from a fixed
 generator): nothing is sampled or downloaded. The output is the same, byte for
 byte, on every run and platform.
 
-Usage: make-example-audio.py SET OUT_DIR
+Usage: make-example-audio.py SET OUT_DIR [--header-dir DIR]
 
 SET jukebox (examples/jukebox), 16000 Hz 8-bit WAVs:
 - theme.mod: upbeat, in A minor / C major, 132 BPM (speed 6, 4 rows a beat).
@@ -21,6 +21,33 @@ SET jukebox (examples/jukebox), 16000 Hz 8-bit WAVs:
 - engine.wav: a low buzzing hum, 80 Hz with a 20 Hz throb, 0.25 s (4,000
   samples, 20 whole cycles) looped whole (smpl loop 0-4000): it plays until
   stopped.
+
+SET rhythm (examples/rhythm, BEAT PAWS): four-channel modules (drums,
+bass, lead, pad), speed 6 throughout (4 rows a beat), one tempo each, no
+pattern delay (EEx) or pattern loop (E6x), and rhythm_charts.h, the songs'
+note charts, made from the same notes as the patterns (written to
+--header-dir if given). Every song opens with a bar of woodblock clicks, a
+count-in with no chart notes, and ends with a held note fading out.
+- rhythm_title.mod: the title loop, cheerful, in C major, 112 BPM: 16 bars
+  (34 s), a hook and its answer, looped from the start.
+- rhythm_calibrate.mod: a woodblock click every beat at 120 BPM, a fifth
+  higher on each bar's first, on two channels (in the middle); 4 bars,
+  looped.
+- rhythm_calm.mod: "calm", relaxed, in F major, 100 BPM: a laid-back groove
+  with a rim click, a round sine bass, a soft flute-like lead with vibrato
+  and broken chords on an electric piano; 30 bars (72 s).
+- rhythm_stride.mod: "stride", bouncy and funky, in D dorian, 124 BPM: kick
+  and claps with an open hat, a syncopated slap bass, a nasal pulse lead
+  and chord stabs on the off-beats; 34 bars (66 s).
+- rhythm_rush.mod: "rush", driving, in E minor, 148 BPM: a rock beat with
+  tom fills, an eighth-note octave bass, a square lead and fast chord
+  arpeggios; verse, chorus, a half-time break, verse, two choruses; 50 bars
+  (81 s).
+The charts (charts() below): per song, HARD and EASY, (tick, lane) pairs,
+lanes 0-3 LEFT, RIGHT, B, A. The right hand (B, A) follows the melody's
+contour, the left (LEFT, RIGHT) the drums (kick LEFT, snare or clap RIGHT);
+EASY keeps a beat of HARD at most every beat (calm, stride) or every other
+(rush).
 
 SET tests (tests/rom), measurable:
 - tone.mod: 4 channels, speed 6, tempo 125 (a row is 6 ticks of 20 ms: 120
@@ -501,6 +528,580 @@ def square_wav(half, count):
     return [0.5 if (i // half) % 2 == 0 else -0.5 for i in range(count)]
 
 
+# --- Beat Paws (rhythm) ---------------------------------------------------------
+#
+# A song is written bar by bar into a Song, which keeps every note it places
+# with the part it plays (drums, bass, lead, pad). The module's patterns and
+# the charts are both made from those notes, so a chart note always lands on a
+# note of the music.
+
+DRUMS, BASS, LEAD, PAD = range(4)  # channels
+
+CHORD_INTERVALS = {
+    "": (0, 4, 7), "m": (0, 3, 7), "7": (0, 4, 7, 10), "m7": (0, 3, 7, 10),
+    "maj7": (0, 4, 7, 11), "sus4": (0, 5, 7), "add9": (0, 4, 7, 14),
+}
+ARP_PARAMS = {  # 0xy: the two tones above the root an arpeggio adds
+    "": 0x47, "m": 0x37, "7": 0x4A, "m7": 0x3A, "maj7": 0x4B, "sus4": 0x57, "add9": 0x47,
+}
+
+
+def chord(name):
+    """'F#m7' as (root pitch class 0-11, quality)."""
+    root = NOTE_NAMES[name[0]]
+    rest = name[1:]
+    if rest[:1] == "#":
+        root, rest = root + 1, rest[1:]
+    elif rest[:1] == "b":
+        root, rest = root - 1, rest[1:]
+    if rest not in CHORD_INTERVALS:
+        raise ValueError(f"chord {name}: unknown quality")
+    return root % 12, rest
+
+
+def near(pitch_class, low):
+    """The MIDI note of `pitch_class` at or above `low`, within an octave."""
+    return low + (pitch_class - low) % 12
+
+
+def stick():
+    """A woodblock click: the count-in and the calibration beat."""
+    out = []
+    for i in range(round(0.07 * DRUM_RATE)):
+        t = i / DRUM_RATE
+        out.append((0.8 * sine(1250 * t) + 0.3 * sine(2610 * t)) * math.exp(-t / 0.014))
+    return out
+
+
+def rim():
+    noise, out = Noise(4), []
+    for i in range(round(0.07 * DRUM_RATE)):
+        t = i / DRUM_RATE
+        out.append(0.6 * sine(1700 * t) * math.exp(-t / 0.01)
+                   + 0.4 * sine(480 * t) * math.exp(-t / 0.02)
+                   + 0.35 * noise.next() * math.exp(-t / 0.005))
+    return out
+
+
+def clap():
+    noise, out, last = Noise(5), [], 0.0
+    for i in range(round(0.2 * DRUM_RATE)):
+        t = i / DRUM_RATE
+        bursts = sum(math.exp(-(t - start) / 0.004) for start in (0.0, 0.011, 0.022) if t >= start)
+        tail = math.exp(-(t - 0.022) / 0.06) if t >= 0.022 else 0.0
+        value = noise.next()
+        out.append(max(-1.0, min(1.0, (value - 0.6 * last) * (0.45 * bursts + 0.5 * tail))))
+        last = value
+    return out
+
+
+def open_hat():
+    noise, out, last = Noise(6), [], 0.0
+    for i in range(round(0.2 * DRUM_RATE)):
+        value = noise.next()
+        out.append((value - last) * 0.45 * math.exp(-i / DRUM_RATE / 0.07))
+        last = value
+    return out
+
+
+def tom(freq):
+    out, phase = [], 0.0
+    for i in range(round(0.25 * DRUM_RATE)):
+        t = i / DRUM_RATE
+        phase += freq * (1 + 0.6 * math.exp(-t / 0.03)) / DRUM_RATE
+        out.append(sine(phase) * math.exp(-t / 0.1))
+    return out
+
+
+# What each drum letter plays (the instrument's name) and at which volume
+# (None: the instrument's own). Kick and low tom are the left hand's LEFT,
+# snare, clap, rim and high tom its RIGHT; hats and the stick are not charted.
+DRUM_LETTERS = {
+    "K": ("kick", None), "S": ("snare", None), "s": ("snare", 0x16), "C": ("clap", None),
+    "R": ("rim", None), "H": ("hat", None), "h": ("hat", 0x14), "O": ("ohat", None),
+    "T": ("tomlo", None), "t": ("tomhi", None), "X": ("stick", None),
+}
+LEFT_LANES = {"K": 0, "T": 0, "S": 1, "C": 1, "R": 1, "t": 1}
+COUNT_IN = "X...X...X...X..."
+# The songs' instruments are balanced against each other at full volume, then
+# all turned down by this, so that four channels at their loudest don't clip
+# the mixer's 8-bit sum.
+MIX_GAIN = 0.7
+
+
+class Song:
+    """A module being written. Cells are placed by row from the song's start
+    (64 rows a pattern); `notes` keeps every note-on as (row, channel, part,
+    pitch), the part being "drums" (pitch: the drum's letter), "bass", "lead"
+    or "pad" (pitch: the MIDI note); `hands` the parts each bar's chart takes
+    for the left and right hand."""
+
+    def __init__(self, title, tempo, instruments, gain=1.0):
+        """`gain` scales every instrument's volume and every volume a cell
+        sets, so that the mix stays clear of the mixer's limit."""
+        self.title, self.tempo, self.gain = title, tempo, gain
+        for ins in instruments:
+            ins.volume = round(ins.volume * gain)
+        self.instruments = instruments
+        self.number = {ins.name: n + 1 for n, ins in enumerate(instruments)}
+        self.cells, self.notes, self.hands = {}, [], {}
+        self.bars = 0
+
+    def cell(self, row, channel):
+        return self.cells.setdefault((row, channel), [None, 0, 0, 0])
+
+    def effect(self, row, channel, effect, param):
+        cell = self.cell(row, channel)
+        if cell[2] or cell[3]:
+            raise ValueError(f"{self.title}: row {row} channel {channel} has an effect already")
+        cell[2], cell[3] = effect, param
+
+    def note(self, row, channel, name, pitch, part, volume=None):
+        """`pitch`: a MIDI note, or a drum letter (drums play at C-3)."""
+        cell = self.cell(row, channel)
+        if cell[0] is not None:
+            raise ValueError(f"{self.title}: two notes on row {row} channel {channel}")
+        ins = self.instruments[self.number[name] - 1]
+        cell[0] = C3 if part == "drums" else ins.note(pitch)
+        cell[1] = self.number[name]
+        if volume is not None:
+            self.effect(row, channel, 0xC, round(volume * self.gain))
+        self.notes.append((row, channel, part, pitch))
+
+    def rest(self, row, channel):
+        self.effect(row, channel, 0xC, 0)
+
+    def melody(self, row, channel, name, part, text, vibrato=0):
+        """Places 'NOTE/sixteenths' tokens from `row`: 'r' rests, '-' holds
+        the note before. A note of 6 sixteenths or more gets the vibrato 4xy
+        `vibrato` from its third row on. Returns the row after the line."""
+        for token in text.split():
+            pitch, length = token.split("/")
+            length = int(length)
+            if pitch == "r":
+                self.rest(row, channel)
+            elif pitch != "-":
+                self.note(row, channel, name, midi(pitch), part)
+                if vibrato and length >= 6:
+                    for r in range(row + 2, row + length):
+                        self.effect(r, channel, 0x4, vibrato)
+            row += length
+        return row
+
+    def drums(self, row, text):
+        for i, letter in enumerate(text):
+            if letter != ".":
+                name, volume = DRUM_LETTERS[letter]
+                self.note(row + i, DRUMS, name, letter, "drums", volume)
+
+    def module(self, restart=0):
+        """The MOD: the tempo set on row 0, the rows packed into 64-row
+        patterns played in order, the last one cut short by D00 when the
+        song's rows don't fill it."""
+        total = self.bars * 16
+        self.effect(0, BASS, 0xF, self.tempo)
+        if total % 64:
+            free = [ch for ch in range(4) if not any(self.cell(total - 1, ch)[2:])]
+            self.effect(total - 1, free[0], 0xD, 0)
+        patterns = []
+        for start in range(0, total, 64):
+            p = Pattern(4)
+            for (row, channel), cell in self.cells.items():
+                if start <= row < start + 64:
+                    p.rows[row - start][channel] = list(cell)
+            patterns.append(p)
+        if any(row >= total for row, _ in self.cells):
+            raise ValueError(f"{self.title}: a cell after the song's end")
+        return mod_file(self.title, self.instruments, patterns, list(range(len(patterns))), restart)
+
+
+# Bass lines: (row, semitones above the chord's root, or None to rest) in a bar.
+BASS_LINES = {
+    "calm": [(0, 0), (6, 7), (8, 12), (14, 7)],
+    "stride": [(0, 0), (3, 0), (6, 12), (8, 0), (10, 10), (11, 12), (14, 7)],
+    "stride_walk": [(0, 0), (4, 7), (8, 12), (12, 10)],
+    "rush": [(r, 12 if r % 4 else 0) for r in range(0, 16, 2)],
+    "rush_half": [(0, 0), (8, 0)],
+    "rush_build": [(0, 0), (4, 0), (8, 0), (12, 0)],
+    "title": [(0, 0), (2, 12), (4, 0), (6, 12), (8, 7), (10, 12), (12, 0), (14, 10)],
+    "root": [(0, 0)],
+}
+
+# Pad patterns: "arp" retriggers the chord's root on `rows` with the 0xy
+# arpeggio held on every row; "broken" plays chord tones (index into the
+# chord's tones, octave above when past the end) on `rows`; "stab" is "arp"
+# on off-beats, short.
+PAD_STYLES = {
+    "calm": ("broken", [(0, 0), (3, 1), (6, 2), (8, 3), (11, 2), (14, 1)]),
+    "calm_sparse": ("broken", [(0, 0), (6, 2), (8, 3)]),
+    "stride": ("stab", [2, 6, 10, 14]),
+    "stride_push": ("stab", [2, 6, 7, 10, 14]),
+    "rush": ("arp", [0, 4, 8, 12]),
+    "rush_half": ("arp", [0, 8]),
+    "title": ("arp", [0, 6, 12]),
+    "hold": ("broken", [(0, 0)]),
+    "none": ("none", []),
+}
+
+
+def arrange(song, sections, bass_low, pad_low):
+    """Writes `sections` into `song`, bar after bar. A section is a dict:
+    chords (one a bar), drums (a 16-letter line a bar), bass and pad (styles
+    above), lead (a line a bar, or None), hands ((left part, right part) for
+    the chart, None for none), vibrato. The bass plays from `bass_low` up, the
+    pad's tones from `pad_low` up."""
+    lead_sounding = False
+    for section in sections:
+        lines = section.get("lead")
+        for i, name in enumerate(section["chords"]):
+            top = song.bars * 16
+            root, quality = chord(name)
+            intervals = CHORD_INTERVALS[quality]
+            song.drums(top, section["drums"][i])
+            for row, step in BASS_LINES[section["bass"]]:
+                if step is None:
+                    song.rest(top + row, BASS)
+                else:
+                    song.note(top + row, BASS, "bass", near(root, bass_low) + step, "bass")
+            kind, pattern = PAD_STYLES[section["pad"]]
+            pad_root = near(root, pad_low)
+            if kind in ("arp", "stab"):
+                for row in range(16):
+                    song.effect(top + row, PAD, 0x0, ARP_PARAMS[quality])
+                for row in pattern:
+                    song.note(top + row, PAD, "pad", pad_root, "pad")
+            elif kind == "broken":
+                tones = list(intervals) + [12 + s for s in intervals]
+                for row, which in pattern:
+                    song.note(top + row, PAD, "pad", pad_root + tones[which], "pad")
+            if lines:
+                end = song.melody(top, LEAD, "lead", "lead", lines[i], section.get("vibrato", 0))
+                if end != top + 16:
+                    raise ValueError(f"{song.title} bar {song.bars + 1}: not 16 sixteenths")
+                lead_sounding = True
+            elif lead_sounding:
+                song.rest(top, LEAD)
+                lead_sounding = False
+            song.hands[song.bars] = section.get("hands", ("drums", None)) or (None, None)
+            song.bars += 1
+
+
+def fade_out(song, bar, start=4):
+    """A volume slide down (A02) on the bass, lead and pad from row `start` of
+    `bar` to the song's end, where no other effect is."""
+    for row in range(bar * 16 + start, song.bars * 16):
+        for channel in (BASS, LEAD, PAD):
+            if not any(song.cell(row, channel)[2:]):
+                song.effect(row, channel, 0xA, 0x02)
+
+
+def charts(song, anchors, easy_rows):
+    """HARD and EASY, each a sorted list of (tick, lane), from the song's
+    notes and its bars' hands.
+
+    HARD: the right hand (B, A) plays every note of its part, by the melody's
+    contour: up to A, down to B, a repeated note on the other button, and two
+    notes a sixteenth apart always on both. The left hand (LEFT, RIGHT) plays
+    its part's kicks and low toms on LEFT and snares, claps, rims and high
+    toms on RIGHT: on the rows of a bar in `anchors` always, elsewhere only on
+    eighths where the right hand has no note within a row, so the two hands
+    take turns. Two notes in one lane are at least 2 rows apart.
+
+    EASY: from HARD, a note every `easy_rows` rows at most, on beats only:
+    for each slot, the note on its first row (or, with 8-row slots, its
+    second beat), one of them, on a different button from the last when it
+    can."""
+    right, previous, lane = [], None, 2
+    last_part, last_row = None, -99
+    for row, _, part, pitch in sorted(song.notes):
+        hand = song.hands.get(row // 16, (None, None))[1]
+        if row < 16 or part != hand:
+            continue
+        if part != last_part:
+            previous = None
+        if previous is None or pitch == previous:
+            lane = 5 - lane
+        else:
+            lane = 3 if pitch > previous else 2
+        if right and right[-1][1] == lane and row - last_row < 2:
+            lane = 5 - lane
+        right.append((row, lane))
+        previous, last_part, last_row = pitch, part, row
+    right_rows = {row for row, _ in right}
+    left, last = [], {}
+    for row, _, part, letter in sorted(song.notes):
+        hand = song.hands.get(row // 16, (None, None))[0]
+        if row < 16 or part != hand or letter not in LEFT_LANES:
+            continue
+        lane = LEFT_LANES[letter]
+        if row % 16 not in anchors and (row % 2 or right_rows & {row - 1, row, row + 1}):
+            continue
+        if row - last.get(lane, -99) < 2:
+            continue
+        left.append((row, lane))
+        last[lane] = row
+    hard = sorted(left + right)
+    at = {}
+    for row, lane in hard:
+        at.setdefault(row, []).append(lane)
+    easy, previous = [], None
+    for start in range(16, song.bars * 16, easy_rows):
+        for row in range(start, start + easy_rows, 4):
+            if row in at:
+                lanes = sorted(at[row], key=lambda lane: (lane == previous, lane < 2))
+                easy.append((row, lanes[0]))
+                previous = lanes[0]
+                break
+    return [(row * 6, lane) for row, lane in hard], [(row * 6, lane) for row, lane in easy]
+
+
+def drum_kit(names, volumes):
+    synth = {"kick": kick, "snare": snare, "hat": hat, "ohat": open_hat, "clap": clap, "rim": rim,
+             "stick": stick, "tomlo": lambda: tom(110), "tomhi": lambda: tom(170)}
+    return [Instrument(name, synth[name](), volumes[name]) for name in names]
+
+
+# --- rhythm_calm.mod: "Sunny Nap", 100 BPM, F major -----------------------------
+
+CALM_A = ["C5/4 A4/2 C5/2 E5/6 F5/2", "E5/4 D5/2 C5/2 A4/8",
+          "D5/4 F5/2 A5/2 G5/4 F5/2 D5/2", "E5/6 D5/2 C5/4 r/4"]
+CALM_A2 = ["C5/4 A4/2 C5/2 E5/6 G5/2", "A5/4 G5/2 E5/2 C5/4 E5/4",
+           "F5/2 E5/2 D5/2 F5/2 A5/4 G5/2 F5/2", "G5/8 r/4 C5/2 D5/2"]
+CALM_B = ["F5/6 E5/2 D5/4 A4/4", "Bb4/4 D5/2 F5/2 A5/6 G5/2",
+          "F5/4 D5/2 F5/2 Bb5/4 A5/4", "G5/8 E5/4 C5/4",
+          "D5/2 E5/2 F5/2 A5/2 C6/6 A5/2", "Bb5/4 A5/2 G5/2 F5/4 D5/4",
+          "F5/2 G5/2 A5/2 Bb5/2 A5/4 F5/4", "G5/6 E5/2 C5/4 Bb4/4"]
+CALM_A3 = ["A5/4 G5/2 F5/2 E5/4 C5/4", "E5/2 F5/2 G5/2 A5/2 C6/8",
+           "Bb5/4 A5/2 G5/2 F5/4 D5/4", "E5/8 D5/4 E5/4"]
+
+
+def calm_song():
+    instruments = drum_kit(["kick", "rim", "hat", "stick", "snare"],
+                           {"kick": 46, "rim": 34, "hat": 22, "stick": 40, "snare": 30}) + [
+        tone("bass", 64, lambda p: 0.85 * sine(p) + 0.15 * sine(2 * p),
+             ramp(1.0, 0.75, 16) + [0.75] * 2, 2, 52),
+        tone("lead", 16, lambda p: 0.7 * sine(p) + 0.3 * triangle(p),
+             ramp(0.3, 1.0, 6) + ramp(1.0, 0.8, 40) + [0.8] * 4, 4, 42),
+        tone("pad", 32, lambda p: 0.75 * sine(p) + 0.2 * sine(2 * p) + 0.05 * sine(3 * p),
+             [math.exp(-c / 70) for c in range(300)], 0, 30),
+    ]
+    song = Song("beat paws calm", 100, instruments, MIX_GAIN)
+    groove = "K.h.R.h.K.hKR.h."
+    groove2 = "K.h.R.h.K.h.R.hK"
+    fill = "K.h.R.h.K.R.sRss"
+    a = ["Fmaj7", "Am7", "Bbmaj7", "C"]
+    b = ["Dm7", "Gm7", "Bbmaj7", "C", "Dm7", "Gm7", "Bbmaj7", "C7"]
+    tune = {"bass": "calm", "pad": "calm", "hands": ("drums", "lead"), "vibrato": 0x42}
+    arrange(song, [
+        {"chords": ["Fmaj7"], "drums": [COUNT_IN], "bass": "root", "pad": "calm_sparse",
+         "hands": None},
+        {"chords": a[1:], "drums": [groove, groove2, fill], "bass": "calm", "pad": "calm",
+         "hands": ("drums", "bass")},
+        {**tune, "chords": a + a, "drums": [groove, groove2] * 4, "lead": CALM_A + CALM_A2},
+        {**tune, "chords": b, "drums": [groove, groove2] * 3 + [groove, fill], "lead": CALM_B},
+        {**tune, "chords": a + a, "drums": [groove, groove2] * 3 + [groove, fill],
+         "lead": CALM_A + CALM_A3},
+        {**tune, "chords": ["Fmaj7", "Fmaj7"], "drums": ["K...............", "................"],
+         "pad": "hold", "bass": "root", "lead": ["F5/16", "-/8 r/8"]},
+    ], bass_low=41, pad_low=53)
+    fade_out(song, song.bars - 1)
+    return song
+
+
+# --- rhythm_stride.mod: "Savanna Stride", 124 BPM, D dorian ---------------------
+
+STRIDE_A = ["A4/2 C5/2 D5/3 F5/1 r/2 E5/2 D5/2 C5/2", "B4/2 D5/2 F5/2 G5/2 r/2 F5/2 D5/4",
+            "A5/3 G5/1 F5/2 D5/2 r/2 C5/2 D5/4", "B4/4 r/2 G4/2 A4/2 B4/2 D5/4",
+            "A4/2 C5/2 D5/3 F5/1 r/2 E5/2 D5/2 C5/2", "B4/2 D5/2 F5/2 A5/2 r/2 G5/2 F5/2 D5/2",
+            "F5/2 D5/2 Bb4/2 D5/2 F5/3 G5/1 A5/4", "G5/2 E5/2 C#5/2 E5/2 A5/6 r/2"]
+STRIDE_A2 = ["D5/2 F5/2 A5/3 C6/1 r/2 B5/2 A5/2 G5/2", "G5/2 F5/2 D5/2 B4/2 r/2 D5/2 G5/4",
+             "F5/1 G5/1 A5/2 C6/2 A5/2 r/2 G5/2 F5/2 D5/2", "E5/4 D5/2 B4/2 G4/2 A4/2 B4/4",
+             "A4/2 C5/2 D5/3 F5/1 r/2 E5/2 D5/2 C5/2", "B4/2 D5/2 F5/2 A5/2 r/2 G5/2 F5/2 D5/2",
+             "Bb5/3 A5/1 F5/2 D5/2 F5/2 G5/2 A5/4", "E5/2 C#5/2 A4/4 r/4 A4/1 C#5/1 E5/2"]
+STRIDE_B = ["D5/3 F5/3 A5/2 r/2 G5/2 F5/2 D5/2", "E5/3 G5/3 C6/2 r/2 B5/2 G5/2 E5/2",
+            "C6/3 B5/1 A5/2 E5/2 r/2 G5/2 A5/4", "F5/4 E5/2 D5/2 r/4 A4/4",
+            "D5/3 F5/3 A5/2 r/2 C6/2 Bb5/2 A5/2", "G5/3 E5/3 C5/2 r/2 E5/2 G5/2 C6/2",
+            "D6/4 C6/2 A5/2 D5/4 E5/4", "C#6/4 A5/2 E5/2 G5/2 E5/2 C#5/2 A4/2"]
+STRIDE_END = ["A4/2 C5/2 D5/3 F5/1 r/2 E5/2 D5/2 C5/2", "B4/2 D5/2 F5/2 G5/2 r/2 F5/2 D5/4",
+              "F5/2 D5/2 Bb4/2 D5/2 F5/3 G5/1 A5/4", "E5/2 G5/2 A5/2 C#6/2 E6/4 r/4"]
+
+
+def stride_song():
+    instruments = drum_kit(["kick", "clap", "hat", "ohat", "stick"],
+                           {"kick": 54, "clap": 52, "hat": 32, "ohat": 28, "stick": 40}) + [
+        tone("bass", 64, lambda p: 0.6 * saw(p) - 0.4 * square(p),
+             ramp(1.0, 0.6, 24) + [0.6] * 2, 2, 44),
+        tone("lead", 16, lambda p: 0.5 * square(p, 0.25) - 0.5 * saw(p),
+             ramp(1.0, 0.7, 60) + [0.7] * 4, 4, 34),
+        tone("pad", 32, saw, [math.exp(-c / 22) for c in range(100)], 0, 34),
+    ]
+    song = Song("beat paws stride", 124, instruments, MIX_GAIN)
+    groove = "K.h.C.hKh.K.C.hO"
+    groove2 = "K.h.C.h.K.hKC.hh"
+    fill = "K.h.C.hKC.KCK.CC"
+    a = ["Dm7", "G7", "Dm7", "G7", "Dm7", "G7", "Bbmaj7", "A7"]
+    b = ["Bbmaj7", "C", "Am7", "Dm7", "Bbmaj7", "C", "Asus4", "A7"]
+    grooves = [groove, groove2, groove, groove2, groove, groove2, groove, fill]
+    tune = {"bass": "stride", "pad": "stride", "hands": ("drums", "lead")}
+    arrange(song, [
+        {"chords": ["Dm7"], "drums": [COUNT_IN], "bass": "root", "pad": "none", "hands": None},
+        {"chords": ["Dm7", "G7", "Dm7"], "drums": [groove, groove2, fill], "bass": "stride_walk",
+         "pad": "stride", "hands": ("drums", "bass")},
+        {**tune, "chords": a, "drums": grooves, "lead": STRIDE_A},
+        {**tune, "chords": a, "drums": grooves, "lead": STRIDE_A2, "pad": "stride_push"},
+        {**tune, "chords": b, "drums": grooves, "lead": STRIDE_B},
+        {**tune, "chords": ["Dm7", "G7", "Bbmaj7", "A7"], "drums": [groove, groove2, groove, fill],
+         "lead": STRIDE_END},
+        {**tune, "chords": ["Dm7", "Dm7"], "drums": ["K.......K.......", "................"],
+         "bass": "root", "pad": "hold", "lead": ["D6/16", "-/8 r/8"]},
+    ], bass_low=38, pad_low=50)
+    fade_out(song, song.bars - 1)
+    return song
+
+
+# --- rhythm_rush.mod: "Night Chase", 148 BPM, E minor --------------------------
+
+RUSH_A = ["E5/2 E5/2 G5/2 E5/2 B5/4 A5/2 G5/2", "E5/2 G5/2 C6/4 B5/2 G5/2 E5/4",
+          "F#5/2 A5/2 D6/3 C6/1 B5/2 A5/2 F#5/4", "B5/6 A5/2 F#5/4 D5/4",
+          "E5/2 E5/2 G5/2 E5/2 B5/4 A5/2 G5/2", "G5/2 A5/2 B5/2 C6/2 E6/4 D6/2 C6/2",
+          "D6/2 C6/2 A5/2 F#5/2 D5/4 F#5/2 A5/2", "B5/4 A5/2 F#5/2 D#5/8"]
+RUSH_A2 = RUSH_A[:4] + ["B5/2 B5/2 D6/2 B5/2 E6/4 D6/2 B5/2", "C6/2 B5/2 G5/2 E5/2 G5/2 C6/2 E6/4",
+                        "F#6/2 E6/2 D6/2 A5/2 F#5/2 A5/2 D6/4", "D#6/4 B5/2 F#5/2 B5/8"]
+RUSH_B = ["G5/4 E6/6 D6/2 C6/2 B5/2", "A5/4 F#5/2 A5/2 D6/6 C6/2",
+          "B5/4 D6/2 F#6/2 E6/4 D6/2 B5/2", "E6/8 r/4 B5/1 C6/1 D6/2",
+          "E6/4 G6/4 E6/2 D6/2 C6/4", "D6/4 F#6/4 A6/2 G6/2 F#6/4",
+          "G6/4 F#6/2 E6/2 D#6/4 B5/4", "F#6/8 D#6/2 B5/2 A5/1 G5/1 F#5/2"]
+RUSH_B_END = RUSH_B[:6] + ["G6/4 F#6/2 E6/2 D#6/4 B5/4", "F#6/4 D#6/4 B5/4 F#5/4"]
+
+
+def rush_song():
+    instruments = drum_kit(["kick", "snare", "hat", "ohat", "tomlo", "tomhi", "stick"],
+                           {"kick": 56, "snare": 48, "hat": 28, "ohat": 24, "tomlo": 48,
+                            "tomhi": 44, "stick": 40}) + [
+        tone("bass", 64, saw, ramp(1.0, 0.65, 10) + [0.65] * 2, 2, 44),
+        tone("lead", 16, square, ramp(1.0, 0.7, 40) + [0.7] * 4, 4, 30),
+        tone("pad", 32, lambda p: square(p, 0.25), [math.exp(-c / 40) for c in range(160)], 0, 24),
+    ]
+    song = Song("beat paws rush", 148, instruments, MIX_GAIN)
+    beat = "K.h.S.h.K.h.S.hK"
+    beat2 = "K.h.S.hKK.h.S.hO"
+    fill = "K.h.S.h.T.TtT.tS"
+    fill2 = "K.h.S.hTt.Tt.SSS"
+    half = "K...h...S...h..."
+    build = "K...K...K...K..."
+    build2 = "K...S...K...SsSs"
+    grooves = [beat, beat2, beat, beat2, beat, beat2, beat, fill]
+    grooves2 = [beat, beat2, beat, beat2, beat, beat2, beat, fill2]
+    verse = ["Em", "C", "D", "Bm", "Em", "C", "D", "B7"]
+    chorus = ["C", "D", "Bm", "Em", "C", "D", "B7", "B7"]
+    tune = {"bass": "rush", "pad": "rush", "hands": ("drums", "lead")}
+    arrange(song, [
+        {"chords": ["Em"], "drums": [COUNT_IN], "bass": "root", "pad": "none", "hands": None},
+        {"chords": ["Em", "C", "D"], "drums": [build, build, build2], "bass": "rush_build",
+         "pad": "rush_half", "hands": ("drums", "bass")},
+        {**tune, "chords": verse, "drums": grooves, "lead": RUSH_A},
+        {**tune, "chords": chorus, "drums": grooves2, "lead": RUSH_B},
+        {"chords": ["Am", "C", "Em", "D"], "drums": [half, half, half, build2], "bass": "rush_half",
+         "pad": "rush", "hands": ("drums", "pad")},
+        {**tune, "chords": verse, "drums": grooves, "lead": RUSH_A2},
+        {**tune, "chords": chorus, "drums": grooves2, "lead": RUSH_B},
+        {**tune, "chords": chorus, "drums": grooves, "lead": RUSH_B_END},
+        {**tune, "chords": ["Em", "Em"], "drums": ["K...............", "................"],
+         "bass": "root", "pad": "hold", "lead": ["E6/16", "-/8 r/8"]},
+    ], bass_low=40, pad_low=52)
+    fade_out(song, song.bars - 1)
+    return song
+
+
+# --- rhythm_title.mod: the title loop, 112 BPM, C major --------------------------
+
+TITLE_LEAD = ["E5/2 G5/2 C6/3 B5/1 A5/2 G5/2 E5/4", "A5/2 G5/2 E5/2 C5/2 D5/4 E5/4",
+              "F5/2 A5/2 C6/2 A5/2 G5/3 F5/1 E5/2 D5/2", "D5/4 G4/2 B4/2 D5/8",
+              "E5/2 G5/2 C6/3 B5/1 A5/2 G5/2 E5/4", "A5/2 C6/2 B5/2 A5/2 G5/4 E5/4",
+              "F5/2 E5/2 D5/2 F5/2 A5/4 G5/2 F5/2", "G5/6 F5/2 E5/4 D5/4",
+              "C5/4 F5/4 A5/6 G5/2", "B4/4 D5/4 G5/6 F5/2",
+              "E5/4 G5/4 B5/4 A5/2 G5/2", "A5/8 E5/4 C5/4",
+              "F5/2 G5/2 A5/2 C6/2 A5/4 F5/4", "G5/2 A5/2 B5/2 D6/2 B5/4 G5/4",
+              "C6/6 B5/2 G5/4 E5/4", "D5/4 F5/4 G5/4 r/4"]
+
+
+def title_song():
+    instruments = drum_kit(["kick", "snare", "hat", "ohat"],
+                           {"kick": 50, "snare": 44, "hat": 26, "ohat": 22}) + [
+        tone("bass", 64, lambda p: 0.6 * triangle(p) + 0.4 * square(p),
+             ramp(1.0, 0.6, 14) + [0.6] * 2, 2, 46),
+        tone("lead", 16, lambda p: 0.7 * square(p) + 0.3 * sine(p),
+             ramp(1.0, 0.6, 80) + [0.6] * 4, 4, 30),
+        tone("pad", 32, triangle, [math.exp(-c / 50) for c in range(200)], 0, 30),
+    ]
+    song = Song("beat paws title", 112, instruments, MIX_GAIN)
+    beat = "K.h.S.hOK.h.S.h."
+    beat2 = "K.h.S.h.K.KhS.hO"
+    fill = "K.h.S.h.K.h.SsSS"
+    a = ["C", "Am", "F", "G", "C", "Am", "F", "G"]
+    b = ["F", "G", "Em", "Am", "F", "G", "C", "G7"]
+    arrange(song, [
+        {"chords": a, "drums": [beat, beat2, beat, beat2, beat, beat2, beat, fill], "bass": "title",
+         "pad": "title", "lead": TITLE_LEAD[:8], "vibrato": 0x32},
+        {"chords": b, "drums": [beat, beat2, beat, beat2, beat, beat2, beat, fill], "bass": "title",
+         "pad": "title", "lead": TITLE_LEAD[8:], "vibrato": 0x32},
+    ], bass_low=36, pad_low=52)
+    return song
+
+
+def calibrate_module():
+    """A click every beat at 120 BPM, higher on each bar's first: one 64-row
+    pattern, looped. The click plays on channels 1 and 2 at once, panned
+    left and right, so it sounds in the middle."""
+    song = Song("beat paws calibrate", 120, drum_kit(["stick"], {"stick": 64}))
+    for row in range(0, 64, 4):
+        for channel in (DRUMS, BASS):
+            cell = song.cell(row, channel)
+            cell[0], cell[1] = (C3 + 7 if row % 16 == 0 else C3), 1
+    song.bars = 4
+    return song.module()
+
+
+RHYTHM_SONGS = {  # key: (song, the rows of a bar the left hand always plays, EASY's rows)
+    "calm": (calm_song, {0, 12}, 4),
+    "stride": (stride_song, {0, 12}, 4),
+    "rush": (rush_song, {0, 12}, 8),
+}
+
+
+def charts_header(songs):
+    out = ["// Beat Paws' charts, generated by tools/make-example-audio.py rhythm from the",
+           "// same notes as its modules (rhythm_<song>.mod): do not edit.",
+           "// A note's tick counts from the module's row 0 (6 ticks a row, 4 rows a",
+           "// beat); lanes 0-3 are LEFT, RIGHT, B, A.",
+           "", "#ifndef RHYTHM_CHARTS_H", "#define RHYTHM_CHARTS_H", "", '#include "chart.h"']
+    for key, (song, hard, easy) in songs.items():
+        k = key.upper()
+        out += ["", f"#define RHYTHM_{k}_TEMPO {song.tempo}", f"#define RHYTHM_{k}_SPEED 6",
+                f"#define RHYTHM_{k}_LENGTH_TICKS {song.bars * 16 * 6}"]
+        for name, notes in (("easy", easy), ("hard", hard)):
+            out.append(f"#define RHYTHM_{k}_{name.upper()}_COUNT {len(notes)}")
+            out.append(f"static const RhythmNote rhythm_{key}_{name}[] = {{")
+            for i in range(0, len(notes), 6):
+                out.append("    " + " ".join(f"{{{t}, {lane}}}," for t, lane in notes[i:i + 6]))
+            out.append("};")
+    out += ["", "#endif", ""]
+    return "\n".join(out).encode("ascii")
+
+
+def rhythm_set():
+    files = {"rhythm_title.mod": title_song().module(restart=0),
+             "rhythm_calibrate.mod": calibrate_module()}
+    songs = {}
+    for key, (make, anchors, easy_rows) in RHYTHM_SONGS.items():
+        song = make()
+        hard, easy = charts(song, anchors, easy_rows)
+        files[f"rhythm_{key}.mod"] = song.module()
+        songs[key] = (song, hard, easy)
+    files["rhythm_charts.h"] = charts_header(songs)
+    return files
+
+
 # --- Sets -----------------------------------------------------------------------
 
 def jukebox_set():
@@ -524,17 +1125,20 @@ def tests_set():
     }
 
 
-SETS = {"jukebox": jukebox_set, "tests": tests_set}
+SETS = {"jukebox": jukebox_set, "rhythm": rhythm_set, "tests": tests_set}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("set", choices=sorted(SETS), help="which files to make")
     parser.add_argument("out_dir", type=pathlib.Path, help="where to write them")
+    parser.add_argument("--header-dir", type=pathlib.Path,
+                        help="where to write the C headers a set makes (default: OUT_DIR)")
     args = parser.parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
     for name, data in SETS[args.set]().items():
-        (args.out_dir / name).write_bytes(data)
+        out_dir = args.header_dir if args.header_dir and name.endswith(".h") else args.out_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / name).write_bytes(data)
     return 0
 
 
