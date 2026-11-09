@@ -1,8 +1,9 @@
 // The sprite tiles scene: runtime sprite tiles, sprite_set_tiles()
 // (docs/sprites.md#runtime-tiles).
 //
-// Four playing cards, each one 32x64 hardware sprite whose face is composed
-// at run time, as a card game deals it: the card, its corner indexes and its
+// Four playing cards on a felt table (a map layer painted at boot, paint() in
+// art.c), each one 32x64 hardware sprite whose face is composed at run time,
+// as a card game deals it: the card, its corner indexes and its
 // pips drawn on the canvas (art.c) into a buffer of the card's own, then
 // copied to the card's VRAM by sprite_set_tiles() in VBlank at frame_end().
 // A metasprite card (blackjack's) takes four hardware sprites; a composed one
@@ -54,6 +55,50 @@ static const SpriteAsset* const sprite_table[SPRITE_COUNT] = {
     &card_sprite, &card_sprite, &card_sprite, &card_sprite, &counter_sprite};
 static const SpriteGroup sprites = {
     .palettes = palette, .sprite_count = SPRITE_COUNT, .palette_count = 1};
+
+// --- The table: green felt between two wooden rails, painted at boot -----------
+
+enum { FELT = 1, FELT_DARK, FELT_LIGHT, WOOD, WOOD_LIGHT, WOOD_DARK, TRIM };
+static const u16 table_palette[16] = {
+    [FELT] = COLOR_RGB(28, 100, 64),       [FELT_DARK] = COLOR_RGB(18, 72, 46),
+    [FELT_LIGHT] = COLOR_RGB(40, 120, 78), [WOOD] = COLOR_RGB(110, 60, 32),
+    [WOOD_LIGHT] = COLOR_RGB(156, 94, 50), [WOOD_DARK] = COLOR_RGB(62, 32, 20),
+    [TRIM] = COLOR_RGB(216, 172, 72),
+};
+
+#define RAIL_TOP 16     // the top rail ends here
+#define RAIL_BOTTOM 144 // the bottom one starts here
+
+static u32 table_pixel(int x, int y) {
+    if (y < RAIL_TOP || y >= RAIL_BOTTOM) {
+        int d = y < RAIL_TOP ? RAIL_TOP - 1 - y : y - RAIL_BOTTOM; // from the felt
+        if (d == 0)
+            return WOOD_DARK;
+        if (d == 1)
+            return TRIM;
+        // Wood grain: streaks along the rail.
+        return ((y * 5 + (x >> 3)) & 7) == 0 ? WOOD_DARK : d == 2 ? WOOD_LIGHT : WOOD;
+    }
+    // Felt: darker near the rails, with a fine weave.
+    int edge = int_min(y - RAIL_TOP, RAIL_BOTTOM - 1 - y);
+    if (edge < 6 && ((x + y) & 1) == 0)
+        return FELT_DARK;
+    if (edge < 3)
+        return FELT_DARK;
+    return ((x + 2 * y) & 7) == 0 ? FELT_LIGHT : ((x - 2 * y) & 7) == 4 ? FELT_DARK : FELT;
+}
+
+static Painting table SERVAL_EWRAM_BSS;
+static bool table_painted;
+
+static Tileset table_tiles = {.tiles = table.tiles, .palettes = table_palette, .palette_count = 1};
+static const MapLayer table_layer = {.width = PAINT_W,
+                                     .height = PAINT_H,
+                                     .cells = table.cells,
+                                     .metatiles = table.metatiles,
+                                     .metatile_count = PAINT_W * PAINT_H,
+                                     .bg = 3,
+                                     .flags = MAP_LAYER_FIXED};
 
 // --- Pictures: '#' is a pixel, '.' is not -------------------------------------
 
@@ -271,6 +316,13 @@ static void compose_counter(u32 value) {
 }
 
 static void enter(void) {
+    if (!table_painted) {
+        paint(&table, table_pixel);
+        table_tiles.tile_count = table.tile_count;
+        table_painted = true;
+    }
+    tileset_load(&table_tiles);
+    map_load(&table_layer);
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprites);
     static const u8 first[CARDS][2] = {{1, SPADES}, {13, HEARTS}, {7, DIAMONDS}, {10, CLUBS}};

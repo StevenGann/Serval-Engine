@@ -49,3 +49,46 @@ u32* canvas_pack(u32* out) {
     }
     return out;
 }
+
+// The index of `tile` in the painting's tiles, added if it isn't there yet.
+static u16 paint_tile(Painting* out, const u32* tile) {
+    for (u16 t = 0; t < out->tile_count; t++) {
+        const u32* have = &out->tiles[t * 8];
+        int w = 0;
+        while (w < 8 && have[w] == tile[w])
+            w++;
+        if (w == 8)
+            return t;
+    }
+    if (out->tile_count == PAINT_MAX_TILES)
+        return 0; // full: a blank tile (raise PAINT_MAX_TILES)
+    u32* dst = &out->tiles[out->tile_count * 8];
+    for (int w = 0; w < 8; w++)
+        dst[w] = tile[w];
+    return out->tile_count++;
+}
+
+void paint(Painting* out, u32 (*pixel)(int x, int y)) {
+    for (int w = 0; w < 8; w++)
+        out->tiles[w] = 0;
+    out->tile_count = 1;
+    for (int ty = 0; ty < PAINT_H * 2; ty++) {
+        for (int tx = 0; tx < PAINT_W * 2; tx++) {
+            u32 tile[8], bank = 0;
+            for (int y = 0; y < 8; y++) {
+                u32 word = 0;
+                for (int x = 0; x < 8; x++) {
+                    u32 p = pixel(tx * 8 + x, ty * 8 + y);
+                    if (p & 15)
+                        bank = p >> 4;
+                    word |= (p & 15) << (4 * x);
+                }
+                tile[y] = word;
+            }
+            int cell = (ty / 2) * PAINT_W + tx / 2;
+            out->metatiles[cell].se[(ty & 1) * 2 + (tx & 1)] =
+                MAP_SE(paint_tile(out, tile), bank, 0);
+            out->cells[cell] = (u16)cell;
+        }
+    }
+}

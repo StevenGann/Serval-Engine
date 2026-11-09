@@ -209,10 +209,11 @@ static void draw_sprites(void) {
 // name its colors for the pictures.
 enum { BANK_SKY, BANK_WALL, BANK_GRASS, BANK_WATER, BANK_COUNT };
 static const u16 bg_palettes[BANK_COUNT][16] = {
-    // W star, D dim star, M moon, S moon shade, C crater, H hills, R hilltops
+    // W star, D dim star, M moon, S moon shade, C crater, H hills, R hilltops,
+    // P pines, F far hills
     [BANK_SKY] = {0, COLOR_RGB(250, 250, 220), COLOR_RGB(120, 130, 190), COLOR_RGB(240, 236, 200),
                   COLOR_RGB(196, 188, 150), COLOR_RGB(170, 160, 128), COLOR_RGB(28, 26, 64),
-                  COLOR_RGB(52, 48, 104)},
+                  COLOR_RGB(52, 48, 104), COLOR_RGB(16, 16, 40), COLOR_RGB(36, 38, 82)},
     // B brick, L lit brick, M mortar, X dark brick, T capstone, U lit capstone
     [BANK_WALL] = {0, COLOR_RGB(156, 62, 50), COLOR_RGB(196, 96, 72), COLOR_RGB(64, 40, 52),
                    COLOR_RGB(112, 40, 40), COLOR_RGB(116, 116, 140), COLOR_RGB(168, 168, 190)},
@@ -223,7 +224,7 @@ static const u16 bg_palettes[BANK_COUNT][16] = {
     [BANK_WATER] = {0, COLOR_RGB(20, 56, 150), COLOR_RGB(40, 110, 210), COLOR_RGB(110, 180, 245),
                     COLOR_RGB(225, 245, 255)},
 };
-static const char sky_keys[] = ".WDMSCHR";
+static const char sky_keys[] = ".WDMSCHRPF";
 static const char wall_keys[] = ".BLMXTU";
 static const char grass_keys[] = ".GLSDP";
 static const char water_keys[] = ".DMLF";
@@ -238,7 +239,10 @@ enum {
     MT_MOON_TR,
     MT_MOON_BL,
     MT_MOON_BR,
-    MT_HILLTOP,
+    MT_FAR_A, // the far hills' ridge
+    MT_FAR_B,
+    MT_HILLTOP, // the near hills' ridge, the far hills behind it
+    MT_PINES,   // the same, with two pines on it
     MT_HILL,
     MT_WALL_TOP,
     MT_WALL,
@@ -311,6 +315,13 @@ static const char* const splash_top[5] = {
     "LFFLFFFLFFLFFFLL", "MLLFLLMLLFLLMLLM",
 };
 
+// Two pines standing on the near hills' ridge.
+static const char* const pines[10] = {
+    "...P............", "...P.......P....", "..PPP......P....", "..PPP.....PPP...",
+    ".PPPPP....PPP...", "..PPP....PPPPP..", ".PPPPP....PPP...", "PPPPPPP..PPPPP..",
+    "...P....PPPPPPP.", "...P.......P....",
+};
+
 // The moon: a disc of radius 13 in a 32x32 picture, shaded on its right,
 // with three craters; (x, y) in the picture.
 static u32 moon_pixel(int x, int y) {
@@ -360,11 +371,26 @@ static void draw_backgrounds(void) {
                     canvas_plot(x, y, moon_pixel(qx + x, qy + y));
             break;
         }
-        case MT_HILLTOP: {
-            static const u8 top[16] = {9, 8, 7, 7, 6, 6, 6, 7, 7, 8, 8, 9, 9, 8, 8, 9};
+        case MT_FAR_A:
+        case MT_FAR_B: {
+            static const u8 far_tops[2][16] = {
+                {14, 12, 11, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14},
+                {14, 14, 13, 13, 12, 11, 11, 10, 10, 11, 11, 12, 13, 13, 14, 14},
+            };
+            const u8* top = far_tops[mt - MT_FAR_A];
             for (int x = 0; x < 16; x++)
                 for (int y = top[x]; y < 16; y++)
-                    canvas_plot(x, y, y == top[x] ? 7 : 6);
+                    canvas_plot(x, y, 9);
+            break;
+        }
+        case MT_HILLTOP:
+        case MT_PINES: {
+            static const u8 top[16] = {9, 8, 7, 7, 6, 6, 6, 7, 7, 8, 8, 9, 9, 8, 8, 9};
+            for (int x = 0; x < 16; x++)
+                for (int y = 0; y < 16; y++)
+                    canvas_plot(x, y, y < top[x] ? 9 : y == top[x] ? 7 : 6);
+            if (mt == MT_PINES)
+                canvas_draw(pines, 10, 0, 0, sky_keys);
             break;
         }
         case MT_HILL:
@@ -439,14 +465,16 @@ static void draw_backgrounds(void) {
         }                                                                                          \
     }
 static const Metatile metatiles[METATILE_COUNT] = {
-    [MT_STARS_A] = MT(MT_STARS_A, BANK_SKY),    [MT_STARS_B] = MT(MT_STARS_B, BANK_SKY),
-    [MT_MOON_TL] = MT(MT_MOON_TL, BANK_SKY),    [MT_MOON_TR] = MT(MT_MOON_TR, BANK_SKY),
-    [MT_MOON_BL] = MT(MT_MOON_BL, BANK_SKY),    [MT_MOON_BR] = MT(MT_MOON_BR, BANK_SKY),
-    [MT_HILLTOP] = MT(MT_HILLTOP, BANK_SKY),    [MT_HILL] = MT(MT_HILL, BANK_SKY),
-    [MT_WALL_TOP] = MT(MT_WALL_TOP, BANK_WALL), [MT_WALL] = MT(MT_WALL, BANK_WALL),
-    [MT_GRASS] = MT(MT_GRASS, BANK_GRASS),      [MT_SOIL] = MT(MT_SOIL, BANK_GRASS),
-    [MT_FALL] = MT(MT_FALL, BANK_WATER),        [MT_POOL_TOP] = MT(MT_POOL_TOP, BANK_WATER),
-    [MT_SPLASH] = MT(MT_SPLASH, BANK_WATER),    [MT_POOL] = MT(MT_POOL, BANK_WATER),
+    [MT_STARS_A] = MT(MT_STARS_A, BANK_SKY),     [MT_STARS_B] = MT(MT_STARS_B, BANK_SKY),
+    [MT_MOON_TL] = MT(MT_MOON_TL, BANK_SKY),     [MT_MOON_TR] = MT(MT_MOON_TR, BANK_SKY),
+    [MT_MOON_BL] = MT(MT_MOON_BL, BANK_SKY),     [MT_MOON_BR] = MT(MT_MOON_BR, BANK_SKY),
+    [MT_FAR_A] = MT(MT_FAR_A, BANK_SKY),         [MT_FAR_B] = MT(MT_FAR_B, BANK_SKY),
+    [MT_HILLTOP] = MT(MT_HILLTOP, BANK_SKY),     [MT_PINES] = MT(MT_PINES, BANK_SKY),
+    [MT_HILL] = MT(MT_HILL, BANK_SKY),           [MT_WALL_TOP] = MT(MT_WALL_TOP, BANK_WALL),
+    [MT_WALL] = MT(MT_WALL, BANK_WALL),          [MT_GRASS] = MT(MT_GRASS, BANK_GRASS),
+    [MT_SOIL] = MT(MT_SOIL, BANK_GRASS),         [MT_FALL] = MT(MT_FALL, BANK_WATER),
+    [MT_POOL_TOP] = MT(MT_POOL_TOP, BANK_WATER), [MT_SPLASH] = MT(MT_SPLASH, BANK_WATER),
+    [MT_POOL] = MT(MT_POOL, BANK_WATER),
 };
 
 static const Tileset tileset = {
@@ -466,7 +494,10 @@ enum {
     M2 = MT_MOON_TR,
     M3 = MT_MOON_BL,
     M4 = MT_MOON_BR,
+    FA = MT_FAR_A,
+    FB = MT_FAR_B,
     HT = MT_HILLTOP,
+    PI = MT_PINES,
     HH = MT_HILL,
     WT = MT_WALL_TOP,
     WW = MT_WALL,
@@ -486,8 +517,8 @@ static const u16 sky_cells[LAYER_W * LAYER_H] = {
     NO, S2, NO, NO, NO, NO, S2, NO, NO, S1, NO, NO, NO, NO, S1, //
     NO, NO, NO, M1, M2, NO, NO, S1, NO, NO, NO, S2, NO, NO, NO, //
     S2, NO, NO, M3, M4, NO, S2, NO, NO, S1, NO, NO, S1, NO, NO, //
-    NO, S1, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO, //
-    HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, HT, //
+    FB, FA, FB, FB, FA, FB, FA, FB, FB, FA, FB, FA, FB, FB, FA, //
+    HT, PI, HT, HT, PI, PI, HT, HT, HT, HT, HT, HT, HT, HT, HT, //
     HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, //
     HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, //
     HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, HH, //

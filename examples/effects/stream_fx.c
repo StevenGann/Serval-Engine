@@ -81,9 +81,14 @@ static const SpriteGroup star_group = {
 
 // The orb's 32 frames: a plasma (two waves across it, one down it and one
 // from the middle, each moving with the frame, a full cycle over the 32)
-// inside a circle, darker toward the rim.
+// inside a circle, darker toward the rim. The GBA has no divide instruction,
+// so what divides is worked out once per radius, not per pixel of the 32
+// frames, and the plasma's scale is a multiply and a shift.
 static void draw_orb(void) {
     static u8 radius[ORB_SIZE * ORB_SIZE] SERVAL_EWRAM_BSS; // half pixels from the middle
+    static s8 shade[64] SERVAL_EWRAM_BSS; // by radius: darker toward the rim, a brighter heart
+    for (int r = 0; r < 64; r++)
+        shade[r] = (s8)((r < 20) - r * r / 1100);
     for (int y = 0; y < ORB_SIZE; y++) {
         for (int x = 0; x < ORB_SIZE; x++) {
             int dx = x * 2 - (ORB_SIZE - 1), dy = y * 2 - (ORB_SIZE - 1);
@@ -112,9 +117,8 @@ static void draw_orb(void) {
                     continue;
                 }
                 int v = across[x] + down[y] + 2 * ring[r / 2]; // -1280 to 1280
-                int level = 1 + (v + 1280) * 13 / 2561;        // 1-13
-                level -= r * r / 1100;                         // darker toward the rim
-                level += r < 20;                               // a brighter heart
+                int level = 1 + (((v + 1280) * 1331) >> 18);   // 1-13: (v + 1280) * 13 / 2561
+                level += shade[r];
                 canvas_plot(x, y, (u32)int_clamp(level, 1, 14));
             }
         }

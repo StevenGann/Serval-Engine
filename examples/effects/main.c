@@ -8,12 +8,14 @@
 //     SPRITE_BLEND: a see-through foreground, sprites that glow, blended
 //     shadows, a metasprite with a blended piece, and blending pausing
 //     while screen_set_brightness() dims the screen
-//   - Art drawn at boot from ASCII pictures and shapes (art.c), map layers
-//     on all three backgrounds, animated background tiles
-//     (tileset_set_tiles)
+//   - Art drawn at boot from ASCII pictures and shapes (art.c), whole
+//     screens painted pixel by pixel into deduplicated tiles (paint(),
+//     art.c), map layers on all three backgrounds, animated background
+//     tiles (tileset_set_tiles)
 //   - Palettes (palette_fx.c): palette writes, sprite_set_colors() and
 //     tileset_set_colors(): a palette cycle, fades mixed with color_mix(),
-//     the backdrop written as color 0 of palette 0, a hit flash
+//     the backdrop written as color 0 of palette 0 (the sky's top band), a
+//     hit flash
 //   - Sprite tiles (sprite_tiles_fx.c): runtime sprite tiles,
 //     sprite_set_tiles(): card faces composed in RAM when they are dealt and
 //     a frame counter rebuilt every frame, each one hardware sprite whose
@@ -38,7 +40,8 @@
 //     scene loads, and the screen fades back in.
 //   - Blending: a garden at night. A starry sky with the moon and dark
 //     hills; a red brick wall on the right, with a waterfall pouring down
-//     over it into a pool along the bottom right; grass on the left, with a
+//     over it into a pool along the bottom right; far hills and a dark
+//     ridge with pines behind; grass on the left, with a
 //     street lamp whose lantern has a round warm halo. A serval stands on
 //     the grass with a shadow at its feet, and three pale green wisps drift
 //     above. Row 1 shows the blend call, row 18 what it does, row 19 the
@@ -61,17 +64,21 @@
 //       effect, and the brightness takes it); releasing B brings the
 //       blending back. The fades between scenes pause it the same way: the
 //       water turns opaque as the screen fades.
-//   - Palettes: a sky of four blue bands over wavy blue water, with a dark
-//     shore between them and a red gem on each side of it. "SKY: A FADE TO
-//     DUSK" on row 1, "< FADE" and "A: FLASH >" pointing at the gems,
-//     "WATER: A PALETTE CYCLE" on the water. The water's waves roll up
-//     toward the shore, a step every 6 frames, while its tiles stay the
-//     same. The sky fades to dusk (purple at the top, orange at the
-//     horizon) and the shore to a darker purple, then back, every 8.5
-//     seconds or so. The left gem brightens toward white and back about
-//     every 2 seconds; A (mGBA: the X key) makes the right gem flash white
-//     for 6 frames, the left one unchanged.
-//   - Sprite tiles: four playing cards on black under "FACES COMPOSED AT
+//   - Palettes: a beach looking out to sea by day: a blue sky in dithered
+//     bands with two white clouds, a pale sun on the right and a hazy island
+//     on the horizon; the sea, its waves thin near the horizon and wavy
+//     near the beach, with the sun's glitter on it; foam and sand at the
+//     bottom with a red gem at each side. "SKY: A FADE TO DUSK" on row 1,
+//     "SEA: A PALETTE CYCLE" on the sea, "< FADE" and "A: FLASH >" pointing
+//     at the gems. The waves (and the glitter) roll down toward the beach,
+//     a step every 6 frames, while their tiles stay the same. Everything
+//     fades to dusk (a purple sky turning orange at the horizon, pink
+//     clouds, an orange-rimmed sun, a violet sea and rosy sand) and back,
+//     every 8.5 seconds or so. The left gem brightens toward white and back
+//     about every 2 seconds; A (mGBA: the X key) makes the right gem flash
+//     white for 6 frames, the left one unchanged.
+//   - Sprite tiles: four playing cards on a green felt table between two
+//     wooden rails with gold trim, under "FACES COMPOSED AT
 //     RUN TIME" (the ace of spades, the king of hearts in a gold frame, the
 //     seven of diamonds, the ten of clubs), each one sprite. Every 40 frames
 //     the next card from the left flips over, narrowing to an edge and
@@ -79,6 +86,9 @@
 //     four at once. Below them, gold digits on a navy bar count the frames,
 //     changing every frame, and "HARDWARE SPRITES: 5" (four cards and the
 //     counter).
+//     (The first visit to the next two scenes takes a moment of black
+//     screen while their art is drawn: under a second for Streaming's 32
+//     frames, a fraction for the others.)
 //   - Streaming: six round plasma orbs (deep violet through orange to white,
 //     with a dark rim) in two rows over a dark sky with drifting blue stars,
 //     "32 FRAMES, ONLY 8 IN VRAM" above them, each orb churning at its own
@@ -87,16 +97,19 @@
 //     missing: ten frames, eight slots. The bottom line counts the orbs and
 //     the draws dropped ("10 ORBS, DROPPED: 2"); A while ten puts them in
 //     step, all ten shown.
-//   - Raster: a city at night on a lake, lit windows in dark towers above
-//     the horizon and their bluer reflections below it, upside down.
+//   - Raster: a city at night on a lake: stars and a crescent moon, two
+//     rows of towers (the far ones darker, a few with red-lit antennas) with
+//     scattered lit windows, standing on a lamp-lit quay, and below it their
+//     bluer reflections, upside down, with glints on the dark water.
 //     - First RIPPLE, "RIPPLE: raster_scroll()" on row 1: the reflections'
-//       edges wave sideways, a pixel near the horizon to four at the bottom,
-//       and the waves keep moving; the towers above stay still. The sky is
-//       a plain dark blue.
+//       edges and the glints wave sideways, a pixel near the horizon to
+//       four at the bottom, and the waves keep moving; the towers above
+//       stay still. The sky and the lake are a plain dark blue.
 //     - A: SUNSET, "SUNSET: raster_backdrop()": the reflections stop
-//       waving, and the sky between the towers turns into a gradient, deep
-//       blue at the top to orange at the horizon, which darkens to purple
-//       night and back over 8 seconds. A again: RIPPLE, the plain sky back.
+//       waving, and the sky turns into a gradient, deep blue at the top
+//       through rose to orange at the horizon, mirrored darker in the lake;
+//       it darkens to purple night and back over 8 seconds. A again:
+//       RIPPLE, the plain sky back.
 //   - No sound after the splash.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A key, R = S key.)

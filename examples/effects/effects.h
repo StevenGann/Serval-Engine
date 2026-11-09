@@ -66,4 +66,23 @@ void canvas_plot(int x, int y, u32 c);
 // Returns the end of what it wrote.
 u32* canvas_pack(u32* out);
 
+// A whole screen painted pixel by pixel, for scenes too big for the canvas:
+// paint() asks `pixel` for every pixel of the screen, a palette bank and a
+// color (bank * 16 + color; color 0 is transparent), and cuts the picture
+// into tiles, keeping one copy of each, and into a metatile per cell of a 15
+// x 10 map layer. Every pixel of a tile must be of the same bank (or
+// transparent). The tiles, the metatiles and the cells are what a Tileset and
+// a MapLayer point to.
+#define PAINT_W (SCREEN_W / 16)
+#define PAINT_H (SCREEN_H / 16)
+#define PAINT_MAX_TILES 256
+typedef struct {
+    u32 tiles[PAINT_MAX_TILES * 8]; // tile 0 blank
+    u16 tile_count;
+    Metatile metatiles[PAINT_W * PAINT_H];
+    u16 cells[PAINT_W * PAINT_H]; // cell n is metatile n
+} Painting;
+
+void paint(Painting* out, u32 (*pixel)(int x, int y));
+
 #endif // EFFECTS_H
