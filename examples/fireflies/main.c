@@ -42,29 +42,41 @@
 //     (sys_animate, SPRITE_ASSET_ANIM_ONCE), depth sorting, two map layers
 //     (sky, treeline and meadow behind; tall grass in front), music and
 //     sound effects with priorities, screen fades.
+//   - The presentation, set up here and drawn in art.c: a raster effect
+//     (raster_backdrop) gives every screen line its own backdrop color, the
+//     dusk sky's gradient and the meadow's; each firefly is a metasprite whose
+//     halo piece is drawn with SPRITE_BLEND, its light added to the meadow
+//     behind it (screen_set_blend with no top layer, weights 16 and 16).
 //
 // What to expect when booting the ROM:
 //   - The Serval Engine splash, a moment of black, then the meadow fades in:
-//     a dark night sky with stars and a crescent moon over a violet glow and
-//     a black treeline, the deep blue-violet meadow with tufts of grass and
-//     pale flowers, tall grass along the bottom. A golden spotted serval
-//     stands in the middle; "CATCH THE FIREFLIES!" for three seconds. The
-//     HUD: "SCORE 0" top left, "TIME 60" top right, counting down each
-//     second. A rising four-note chime over the start of a gentle tune (A
-//     minor into C major, with crickets chirping), which loops.
+//     a night sky going from deep blue to a rose glow on the horizon, with
+//     stars and a crescent moon, violet hills rimmed with pink light behind a
+//     black treeline and a lone flat-topped acacia. The meadow below is hazy
+//     violet near the hills and darker towards the front, scattered with
+//     tufts, lone blades, stones, white and pink flowers and seed heads, small
+//     far off and bigger near; tall grass with moonlit tips runs along the
+//     bottom. A golden spotted serval, moonlight along its back, stands in
+//     the middle; "CATCH THE FIREFLIES!" for three seconds. The HUD:
+//     "SCORE 0" top left, "TIME 60" top right, counting down each second. A
+//     rising four-note chime over the start of a gentle tune (A minor into C
+//     major, with crickets chirping), which loops.
 //   - The D-pad walks the serval (1.5 pixels per frame, diagonals too),
 //     turning to face left or right; it stands and blinks when you let go.
 //     It stays on the meadow, below the treeline; at the bottom its legs
 //     vanish into the tall grass.
 //   - Fireflies appear one by one (every 40-90 frames, up to 8 at once,
-//     never right on the serval), blinking yellow-green (mostly a dim ember, then a bright flash),
-//     each out of step with the others. They drift, loop and zigzag slowly, hovering a moment
-//     between flights, and bounce off the screen's edges. After about 6-10 seconds each one fades:
-//     a last flash, a ring, scattered dots, gone.
+//     never right on the serval), blinking yellow-green (mostly a dim ember,
+//     then a bright flash that lights a soft green circle of the meadow
+//     around it), each out of step with the others. They drift, loop and
+//     zigzag slowly, hovering a moment between flights, and bounce off the
+//     screen's edges. After about 6-10 seconds each one fades: a last flash,
+//     a ring, scattered dots, its light going out, gone.
 //   - Touch one with the serval to catch it: a two-note chime, a white and
-//     gold starburst where it was, the score goes up, and the serval turns
-//     to face it. Every 10th catch plays a five-note jingle, and fireflies
-//     come a little faster (four times, down to every 20-42 frames).
+//     gold starburst where it was, with eight sparks flying out from it and
+//     fading, the score goes up, and the serval turns to face it. Every 10th
+//     catch plays a five-note jingle, and fireflies come a little faster
+//     (four times, down to every 20-42 frames).
 //   - The last ten seconds tick. At 0: the music stops, a falling phrase
 //     plays, the serval sits down where it stood (fireflies touching it now
 //     are not caught), the fireflies fade away, and "TIME UP!" and "CAUGHT"
@@ -101,7 +113,10 @@ int main(void) {
     tileset_load(&meadow_tileset);
     map_load(&meadow_layer);
     map_load(&grass_layer);
-    screen_set_backdrop(COLOR_RGB(48, 38, 100)); // the meadow at dusk
+    raster_backdrop(dusk_lines); // the sky and the meadow at dusk, a color per line
+    // The fireflies' halos (SPRITE_BLEND pieces) add their light to the
+    // meadow and the backdrop behind them.
+    screen_set_blend(0, LAYER_BACKGROUND | LAYER_BACKDROP, 16, 16);
     text_set_color(COLOR_RGB(255, 246, 200), COLOR_RGB(10, 8, 30));
     text_set_shadow(true);
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);

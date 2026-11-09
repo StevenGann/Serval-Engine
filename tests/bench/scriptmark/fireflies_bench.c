@@ -33,7 +33,8 @@ int main(void) {
     tileset_load(&meadow_tileset);
     map_load(&meadow_layer);
     map_load(&grass_layer);
-    screen_set_backdrop(COLOR_RGB(48, 38, 100));
+    raster_backdrop(dusk_lines);
+    screen_set_blend(0, LAYER_BACKGROUND | LAYER_BACKDROP, 16, 16);
     text_set_color(COLOR_RGB(255, 246, 200), COLOR_RGB(10, 8, 30));
     text_set_shadow(true);
     physics_set_bounds(0, FIELD_TOP, SCREEN_W, SCREEN_H);

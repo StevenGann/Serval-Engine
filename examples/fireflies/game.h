@@ -37,9 +37,11 @@ enum {
     SPR_SERVAL_IDLE,  // 32x32, standing, blinking now and then
     SPR_SERVAL_WALK,  // 32x32, a four-frame walk
     SPR_SERVAL_SIT,   // 32x32, sitting (time is up), blinking
-    SPR_FIREFLY,      // 8x8, blinking (FIREFLY_FRAMES frames, looping)
-    SPR_FIREFLY_FADE, // 8x8, its glow dissolving (plays once)
-    SPR_SPARKLE,      // 16x16, a burst of light (plays once)
+    SPR_FIREFLY,      // 8x8 and a halo, blinking (FIREFLY_FRAMES frames, looping)
+    SPR_FIREFLY_FADE, // 8x8 and a halo, its glow dissolving (plays once)
+    SPR_SPARKLE,      // 32x32, a burst of light and a ring (plays once)
+    SPR_GLOW_CORE,    // 8x8: the pieces of the two firefly metasprites,
+    SPR_GLOW_HALO,    // 16x16: its light, blended (art.c, main.c's screen_set_blend)
     SPRITE_COUNT
 };
 #define FIREFLY_FRAMES 6
@@ -54,6 +56,7 @@ extern const SpriteGroup sprite_group;
 extern const Tileset meadow_tileset;
 extern const MapLayer meadow_layer; // background 3: sky, treeline, meadow
 extern const MapLayer grass_layer;  // background 1: tall grass in front
+extern Color dusk_lines[SCREEN_H];  // the backdrop, line by line (raster_backdrop)
 
 // Firefly flight paths, reached by index from the scripts (vm_bind).
 enum { PATH_DRIFT, PATH_LOOP, PATH_ZIGZAG, PATH_COUNT };
