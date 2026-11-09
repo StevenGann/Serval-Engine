@@ -75,5 +75,7 @@ extern const TestSuite link_vm_tests;   // debug link (E6): the agent's VM part
 extern const TestSuite link_reload_tests;
 // racer: the example's road and race arithmetic (examples/racer/)
 extern const TestSuite racer_tests;
+// rhythm: Beat Paws' judging and scoring (examples/rhythm/judge.c)
+extern const TestSuite rhythm_tests;
 
 #endif // SERVAL_TEST_H
