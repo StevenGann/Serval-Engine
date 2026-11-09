@@ -8,9 +8,9 @@
 // to PAL_CORRECT give the same art each state's face, letter and outline
 // colors, and the script picks one per tile (SPRITE_PALETTE in its flags).
 //
-// Sprite VRAM, in 8x8 tiles (1,024 in all): the board's tiles 30 frames of 16
-// (480), the cheer's glyphs 28 of 4 (112), the serval 4 frames of 64 (256),
-// the arrows 2 of 2 and the confetti 5 of 1: 857.
+// Sprite VRAM, in 8x8 tiles (1,024 in all): the board's tiles 31 frames of 16
+// (496), the cheer's glyphs 28 of 4 (112), the serval 4 frames of 64 (256),
+// the arrows 2 of 2 and the confetti 5 of 1: 873.
 
 #include "game.h"
 
@@ -267,6 +267,22 @@ static void squashed_tile(int h) {
 #define SQUASH_HEIGHTS 3
 static const u8 squash_heights[SQUASH_HEIGHTS] = {14, 7, 3};
 
+// The cursor's ring: two pixels wide, in the two-pixel gap between the cell's
+// tile and its neighbours (over the shadow below it), corners cut, with an
+// outline inside and out so it reads on an empty slot and on a cream tile.
+static void cursor_ring(void) {
+    int lo = TILE_LEFT - 2, hi = TILE_LEFT + TILE_SIZE + 1; // the ring's outer edges
+    for (int y = lo; y <= hi; y++) {
+        for (int x = lo; x <= hi; x++) {
+            bool edge_x = x <= lo + 1 || x >= hi - 1, edge_y = y <= lo + 1 || y >= hi - 1;
+            bool corner = (x == lo || x == hi) && (y == lo || y == hi);
+            if ((edge_x || edge_y) && !corner)
+                put(x, y, C_FACE);
+        }
+    }
+    outline(C_OUTLINE);
+}
+
 // --- The serval ------------------------------------------------------------------
 //
 // Its face, after the sketch's: big ears with dark tips, a golden spotted
@@ -444,7 +460,7 @@ const SpriteGroup sprite_group = {
 
 static void build_sprites(void) {
     u32* out = obj_tiles;
-    // T_TILE: the empty slot, the letters, the squashed blank tile.
+    // T_TILE: the empty slot, the letters, the squashed blank tile, the ring.
     canvas_begin(32, 32);
     box(TILE_LEFT, TILE_TOP, TILE_SIZE, TILE_SIZE, C_SLOT, C_SLOT_EDGE, false);
     out = canvas_pack(out);
@@ -464,6 +480,9 @@ static void build_sprites(void) {
         squashed_tile(squash_heights[s]);
         out = canvas_pack(out);
     }
+    canvas_begin(32, 32);
+    cursor_ring();
+    out = canvas_pack(out);
     // T_GLYPH: frame 0 empty, then the letters and '!' in C_FACE (gold or
     // red, by the palette), outlined.
     canvas_begin(16, 16);

@@ -43,7 +43,7 @@
 enum {
     SPR_TILE,     // 32x32, the 22x22 tile centred in it: frame 0 an empty slot, 1-26
                   // the letters, then TILE_SQUASH (27) to TILE_SQUASH + 2: the blank
-                  // tile squashed for a flip
+                  // tile squashed for a flip; TILE_CURSOR (30): the cursor's ring
     SPR_GLYPH,    // 16x16: frames 1-26 the letters, 27 '!'; frame 0 empty. For the cheer
     SPR_ARROW,    // the cursor's arrows
     SPR_CONFETTI, // a falling scrap of a win
@@ -53,7 +53,8 @@ enum {
 
 // Frames past the letters (a letter's frame is its code, 1-26).
 #define TILE_SQUASH 27 // SPR_TILE: 27-29, the blank tile ever flatter, for a flip
-#define TILE_FRAMES 30
+#define TILE_CURSOR 30 // SPR_TILE: a ring around a cell's tile, transparent inside
+#define TILE_FRAMES 31
 #define GLYPH_BANG 27 // SPR_GLYPH: '!'
 #define GLYPH_FRAMES 28
 #define ARROW_UP 0 // SPR_ARROW: pointing up (drawn below the cell), and down

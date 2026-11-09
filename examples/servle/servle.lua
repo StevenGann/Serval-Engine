@@ -31,6 +31,7 @@ Game = object {}
 Tile = object { components = C_POS | C_SPR, sprite = SPR_TILE }
 Glyph = object { components = C_POS | C_SPR, sprite = SPR_GLYPH } -- a letter of the cheer
 Arrow = object { components = C_POS | C_SPR, sprite = SPR_ARROW } -- the cursor's two
+Cursor = object { components = C_POS | C_SPR, sprite = SPR_TILE } -- its ring (TILE_CURSOR)
 Confetti = object { components = C_POS | C_VEL | C_SPR, sprite = SPR_CONFETTI }
 Serval = object { components = C_POS | C_SPR, sprite = SPR_SERVAL }
 Motion = object { components = C_POS }
@@ -58,6 +59,7 @@ confetti = array(24)   -- a won round's scraps (none: not thrown, or gone)
 cat = none             -- the serval
 arrow_up = none        -- the cursor's arrows, above and below its cell
 arrow_down = none
+cursor = none          -- the gold ring around its cell
 
 local held = 0         -- buttons down when the state began, ignored until released
 local spin_dir = 0     -- Up (1), Down (-1) or neither (0) last frame
@@ -78,6 +80,7 @@ local hop_first = 0    -- the won row's first cell (0: no hop)
 local hop_time = 0
 local cheer_count = 0  -- Glyphs in cheer
 local cheer_palette = 0
+local cheer_y = 0      -- where its glyphs rest
 local cheer_time = 0
 local mood = SERVAL_IDLE -- the serval's frame: idle (and blinking), happy or sad
 local mood_time = 0
@@ -124,9 +127,10 @@ local DRAW <const> = SPRITE_SCREEN | SPRITE_ABOVE_FOREGROUND
 -- in front): a tile that moves rises above its neighbours while it moves.
 local DEPTH_TILE <const> = 0
 local DEPTH_LIFTED <const> = 1
-local DEPTH_ARROW <const> = 2
-local DEPTH_CHEER <const> = 3
-local DEPTH_CONFETTI <const> = 4
+local DEPTH_CURSOR <const> = 2
+local DEPTH_ARROW <const> = 3
+local DEPTH_CHEER <const> = 4
+local DEPTH_CONFETTI <const> = 5
 
 -- The title's tiles: the 22x22 tile's top-left of the first, and the step
 -- to the next (sprites at TILE_INSET + 1 up and left of it).
@@ -153,7 +157,8 @@ local TITLE_WAVE <const> = 96     -- the title's wave, once up and down
 local ARROW_BOB <const> = 54      -- the cursor's arrows, out and back
 local ARROW_INSET <const> = 4     -- an arrow's 16-pixel sprite, centred on its cell
 local HOP_STAGGER <const> = 5     -- between the won row's tiles starting to hop
-local CHEER_Y <const> = 58        -- the cheer's glyphs, over the board's middle
+local CHEER_Y <const> = 58        -- a lost round's answer, over the board's middle
+local CHEER_INSET <const> = 4     -- a glyph's 16-pixel sprite, centred on a row's cells
 local GLYPH_PITCH <const> = 14
 local CHEER_MAX <const> = 9       -- glyphs in the longest cheer, PURRFECT!
 local CHEER_STAGGER <const> = 4   -- between its glyphs starting to drop
@@ -667,6 +672,9 @@ function Motion:create()
   arrow_down.frame = ARROW_DOWN
   arrow_up.depth = DEPTH_ARROW
   arrow_down.depth = DEPTH_ARROW
+  cursor = spawn(Cursor, 0, 0)
+  cursor.frame = TILE_CURSOR
+  cursor.depth = DEPTH_CURSOR
   local t = 0
   while true do
     fade_in()
@@ -733,23 +741,32 @@ function drop_title()
   end
 end
 
--- The cursor's gold arrows, above and below its cell while a guess is being
--- typed, bob apart and together.
+-- The cursor: a gold ring around its cell, and gold arrows above and below
+-- it that bob together and apart, while a guess is being typed. Rows are
+-- only 2 pixels apart, so the arrows sit on the gap between them, over the
+-- ring and the tile's edge, reaching the neighbouring rows' tiles only with
+-- their dark outline, and bob in towards the letter, never over the
+-- neighbours; on the top row the up arrow stops at the screen's edge.
 function bob_arrows(t)
   if state ~= STATE_PLAY then
     set_sprite_flags(arrow_up, SPRITE_HIDDEN)
     set_sprite_flags(arrow_down, SPRITE_HIDDEN)
+    set_sprite_flags(cursor, SPRITE_HIDDEN)
     return
   end
+  local i = row * 5 + col + 1
+  cursor.x = tile_x(i)
+  cursor.y = tile_y(i)
   local bob = 1 - fx_cos(t % ARROW_BOB * 65536 // ARROW_BOB) -- 0 to 2 pixels and back
   local x = BOARD_X + col * CELL + ARROW_INSET
-  local top = BOARD_Y + row * CELL
+  local top = BOARD_Y + row * CELL -- the cell's top
   arrow_up.x = x
-  arrow_up.y = math.max(top - 4, 0) - bob
+  arrow_up.y = math.max(top - 3 + bob, 0.0)
   arrow_down.x = x
-  arrow_down.y = top + 18 + bob
-  set_sprite_flags(arrow_up, 0)
-  set_sprite_flags(arrow_down, 0)
+  arrow_down.y = top + CELL - 5 - bob
+  set_sprite_flags(arrow_up, palette(PAL_GOLD))
+  set_sprite_flags(arrow_down, palette(PAL_GOLD))
+  set_sprite_flags(cursor, palette(PAL_GOLD))
 end
 
 -- A tile back where it rests, straight, among the others.
@@ -853,7 +870,11 @@ function celebrate()
   local n = 0
   while n < CHEER_MAX and CHEERS[row * CHEER_MAX + n + 1] ~= 0 do n = n + 1 end
   for k = 1, n do spawn_glyph(k, n, CHEERS[row * CHEER_MAX + k]) end
-  start_cheer(n, PAL_GOLD)
+  -- Over the empty row below the won one (the fifth row, for the sixth), so
+  -- the word just found stays in sight.
+  local over = row + 1
+  if row == 5 then over = 4 end
+  start_cheer(n, PAL_GOLD, BOARD_Y + over * CELL + CHEER_INSET)
   confetti_to_throw = CONFETTI_COUNT
   set_mood(SERVAL_HAPPY)
   flash_time = FLASH_TIME
@@ -862,7 +883,7 @@ end
 -- A lost round: the answer drops in, in red, and the serval's ears droop.
 function mourn()
   for k = 1, 5 do spawn_glyph(k, 5, answer_letter(k)) end
-  start_cheer(5, PAL_RED)
+  start_cheer(5, PAL_RED, CHEER_Y)
   set_mood(SERVAL_SAD)
 end
 
@@ -875,9 +896,10 @@ function spawn_glyph(k, n, frame)
   cheer[k] = g
 end
 
-function start_cheer(n, pal)
+function start_cheer(n, pal, y)
   cheer_count = n
   cheer_palette = pal
+  cheer_y = y
   cheer_time = 0
 end
 
@@ -889,7 +911,7 @@ function drop_cheer_step()
     if f < 1 then return end -- this one and the rest haven't started
     local g = cheer[k]
     if f == 1 then set_sprite_flags(g, palette(cheer_palette)) end
-    drop_and_wave(g, f, CHEER_Y, CHEER_WAVE)
+    drop_and_wave(g, f, cheer_y, CHEER_WAVE)
     f = f - CHEER_STAGGER
   end
 end
@@ -899,7 +921,7 @@ end
 -- the screen. Each speeds up every CONFETTI_EVERY frames, a share of them
 -- each frame, so 24 scraps cost a frame no more than 6 do.
 function throw_confetti()
-  for n = 1, CONFETTI_PER_FRAME do
+  for n = 1, math.min(CONFETTI_PER_FRAME, confetti_to_throw) do
     local c = spawn(Confetti, random_range(BOARD_X - 10, BOARD_X + 5 * CELL + 2),
                     random_range(-30, 30))
     c.frame = random_range(0, CONFETTI_FRAMES - 1)

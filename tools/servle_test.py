@@ -437,15 +437,19 @@ end
         start = 40
         buttons, enters, end = timeline(["plant"], start)
         landed = enters[0] + REVEAL_END
-        # The title's tiles dropping, play, a tile mid-flip, the win's cheer and
-        # confetti.
-        frames = [10, start + 3, enters[0] + REVEAL_END // 2, landed + 30]
+        # The title's tiles dropping, play (the cursor's ring and arrows), a tile
+        # mid-flip, the win's tiles hopping and tilted under the dropping cheer
+        # and the confetti, and the win a little later.
+        frames = [10, start + 3, enters[0] + REVEAL_END // 2, landed + 10, landed + 30]
         run = run_vm(source(), frames=landed + 31, start=["GAME"], buttons=buttons,
                      set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES,
                      printed=",".join(map(str, frames)))
-        self.assertEqual(run.states[landed + 30][0]["STATE"], STATE_WON)
-        objects = {e["object"] for e in run.states[landed + 30][2].values()}
-        self.assertLessEqual({"TILE", "GLYPH", "CONFETTI", "ARROW", "SERVAL"}, objects)
+        self.assertEqual(run.states[landed + 10][0]["STATE"], STATE_WON)
+        self.assertIn("CURSOR", {e["object"] for e in run.states[start + 3][2].values()})
+        busy = run.states[landed + 10][2].values()
+        self.assertLessEqual({"TILE", "GLYPH", "CONFETTI", "ARROW", "SERVAL"},
+                             {e["object"] for e in busy})
+        self.assertTrue([e for e in busy if e["object"] == "TILE" and e["ANGLE"]])  # tilted
         self.assert_drawn_on_screen(run, frames)
         # A lost round's answer.
         buttons, enters, end = timeline(["crane"] * 6)
@@ -455,6 +459,26 @@ end
                      printed=str(lost))
         self.assertEqual(run.globals["STATE"], STATE_LOST)
         self.assert_drawn_on_screen(run, [lost])
+
+    @needs_runner
+    def test_cheer_keeps_off_the_winning_word(self):
+        """A won round's cheer rests over the row below the won one (the fifth
+        for the sixth): no glyph, waving up to 2 pixels, covers a cell of the
+        row just found."""
+        for wrong in (0, 2, 5):
+            with self.subTest(row=wrong):
+                guesses = ["crane"] * wrong + ["plant"]
+                buttons, enters, _ = timeline(guesses)
+                settled = enters[-1] + REVEAL_END + PROMPT_DELAY - 5
+                run = run_vm(source(), frames=settled, start=["GAME"], buttons=buttons,
+                             set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
+                self.assertEqual(run.globals["STATE"], STATE_WON)
+                glyphs = [e for e in run.entities.values() if e["object"] == "GLYPH"]
+                self.assertTrue(glyphs)
+                top = names().lookup("BOARD_Y") + wrong * names().lookup("CELL")
+                for g in glyphs:
+                    y = g["Y"] // 256
+                    self.assertTrue(y + 16 <= top or y - 2 >= top + 24, (wrong, y, top))
 
     # --- Size and cleanliness ---------------------------------------------------
 
