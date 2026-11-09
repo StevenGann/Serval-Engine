@@ -357,7 +357,7 @@ end
 
 A metatile outside 0-65535 doesn't wrap: it is one the layer lacks, and `map_set_cell` warns and changes nothing ([vm.md](vm.md#engine-calls)).
 
-<a id="saving"></a>**Saving** keeps a RAM array in a save slot ([save.h](api-reference.md#save-data)), so what a game saves is one array, of any type, its length the data's size. C opts in once at boot, `vm_use_saves()`, as it binds songs and paths (a game whose scripts don't save then links no save code); Studio Advance's generated `main()` does when a script uses a save function. Without it, a save call warns and does nothing.
+<a id="saving"></a>**Saving** keeps a RAM array in a save slot ([save.h](api-reference.md#saveh)), so what a game saves is one array, of any type, its length the data's size. C opts in once at boot, `vm_use_saves()`, as it binds songs and paths (a game whose scripts don't save then links no save code); Studio Advance's generated `main()` does when a script uses a save function. Without it, a save call warns and does nothing.
 
 ```lua
 Table = object {}
