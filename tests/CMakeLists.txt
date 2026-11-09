@@ -401,6 +401,10 @@ else()
     # lz77: the web's LZ77 decoder, on BIOS-format vectors and on the
     # encoder's output (tools/lz77.py, which has its own tests)
     target_sources(serval_host_tests PRIVATE web_lz77_tests.c ../src/web/lz77.c)
+    # racer: the example's road and race arithmetic, portable C tested here
+    # (the example itself is built only for the GBA and the web)
+    target_sources(serval_host_tests PRIVATE racer_tests.c ../examples/racer/road.c
+                   ../examples/racer/track.c)
     serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
     # debug link: the agent against a fake endpoint (link_tests.c), with a

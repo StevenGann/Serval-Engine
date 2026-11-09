@@ -73,5 +73,7 @@ extern const TestSuite link_tests;      // debug link: the agent, with a fake en
 extern const TestSuite link_vm_tests;   // debug link (E6): the agent's VM part
 // debug link (E9): the agent's hot reload
 extern const TestSuite link_reload_tests;
+// racer: the example's road and race arithmetic (examples/racer/)
+extern const TestSuite racer_tests;
 
 #endif // SERVAL_TEST_H

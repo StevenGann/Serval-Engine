@@ -28,6 +28,7 @@ int main(void) {
         &link_tests,                           // debug link: the agent
         &link_vm_tests,                        // debug link (E6): its VM part
         &link_reload_tests,                    // debug link (E9): its hot reload
+        &racer_tests,                          // racer: the road and the race
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }
