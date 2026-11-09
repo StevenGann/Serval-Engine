@@ -11,9 +11,10 @@
 //
 // Who wins a channel when two effects want it is decided by priority:
 //   0  the wand's spark and its dry click, menu blips
-//   1  wisps: waking, striking, hurt; doors
+//   1  wisps: waking, striking, hurt; doors; a spark knocking an urn
 //   2  a wisp gone, a hex cast, pickups, the locked door
-//   3  the serval hurt, the key, the unlocked door, pause, the end jingles
+//   3  the serval hurt, an urn bursting, the key, the unlocked door, pause,
+//      the end jingles
 // The tunes have priority 0, so every effect plays over them.
 //
 // Both tunes are built on one motif, the wisps' call: up a fifth, a flick to
@@ -47,6 +48,8 @@
 #define C7 2093
 
 static const u16 wisp_hurt_notes[] = {760, 520};
+// A hollow knock: the clay's ring, low, then lower.
+static const u16 urn_notes[] = {330, 196, 147};
 static const u16 wisp_gone_notes[] = {980, 740, 560, 420, 310, 230};
 static const u16 wisp_wakes_notes[] = {330, 0, 440, 660};
 static const u16 hex_notes[] = {392, 494, 622, 784, 988, 1245, 1568};
@@ -110,6 +113,23 @@ static const PsgSound sounds[SOUND_COUNT] = {
                   .volume = 15,
                   .fade = -2,
                   .priority = 3},
+    // The knock on square 1 (over the spark's zap). The burst is two at
+    // once: a deep roar of noise, fading slowly as it rolls round the walls,
+    // and a thump on square 1 that drops away under it.
+    [SND_URN] = {.frames = 2, .volume = 12, .duty = PSG_DUTY_12, .priority = 1, NOTES(urn_notes)},
+    [SND_BLAST] = {.channel = PSG_NOISE,
+                   .frequency = 110,
+                   .frames = 34,
+                   .volume = 15,
+                   .fade = -5,
+                   .priority = 3},
+    [SND_BOOM] = {.frequency = 150,
+                  .frames = 24,
+                  .volume = 15,
+                  .fade = -3,
+                  .slide = -3,
+                  .slide_size = 3,
+                  .priority = 3},
     [SND_PICKUP] = {.frames = 3, .volume = 10, .priority = 2, NOTES(pickup_notes)},
     [SND_KEY] = {.frames = 4, .volume = 12, .priority = 3, NOTES(key_notes)},
     [SND_DOOR] = {.channel = PSG_NOISE,
@@ -137,6 +157,9 @@ static const PsgSound* const sound_table[SOUND_COUNT] = {
     [SND_STRIKE] = &sounds[SND_STRIKE],
     [SND_HEX] = &sounds[SND_HEX],
     [SND_HURT] = &sounds[SND_HURT],
+    [SND_URN] = &sounds[SND_URN],
+    [SND_BLAST] = &sounds[SND_BLAST],
+    [SND_BOOM] = &sounds[SND_BOOM],
     [SND_PICKUP] = &sounds[SND_PICKUP],
     [SND_KEY] = &sounds[SND_KEY],
     [SND_DOOR] = &sounds[SND_DOOR],

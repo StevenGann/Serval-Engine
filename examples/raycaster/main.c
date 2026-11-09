@@ -32,8 +32,11 @@
 //     a blue haze, plus a row for the hex wisps' colors (surface_set_colors,
 //     mixed with color_mix), so darkening a texel with distance is one OR;
 //     glowing colors (fire, gold, eyes) darken less; a second table turns
-//     the screen red for a moment when the serval is hurt, and darker ones
-//     dim the view behind the menus
+//     the screen red for a moment when the serval is hurt, a third washes
+//     it with light when an urn bursts, and darker ones dim the view behind
+//     the menus
+//   - Screen shake for free: the surface's transform moved a pixel or three
+//     each picture (surface_set_transform), when an urn bursts or a blow lands
 //   - Sliding doors in a raycaster: thin, set in the middle of their cell,
 //     with the wall's depth showing beside them; animated walls (torches,
 //     the moon gate's swirl)
@@ -49,6 +52,10 @@
 //   - An attract mode: the game's own world and view behind the title
 //   - Fades (screen_set_brightness): to black, or through the moon gate to
 //     white
+//   - Things that move and push back (world.c): urns that a spark knocks
+//     sliding across the floor, stopped by walls, doors, wisps and each
+//     other, and that burst at the third spark, hurting what is near and
+//     setting off the urns near them
 //   - Simple enemies on a grid map (world.c): wisps that wake when they see
 //     the serval (a line of sight walked through the map), chase it around
 //     corners by sliding along walls, and keep apart from each other; aimed
@@ -106,15 +113,16 @@
 //     then the rest of the warren: mossy tunnels with drain grates at the
 //     foot of the walls, a wood-panelled room with bookcases and urns (red
 //     clay amphoras with a blue band), brick rooms with barred windows, red
-//     banners with a paw print, torches along the corridors. Pillars, urns
-//     and braziers block the way but not the view.
+//     banners with a paw print, torches along the corridors. Pillars,
+//     braziers and urns block the way but not the view (urns move: below).
 //   - Wisps: big blue ghosts with a hooked tip, heavy black brows over
 //     glowing orange eyes and a toothy grin, ragged hems trailing off into
 //     see-through wisps, each drifting in its own rhythm. They bob in place
 //     until they see the serval, then (a rising three-note call) come for
 //     it; up close one rears up, arms raised (a hiss), then lunges with a
 //     fanged red maw: the screen flashes red, with a thud, and health drops
-//     (6, 10 or 15 by difficulty) unless the serval has backed away. Violet
+//     (6, 10 or 15 by difficulty) unless the serval has backed away; the
+//     picture jolts with the blow. Violet
 //     hex wisps with green eyes keep their distance and cast instead: they
 //     raise a green orb overhead and hurl it (a quick rising run of notes);
 //     the hex lands unless the serval gets out of their sight first, less
@@ -124,12 +132,29 @@
 //     wisp under the crosshair flinches white, eyes squeezed shut (two
 //     falling notes); a blue wisp is gone after two sparks and a violet one
 //     after four, breaking up into fading motes with a falling run of
-//     notes. With no sparks the wand only clicks, and finds one spark again
-//     every second and a half (up to 4).
-//   - Walking over things picks them up, with a chime: a round red potion
-//     flask gives 25 health (left alone at full health), a cluster of blue
-//     crystals 12 sparks (to 99 at most), and the sparkling gold key (a
-//     longer chime) puts a key icon beside the health.
+//     notes. A spark that hits a wall bursts there in a small blue-white
+//     star. With no sparks the wand only clicks, and finds one spark again
+//     every second and a half (up to 4), so the wand never stays empty.
+//   - Urns hold lamp oil. A spark knocks one with a hollow clay knock and
+//     sends it sliding a little way along the spark's path until a wall, a
+//     door, a pillar, a wisp, another urn or the serval stops it; the first
+//     spark cracks it, the second sets the oil glowing through the cracks
+//     with smoke curling from the neck, and the third bursts it: a white
+//     flash, a fireball, smoke and embers and clay shards (about 0.4
+//     seconds), the whole screen washed bright for a moment and shaking,
+//     a deep roar of noise with a thump under it. The blast takes 3 health
+//     from every wisp within about two cells that it can reach (a blue wisp
+//     is gone, a violet one nearly) and sets off any urn as near a moment
+//     later, so the paired urns of the brick rooms go up together. The
+//     serval is hurt only within a cell and a half (8, 12 or 16 by
+//     difficulty, half that at the edge), and a spark carries farther than
+//     that. One urn stands just inside the door of the room with the key:
+//     walking in is blocked until it is pushed in or burst.
+//   - At 25 health or less the heart in the HUD beats.
+//   - Walking over things picks them up, with a chime and a glint of gold
+//     over the view: a round red potion flask gives 25 health (left alone at full health), a
+//     cluster of blue crystals 12 sparks (to 99 at most), and the sparkling gold key (a longer
+//     chime) puts a key icon beside the health.
 //   - One door has a gold frame and a large gold keyhole plate: without the
 //     key B only gets two low buzzes; with it, a rising chime, and it opens
 //     as a plain door from then on. Behind it, a hall of hex wisps and, in

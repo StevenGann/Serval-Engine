@@ -97,8 +97,10 @@ enum {
     THING_CRYSTALS,
     THING_KEY,
     THING_BRAZIER,
-    THING_URN,
+    THING_URN, // pushed by sparks; bursts at the third
     THING_PILLAR,
+    THING_BLAST, // a burst urn's fire and smoke
+    THING_PUFF,  // where a spark struck a wall
 };
 
 // The pictures of things (art.c). The hex wisp is drawn from the wisp's
@@ -116,23 +118,28 @@ enum {
     PIC_KEY,
     PIC_BRAZIER, // 3 frames
     PIC_URN = PIC_BRAZIER + 3,
+    PIC_URN_CRACKED, // after one spark
+    PIC_URN_BURNING, // after two: its oil alight
     PIC_PILLAR,
-    PIC_COUNT
+    PIC_BLAST,                // 4 frames
+    PIC_PUFF = PIC_BLAST + 4, // 2 frames
+    PIC_COUNT = PIC_PUFF + 2
 };
 #define PIC_SIZE 64
 
 // What a wisp is doing.
 enum { WISP_ASLEEP, WISP_CHASING, WISP_STRIKING, WISP_HURT, WISP_FADING };
 
-#define MAX_THINGS 72
+#define MAX_THINGS 80
 typedef struct {
     Fix x, y;
-    u8 kind;  // THING_*
-    u8 pic;   // PIC_*: what view.c draws
-    u8 state; // wisps: WISP_*
-    u8 timer; // ticks left in the state
-    u8 rest;  // wisps: ticks before the next strike
-    s8 health;
+    Fix vx, vy; // an urn sliding: cells a tick
+    u8 kind;    // THING_*
+    u8 pic;     // PIC_*: what view.c draws
+    u8 state;   // wisps: WISP_*
+    u8 timer;   // ticks left in the state; an urn: to its burst, set by another's
+    u8 rest;    // wisps: ticks before the next strike
+    s8 health;  // wisps and urns: sparks they can still take
     bool glows; // drawn at full brightness however far away
 } Thing;
 extern Thing things[MAX_THINGS];
@@ -149,6 +156,9 @@ typedef struct {
     u8 flash;     // ticks the wand's flash still shows
     u8 hurt;      // ticks the screen stays red
     u8 recharge;  // ticks until a spark comes back by itself
+    u8 shake;     // ticks the view still shakes: a burst, a blow
+    u8 dazzle;    // ticks the screen stays bright from a burst
+    u8 glint;     // ticks it glints gold from a pickup
 } Player;
 extern Player player;
 
@@ -212,14 +222,15 @@ extern u8 pic_spans[PIC_COUNT][PIC_SIZE * 2];
 // The surface's palette: 31 base colors at 7 brightness levels. Color number
 // = level * 32 + base color; level 0 is the brightest. The eighth row of 32
 // is the hex wisp's: its colors in the places of the wisp's, so the two share
-// their pictures. `tint` picks the table: the plain one, or the red one shown
-// for a moment when hurt.
+// their pictures. `tint` picks the table: the plain one, the red one shown
+// for a moment when hurt, the bright one of a burst urn's flash, or the
+// gold glint of a pickup.
 #define SHADES 7
 #define SHADE(level) ((level) << 5)
 #define SHADE_HEX SHADE(SHADES)
 #define BASE_CEILING 6
 #define BASE_FLOOR 31
-enum { TINT_NONE, TINT_HURT, TINT_COUNT };
+enum { TINT_NONE, TINT_HURT, TINT_BLAST, TINT_GLINT, TINT_COUNT };
 const Color* art_palette(u32 tint);
 
 // Sprites: the HUD over the view.
@@ -255,6 +266,9 @@ enum {
     SND_STRIKE, // a wisp strikes
     SND_HEX,    // a hex wisp casts
     SND_HURT,   // the serval is hit
+    SND_URN,    // a spark knocks an urn
+    SND_BLAST,  // and an urn bursts: its roar
+    SND_BOOM,   // and its thump
     SND_PICKUP,
     SND_KEY,
     SND_DOOR,

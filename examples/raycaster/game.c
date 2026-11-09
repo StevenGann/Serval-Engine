@@ -90,6 +90,13 @@ static void picture_whole(void) {
     half = 0;
 }
 
+// The surface on its side (view.c): screen columns are its rows, each shown
+// two pixels wide. `down` and `right` move the picture by that many screen
+// pixels, to shake it (the hardware does it as it draws: no cost).
+static void place_surface(int down, int right) {
+    surface_set_transform(FX(down), FX(right) / 2, 0, FX(1), FX(1) / 2, 0);
+}
+
 // The surface's colors now: art_palette()'s or view_colors()'s.
 static const Color* colors;
 
@@ -468,6 +475,16 @@ static void enter_play(void) {
     sound_music(TUNE_WARREN);
 }
 
+// A shake: a burst urn's (strong) or a blow's (short), dying away. The
+// picture jumps to another of four places every other frame.
+static void shake_view(void) {
+    static const s8 jolts[4][2] = {{1, -1}, {-1, 1}, {1, 1}, {-1, -1}};
+    u32 shake = run.over || paused ? 0 : player.shake;
+    int size = shake > 6 ? 3 : shake > 2 ? 2 : shake ? 1 : 0;
+    const s8* jolt = jolts[frame_count() >> 1 & 3];
+    place_surface(jolt[0] * size, jolt[1] * size);
+}
+
 static void draw_hud(void) {
     static const u8 paused_glyphs[] = {GLYPH_P, GLYPH_A, GLYPH_U, GLYPH_S, GLYPH_E, GLYPH_D};
     if (paused)
@@ -482,7 +499,13 @@ static void draw_hud(void) {
     u8 wand = player.flash > 2 ? 1 : player.flash ? 2 : 0;
     sprite_draw(SPR_WAND, wand, 130 + sway, SCREEN_H - 62 + dip, 0);
 
-    sprite_draw(SPR_ICON, ICON_HEART, 4, SCREEN_H - 20, 0);
+    // The heart beats when health runs low: lub-dub, every two-thirds of a second.
+    int beat = 0;
+    if (player.health > 0 && player.health <= 25) {
+        u32 t = frame_count() % 40;
+        beat = t < 4 || (t >= 8 && t < 12) ? 2 : 0;
+    }
+    sprite_draw(SPR_ICON, ICON_HEART, 4, SCREEN_H - 20 - beat, 0);
     draw_number(player.health, 3, 22, SCREEN_H - 20);
     if (player.has_key)
         sprite_draw(SPR_ICON, ICON_KEY, 52, SCREEN_H - 20, 0);
@@ -522,8 +545,14 @@ static void play_frame(bool leaving) {
             world_tick(&input);
             if (input.forward || input.strafe)
                 bob = (u16)(bob + ANGLE_DEG(12));
-            // Red for a moment when hurt; and it stays red when that was the end.
-            set_colors(art_palette(player.hurt || (run.over && !run.won) ? TINT_HURT : TINT_NONE));
+            // Bright for a moment when an urn bursts in sight; red for a
+            // moment when hurt, and it stays red when that was the end; a
+            // glint of gold for a pickup.
+            u32 tint = player.dazzle                           ? TINT_BLAST
+                       : player.hurt || (run.over && !run.won) ? TINT_HURT
+                       : player.glint                          ? TINT_GLINT
+                                                               : TINT_NONE;
+            set_colors(art_palette(tint));
             picture_begin();
         }
     } else if (run.over && !leaving) {
@@ -533,6 +562,7 @@ static void play_frame(bool leaving) {
         psg_play(run.won ? SND_WON : SND_LOST);
         leave_to(enter_result, run.won ? SCREEN_BRIGHTNESS_MAX : SCREEN_BRIGHTNESS_MIN);
     }
+    shake_view();
     draw_hud();
 }
 
@@ -615,10 +645,9 @@ void game_init(void) {
     sound_init();
     sprite_table_set(sprite_table, SPRITE_COUNT);
 
-    // The surface, on its side: screen columns are its rows (view.c). It
-    // stays on for good.
+    // The surface, on its side. It stays on for good.
     surface_begin();
-    surface_set_transform(0, 0, 0, FX(1), FX(1) / 2, 0);
+    place_surface(0, 0);
     // surface_begin() unloaded the sprites: the HUD's load into the half of
     // the sprite tiles the surface leaves.
     sprite_group_load(&hud_group);
