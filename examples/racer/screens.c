@@ -41,7 +41,7 @@ void title_show(void) {
 
 void title_erased(void) {
     title_records();
-    text_set_style(records_save_failed() ? TEXT_WARNING : TEXT_HIGHLIGHT);
+    text_set_style(records_save_failed() ? STYLE_WARNING : TEXT_HIGHLIGHT);
     text_print_line(0, ERASED_ROW, "");
     text_print_centered(ERASED_ROW, records_save_failed() ? "SAVE FAILED" : "RECORDS ERASED");
     text_set_style(TEXT_NORMAL);
@@ -109,7 +109,7 @@ void results_show(const Race* r, u32 fell) {
             mark(LAPS_ROW + 2 * i, fell & RECORD_LAP ? "NEW RECORD" : "BEST");
     }
     if (fell && records_save_failed()) {
-        text_set_style(TEXT_WARNING);
+        text_set_style(STYLE_WARNING);
         text_print_centered(FAILED_ROW, "SAVE FAILED");
         text_set_style(TEXT_NORMAL);
     }

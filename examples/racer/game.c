@@ -2,9 +2,9 @@
 // end), the results, and the fades between them.
 //
 // The title drives the road by itself, at an easy pace down the middle of
-// the circuit, under the logo; START fades to a race. A race is the Race of
-// track.c, one race_step() a frame with the buttons held, and what it
-// reports as events comes to one place, events(), with the game's own
+// the circuit, under the logo; START or A fades to a race. A race is the
+// Race of track.c, one race_step() a frame with the buttons held, and what
+// it reports as events comes to one place, events(), with the game's own
 // (the countdown's numbers, pausing, a record): the messages, the sounds
 // (sound.c) and the end of the race are made there. Everything else on
 // screen follows the race's state by itself: the jeep's spin after a crash,
@@ -15,8 +15,8 @@
 // engine idling and the countdown's beeps, then the race tune from GO.
 // When the race is over, FINISH or TIME UP holds over the stopped picture
 // with its fanfare or phrase, then the results come up over it; the
-// records are taken (and saved, if one fell) as they do. A goes back to
-// the title.
+// records are taken (and saved, if one fell) as they do. A or START goes
+// back to the title.
 //
 // Everything is loaded once at boot, under a black screen, so changing
 // screens is a fade of the brightness and some text.
@@ -160,7 +160,7 @@ static void show_title(void) {
 
 static void title_frame(void) {
     u32 ev = 0;
-    if (!fade && button_pressed(BUTTON_START)) {
+    if (!fade && (button_pressed(BUTTON_START) || button_pressed(BUTTON_A))) {
         fade_to(start_race);
     } else if (!fade && button_down(BUTTON_L) && button_down(BUTTON_R) &&
                button_pressed(BUTTON_SELECT)) {
@@ -262,7 +262,7 @@ static void ending_frame(void) {
 }
 
 static void results_frame(void) {
-    if (!fade && button_pressed(BUTTON_A))
+    if (!fade && (button_pressed(BUTTON_A) || button_pressed(BUTTON_START)))
         fade_to(show_title);
     results_draw(screen_frames++);
     draw_race(false);
@@ -281,7 +281,7 @@ void game_init(void) {
     // middle of a race.
     text_clear();
     text_set_style(TEXT_HIGHLIGHT);
-    text_set_style(TEXT_WARNING);
+    text_set_style(STYLE_WARNING);
     text_set_style(TEXT_NORMAL);
     records_load();
     sound_init();

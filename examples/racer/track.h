@@ -114,7 +114,8 @@ typedef struct Track {
 // The game's one circuit.
 extern const Track savanna;
 
-// The lap's length, track units.
+// The lap's length, track units. The track must not change (it is summed
+// once and kept).
 FIXED track_length(const Track* t);
 
 // A distance taken around the lap into [0, track_length()). An object's

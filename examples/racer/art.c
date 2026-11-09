@@ -415,7 +415,6 @@ static void build_time(TimeColors* c, const TimeOfDay* t) {
     c->edge = t->edge;
     for (int i = 0; i < SKY_COLORS; i++)
         c->sky[i] = t->sky[i];
-    c->backdrop = t->sky[SKY_BANDS - 1];
     for (int p = 0; p < TINTED_PALETTES; p++)
         for (int i = 0; i < 16; i++)
             c->sprites[p][i] = color_mix(obj_palettes[p][i], t->tint, t->tint_amount);
@@ -432,7 +431,6 @@ static void mix_time(TimeColors* c, const TimeColors* a, const TimeColors* b, u3
         mix_colors(c->road[s], a->road[s], b->road[s], MATERIALS, amount);
     c->edge = color_mix(a->edge, b->edge, amount);
     mix_colors(c->sky, a->sky, b->sky, SKY_COLORS, amount);
-    c->backdrop = color_mix(a->backdrop, b->backdrop, amount);
     for (int p = 0; p < TINTED_PALETTES; p++)
         mix_colors(c->sprites[p], a->sprites[p], b->sprites[p], 16, amount);
 }

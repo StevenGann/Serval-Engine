@@ -54,7 +54,6 @@ typedef struct {
     Color road[3][MATERIALS]; // by shade: SHADE_DARK, SHADE_LIGHT, SHADE_HAZE (the mix)
     Color edge;               // ROAD_EDGE_COLOR
     Color sky[15];            // the sky bank's colours 1-15
-    Color backdrop;           // behind everything (the sky's lowest band)
     Color sprites[TINTED_PALETTES][16];
 } TimeColors;
 

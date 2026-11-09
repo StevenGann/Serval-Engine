@@ -55,7 +55,7 @@
 //     jeep, seen from behind with the serval's spotted head over the
 //     driver's seat, leaning into the curves. "PRESS START" blinks; under
 //     it BEST RACE and BEST LAP ("--'--"--" until a race sets them). A
-//     short jingle plays once. START fades to a race.
+//     short jingle plays once. START or A fades to a race.
 //   - The race starts in the late afternoon, on the start line. Top left:
 //     LAP 1/3 and the race's time; in the middle TIME and the seconds left
 //     (34); top right the speed in KM/H. Big 3, 2, 1 over the sky with low
@@ -89,7 +89,8 @@
 //     come up over the road: the race's time (or, after TIME UP, the
 //     distance reached in km), the three laps with BEST by the fastest, or
 //     NEW RECORD (and a chime) where a saved record fell, the records as
-//     they stand, and "PRESS A" blinking. A fades back to the title.
+//     they stand, and "PRESS A" blinking. A or START fades back to the
+//     title.
 //   - START pauses: a blip, "PAUSED", the music and the engine's drone
 //     stop (an effect already sounding fades out on its own) and the
 //     picture holds; START again goes on from where it was, with the blip.

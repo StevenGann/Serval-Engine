@@ -28,9 +28,10 @@
 //
 // The time of day is a walk through art.c's colour stages, one stage every
 // few frames, from the one shown toward the one wanted: the road's colours
-// come from the stage with the stripes every frame, and the sky's bank, the
-// backdrop and the sprites' palettes are written only when the stage
-// changes. A bump, or a crash's first frames, shakes the picture by
+// come from the stage with the stripes every frame, and the sky's bank and
+// the sprites' palettes are written only when the stage changes (the
+// backdrop never shows: the sky and the road cover every line, shaken or
+// not). A bump, or a crash's first frames, shakes the picture by
 // scrolling both layers down a line or two (the raster table's shifts stay
 // put: a line then shows a road a little narrower than its own, which keeps
 // it clear of the edges).
@@ -104,7 +105,6 @@ void view_draw(const RoadFrame* f, int shake) {
     if (written != stage) {
         written = stage;
         tileset_set_colors(SKY_BANK * 16 + 1, c->sky, 15);
-        screen_set_backdrop(c->backdrop);
         sprite_set_colors(SPR_JEEP, 0, &c->sprites[0][0], TINTED_PALETTES * 16);
     }
     map_set_scroll(ROAD_BG, 0, -shake);

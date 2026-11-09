@@ -7,7 +7,7 @@
 #include "track.h"
 
 // The engine's third text style, light red (text.h): SAVE FAILED.
-#define TEXT_WARNING 2
+#define STYLE_WARNING 2
 
 // The title: clears the text and shows the records. title_draw() each
 // frame (`frames` since the title came up): the logo and PRESS START

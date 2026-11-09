@@ -210,10 +210,18 @@ const Track savanna = {
 
 // --- The track --------------------------------------------------------------
 
+// Summed once per track and kept: it is asked for several times a frame.
+// The track is remembered by its address, so it must not change while the
+// game runs (the game's and the tests' tracks are all const).
 FIXED track_length(const Track* t) {
-    FIXED length = 0;
-    for (int i = 0; i < t->segment_count; i++)
-        length += t->segments[i].length * SEGMENT_LENGTH;
+    static const Track* summed;
+    static FIXED length;
+    if (t != summed) {
+        length = 0;
+        for (int i = 0; i < t->segment_count; i++)
+            length += t->segments[i].length * SEGMENT_LENGTH;
+        summed = t;
+    }
     return length;
 }
 

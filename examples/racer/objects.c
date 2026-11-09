@@ -85,12 +85,21 @@ static int item_count;
 // Places an object `ahead` in front of the car and `lateral` across the
 // road, its foot `lift` pixels (of the full-size picture) above the ground,
 // among the items in order of distance (after any as far, so the first
-// added of a checkpoint is in front).
+// added of a checkpoint is in front). With the list full, the farthest
+// item makes way for a nearer one, so what is near is always drawn,
+// traffic included (added last). It doesn't fill today: at most 16 scenery
+// items lie within VIEW_AHEAD anywhere on the circuit, one checkpoint's 7
+// sprites and RACE_TRAFFIC_MAX vehicles, 29 of ITEMS_MAX.
 static void add(const RoadFrame* f, int object, FIXED ahead, FIXED lateral, u16 flags, int lift,
                 int shake) {
     Projection p = road_project(f, ahead, lateral);
-    if (!p.visible || item_count == ITEMS_MAX)
+    if (!p.visible)
         return;
+    if (item_count == ITEMS_MAX) {
+        if (items[ITEMS_MAX - 1].ahead <= ahead)
+            return;   // farther than everything kept
+        item_count--; // the farthest goes
+    }
     const ObjectBox* box = &object_box[object][p.size_class];
     // The picture stands at the bottom of its box, which shrinks about its
     // centre: put the box so that its picture's foot is on line p.y.
