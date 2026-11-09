@@ -7,8 +7,8 @@
 //   sounds at rising pitches, each holding until replaced (.frames 0, .fade
 //   0), and a new one is played only when the car's speed reaches another
 //   step: a few times a second while accelerating, never at a steady speed.
-//   Each step comes in a semitone and three quarters above the one below,
-//   about 1.75 octaves from idle to top speed. A little slack on the way down
+//   The steps run from 50 to 168 Hz, about 1.4 semitones apart, about 1.75
+//   octaves from idle to top speed. A little slack on the way down
 //   keeps a speed sitting on a step's edge from flicking between two.
 // - The race tune plays its melody on square 2, its bass on square 1 and
 //   its drums on the noise channel. The effects are on square 1 (the bass
@@ -19,6 +19,9 @@
 //   crash's tone KNOCK_PRIORITY; the skid's squeal 0. So a squeal held through
 //   a checkpoint can't cut its jingle, and a bump cuts the squeal. On the
 //   noise channel the crash is above the rumble, which is 0.
+// - The squeal is short and sounds when a skid starts, then only every
+//   SKID_REPEAT frames while it lasts, so a long skid leaves square 1 to the
+//   bass most of the time.
 
 #include "sound.h"
 
@@ -36,8 +39,10 @@
 // of 15. Under the music and well under the effects.
 #define DRONE_VOLUME 8
 
-// The held effects are played again as each ends, while their event lasts.
+// The held effects are played again while their event lasts: the rumble as
+// each ends, the squeal (SKID_FRAMES long) every SKID_REPEAT frames.
 #define SKID_FRAMES 8
+#define SKID_REPEAT 32
 #define RUMBLE_FRAMES 6
 
 // The table's sounds past the effects game.c plays: the held ones and the
@@ -142,7 +147,7 @@ static const PsgSound sounds[SOUND_COUNT] = {
     [SND_RUMBLE] = {.channel = PSG_NOISE, .frequency = 120, .frames = RUMBLE_FRAMES, .volume = 9},
     // The drone off: the lowest level, gone within a frame.
     [SND_DRONE_OFF] = {.channel = PSG_WAVE, .frequency = 50, .volume = 1, .fade = -1},
-    // 50 Hz at idle, then each a semitone and three quarters up.
+    // 50 Hz at idle, then each about 1.4 semitones up, to 168 Hz.
     [SND_DRONE + 0] = DRONE(50),
     [SND_DRONE + 1] = DRONE(54),
     [SND_DRONE + 2] = DRONE(59),
@@ -382,7 +387,7 @@ void sound_drive(const Race* r, u32 ev) {
         drone = step;
         psg_play((u16)(SND_DRONE + step));
     }
-    hold(&skid_left, ev & RACE_EV_SKID, SND_SKID, SKID_FRAMES);
+    hold(&skid_left, ev & RACE_EV_SKID, SND_SKID, SKID_REPEAT);
     hold(&rumble_left, ev & RACE_EV_OFFROAD, SND_RUMBLE, RUMBLE_FRAMES);
 }
 
