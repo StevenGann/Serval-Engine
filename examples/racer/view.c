@@ -1,5 +1,5 @@
-// Drawing the race: a frame of road from three cheap tricks on one still
-// picture, and the jeep on top.
+// Drawing the road and the sky: a frame of road from three cheap tricks on
+// one still picture.
 //
 // 1. The bend: a raster table. The road picture (art.c) is a straight road,
 //    and it never changes. raster_scroll() gives every screen line its own
@@ -14,7 +14,7 @@
 // 2. The stripes: palette writes. Every tile row of the road has its own
 //    palette bank, and its pixels name a material (grass, rumble strip,
 //    tarmac, dash) and a group of lines in the row, never a colour. So one
-//    write of twelve colours per row makes each third of the row light or
+//    write of thirteen colours per row makes each third of the row light or
 //    dark: road_frame() says which, from the stretch of track the row's
 //    lines show, and as the car moves on the boundaries roll down the
 //    screen toward the player. Far up, where a light and a dark stretch
@@ -25,22 +25,32 @@
 // 3. The sky's swing: a whole-layer scroll. The sky (another wrapping
 //    layer) slides sideways by the curve under the car times the speed,
 //    so the horizon swings the other way as the road bends.
+//
+// The time of day is a walk through art.c's colour stages, one stage every
+// few frames, from the one shown toward the one wanted: the road's colours
+// come from the stage with the stripes every frame, and the sky's bank, the
+// backdrop and the sprites' palettes are written only when the stage
+// changes. A bump shakes the picture by scrolling both layers down a line
+// or two (the raster table's shifts stay put: a line then shows a road a
+// little narrower than its own, which keeps it clear of the edges).
 
 #include "view.h"
 
 #include "art.h"
 
-// The jeep's wheels stand on this line, a few above the screen's bottom.
-#define JEEP_FOOT (SCREEN_H - 3)
 // The sky drifts (curve * speed) >> SKY_SWING_SHIFT 256ths of a pixel a
 // frame: about a pixel and a third at top speed on the sharpest curve.
 #define SKY_SWING_SHIFT 10
+// Frames per stage of the time of day: TIME_STEPS stages, about two seconds.
+#define STAGE_FRAMES 8
 
 // The raster table the engine reads at every frame_end(): this frame's
 // offsets, copied from the road frame so the caller's may be anywhere.
 static s16 offsets[SCREEN_H] SERVAL_EWRAM_BSS;
-static s32 sky_x; // the sky's scroll, 256ths of a pixel; counts on, never wraps
-static u8 time_of_day;
+static s32 sky_x;        // the sky's scroll, 256ths of a pixel; counts on, never wraps
+static int stage;        // the time of day shown, a stage of time_colors
+static int stage_frames; // frames toward the next stage
+static int written;      // the stage whose sky and sprite colours are in the palettes
 
 void view_init(void) {
     tileset_load(&road_tileset);
@@ -48,55 +58,61 @@ void view_init(void) {
     map_load(&sky_layer);
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprite_group);
-    // The sky's lowest colour behind everything (nothing should show it).
-    screen_set_backdrop(COLOR_RGB(252, 208, 124));
     for (int y = 0; y < SCREEN_H; y++)
         offsets[y] = 0;
     raster_scroll(ROAD_BG, false, offsets);
-    view_reset();
+    view_reset(TIME_STAGE(TIME_AFTERNOON));
 }
 
-void view_reset(void) {
+void view_reset(int to) {
     sky_x = 0;
-    time_of_day = TIME_AFTERNOON;
-    map_set_scroll(SKY_BG, 0, 0);
+    stage = to;
+    stage_frames = 0;
+    written = -1;
 }
 
-// Each road row's twelve colours from its groups' shades.
-static void stripe(const RoadFrame* f) {
-    const RoadColors* c = &road_colors[time_of_day];
-    Color colors[ROAD_STRIPE_COLORS];
-    for (int row = 0; row < ROAD_ROWS; row++) {
-        for (int g = 0; g < ROAD_GROUPS; g++) {
-            const Color* shade = c->shade[f->shade[row][g]];
-            for (int m = 0; m < MATERIALS; m++)
-                colors[m * ROAD_GROUPS + g] = shade[m];
-        }
-        tileset_set_colors(row * 16 + 1, colors, ROAD_STRIPE_COLORS);
+void view_step(const RoadFrame* f, FIXED speed, int to) {
+    sky_x += (f->curve * speed) >> SKY_SWING_SHIFT;
+    if (stage == to) {
+        stage_frames = 0;
+    } else if (++stage_frames == STAGE_FRAMES) {
+        stage_frames = 0;
+        stage += stage < to ? 1 : -1;
     }
 }
 
-// The jeep: its frame by the steering, lit tail lights while braking, a
-// jolt off the road, a wobble while it spins out after a crash.
-static void draw_jeep(const Race* r, const RoadFrame* f) {
-    static const s8 jolt[4] = {0, -1, -2, -1};
-    int frame = JEEP_STRAIGHT;
-    int y = JEEP_FOOT;
-    if (r->car_state == CAR_CRASHED)
-        frame = (r->crash_timer >> 3) & 1 ? JEEP_LEFT : JEEP_RIGHT;
-    else if (r->speed > 0 && r->steer)
-        frame = r->steer < 0 ? JEEP_LEFT : JEEP_RIGHT;
-    if (r->car_state == CAR_OFFROAD && r->speed > 0)
-        y += jolt[(r->distance >> 10) & 3];
-    u16 flags = r->braking ? SPRITE_PALETTE(PAL_JEEP_BRAKING) : 0;
-    sprite_draw(SPR_JEEP, (u8)frame, f->car_x, y, flags);
+// Each road row's thirteen colours from its groups' shades.
+static void stripe(const RoadFrame* f, const TimeColors* c) {
+    Color colors[ROAD_STRIPE_COLORS + 1];
+    for (int row = 0; row < ROAD_ROWS; row++) {
+        for (int g = 0; g < ROAD_GROUPS; g++) {
+            const Color* shade = c->road[f->shade[row][g]];
+            for (int m = 0; m < MATERIALS; m++)
+                colors[m * ROAD_GROUPS + g] = shade[m];
+        }
+        colors[ROAD_EDGE_COLOR - 1] = c->edge;
+        tileset_set_colors(row * 16 + 1, colors, ROAD_STRIPE_COLORS + 1);
+    }
 }
 
-void view_frame(const Race* r, const RoadFrame* f) {
+void view_draw(const RoadFrame* f, int shake) {
+    const TimeColors* c = &time_colors[stage];
     for (int y = HORIZON; y < SCREEN_H; y++)
         offsets[y] = f->offsets[y];
-    stripe(f);
-    sky_x += (f->curve * r->speed) >> SKY_SWING_SHIFT;
-    map_set_scroll(SKY_BG, sky_x >> 8, 0);
-    draw_jeep(r, f);
+    stripe(f, c);
+    if (written != stage) {
+        written = stage;
+        tileset_set_colors(SKY_BANK * 16 + 1, c->sky, 15);
+        screen_set_backdrop(c->backdrop);
+        sprite_set_colors(SPR_JEEP, 0, &c->sprites[0][0], TINTED_PALETTES * 16);
+    }
+    map_set_scroll(ROAD_BG, 0, -shake);
+    map_set_scroll(SKY_BG, sky_x >> 8, -shake);
+}
+
+int view_shake(int bump_timer) {
+    // Down hard, back, down again, settling: indexed by frames left.
+    static const u8 shake[CAR_BUMP_FRAMES + 1] = {0, 0, 0, 0, 1, 0, 1, 0, 1,
+                                                  1, 0, 1, 2, 1, 0, 2, 2};
+    return bump_timer > 0 && bump_timer <= CAR_BUMP_FRAMES ? shake[bump_timer] : 0;
 }

@@ -698,6 +698,48 @@ static void traffic_waits_behind(void) {
     CHECK(!(ev & RACE_EV_BUMP) && r.speed == CAR_TOP_SPEED);
 }
 
+// Two jeeps in the right lane close behind the start line, the second 10
+// units behind the first.
+static const TrafficSpawn queue_spawn[] = {
+    {200 * SEGMENT_LENGTH - FX(20), TRAFFIC_LANE_RIGHT, TRAFFIC_JEEP},
+    {200 * SEGMENT_LENGTH - FX(30), TRAFFIC_LANE_RIGHT, TRAFFIC_JEEP},
+};
+static const Track queue = {
+    .segments = rocky_segments,
+    .segment_count = 1,
+    .traffic = queue_spawn,
+    .traffic_count = 2,
+    .start_time = 60 * 60 * 10,
+};
+
+// Vehicles queueing behind a car at rest never stack: each waits BUMP_GAP
+// behind the car or the vehicle ahead of it in its lane, so their sprites
+// never lie one on the other.
+static void traffic_queues(void) {
+    Race r;
+    start_racing(&r, &queue);
+    r.lateral = TRAFFIC_LANE_RIGHT;
+    int stacked = 0;
+    for (int i = 0; i < 300; i++) {
+        race_step(&r, 0);
+        FIXED first = gap(&queue, r.distance, r.traffic[0].distance);
+        FIXED second = gap(&queue, r.distance, r.traffic[1].distance);
+        stacked += first > -BUMP_GAP || second - first > -BUMP_GAP;
+    }
+    CHECK(stacked == 0);
+    // Both still waiting, the first BUMP_GAP behind the car, the second
+    // BUMP_GAP behind it.
+    CHECK(gap(&queue, r.distance, r.traffic[0].distance) == -BUMP_GAP);
+    CHECK(gap(&queue, r.traffic[1].distance, r.traffic[0].distance) == BUMP_GAP);
+    // The car drives off: the queue follows it, still apart.
+    for (int i = 0; i < 120; i++) {
+        race_step(&r, BUTTON_A);
+        FIXED apart = gap(&queue, r.traffic[1].distance, r.traffic[0].distance);
+        stacked += apart < BUMP_GAP;
+    }
+    CHECK(stacked == 0);
+}
+
 // A short straight circuit with two checkpoints.
 static const TrackSegment loop_segments[] = {{20, 0}, {20, 0}};
 static const Checkpoint loop_checkpoints[] = {{0, 600}, {20 * SEGMENT_LENGTH, 900}};
@@ -964,6 +1006,23 @@ static void records(void) {
     running.race_time = 10;
     running.lap_times[0] = 10;
     CHECK(records_update(&rec, &running) == 0);
+
+    // A real race that runs out of time: no race record, and the best lap
+    // is the fastest of the laps it completed, not the one cut short.
+    static Race up;
+    race_start(&up, &savanna, 5);
+    careless_crashes = 0;
+    drive(&up, careless_driver);
+    CHECK(up.over && !up.finished && up.lap >= 1 && up.lap < RACE_LAPS);
+    Records none = {0, 0};
+    CHECK(records_update(&none, &up) == RECORD_LAP);
+    CHECK(none.best_race == 0);
+    u32 fastest = up.lap_times[0];
+    for (int i = 1; i < up.lap; i++)
+        fastest = up.lap_times[i] < fastest ? up.lap_times[i] : fastest;
+    CHECK(none.best_lap == fastest && fastest > 0);
+    // Taken again: nothing more falls.
+    CHECK(records_update(&none, &up) == 0);
 }
 
 // The circuit's own data is well formed.
@@ -1013,6 +1072,7 @@ TEST_SUITE(racer_tests, "racer", {"wrap_invariant", wrap_invariant},
            {"stripes_continuous_across_lap", stripes_continuous_across_lap},
            {"projection", projection}, {"car_physics", car_physics},
            {"crash_and_recovery", crash_and_recovery}, {"bump", bump},
-           {"traffic_waits_behind", traffic_waits_behind}, {"skids", skids}, {"timing", timing},
-           {"scripted_race", scripted_race}, {"race_start_resets", race_start_resets},
-           {"records", records}, {"savanna_data", savanna_data});
+           {"traffic_waits_behind", traffic_waits_behind}, {"traffic_queues", traffic_queues},
+           {"skids", skids}, {"timing", timing}, {"scripted_race", scripted_race},
+           {"race_start_resets", race_start_resets}, {"records", records},
+           {"savanna_data", savanna_data});

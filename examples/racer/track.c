@@ -370,7 +370,11 @@ static u32 bump_traffic(Race* r, FIXED lap, FIXED* advance) {
 // Traffic drives on, `from` being where the car was before its move. A
 // vehicle that was behind the car and within its reach sideways never
 // passes through it: it waits BUMP_GAP behind the car, at the car's pace,
-// until the car moves out of its lane or pulls away (never backward).
+// until the car moves out of its lane or pulls away (never backward). A
+// vehicle never closes to less than BUMP_GAP behind another in its lane
+// either, so a queue forms behind a waiting one instead of a stack: all
+// drive at one speed, so only waiting can close them up. (The other is
+// where it is now, moved this frame or not: never behind where it ends.)
 static void move_traffic(Race* r, FIXED lap, FIXED from) {
     for (int i = 0; i < r->traffic_count; i++) {
         Vehicle* v = &r->traffic[i];
@@ -379,6 +383,12 @@ static void move_traffic(Race* r, FIXED lap, FIXED from) {
         if (behind > 0 && int_abs(v->lateral - r->lateral) < BUMP_X) {
             FIXED room = behind + ahead_of(from, r->distance, lap) - BUMP_GAP;
             move = int_clamp(room, 0, move);
+        }
+        for (int j = 0; j < r->traffic_count; j++) {
+            const Vehicle* w = &r->traffic[j];
+            FIXED gap = ahead_of(v->distance, w->distance, lap);
+            if (j != i && gap > 0 && int_abs(v->lateral - w->lateral) < BUMP_X)
+                move = int_clamp(gap - BUMP_GAP, 0, move);
         }
         v->distance = around(v->distance + move, lap);
     }
