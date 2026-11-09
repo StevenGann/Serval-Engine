@@ -11,8 +11,14 @@
 
 #include <serval/serval.h>
 
-// Text style 2: light red by default (text.h), for what went wrong.
+// Text style 2, for what went wrong (light red), and 3, for the hints and
+// labels (a soft lavender): their colours set by game_init().
 #define TEXT_WARNING 2
+#define TEXT_HINT 3
+
+// Builds the song select's and the results' cards (art_build_cards()):
+// once at boot, after art_build() and before art_load().
+void screens_build_art(void);
 
 // The serval at (x, foot y), dancing to `ticks` of music at 4 rows a beat
 // (a paw up on the beat, left then right, a bob on the half beat), or

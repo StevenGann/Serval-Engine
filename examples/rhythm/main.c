@@ -12,13 +12,15 @@
 //     turned into ticks with MusicPosition.tick_samples
 //   - Judging, scoring and grading as portable C tested on the host
 //     (judge.c, tests/rhythm_tests.c)
-//   - Palette effects: the field's colours pulse on every beat and the
-//     pads flash, each a few tileset_set_colors() calls, from tables mixed
-//     at boot with color_mix
+//   - Palette effects: the field's colours pulse on every beat, and a press
+//     lights its lane, a beam of the lane's colour up from its pad, each a
+//     few tileset_set_colors() calls from tables mixed at boot with
+//     color_mix; the stage dims behind the menus and the pause
 //   - Art drawn at boot from pixel functions and ASCII pictures (art.c):
-//     the field and its panel as background tiles kept once, the sprites
-//     (paw-print notes in four colours by SPRITE_PALETTE, the serval's dance
-//     frames, the words and digits)
+//     the field and its panel as background tiles kept once, the menus'
+//     cards (a third map, on the panel's background), the sprites (paw-print
+//     notes in four colours by SPRITE_PALETTE, the serval's dance frames,
+//     the words and digits, the grade's rosette)
 //   - A background in front of the sprites (the panel the notes come out
 //     from under) and a sprite in front of it (SPRITE_ABOVE_FOREGROUND)
 //   - PSG blips for presses and menus over Maxmod's tracker music
@@ -41,13 +43,16 @@
 //     100 BPM, 1:12), STRIDE (bouncy and funky, 124 BPM, 1:05) and RUSH (a
 //     driving rock beat, 148 BPM, 1:21), a paw beside the one chosen; the
 //     difficulty (EASY or HARD); the best score and grade for it (dashes
-//     before any), and FULL COMBO once played without a miss. The chosen
+//     before any), and FULL COMBO once played without a miss; the songs on
+//     one dark rounded card, the rest on a second under it, the serval to
+//     their right, the help in lavender at the foot. The chosen
 //     song plays, looping, and the serval dances to it. UP and DOWN choose
 //     the song, LEFT and RIGHT the difficulty, R turns AUTO on and off
 //     ("AUTO: NO RECORDS"), A plays, B goes back to the title, SELECT
 //     opens the calibration. Holding L and R and pressing SELECT erases the
 //     records (RECORDS ERASED; the calibration stays).
-//   - The calibration: steady clicks at 120 BPM, a timing line across the
+//   - The calibration, over the play screen dimmed nearly dark: steady
+//     clicks at 120 BPM, a timing line across the
 //     top (EARLY to LATE, -200 to +200 ms; a white diamond at 0). Tap A,
 //     LEFT or RIGHT on every click: each tap, silent so that only the
 //     clicks are heard, puts a rose diamond on the line and its error under
@@ -68,7 +73,8 @@
 //     white diamond that travels along it as the song goes. Two pairs of
 //     lanes, rose and amber on the left, mint and blue on the right, with
 //     an oval pad at the foot of each: a paw print, and under it the button
-//     that plays it (the D-pad's LEFT and RIGHT as triangles, B, A). Between
+//     that plays it (the D-pad's LEFT and RIGHT as triangles, B, A), each
+//     lane's floor tinted with its colour, deepening toward its pad. Between
 //     the pairs a stage under a starry purple sky: a spotlight, black grass
 //     and acacias on the horizon, and the serval, golden with black spots
 //     and huge ears, dancing: a paw raised on every beat, left then right,
@@ -79,8 +85,9 @@
 //     paw-print notes in the lanes' colours slide out from under the panel
 //     and fall onto the pads, landing as the music plays them. Pressing a
 //     lane's button blips (one pitch a lane, a C major chord LEFT to A) and
-//     lights its pad dimly; a press on time hits the note: the pad flashes
-//     bright, a ring of sparks opens from it, the note vanishes and PERFECT
+//     lights its pad and lane dimly; a press on time hits the note: the pad
+//     flashes bright and the lane lights up in its colour, a flash and a
+//     ring of sparks open from the pad, the note vanishes and PERFECT
 //     (gold, within 35 ms) or GOOD (green, within 80 ms) pops up over the
 //     stage, with the combo under it from 2 hits ("12" over "COMBO"). A
 //     note let past is a MISS (grey), and the combo goes. The score grows
@@ -90,15 +97,18 @@
 //     that reaches it, judged as a press in that frame would be: the blips
 //     play the chart, every pad flashes on its note and every judgement is
 //     PERFECT, through the last note (a GOOD or MISS there is a timing bug).
-//   - START pauses: a blip, the music stops, the picture holds, and PAUSED
+//   - START pauses: a blip, the music stops, the picture holds, the stage
+//     dims, and PAUSED
 //     over CONTINUE, RETRY and QUIT, chosen with UP and DOWN and A (START
 //     or B continue). CONTINUE goes on exactly where it was; RETRY starts
 //     the song again from its count-in, the score at 0; QUIT fades back to
 //     the song select.
 //   - When the music ends, after the last note, the screen fades to the
-//     results (the music stopped; A chimes), over the stage dimmed: the song, the PERFECT,
-//     GOOD and MISS counts, the longest combo, the accuracy, the score, and
-//     the grade (S, A, B, C, D) as a big letter that drops in; NEW BEST when
+//     results (the music stopped; A chimes), over the stage dimmed: the
+//     song, and on a card the PERFECT, GOOD and MISS counts, the longest
+//     combo, the accuracy and the score; beside it the grade (S, A, B, C, D)
+//     as a big letter that drops onto a scalloped rosette (gold for S and A,
+//     silver for the rest) with a burst of sparks; NEW BEST when
 //     the score beats the record, else NEW BEST GRADE for a better grade
 //     (never with AUTO), FULL COMBO when nothing was missed (FIRST FULL COMBO
 //     the first time) (the serval dances), SAVE FAILED if the save memory

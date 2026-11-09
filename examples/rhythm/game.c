@@ -92,11 +92,19 @@ static void to_calibration(void) {
 void game_init(void) {
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN); // black while VRAM is written
     art_build();
+    screens_build_art();
     art_load();
     text_set_shadow(true); // text reads over the bright panel and the stage
+    // The text's colours: a cool white and a warm gold over deep purple
+    // shadows, the night's colours rather than black.
+    text_set_style_color(TEXT_NORMAL, COLOR_RGB(240, 236, 255), COLOR_RGB(22, 12, 44));
+    text_set_style_color(TEXT_HIGHLIGHT, COLOR_RGB(255, 214, 90), COLOR_RGB(56, 24, 20));
+    text_set_style_color(TEXT_WARNING, COLOR_RGB(255, 120, 130), COLOR_RGB(56, 12, 24));
+    text_set_style_color(TEXT_HINT, COLOR_RGB(170, 160, 226), COLOR_RGB(22, 12, 44));
     // Each text style builds its glyphs the first time it is used (tens of
     // thousands of cycles): use them now, under the black, not in a song.
     text_clear();
+    text_set_style(TEXT_HINT);
     text_set_style(TEXT_WARNING); // SAVE FAILED's
     text_set_style(TEXT_HIGHLIGHT);
     text_set_style(TEXT_NORMAL);

@@ -3,9 +3,9 @@
 
 // The pictures, built at boot by art_build() (no image files): the play
 // screen's field (lanes, pads, the stage under a night sky) and its top
-// panel, and the sprites (the notes, the serval, the words, the digits),
-// with their palettes and the colour tables play.c steps through for the
-// beat's pulse and the pads' flashes.
+// panel, the menus' cards, and the sprites (the notes, the serval, the
+// words, the digits, the grade's medal), with their palettes and the colour
+// tables play.c steps through for the beat's pulse and the lanes' flashes.
 
 #include <serval/serval.h>
 
@@ -44,11 +44,12 @@ enum { BANK_FIELD, BANK_PAD, BANK_PANEL = BANK_PAD + LANES, BG_BANKS };
 #define FIELD_SHARED 7 // colours 1-7: in the pads' banks too
 extern Color field_pulse[PULSE_LEVELS][PULSE_COLORS];
 
-// A pad's flash: colours 8-13 of its bank, in FLASH_LEVELS stages from rest
-// (0) to a hit (FLASH_LEVELS - 1).
+// A lane's flash: colours 8-15 of its pad's bank (the pad, and the lane's
+// floor, which lights up toward the pad in the lane's colour), in
+// FLASH_LEVELS stages from rest (0) to a hit (FLASH_LEVELS - 1).
 #define FLASH_LEVELS 8
 #define PAD_COLOR0 8
-#define PAD_COLORS 6
+#define PAD_COLORS 8
 extern Color pad_flash[LANES][FLASH_LEVELS][PAD_COLORS];
 
 // --- Sprites ------------------------------------------------------------------------------
@@ -61,10 +62,12 @@ enum {
     SPR_DIGIT,  // 16x16: 0-9, each 12 pixels wide with its outline
     SPR_MARKER, // 8x8: the progress marker, origin its middle
     SPR_BIG,    // 32x32: a big letter a frame (big_letters), origin its middle
+    SPR_MEDAL,  // 64x64: the grade's rosette, origin its middle, in the grade's palette
     SPRITE_COUNT,
 };
 
-#define BURST_FRAMES 3
+#define BURST_FRAMES 4
+#define BURST_FRAME_TIME 3 // frames each of its frames shows
 #define DIGIT_ADVANCE 12
 
 // The serval's dance: standing, bobbing down, its left paw raised (drawn
@@ -96,7 +99,8 @@ extern const char big_letters[];
 // The frame of big letter c (0 for one it lacks).
 int art_big_frame(char c);
 
-// Builds every picture into EWRAM. Call once at boot, before art_load().
+// Builds every picture into EWRAM. Call once at boot, before
+// art_build_cards() and art_load().
 void art_build(void);
 
 // Loads the tiles, the palettes and the sprites into VRAM. Call once, with
@@ -111,6 +115,18 @@ void art_hide_play(void);
 // Shows the field alone (the title's stage), or the panel alone.
 void art_show_field(void);
 void art_show_panel(void);
+
+// The menus' cards: dark rounded panels with a bright rim and a drop
+// shadow, on the panel's background (in front of the stage and of the
+// sprites but those drawn SPRITE_ABOVE_FOREGROUND, behind the text). A set
+// of them is built once, before art_load(), from rectangles of 8x8 text
+// cells, and shown with art_show_cards() (art_hide_play() takes it off).
+typedef struct {
+    u8 col, row, cols, rows;
+} Card;
+enum { CARDS_SELECT, CARDS_RESULTS, CARD_SETS };
+void art_build_cards(int set, const Card* cards, int count);
+void art_show_cards(int set);
 
 // The field's colours at a stage of the beat's pulse (0 at rest), and a
 // lane's pad at a stage of its flash (0 at rest): palette writes, for the

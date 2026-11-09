@@ -12,7 +12,14 @@
 // given by pixel functions (field_pixel); the colours themselves pulse with
 // the beat (field_pulse: play.c writes a stage of them a frame) and the pads
 // flash (pad_flash), so the picture never changes, only its palettes. Each
-// pad's tiles have their own bank, whose colours 1-7 copy the field's.
+// lane's tiles, its runway's and its pad's, have their own bank, whose
+// colours 1-7 copy the field's and 8-15 are the lane's: its pad, and its
+// floor, which lights up with the pad, in two colours dithered together so
+// that the light is brightest at the pad.
+//
+// The cards (on background 1, where the panel is in a song) are the menus'
+// rounded dark panels, made in the panel's colours from rectangles of text
+// cells (art_build_cards()).
 //
 // The panel (background 1, in front of the sprites) is the strip across
 // the top that the notes come out from under, with the song's progress
@@ -72,8 +79,9 @@ static const Color field_peak[PULSE_COLORS] = {
     COLOR_RGB(46, 34, 96),    COLOR_RGB(78, 48, 124),  COLOR_RGB(134, 68, 144),
 };
 
-// A pad's colours (8-13 of its bank).
-enum { P_RIM, P_PAW, P_PAW_LIGHT, P_SOCKET, P_LABEL, P_PAW_EDGE };
+// A lane's colours (8-15 of its pad's bank): the pad's, then the floor of
+// the lane's runway, far from the pad and near it.
+enum { P_RIM, P_PAW, P_PAW_LIGHT, P_SOCKET, P_LABEL, P_PAW_EDGE, P_FLOOR_FAR, P_FLOOR_NEAR };
 
 // The panel's colours.
 enum { N_BASE = 1, N_TOP, N_BORDER, N_GROOVE, N_GROOVE_TOP, N_SHADOW };
@@ -112,6 +120,13 @@ static void pad_colors(Color* out, Color h, int level) {
     peak[P_LABEL] = color_mix(h, WHITE, 160);
     rest[P_PAW_EDGE] = COLOR_RGB(10, 6, 20);
     peak[P_PAW_EDGE] = color_mix(h, BLACK, 180);
+    // The floor: a hint of the lane's colour at rest, deepening toward the
+    // pad; a beam of it on a hit, brightest at the pad.
+    Color floor = field_rest[F_FLOOR];
+    rest[P_FLOOR_FAR] = color_mix(floor, h, 20);
+    peak[P_FLOOR_FAR] = color_mix(floor, h, 88);
+    rest[P_FLOOR_NEAR] = color_mix(floor, h, 44);
+    peak[P_FLOOR_NEAR] = color_mix(floor, h, 168);
     for (int c = 0; c < PAD_COLORS; c++)
         out[c] = stage_mix(rest[c], peak[c], level, FLASH_LEVELS);
 }
@@ -171,6 +186,11 @@ static void build_palettes(void) {
                  COLOR_RGB(110, 110, 150));
     word_palette(&obj_palettes[PAL_WHITE * 16], COLOR_RGB(30, 24, 60), COLOR_RGB(255, 255, 255),
                  COLOR_RGB(190, 180, 240));
+    // The medal's rays (build_medal()), behind a gold grade or a white one.
+    obj_palettes[PAL_GOLD * 16 + 7] = COLOR_RGB(72, 30, 58);
+    obj_palettes[PAL_GOLD * 16 + 8] = COLOR_RGB(104, 46, 70);
+    obj_palettes[PAL_WHITE * 16 + 7] = COLOR_RGB(34, 30, 72);
+    obj_palettes[PAL_WHITE * 16 + 8] = COLOR_RGB(52, 46, 104);
 }
 
 // --- Shapes -------------------------------------------------------------------------------
@@ -238,7 +258,7 @@ static bool glyph_pixel(char c, int x, int y) {
 
 // --- Background tiles ---------------------------------------------------------------------
 
-// Room for the backgrounds' tiles: they take 203 (the blank one included),
+// Room for the backgrounds' tiles: they take 234 (the blank one included),
 // counted into bg_tiles_used; art_build() logs it if they ever outgrow this.
 #define BG_TILE_MAX 256
 
@@ -390,16 +410,26 @@ static int pad_pixel(int l, int x, int y) {
     return -1;
 }
 
-// A lane's runway: dark, a glow inside each pair's rails, a faint line
-// between the pair's two lanes.
-static int runway_pixel(int x) {
+// The lanes' floors change from their far colour to their near one over
+// these lines, dithered (an ordered 4x4 dither).
+#define BEAM_FROM 72
+#define BEAM_TO 88
+static const u8 bayer4[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+
+// A lane's runway: its floor, a glow inside each pair's rails, a faint line
+// between the pair's two lanes. Its tiles take the lane's pad's bank, so
+// the floor is the lane's (and flashes with its pad).
+static int runway_pixel(int x, int y) {
     int pair_left = x < STAGE_X ? lane_x[0] - LANE_W / 2 : lane_x[2] - LANE_W / 2;
     int i = x - pair_left; // 0-63 across the pair
     if (i == 0 || i == 2 * LANE_W - 1)
         return F_RAIL;
     if (i == 1 || i == 2 * LANE_W - 2 || i == LANE_W - 1 || i == LANE_W)
         return F_GLOW;
-    return F_FLOOR;
+    bool near =
+        y >= BEAM_TO ||
+        (y >= BEAM_FROM && bayer4[y & 3][x & 3] < (y - BEAM_FROM) * 16 / (BEAM_TO - BEAM_FROM));
+    return PAD_COLOR0 + (near ? P_FLOOR_NEAR : P_FLOOR_FAR);
 }
 
 // Small hash of a pixel, for the stars.
@@ -520,7 +550,7 @@ static int field_pixel(int x, int y) {
         if (c >= 0)
             return c;
     }
-    return runway_pixel(x);
+    return runway_pixel(x, y);
 }
 
 #define FIELD_MAP_W 15 // metatiles: the whole screen
@@ -528,22 +558,15 @@ static int field_pixel(int x, int y) {
 static Metatile field_metatiles[FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
 static u16 field_cells[FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
 
-// A runway's tiles depend only on their column: made once a column (plus
-// 1, so that 0 means not yet).
-static u16 runway_tiles[SCREEN_W / 8] SERVAL_EWRAM_BSS;
-
 // A tile lies wholly in a lane or wholly on the stage (the lanes' edges
-// fall on tile edges), so the choice is made once a tile.
+// fall on tile edges), so the choice is made once a tile. A lane's tiles,
+// its runway's and its pad's, take its pad's bank.
 static u16 field_se(int tx, int ty) {
     int x = tx * 8, y = ty * 8;
     int l = lane_of(x);
     if (l < 0)
         return MAP_SE(make_stage_tile(x, y), BANK_FIELD, 0);
-    if (ty >= PAD_TILE_ROW && ty < PAD_TILE_ROW + PAD_TILE_ROWS)
-        return MAP_SE(make_tile(field_pixel, x, y), BANK_PAD + l, 0);
-    if (!runway_tiles[tx])
-        runway_tiles[tx] = (u16)(make_tile(field_pixel, x, y) + 1);
-    return MAP_SE(runway_tiles[tx] - 1, BANK_FIELD, 0);
+    return MAP_SE(make_tile(field_pixel, x, y), BANK_PAD + l, 0);
 }
 
 // --- The panel ----------------------------------------------------------------------------
@@ -570,6 +593,56 @@ static int panel_pixel(int x, int y) {
 static Metatile panel_metatiles[FIELD_MAP_W * PANEL_MAP_H] SERVAL_EWRAM_BSS;
 static u16 panel_cells[FIELD_MAP_W * PANEL_MAP_H] SERVAL_EWRAM_BSS;
 
+// --- The cards ------------------------------------------------------------------------------
+
+// A card, in the panel's colours: its rim, a dark bevel inside it, a lit
+// line under its top, its face; the corners rounded (CARD_CORNER pixels),
+// and a shadow CARD_SHADOW pixels down and right of it.
+#define CARD_CORNER 4
+#define CARD_SHADOW 2
+
+static const Card* card_list; // the set being built
+static int card_count;
+
+// How far (x, y) is inside the card: 0 on its rim, -1 outside.
+static int card_depth(const Card* c, int x, int y) {
+    int x0 = c->col * 8, y0 = c->row * 8;
+    int x1 = x0 + c->cols * 8 - 1, y1 = y0 + c->rows * 8 - 1;
+    if (x < x0 || x > x1 || y < y0 || y > y1)
+        return -1;
+    int ex = int_min(x - x0, x1 - x), ey = int_min(y - y0, y1 - y);
+    if (ex >= CARD_CORNER || ey >= CARD_CORNER)
+        return int_min(ex, ey);
+    // In a corner: in half pixels from the corner's circle's middle.
+    int u = 2 * (CARD_CORNER - ex) - 1, v = 2 * (CARD_CORNER - ey) - 1, d = u * u + v * v;
+    for (int depth = 0; depth < 3; depth++) {
+        int r = 2 * (CARD_CORNER - depth);
+        if (d > r * r)
+            return depth - 1;
+    }
+    return 2;
+}
+
+static int card_pixel(int x, int y) {
+    bool shadow = false;
+    for (int i = 0; i < card_count; i++) {
+        const Card* c = &card_list[i];
+        int depth = card_depth(c, x, y);
+        if (depth == 0)
+            return N_BORDER;
+        if (depth == 1)
+            return N_SHADOW;
+        if (depth > 1)
+            return y == c->row * 8 + 2 ? N_TOP : N_BASE;
+        shadow |= card_depth(c, x - CARD_SHADOW, y - CARD_SHADOW) >= 0;
+    }
+    return shadow ? N_SHADOW : 0;
+}
+
+static Metatile card_metatiles[CARD_SETS][FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
+static u16 card_cells[CARD_SETS][FIELD_MAP_W * FIELD_MAP_H] SERVAL_EWRAM_BSS;
+static MapLayer card_layers[CARD_SETS] SERVAL_EWRAM_BSS; // map_load() keeps the layer
+
 static void build_layer(Metatile* metatiles, u16* cells, int h, int (*pixel)(int, int), int bank,
                         bool field) {
     for (int my = 0; my < h; my++) {
@@ -591,7 +664,6 @@ static const Tileset tileset = {
     .palettes = bg_palettes,
     .palette_count = BG_BANKS,
 };
-static u16 tileset_tiles; // bg_tiles_used once built
 
 static const MapLayer field_layer = {
     .width = FIELD_MAP_W,
@@ -652,12 +724,12 @@ static u32* pack(int x0, int y0, int w, int h, u32* out) {
 
 const char big_letters[] = "BEATPWSCD"; // the title's, then the grades' others
 
-// Every frame's tiles: the note 4, the burst 48, the serval 192, the words
-// 224, the digits 40, the marker 1, the big letters 144.
+// Every frame's tiles: the note 4, the burst 64, the serval 192, the words
+// 224, the digits 40, the marker 1, the big letters 144, the medal 64.
 #define BIG_COUNT ((int)sizeof big_letters - 1)
 #define OBJ_TILES                                                                                  \
     (4 + BURST_FRAMES * 16 + DANCE_FRAMES * 64 + WORD_COUNT * WORD_PIECES * 8 + 10 * 4 + 1 +       \
-     BIG_COUNT * 16)
+     BIG_COUNT * 16 + 64)
 static u32 obj_tiles[OBJ_TILES * 8] SERVAL_EWRAM_BSS;
 
 static SpriteAsset sprites[SPRITE_COUNT] SERVAL_EWRAM_BSS;
@@ -711,33 +783,40 @@ static u32* build_note(u32* out) {
     return pack(0, 0, 16, 16, out);
 }
 
-// The burst: a ring opening from the pad, with eight sparks around it,
-// white, then the lane's light colour, then its colour, only the sparks.
+// The burst: a flash over the pad, then a ring opening from it with eight
+// sparks flying out around it, fading from white to the lane's colour.
 static u32* build_burst(u32* out) {
     static const s8 dirs[8][2] = {{16, 0},  {11, 11},   {0, 16},  {-11, 11},
                                   {-16, 0}, {-11, -11}, {0, -16}, {11, -11}};
-    static const u8 radius[BURST_FRAMES] = {6, 10, 13};
-    static const u8 ring[BURST_FRAMES] = {4, 3, 0};
-    static const u8 spark[BURST_FRAMES] = {4, 4, 3};
+    static const u8 radius[BURST_FRAMES] = {7, 10, 13, 15}; // the ring's
+    static const u8 width[BURST_FRAMES] = {2, 2, 1, 0};     // ... its thickness, 0 none
+    static const u8 ring[BURST_FRAMES] = {4, 4, 3, 0};      // ... its colour
+    static const u8 core[BURST_FRAMES] = {3, 0, 0, 0};      // the flash inside it
+    static const u8 spark[BURST_FRAMES] = {4, 4, 3, 2};     // the sparks' middles
+    static const u8 arms[BURST_FRAMES] = {2, 2, 3, 0};      // ... and arms, 0 none
     const u32* first = out;
     for (int f = 0; f < BURST_FRAMES; f++) {
         canvas_clear(32);
         int r = radius[f];
-        if (ring[f]) {
-            for (int y = 0; y < 32; y++)
-                for (int x = 0; x < 32; x++) {
-                    int u = 2 * x - 31, v = 2 * y - 31, d = u * u + v * v;
-                    if (d >= (2 * r - 1) * (2 * r - 1) && d <= (2 * r + 1) * (2 * r + 1))
-                        put(x, y, ring[f]);
-                }
-        }
+        for (int y = 0; y < 32; y++)
+            for (int x = 0; x < 32; x++) {
+                // In half pixels from the frame's middle (between two pixels).
+                int u = 2 * x - 31, v = 2 * y - 31, d = u * u + v * v;
+                int outer = 2 * r + 1, inner = 2 * (r - width[f]) + 1;
+                if (width[f] && d <= outer * outer && d > inner * inner)
+                    put(x, y, ring[f]);
+                else if (core[f] && d <= inner * inner)
+                    put(x, y, core[f]);
+            }
         for (int i = 0; i < 8; i++) {
-            int sx = 16 + dirs[i][0] * (r + 2) / 16, sy = 16 + dirs[i][1] * (r + 2) / 16;
+            int sx = 16 + dirs[i][0] * (r + 3) / 16, sy = 16 + dirs[i][1] * (r + 3) / 16;
             put(sx, sy, spark[f]);
-            put(sx - 1, sy, 2);
-            put(sx + 1, sy, 2);
-            put(sx, sy - 1, 2);
-            put(sx, sy + 1, 2);
+            if (arms[f]) {
+                put(sx - 1, sy, arms[f]);
+                put(sx + 1, sy, arms[f]);
+                put(sx, sy - 1, arms[f]);
+                put(sx, sy + 1, arms[f]);
+            }
         }
         out = pack(0, 0, 32, 32, out);
     }
@@ -918,6 +997,34 @@ int art_big_frame(char c) {
     return 0;
 }
 
+// The grade's medal: a rosette with a scalloped rim, shaded like the
+// letters (colours 2-6, top to foot), around a dark disc of sixteen rays
+// (colours 7 and 8) that the big letter sits on. In the grade's palette.
+#define MEDAL_SCALLOPS 16
+static u32* build_medal(u32* out) {
+    canvas_clear(64);
+    for (int y = 0; y < 64; y++)
+        for (int x = 0; x < 64; x++) {
+            // In 256ths of a pixel from the frame's middle (between two pixels).
+            FIXED u = (2 * x - 63) * 128, v = (2 * y - 63) * 128;
+            FIXED d = fx_length(u, v);
+            u16 a = angle_of(u, v);
+            FIXED edge = FX(27) + fx_cos((u16)(a * MEDAL_SCALLOPS)) * 3 / 2;
+            if (d >= edge)
+                continue;
+            int c;
+            if (d >= edge - FX(1) || (d >= FX(19) && d < FX(20)))
+                c = 1; // the outline, and a line inside the rim
+            else if (d >= FX(20))
+                c = 2 + y * 5 / 64; // the rim, lit from above
+            else
+                c = 7 + ((a >> 12) & 1); // the rays
+            put(x, y, c);
+        }
+    sprite(SPR_MEDAL, SPRITE_64x64, 1, PAL_GOLD, out, 32, 32);
+    return pack(0, 0, 64, 64, out);
+}
+
 // The progress marker: a small diamond.
 static u32* build_marker(u32* out) {
     canvas_clear(8);
@@ -942,6 +1049,7 @@ static void build_sprites(void) {
     out = build_digits(out);
     out = build_marker(out);
     out = build_big(out);
+    out = build_medal(out);
     for (int i = 0; i < SPRITE_COUNT; i++)
         sprite_table[i] = &sprites[i];
 }
@@ -959,7 +1067,6 @@ void art_build(void) {
     build_stage_tables();
     build_layer(field_metatiles, field_cells, FIELD_MAP_H, field_pixel, BANK_FIELD, true);
     build_layer(panel_metatiles, panel_cells, PANEL_MAP_H, panel_pixel, BANK_PANEL, false);
-    tileset_tiles = bg_tiles_used;
     if (bg_tiles_full)
         debug_log("rhythm: the backgrounds need more tiles than BG_TILE_MAX: raise it (art.c)");
     build_sprites();
@@ -967,7 +1074,7 @@ void art_build(void) {
 
 void art_load(void) {
     Tileset t = tileset;
-    t.tile_count = tileset_tiles;
+    t.tile_count = bg_tiles_used;
     tileset_load(&t);
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprite_group);
@@ -984,6 +1091,29 @@ void art_show_field(void) {
 
 void art_show_panel(void) {
     map_load(&panel_layer);
+}
+
+void art_build_cards(int set, const Card* cards, int count) {
+    if (set < 0 || set >= CARD_SETS)
+        return;
+    card_list = cards;
+    card_count = count;
+    build_layer(card_metatiles[set], card_cells[set], FIELD_MAP_H, card_pixel, BANK_PANEL, false);
+    card_layers[set] = (MapLayer){
+        .width = FIELD_MAP_W,
+        .height = FIELD_MAP_H,
+        .cells = card_cells[set],
+        .metatiles = card_metatiles[set],
+        .metatile_count = FIELD_MAP_W * FIELD_MAP_H,
+        .bg = PANEL_BG,
+        .flags = MAP_LAYER_FIXED,
+    };
+    if (bg_tiles_full)
+        debug_log("rhythm: the cards need more tiles than BG_TILE_MAX: raise it (art.c)");
+}
+
+void art_show_cards(int set) {
+    map_load(&card_layers[set]);
 }
 
 void art_pulse(int level) {

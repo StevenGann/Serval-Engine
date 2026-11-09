@@ -4,9 +4,9 @@
 // dances to the title loop, BEAT PAWS hops a letter a beat, and a paw
 // print falls onto a pad on every beat, which flashes as it lands, all
 // timed by music_ticks() as a song is. The song select and the results
-// show the stage dimmed behind their text (art_dim()), so the text reads
-// clearly; the select previews the song chosen, looping, and the serval
-// dances to it.
+// show the stage dimmed (art_dim()) behind cards (art_show_cards()) that
+// hold their text; the select previews the song chosen, looping, and the
+// serval dances to it beside the cards.
 
 #include "screens.h"
 
@@ -114,9 +114,10 @@ bool title_frame(bool input) {
     // Sprites, front to back.
     title_word("BEAT", WORD1_Y, beat, into, PAL_GOLD);
     title_word("PAWS", WORD2_Y, beat, into, PAL_MINT);
-    if (beat >= 0 && into < 9) { // a burst where the paw landed
+    if (beat >= 0 && into < BURST_FRAMES * BURST_FRAME_TIME) { // a burst where the paw landed
         int l = title_lanes[beat & 7];
-        sprite_draw(SPR_BURST, (u8)(into / 3), lane_x[l], PAD_Y, SPRITE_PALETTE(PAL_LANE + l));
+        sprite_draw(SPR_BURST, (u8)(into / BURST_FRAME_TIME), lane_x[l], PAD_Y,
+                    SPRITE_PALETTE(PAL_LANE + l));
     }
     for (int b = beat + 1; b <= beat + TITLE_AHEAD; b++) {
         if (b < 0)
@@ -141,15 +142,31 @@ bool title_frame(bool input) {
 
 // --- The song select ------------------------------------------------------------------------
 
+// Two cards on the left, the songs' and the difficulty's, their text
+// centred in CARD_COL to CARD_COL + CARD_COLS - 1; the serval to their right.
+#define CARD_COL 1
+#define CARD_COLS 23
 #define HEAD_ROW 1
+#define SONG_CARD_ROW 3
 #define SONG_ROW 4 // the songs, two rows apart
-#define SONG_COL 5
+#define SONG_COL 4
+#define LEVEL_CARD_ROW 10
 #define LEVEL_ROW 11
 #define BEST_ROW 13
-#define MESSAGE_ROW 15 // RECORDS ERASED, SAVE FAILED
-#define AUTO_ROW 16
+#define AUTO_ROW 15
+#define MESSAGE_ROW 17 // RECORDS ERASED, SAVE FAILED
 #define HELP_ROW 18
 #define MESSAGE_FRAMES 150
+
+static const Card select_cards[] = {
+    {CARD_COL, SONG_CARD_ROW, CARD_COLS, 7},  // the songs: rows 4, 6 and 8
+    {CARD_COL, LEVEL_CARD_ROW, CARD_COLS, 7}, // the difficulty, the best, FULL COMBO, AUTO
+};
+
+// Text centred over the cards.
+static void print_in_cards(int row, const char* s) {
+    text_print_centered_in(CARD_COL, CARD_COLS, row, s);
+}
 
 #define SELECT_SERVAL_X 216
 #define SELECT_SERVAL_FOOT 140
@@ -170,32 +187,38 @@ static void select_songs(void) {
         const Song* s = &songs[i];
         text_set_style(i == choice.song ? TEXT_HIGHLIGHT : TEXT_NORMAL);
         text_print_line(SONG_COL, SONG_ROW + 2 * i,
-                        text_format("%-7s %3u BPM  %s", s->name, s->tempo, song_length(s)));
+                        text_format("%-6s %3u BPM %s", s->name, s->tempo, song_length(s)));
     }
     text_set_style(TEXT_NORMAL);
 }
 
 static void select_level(void) {
     text_set_style(TEXT_HIGHLIGHT);
-    text_print_centered(LEVEL_ROW, text_format("<  %s  >", difficulty_names[choice.difficulty]));
+    print_in_cards(LEVEL_ROW, text_format("<  %s  >", difficulty_names[choice.difficulty]));
     text_set_style(TEXT_NORMAL);
     const Best* b = &records_get()->best[choice.song][choice.difficulty];
     if (b->grade)
-        text_print_centered(BEST_ROW, text_format("BEST %06u  GRADE %c", b->score, b->grade));
+        print_in_cards(BEST_ROW, text_format("BEST %06u  GRADE %c", b->score, b->grade));
     else
-        text_print_centered(BEST_ROW, "BEST ------  GRADE -");
-    text_print_centered(BEST_ROW + 1, b->full_combo ? "FULL COMBO" : "");
+        print_in_cards(BEST_ROW, "BEST ------  GRADE -");
+    text_set_style(TEXT_HIGHLIGHT);
+    text_clear_area(CARD_COL + 1, BEST_ROW + 1, CARD_COLS - 2, 1);
+    if (b->full_combo)
+        print_in_cards(BEST_ROW + 1, "FULL COMBO");
+    text_set_style(TEXT_NORMAL);
 }
 
 static void select_auto(void) {
     text_set_style(TEXT_HIGHLIGHT);
-    text_print_centered(AUTO_ROW, choice.autoplay ? "AUTO: NO RECORDS" : "");
+    text_clear_area(CARD_COL, AUTO_ROW, CARD_COLS, 1);
+    if (choice.autoplay)
+        print_in_cards(AUTO_ROW, "AUTO: NO RECORDS");
     text_set_style(TEXT_NORMAL);
 }
 
 static void select_message(const char* s, bool warning) {
     text_set_style(warning ? TEXT_WARNING : TEXT_HIGHLIGHT);
-    text_print_centered(MESSAGE_ROW, s);
+    print_in_cards(MESSAGE_ROW, s);
     text_set_style(TEXT_NORMAL);
     message_frames = MESSAGE_FRAMES;
 }
@@ -210,15 +233,18 @@ void select_show(bool save_failed) {
     text_clear();
     art_hide_play();
     art_show_field();
+    art_show_cards(CARDS_SELECT);
     art_dim(DIM);
     text_set_style(TEXT_HIGHLIGHT);
-    text_print_centered(HEAD_ROW, "CHOOSE A SONG");
+    print_in_cards(HEAD_ROW, "CHOOSE A SONG");
     text_set_style(TEXT_NORMAL);
     select_songs();
     select_level();
     select_auto();
+    text_set_style(TEXT_HINT);
     text_print_centered(HELP_ROW, "A PLAY  B BACK  R AUTO");
     text_print_centered(HELP_ROW + 1, "SELECT CALIBRATE");
+    text_set_style(TEXT_NORMAL);
     if (save_failed)
         select_message("SAVE FAILED", true);
     button_repeat_reset();
@@ -231,10 +257,10 @@ SelectAction select_frame(bool input) {
     int into, beat = beat_of(t, &into);
     int bob = beat >= 0 && into < BEAT_TICKS / 4 ? 1 : 0;
     sprite_draw(SPR_NOTE, 0, SONG_COL * 8 - 12, (SONG_ROW + 2 * choice.song) * 8 + 3 - bob,
-                SPRITE_PALETTE(PAL_LANE + choice.song));
+                SPRITE_PALETTE(PAL_LANE + choice.song) | SPRITE_ABOVE_FOREGROUND);
     serval_dance(t, SELECT_SERVAL_X, SELECT_SERVAL_FOOT);
     if (message_frames > 0 && --message_frames == 0)
-        text_print_line(0, MESSAGE_ROW, "");
+        text_clear_area(CARD_COL, MESSAGE_ROW, CARD_COLS, 1);
     frames++;
     if (!input)
         return SELECT_STAY;
@@ -297,12 +323,17 @@ const SelectChoice* select_choice(void) {
 #define RES_TITLE_ROW 1
 #define RES_COL 3 // labels; their values end at RES_END
 #define RES_END 20
-#define GRADE_X 200 // the big grade's middle
-#define GRADE_Y 44
+#define GRADE_X 200 // the big grade's middle, on its medal
+#define GRADE_Y 46
+#define GRADE_LABEL_ROW 10 // "GRADE", under the medal
 #define RES_SERVAL_FOOT 148
 #define BADGE_ROW 14 // NEW BEST, FULL COMBO under it
 #define FAILED_ROW 17
 #define BACK_ROW 19
+
+static const Card results_cards[] = {
+    {1, 3, 20, 10}, // the counts, the combo, the accuracy, the score: rows 4-11
+};
 
 static char grade;
 static bool full_combo;
@@ -320,6 +351,7 @@ void results_show(const SelectChoice* played, const Score* s, u32 fell) {
     text_clear();
     art_hide_play();
     art_show_field();
+    art_show_cards(CARDS_RESULTS);
     art_dim(DIM);
     u16 acc = score_accuracy_permille(s);
     grade = grade_of(acc);
@@ -336,7 +368,9 @@ void results_show(const SelectChoice* played, const Score* s, u32 fell) {
     result_line(8, "MAX COMBO", text_format("%u", s->max_combo));
     result_line(9, "ACCURACY", text_format("%u.%u%%", acc / 10, acc % 10));
     result_line(11, "SCORE", text_format("%06u", s->score));
-    text_print(GRADE_X / 8 - 2, 2, "GRADE");
+    text_set_style(TEXT_HINT);
+    text_print(GRADE_X / 8 - 2, GRADE_LABEL_ROW, "GRADE");
+    text_set_style(TEXT_NORMAL);
 
     text_set_style(TEXT_HIGHLIGHT);
     int row = BADGE_ROW;
@@ -364,8 +398,13 @@ bool results_frame(bool input) {
     // The grade lands from above in its first frames; the serval dances,
     // counting its own beats (the music is over), on a full combo.
     int drop = frames < 12 ? (12 - (int)frames) * 4 : 0;
+    u16 palette = SPRITE_PALETTE(grade == 'S' || grade == 'A' ? PAL_GOLD : PAL_WHITE);
     sprite_draw(SPR_BIG, (u8)art_big_frame(grade), GRADE_X, GRADE_Y - drop,
-                SPRITE_PALETTE(grade == 'S' || grade == 'A' ? PAL_GOLD : PAL_WHITE));
+                palette | SPRITE_ABOVE_FOREGROUND);
+    if (frames >= 12 && frames < 12 + BURST_FRAMES * BURST_FRAME_TIME) // it lands
+        sprite_draw(SPR_BURST, (u8)((frames - 12) / BURST_FRAME_TIME), GRADE_X, GRADE_Y,
+                    SPRITE_PALETTE(PAL_LANE + 1) | SPRITE_ABOVE_FOREGROUND);
+    sprite_draw(SPR_MEDAL, 0, GRADE_X, GRADE_Y, palette | SPRITE_ABOVE_FOREGROUND);
     FIXED beat_ticks = full_combo ? (FIXED)(frames * (BEAT_TICKS * 256 / 30)) : -1;
     serval_dance(beat_ticks, GRADE_X, RES_SERVAL_FOOT);
     frames++;
@@ -374,4 +413,11 @@ bool results_frame(bool input) {
         return true;
     }
     return false;
+}
+
+// --- The cards ------------------------------------------------------------------------------
+
+void screens_build_art(void) {
+    art_build_cards(CARDS_SELECT, select_cards, sizeof select_cards / sizeof select_cards[0]);
+    art_build_cards(CARDS_RESULTS, results_cards, sizeof results_cards / sizeof results_cards[0]);
 }

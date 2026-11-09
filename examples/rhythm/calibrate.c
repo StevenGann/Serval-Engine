@@ -56,6 +56,7 @@ enum { TAPPING, SETTLING, ADJUSTING };
 #define SERVAL_X 220
 #define SERVAL_FOOT 150
 #define PAW_FRAMES 8
+#define CALIBRATE_DIM 192 // the stage behind the text, nearly dark
 
 static const u16 tap_buttons = BUTTON_LEFT | BUTTON_RIGHT | BUTTON_A;
 
@@ -117,7 +118,8 @@ void calibrate_show(void) {
     cal.paw = 0;
     text_clear();
     art_hide_play();
-    art_show_panel();
+    art_show_play();
+    art_dim(CALIBRATE_DIM);
     text_set_style(TEXT_HIGHLIGHT);
     text_print_centered(TITLE_ROW, "CALIBRATION");
     text_set_style(TEXT_NORMAL);

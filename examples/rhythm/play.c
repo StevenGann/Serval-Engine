@@ -70,8 +70,7 @@ static const u16 scroll[DIFF_COUNT] = {384, 512};
 #define FLASH_HIT (FLASH_LEVELS - 1) // a pad's flash on a hit; a stray press, less
 #define FLASH_PRESS 3
 
-#define BURST_TIME 9 // frames of a burst: each of its frames three
-static const u8 burst_frame[BURST_TIME] = {0, 0, 0, 1, 1, 1, 2, 2, 2};
+#define BURST_TIME (BURST_FRAMES * BURST_FRAME_TIME) // frames of a burst
 
 // The beat's pulse by the tick in the beat: the peak on the beat, gone
 // before the middle of it.
@@ -86,6 +85,8 @@ enum { MENU_CONTINUE, MENU_RETRY, MENU_QUIT, MENU_ITEMS };
 static const char* const menu_items[MENU_ITEMS] = {"CONTINUE", "RETRY", "QUIT"};
 #define MENU_ROW 6 // "PAUSED", the items two rows under it
 #define MENU_COL 11
+
+#define PAUSE_DIM 160 // the stage behind the pause menu: 160/256 of the way to the backdrop
 
 #define READOUT_ROW 18 // SELECT's readout: the bottom two rows
 #define READOUT_FRAMES 16
@@ -321,8 +322,10 @@ static void draw(void) {
         beat = (int)(st.heard / (BEAT_TICKS << 8));
         into = (int)((st.heard - beat * (BEAT_TICKS << 8)) >> 8);
     }
-    set_pulse(beat >= 0 && st.heard < st.end ? pulse_curve[into] : 0);
-    set_flashes();
+    if (!st.paused) { // paused, the stage is dimmed behind the menu
+        set_pulse(beat >= 0 && st.heard < st.end ? pulse_curve[into] : 0);
+        set_flashes();
+    }
     u32 score = play_score(&play)->score;
     if (score != st.shown_score)
         text_print(23, 0, text_format("%06u", st.shown_score = score));
@@ -333,8 +336,8 @@ static void draw(void) {
     }
     for (int l = 0; l < LANES; l++)
         if (st.burst[l])
-            sprite_draw(SPR_BURST, burst_frame[BURST_TIME - st.burst[l]], lane_x[l], PAD_Y,
-                        SPRITE_PALETTE(PAL_LANE + l));
+            sprite_draw(SPR_BURST, (u8)((BURST_TIME - st.burst[l]) / BURST_FRAME_TIME), lane_x[l],
+                        PAD_Y, SPRITE_PALETTE(PAL_LANE + l));
     int marker_x = progress_x();
     draw_notes(marker_x);
     draw_serval(beat, into);
@@ -424,7 +427,15 @@ static void pause_song(void) {
     st.menu = MENU_CONTINUE;
     st.combo_text = false; // the menu covers its row: printed again after
     sound_play(SND_PAUSE);
+    art_dim(PAUSE_DIM);
     menu_print();
+}
+
+// Back from the pause: the stage's colours written again at the next draw.
+static void undim(void) {
+    st.shown_pulse = 0xFF;
+    for (int l = 0; l < LANES; l++)
+        st.shown_flash[l] = 0xFF;
 }
 
 static void start_song(void);
@@ -443,6 +454,7 @@ static PlayResult pause_frame(void) {
     if (choice == MENU_CONTINUE) {
         text_clear_area(0, MENU_ROW, TEXT_COLS, MENU_ITEMS + 2);
         st.paused = false;
+        undim();
         music_resume();
         sound_play(SND_SELECT);
     } else if (choice == MENU_RETRY) {
