@@ -94,8 +94,8 @@ static void mashing(void) {
             } else {
                 CHECK(after == before + 1);
                 hits++;
-                // Exactly one note of this lane lies in the window, and it
-                // is a note nobody judged yet.
+                // A note of this lane nobody judged yet lies in the window:
+                // mark the earliest such note as taken.
                 unsigned found = 0;
                 for (unsigned i = 0; i < 400; i++)
                     if (notes[i].lane == l && T(notes[i].tick) - GOOD <= now &&
@@ -225,12 +225,18 @@ static void ms_to_ticks_values(void) {
     // ms * 15768 * 256 / (1000 * samples), to the nearest.
     CHECK(ms_to_ticks(35, 314) == 450);  // 449.94
     CHECK(ms_to_ticks(80, 314) == 1028); // 1028.44
-    CHECK(ms_to_ticks(35, 188) == 751);  // 751.50: halves round up
+    CHECK(ms_to_ticks(35, 188) == 751);  // 751.496
     CHECK(ms_to_ticks(80, 188) == 1718); // 1717.71
     CHECK(ms_to_ticks(0, 188) == 0);
     CHECK(ms_to_ticks(-35, 314) == -450);
     CHECK(ms_to_ticks(-80, 188) == -1718);
     CHECK(ms_to_ticks(1000, 314) == 12855); // 12855.1
+    // Exact halves round away from zero: 125 ms at 512 samples a tick is
+    // 125 * 15768 * 256 / 512000 = 985.5 ticks of 1/256 exactly.
+    CHECK(ms_to_ticks(125, 512) == 986);
+    CHECK(ms_to_ticks(-125, 512) == -986);
+    CHECK(ms_to_ticks(375, 512) == 2957); // 2956.5
+    CHECK(ms_to_ticks(-375, 512) == -2957);
 }
 
 static void calibration_extremes(void) {
@@ -275,6 +281,23 @@ static void play_start_resets(void) {
     CHECK(play_score(&play)->score == 300 + 305);
 }
 
+static void lanes_past_three(void) {
+    // A note in lane 4 or 7 is skipped, not folded into lane 0 or 3: no
+    // press judges it, it counts nowhere, and the chart still ends.
+    static const RhythmNote notes[] = {{10, 0}, {20, 4}, {30, 3}, {40, 7}};
+    start(notes, 4);
+    CHECK(!play_done(&play));
+    CHECK(play_press(&play, 0, T(20)) == JUDGE_NONE); // not lane 4 & 3
+    CHECK(play_press(&play, 3, T(40)) == JUDGE_NONE); // not lane 7 & 3
+    CHECK(play_press(&play, 4, T(20)) == JUDGE_NONE);
+    CHECK(play_press(&play, 0, T(10)) == JUDGE_PERFECT);
+    CHECK(play_press(&play, 3, T(30)) == JUDGE_PERFECT);
+    CHECK(play_done(&play));
+    CHECK(play_expire(&play, T(1000)) == 0);
+    const Score* s = play_score(&play);
+    CHECK(s->perfect == 2 && s->good == 0 && s->miss == 0 && s->combo == 2);
+}
+
 static void play_done_when_all_judged(void) {
     static const RhythmNote notes[] = {{10, 0}, {20, 1}};
     start(notes, 2);
@@ -292,4 +315,5 @@ TEST_SUITE(rhythm_tests, "rhythm", {"judge_windows", judge_windows},
            {"expire_counts", expire_counts}, {"scoring", scoring}, {"grades", grades},
            {"ms_to_ticks_values", ms_to_ticks_values},
            {"calibration_extremes", calibration_extremes}, {"play_start_resets", play_start_resets},
+           {"lanes_past_three", lanes_past_three},
            {"play_done_when_all_judged", play_done_when_all_judged});

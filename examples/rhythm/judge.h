@@ -33,7 +33,9 @@ typedef struct {
 
 // Starts a chart: nothing judged, score zero. The windows are half-widths in
 // ticks (ms_to_ticks()): a press within +-perfect_ticks of a note is PERFECT,
-// within +-good_ticks GOOD (both inclusive).
+// within +-good_ticks GOOD (both inclusive). A note in a lane past 3, which
+// no press can reach (play_press()), is skipped: judged at once, in no count
+// of the score.
 void play_start(Play* p, const RhythmNote* notes, u16 count, FIXED perfect_ticks, FIXED good_ticks);
 
 // A press in a lane at a time: judges the earliest unjudged note of that lane

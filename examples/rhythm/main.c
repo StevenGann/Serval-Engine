@@ -15,6 +15,7 @@
 
 #include <serval/serval.h>
 
+#include "judge.h"
 #include "rhythm_bank.h"
 #include "rhythm_charts.h"
 
@@ -37,6 +38,13 @@ static const Track tracks[] = {
     {"CALIBRATE", MOD_RHYTHM_CALIBRATE, true, NULL, NULL, 0, 0},
 };
 #define TRACK_COUNT (int)(sizeof tracks / sizeof tracks[0])
+
+// Every chart fits a Play (judge.h), which would ignore notes past its limit.
+#define FITS(n) ((n) <= PLAY_MAX_NOTES)
+_Static_assert(FITS(RHYTHM_CALM_EASY_COUNT) && FITS(RHYTHM_CALM_HARD_COUNT) &&
+                   FITS(RHYTHM_STRIDE_EASY_COUNT) && FITS(RHYTHM_STRIDE_HARD_COUNT) &&
+                   FITS(RHYTHM_RUSH_EASY_COUNT) && FITS(RHYTHM_RUSH_HARD_COUNT),
+               "a chart holds more notes than PLAY_MAX_NOTES: raise it");
 
 static void show(int t) {
     const Track* k = &tracks[t];

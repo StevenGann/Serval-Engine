@@ -70,8 +70,16 @@ void play_start(Play* p, const RhythmNote* notes, u16 count, FIXED perfect_ticks
     for (u8 l = 0; l < 4; l++)
         p->cursor[l] = last[l] = NONE;
     for (u16 i = 0; i < count; i++) {
-        u8 l = notes[i].lane & 3;
+        u8 l = notes[i].lane;
         p->next[i] = NONE;
+        if (l > 3) {
+            // A lane play_press() has no press for: the note is skipped,
+            // set aside as judged at once, in no count of the score, so
+            // the chart still ends (play_done()).
+            p->judged[i >> 3] |= (u8)(1u << (i & 7));
+            p->judged_count++;
+            continue;
+        }
         if (last[l] == NONE)
             p->cursor[l] = i;
         else
