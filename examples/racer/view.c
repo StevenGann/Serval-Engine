@@ -30,9 +30,10 @@
 // few frames, from the one shown toward the one wanted: the road's colours
 // come from the stage with the stripes every frame, and the sky's bank, the
 // backdrop and the sprites' palettes are written only when the stage
-// changes. A bump shakes the picture by scrolling both layers down a line
-// or two (the raster table's shifts stay put: a line then shows a road a
-// little narrower than its own, which keeps it clear of the edges).
+// changes. A bump, or a crash's first frames, shakes the picture by
+// scrolling both layers down a line or two (the raster table's shifts stay
+// put: a line then shows a road a little narrower than its own, which keeps
+// it clear of the edges).
 
 #include "view.h"
 
@@ -110,9 +111,12 @@ void view_draw(const RoadFrame* f, int shake) {
     map_set_scroll(SKY_BG, sky_x >> 8, -shake);
 }
 
-int view_shake(int bump_timer) {
+int view_shake(const Race* r) {
     // Down hard, back, down again, settling: indexed by frames left.
     static const u8 shake[CAR_BUMP_FRAMES + 1] = {0, 0, 0, 0, 1, 0, 1, 0, 1,
                                                   1, 0, 1, 2, 1, 0, 2, 2};
-    return bump_timer > 0 && bump_timer <= CAR_BUMP_FRAMES ? shake[bump_timer] : 0;
+    int left = r->bump_timer;
+    if (r->car_state == CAR_CRASHED) // a crash's first frames jolt as a bump does
+        left = r->crash_timer - (CAR_CRASH_FRAMES - CAR_BUMP_FRAMES);
+    return left > 0 && left <= CAR_BUMP_FRAMES ? shake[left] : 0;
 }

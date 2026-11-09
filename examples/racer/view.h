@@ -28,8 +28,8 @@ void view_step(const RoadFrame* f, FIXED speed, int stage);
 // every frame, paused or not.
 void view_draw(const RoadFrame* f, int shake);
 
-// The shake of the picture (0 to SHAKE_MAX lines) for a bump's timer
-// (Race.bump_timer: CAR_BUMP_FRAMES just after a bump, counting down).
-int view_shake(int bump_timer);
+// The shake of the picture (0 to SHAKE_MAX lines): for CAR_BUMP_FRAMES
+// after a bump (Race.bump_timer) or a crash (Race.crash_timer).
+int view_shake(const Race* r);
 
 #endif // RACER_VIEW_H

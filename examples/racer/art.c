@@ -905,9 +905,10 @@ static u32* pack(const u8* pixels, int pitch, int x0, int y0, int w, int h, u32*
 _Static_assert(ROAD_SIZE_CLASSES == 4, "OBJECT_TILES counts four size classes");
 
 // Every frame's tiles: the jeep 160, the logo 160, the countdown 80 (three
-// digits of 32x32 and GO in 64x32), the objects 398. art_build() counts what
-// it packs into obj_tiles_used, which stays at this.
+// digits of 32x32 and GO in 64x32), the dust 8, the objects 398: 806.
+// art_build() counts what it packs into obj_tiles_used, which stays at this.
 #define JEEP_TILES (JEEP_FRAMES * JEEP_W * JEEP_H / 64)
+#define DUST_TILES (DUST_FRAMES * DUST_SIDE * DUST_SIDE / 64)
 #define LETTER_TILES (LOGO_FRAMES * 64 * 32 / 64 + 3 * 32 * 32 / 64 + 64 * 32 / 64)
 #define OBJECTS_TILES                                                                              \
     (OBJECT_TILES(ACACIA_W, ACACIA_H) + OBJECT_TILES(MOUND_W, MOUND_H) +                           \
@@ -916,7 +917,7 @@ _Static_assert(ROAD_SIZE_CLASSES == 4, "OBJECT_TILES counts four size classes");
      OBJECT_TILES(BANNER_W, BANNER_H) + OBJECT_TILES(JEEP_W, JEEP_H) +                             \
      OBJECT_TILES(TRUCK_W, TRUCK_H))
 #define OBJ_TILE_MAX 832
-_Static_assert(JEEP_TILES + LETTER_TILES + OBJECTS_TILES <= OBJ_TILE_MAX,
+_Static_assert(JEEP_TILES + LETTER_TILES + DUST_TILES + OBJECTS_TILES <= OBJ_TILE_MAX,
                "the sprites' art outgrows obj_tiles: raise OBJ_TILE_MAX (1,024 at most)");
 _Static_assert(OBJ_TILE_MAX <= 1024, "sprite tiles: 1,024 at most (the hardware's 32 KB)");
 static u32 obj_tiles[OBJ_TILE_MAX * 8] SERVAL_EWRAM_BSS;
@@ -1105,6 +1106,39 @@ static u32* build_objects(u32* out) {
     return build_object(OBJ_TRUCK, TRUCK_W, TRUCK_H, PAL_TRAFFIC, out);
 }
 
+// The dust: three overlapping balls, lit from the top left. Thick, solid
+// pale earth; thin, every other pixel, a little bigger.
+static void draw_dust(int frame) {
+    static const s8 balls[3][2] = {{5, 10}, {10, 9}, {8, 6}};
+    int r = frame == DUST_THICK ? 4 : 5;
+    for (int y = 0; y < DUST_SIDE; y++) {
+        for (int x = 0; x < DUST_SIDE; x++) {
+            int in = 0;
+            for (int b = 0; b < 3; b++) {
+                int dx = x - balls[b][0], dy = y - balls[b][1];
+                in |= dx * dx + dy * dy <= r * r;
+            }
+            if (!in)
+                continue;
+            if (frame == DUST_THICK) // C cream, H and E: pale earth, light to dark
+                put(x, y, x + y < 11 ? 13 : x + y < 18 ? 9 : 8);
+            else if ((x + y) & 1)
+                put(x, y, x + y < 16 ? 13 : 9);
+        }
+    }
+}
+
+static u32* build_dust(u32* out) {
+    const u32* first = out;
+    for (int f = DUST_THICK; f < DUST_FRAMES; f++) {
+        canvas_clear();
+        draw_dust(f);
+        out = pack(canvas, CANVAS_W, 0, 0, DUST_SIDE, DUST_SIDE, out);
+    }
+    sprite(SPR_DUST, DUST_SIDE, DUST_SIDE, DUST_FRAMES, PAL_SCENERY, first);
+    return out;
+}
+
 // Text in the big letters onto the canvas, its top-left at (x0, y0): each
 // letter yellow at the top to red at its foot.
 static void letters(const char* s, int x0, int y0) {
@@ -1173,6 +1207,7 @@ static void build_sprites(void) {
     u32* out = obj_tiles;
     out = build_jeep(out);
     out = build_letters(out);
+    out = build_dust(out);
     out = build_objects(out);
     obj_tiles_used = (u16)((out - obj_tiles) / 8);
     for (int i = 0; i < SPRITE_COUNT; i++)

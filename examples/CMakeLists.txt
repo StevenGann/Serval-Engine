@@ -101,7 +101,7 @@ target_link_libraries(raycaster PRIVATE serval_warnings)
 
 serval_add_rom(racer SOURCES racer/main.c racer/game.c racer/screens.c racer/hud.c
                racer/records.c racer/view.c racer/objects.c racer/art.c racer/road.c
-               racer/track.c
+               racer/track.c racer/sound.c
                TITLE "SAVANNA RUN" GAME_CODE "SVRR")
 target_link_libraries(racer PRIVATE serval_warnings)
 

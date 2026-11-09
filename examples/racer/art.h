@@ -89,6 +89,7 @@ enum {
     SPR_LOGO,  // 64x32: LOGO_FRAMES pieces of "SAVANNA RUN"
     SPR_DIGIT, // 32x32: "1", "2", "3" (frame n - 1 is n)
     SPR_GO,    // 64x32: "GO"
+    SPR_DUST,  // 16x16: a puff of dust, DUST_THICK then DUST_THIN
     SPR_OBJECTS,
     SPRITE_COUNT = SPR_OBJECTS + OBJECTS * ROAD_SIZE_CLASSES,
 };
@@ -110,6 +111,10 @@ extern ObjectBox object_box[OBJECTS][ROAD_SIZE_CLASSES];
 enum { JEEP_STRAIGHT, JEEP_LEFT, JEEP_RIGHT, JEEP_FRONT, JEEP_SIDE, JEEP_FRAMES };
 #define JEEP_W 64
 #define JEEP_H 32
+
+// The dust's frames: a fresh puff, and one thinning out.
+enum { DUST_THICK, DUST_THIN, DUST_FRAMES };
+#define DUST_SIDE 16
 
 // The logo: SAVANNA in three 64x32 pieces side by side, RUN in two under
 // them; LOGO_W wide in all, drawn by screens.c.

@@ -5,13 +5,17 @@
 // the circuit, under the logo; START fades to a race. A race is the Race of
 // track.c, one race_step() a frame with the buttons held, and what it
 // reports as events comes to one place, events(), with the game's own
-// (the countdown's numbers, pausing, a record): the messages and the end of
-// the race are made there. Everything else on screen follows the race's
-// state by itself: the jeep's spin after a crash, the shake after a bump,
-// the time of day by the lap. START pauses: nothing steps, the same
-// picture is drawn again every frame. When the race is over, FINISH or
-// TIME UP holds over the stopped picture, then the results come up over it;
-// the records are taken (and saved, if one fell) as they do. A goes back to
+// (the countdown's numbers, pausing, a record): the messages, the sounds
+// (sound.c) and the end of the race are made there. Everything else on
+// screen follows the race's state by itself: the jeep's spin after a crash,
+// the shake after a bump or a crash, the dust off the road, the time of day
+// by the lap. START pauses: nothing steps, the same picture is drawn again
+// every frame, and the music and the drone stop until it goes on. Each
+// screen starts its own sound: the title its jingle once; a race the
+// engine idling and the countdown's beeps, then the race tune from GO.
+// When the race is over, FINISH or TIME UP holds over the stopped picture
+// with its fanfare or phrase, then the results come up over it; the
+// records are taken (and saved, if one fell) as they do. A goes back to
 // the title.
 //
 // Everything is loaded once at boot, under a black screen, so changing
@@ -25,6 +29,7 @@
 #include "records.h"
 #include "road.h"
 #include "screens.h"
+#include "sound.h"
 #include "track.h"
 #include "view.h"
 
@@ -96,21 +101,46 @@ static void show_ending(void) {
 }
 
 // Everything that happens, in one place: race_step()'s RACE_EV_* bits and
-// the game's EV_* ones. RACE_EV_GO, RACE_EV_CRASH, RACE_EV_BUMP,
-// RACE_EV_OFFROAD, RACE_EV_SKID and the game's EV_COUNT, EV_PAUSE,
-// EV_RESUME, EV_RECORD and EV_ERASED need nothing here yet: the pictures
-// follow the race by themselves (GO and the numbers from the countdown, the
-// spin, the shake, the jolt, PAUSED, the results' marks).
+// the game's EV_* ones. The messages, the sounds and the end of the race
+// are made here; the pictures follow the race by themselves (GO and the
+// numbers from the countdown, the spin, the shake, the jolt, the dust,
+// PAUSED, the results' marks). While racing, the drone follows the speed
+// and the held events (a skid, off the road) sound while they last.
 static void events(u32 ev) {
+    if (ev & EV_COUNT)
+        sound_play(SND_COUNT);
+    if (ev & RACE_EV_GO) {
+        sound_play(SND_GO);
+        sound_tune(TUNE_RACE);
+    }
     if ((ev & RACE_EV_LAP) && !(ev & RACE_EV_FINISH)) {
         const char* lap =
             race.lap == RACE_LAPS - 1 ? "FINAL LAP" : text_format("LAP %d", race.lap + 1);
         hud_message(lap, text_format("+%u", race.last_bonus / 60));
+        sound_play(SND_LAP);
     } else if (ev & RACE_EV_CHECKPOINT) {
         hud_message(text_format("+%u", race.last_bonus / 60), NULL);
+        sound_play(SND_CHECKPOINT);
     }
-    if (ev & (RACE_EV_FINISH | RACE_EV_TIME_UP))
+    if (ev & RACE_EV_BUMP)
+        sound_play(SND_BUMP);
+    if (ev & RACE_EV_CRASH) {
+        sound_play(SND_CRASH);
+        sound_play(SND_CRASH_TONE);
+    }
+    if (ev & (EV_PAUSE | EV_RESUME))
+        sound_pause(ev & EV_PAUSE);
+    if (ev & EV_RECORD)
+        sound_play(SND_RECORD);
+    if (ev & EV_ERASED)
+        sound_play(SND_ERASED);
+    if (state == RACE)
+        sound_drive(&race, ev);
+    if (ev & (RACE_EV_FINISH | RACE_EV_TIME_UP)) {
+        sound_drone_off();
+        sound_tune(race.finished ? TUNE_FINISH : TUNE_TIME_UP);
         show_ending();
+    }
 }
 
 // --- The title ------------------------------------------------------------------------
@@ -124,6 +154,8 @@ static void show_title(void) {
     view_reset(TIME_STAGE(TIME_SUNSET));
     hud_readout_off();
     title_show();
+    sound_quiet();
+    sound_tune(TUNE_TITLE);
 }
 
 static void title_frame(void) {
@@ -162,6 +194,8 @@ static void start_race(void) {
     shown_count = 0;
     view_reset(TIME_STAGE(TIME_AFTERNOON)); // every race starts in the afternoon
     hud_reset();
+    dust_reset();
+    sound_quiet();
 }
 
 static void show_results(void) {
@@ -184,11 +218,13 @@ static void draw_race(bool running) {
         int lap = int_min(race.lap, TIMES_OF_DAY - 1); // lap 1 afternoon, 2 sunset, 3 dusk
         view_step(&road, running ? race.speed : 0, TIME_STAGE(lap));
     }
-    int shake = state == RACE || state == PAUSED ? view_shake(race.bump_timer) : 0;
+    int shake = state == RACE || state == PAUSED ? view_shake(&race) : 0;
     view_draw(&road, shake);
     if (state != RESULTS)
         hud_draw(&race, since_go, state == PAUSED);
     jeep_draw_race(&race, &road, shake);
+    if (state != RESULTS)
+        dust_draw(&road, shake);
     if (state != RESULTS)
         objects_draw(&savanna, &road, race.distance, race.traffic, race.traffic_count, shake);
     hud_readout_draw();
@@ -204,6 +240,7 @@ static void race_frame(void) {
         hud_readout_toggle();
     if (state == RACE) {
         ev |= race_step(&race, held_buttons());
+        dust_step(&race, ev);
         if (!race.countdown)
             since_go++;
         int count = race.countdown ? (race.countdown + 59) / 60 : 0;
@@ -247,6 +284,7 @@ void game_init(void) {
     text_set_style(TEXT_WARNING);
     text_set_style(TEXT_NORMAL);
     records_load();
+    sound_init();
     show_title();
 }
 

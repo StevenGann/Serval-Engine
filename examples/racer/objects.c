@@ -35,6 +35,18 @@
 // The jeep's wheels stand on this line, a few above the screen's bottom.
 #define JEEP_FOOT (SCREEN_H - 3)
 
+// The dust: a puff lives DUST_LIFE frames, and one is thrown every
+// DUST_OFFROAD frames off the road (every DUST_SKID frames in a skid), from
+// each rear wheel in turn, WHEEL_X pixels out from the jeep's middle. It
+// grows from half its size to full, in sixteenths (so it shares the
+// objects' matrices), drifting out a pixel a frame and rising a pixel every
+// other frame.
+#define DUST_MAX 6
+#define DUST_LIFE 16
+#define DUST_OFFROAD 3
+#define DUST_SKID 5
+#define WHEEL_X 24
+
 // A crash: the jeep spins, slowing, then is gone for its last CRASH_GONE
 // frames, and comes back at the road's middle. After e frames it has turned
 // e * (SPIN_SPAN - e) >> SPIN_SHIFT quarter turns: three turns in all.
@@ -190,6 +202,59 @@ void jeep_draw_race(const Race* r, const RoadFrame* f, int shake) {
     if (r->car_state == CAR_OFFROAD && r->speed > 0)
         y += jolt[(r->distance >> 10) & 3];
     sprite_draw(SPR_JEEP, (u8)frame, f->car_x, y, flags);
+}
+
+typedef struct {
+    u8 age;  // frames since thrown; DUST_LIFE: gone
+    s8 side; // -1 the left wheel's, 1 the right's
+} Puff;
+
+static Puff puffs[DUST_MAX];
+static u8 next_puff; // the slot the next puff takes (the oldest)
+static u8 dust_wait; // frames until the next puff
+static s8 dust_side; // the wheel that throws it
+
+void dust_reset(void) {
+    for (int i = 0; i < DUST_MAX; i++)
+        puffs[i].age = DUST_LIFE;
+    next_puff = 0;
+    dust_wait = 0;
+    dust_side = -1;
+}
+
+void dust_step(const Race* r, u32 ev) {
+    for (int i = 0; i < DUST_MAX; i++)
+        if (puffs[i].age < DUST_LIFE)
+            puffs[i].age++;
+    int every = r->speed > 0 && (ev & RACE_EV_OFFROAD) ? DUST_OFFROAD
+                : ev & RACE_EV_SKID                    ? DUST_SKID
+                                                       : 0;
+    if (!every) {
+        dust_wait = 0; // the next dust starts at once
+        return;
+    }
+    if (dust_wait == 0) {
+        puffs[next_puff] = (Puff){.age = 0, .side = dust_side};
+        if (++next_puff == DUST_MAX)
+            next_puff = 0;
+        dust_side = (s8)-dust_side;
+        dust_wait = (u8)every;
+    }
+    dust_wait--;
+}
+
+void dust_draw(const RoadFrame* f, int shake) {
+    for (int i = 0; i < DUST_MAX; i++) {
+        const Puff* p = &puffs[i];
+        if (p->age >= DUST_LIFE)
+            continue;
+        int rise = p->age >> 1;
+        FIXED scale = (FIXED)(8 + rise) << (FX_SHIFT - 4);
+        int x = f->car_x + p->side * (WHEEL_X + p->age) - DUST_SIDE / 2;
+        int y = JEEP_FOOT + shake - rise - DUST_SIDE / 2 - 2;
+        int frame = p->age < DUST_LIFE / 2 ? DUST_THICK : DUST_THIN;
+        sprite_draw_ex(SPR_DUST, (u8)frame, x, y, 0, scale, scale, 0);
+    }
 }
 
 void jeep_draw_cruise(const RoadFrame* f) {

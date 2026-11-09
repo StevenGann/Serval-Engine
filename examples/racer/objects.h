@@ -14,6 +14,17 @@
 // objects: the first drawn is in front.
 void jeep_draw_race(const Race* r, const RoadFrame* f, int shake);
 
+// The dust behind the jeep's wheels: puffs thrown out while it drives off
+// the road or skids, which grow, rise and drift outward as they thin.
+// dust_reset() clears them for a new race; dust_step() is a frame of
+// racing (`ev`: race_step()'s events, for RACE_EV_OFFROAD and RACE_EV_SKID);
+// dust_draw() draws them as they are, beside the jeep drawn by
+// jeep_draw_race() on f (call it just after: the jeep is in front of them,
+// they are in front of everything else).
+void dust_reset(void);
+void dust_step(const Race* r, u32 ev);
+void dust_draw(const RoadFrame* f, int shake);
+
 // The jeep cruising on its own (the title): leaning into the curves.
 void jeep_draw_cruise(const RoadFrame* f);
 
