@@ -626,8 +626,9 @@ LEFT_LANES = {"K": 0, "T": 0, "S": 1, "C": 1, "R": 1, "t": 1}
 COUNT_IN = "X...X...X...X..."
 # The songs' instruments are balanced against each other at full volume, then
 # all turned down by this, so that four channels at their loudest don't clip
-# the mixer's 8-bit sum.
-MIX_GAIN = 0.7
+# the mixer's 8-bit sum, and leave room for the game's PSG blips on top (at
+# 0.7 the music peaked at -2.5 dBFS on the web, -0.1 with the blips).
+MIX_GAIN = 0.56
 
 
 class Song:

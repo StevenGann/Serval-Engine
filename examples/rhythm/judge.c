@@ -88,6 +88,11 @@ void play_start(Play* p, const RhythmNote* notes, u16 count, FIXED perfect_ticks
     }
 }
 
+void play_set_windows(Play* p, FIXED perfect_ticks, FIXED good_ticks) {
+    p->perfect = perfect_ticks;
+    p->good = good_ticks;
+}
+
 Judgement play_press(Play* p, u8 lane, FIXED press_ticks) {
     if (lane > 3)
         return JUDGE_NONE;
@@ -126,6 +131,10 @@ u16 play_expire(Play* p, FIXED now_ticks) {
 
 bool play_done(const Play* p) {
     return p->judged_count == p->count;
+}
+
+bool play_note_judged(const Play* p, u16 i) {
+    return i >= p->count || is_judged(p, i);
 }
 
 const Score* play_score(const Play* p) {

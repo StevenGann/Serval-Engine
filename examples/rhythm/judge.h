@@ -38,6 +38,11 @@ typedef struct {
 // of the score.
 void play_start(Play* p, const RhythmNote* notes, u16 count, FIXED perfect_ticks, FIXED good_ticks);
 
+// New windows for the notes still to judge, the score and the judged notes
+// kept: for a tick's length that changes in the middle of a chart (the
+// windows are milliseconds, the chart ticks).
+void play_set_windows(Play* p, FIXED perfect_ticks, FIXED good_ticks);
+
 // A press in a lane at a time: judges the earliest unjudged note of that lane
 // within the good window and returns PERFECT or GOOD, or returns JUDGE_NONE
 // and changes nothing when there is none (an early or stray press costs
@@ -50,6 +55,10 @@ u16 play_expire(Play* p, FIXED now_ticks);
 
 // True when every note is judged.
 bool play_done(const Play* p);
+
+// True when note i of the chart is judged (or skipped), and so no longer
+// to be drawn; true for i past the chart too.
+bool play_note_judged(const Play* p, u16 i);
 
 const Score* play_score(const Play* p);
 

@@ -298,6 +298,39 @@ static void lanes_past_three(void) {
     CHECK(s->perfect == 2 && s->good == 0 && s->miss == 0 && s->combo == 2);
 }
 
+static void windows_change(void) {
+    // A tick's length changing mid-chart: wider windows from then on, the
+    // judged notes and the score kept.
+    static const RhythmNote notes[] = {{10, 0}, {20, 0}, {30, 1}};
+    start(notes, 3);
+    CHECK(play_press(&play, 0, T(10)) == JUDGE_PERFECT);
+    CHECK(play_press(&play, 0, T(20) + PERFECT + 1) == JUDGE_GOOD);
+    play_set_windows(&play, 2 * PERFECT, 2 * GOOD);
+    CHECK(play_press(&play, 1, T(30) + PERFECT + 1) == JUDGE_PERFECT);
+    CHECK(play_done(&play));
+    CHECK(play_score(&play)->perfect == 2 && play_score(&play)->good == 1);
+    CHECK(play_score(&play)->combo == 3);
+    // ... and narrower: a press now outside the good window finds nothing.
+    start(notes, 3);
+    play_set_windows(&play, PERFECT / 2, GOOD / 2);
+    CHECK(play_press(&play, 0, T(10) + GOOD / 2 + 1) == JUDGE_NONE);
+    CHECK(play_expire(&play, T(10) + GOOD / 2 + 1) == 1);
+}
+
+static void note_judged(void) {
+    static const RhythmNote notes[] = {{10, 0}, {20, 1}, {30, 5}, {40, 2}};
+    start(notes, 4);
+    CHECK(!play_note_judged(&play, 0) && !play_note_judged(&play, 1));
+    CHECK(play_note_judged(&play, 2)); // lane 5: skipped
+    CHECK(!play_note_judged(&play, 3));
+    CHECK(play_note_judged(&play, 4)); // past the chart
+    CHECK(play_press(&play, 1, T(20)) == JUDGE_PERFECT);
+    CHECK(!play_note_judged(&play, 0) && play_note_judged(&play, 1));
+    CHECK(play_expire(&play, T(20)) == 1); // note 0, missed
+    CHECK(play_note_judged(&play, 0));
+    CHECK(!play_note_judged(&play, 3));
+}
+
 static void play_done_when_all_judged(void) {
     static const RhythmNote notes[] = {{10, 0}, {20, 1}};
     start(notes, 2);
@@ -315,5 +348,5 @@ TEST_SUITE(rhythm_tests, "rhythm", {"judge_windows", judge_windows},
            {"expire_counts", expire_counts}, {"scoring", scoring}, {"grades", grades},
            {"ms_to_ticks_values", ms_to_ticks_values},
            {"calibration_extremes", calibration_extremes}, {"play_start_resets", play_start_resets},
-           {"lanes_past_three", lanes_past_three},
-           {"play_done_when_all_judged", play_done_when_all_judged});
+           {"lanes_past_three", lanes_past_three}, {"windows_change", windows_change},
+           {"note_judged", note_judged}, {"play_done_when_all_judged", play_done_when_all_judged});
