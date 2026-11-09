@@ -375,6 +375,16 @@ function block_held()
   end
 end
 
+-- The cursor moved to another cell: an Up or Down still held from the last
+-- one spins nothing there until it is released and pressed again.
+function move_cursor(c)
+  col = c
+  if button_down(BUTTON_UP) then held = held | BUTTON_UP end
+  if button_down(BUTTON_DOWN) then held = held | BUTTON_DOWN end
+  spin_dir = 0
+  spin_time = 0
+end
+
 function update_held()
   if held ~= 0 then
     local b = 1
@@ -413,11 +423,11 @@ function play_input()
     spin(dir)
   end
   if pressed(BUTTON_LEFT) and col > 0 then
-    col = col - 1
+    move_cursor(col - 1)
     psg_play(SND_MOVE)
   end
   if pressed(BUTTON_RIGHT) and col < 4 then
-    col = col + 1
+    move_cursor(col + 1)
     psg_play(SND_MOVE)
   end
   if pressed(BUTTON_B) then erase() end
@@ -442,7 +452,7 @@ end
 
 -- B clears the cursor's cell; if it is already empty, the cell left of it.
 function erase()
-  if letters[row * 5 + col + 1] == 0 and col > 0 then col = col - 1 end
+  if letters[row * 5 + col + 1] == 0 and col > 0 then move_cursor(col - 1) end
   local i = row * 5 + col + 1
   letters[i] = 0
   show_tile(i)
@@ -459,7 +469,7 @@ function press_a()
   if first_empty == 0 then
     enter_guess()
   elseif letters[row * 5 + col + 1] ~= 0 then
-    col = first_empty - 1
+    move_cursor(first_empty - 1)
     psg_play(SND_MOVE)
   else
     psg_play(SND_BUZZ)

@@ -426,6 +426,29 @@ end
         self.assertEqual(self.array(run, "LETTERS")[5], 1)
 
     @needs_runner
+    def test_held_spin_stays_in_its_cell(self):
+        # Up held while the cursor moves on (A's jump to the first empty cell,
+        # Right) and let go several frames later: the cell the cursor moved to
+        # stays empty, and Up must be let go before it spins again.
+        def run_with(buttons, frames):
+            return run_vm(source(), frames=frames, start=["GAME"],
+                          buttons=[(5, START, 1)] + buttons,
+                          set_={"ANSWER": servle_words.pack_word("plant")}, files=FILES)
+
+        # Up from frame 10: A, then B on its first repeat; A jumps to col 1
+        # while Up is down until frame 30, past the next repeat.
+        run = run_with([(10, UP, 21), (28, A, 1)], 36)
+        self.assertEqual(self.glob(run, "COL"), 1)
+        self.assertEqual(self.array(run, "LETTERS")[:2], [2, 0])
+        # Up held through a Right tap, for many repeats.
+        run = run_with([(8, UP, 40), (12, RIGHT, 1)], 52)
+        self.assertEqual(self.glob(run, "COL"), 1)
+        self.assertEqual(self.array(run, "LETTERS")[:2], [1, 0])
+        # Released and pressed again: it spins the new cell at once.
+        run = run_with([(8, UP, 10), (12, RIGHT, 1), (20, UP, 1)], 23)
+        self.assertEqual(self.array(run, "LETTERS")[:2], [1, 1])
+
+    @needs_runner
     def test_blank_save_starts_at_zero(self):
         run = run_vm(source(), frames=10, start=["GAME"], files=FILES)  # warns: run_vm fails
         self.assertEqual(self.glob(run, "STATE"), STATE_TITLE)
