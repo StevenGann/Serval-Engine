@@ -122,6 +122,8 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     case VM_SYS_SFX_SET_VOLUME:
         sfx_set_volume((u8)args[0]);
         return 0;
+    case VM_SYS_MUSIC_TICKS:
+        return music_ticks();
     // text: clearing, the shadow (vm.c has made `on` 0 or 1), centered lines
     // (the string vm.c resolved). The map calls are portable: vm.c makes them.
     case VM_SYS_TEXT_CLEAR:

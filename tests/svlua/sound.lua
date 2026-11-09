@@ -26,6 +26,7 @@ function Ship:step()
     music_set_speed(125)
   end
   sfx_play_ex(SFX_JUMP, 255, 0, 2, 0) -- an integer pitch; the handle unused
+  self.beat = math.floor(music_ticks() / 6) -- rows, at speed 6: ticks are fixed
 end
 
 function Ship:destroy()

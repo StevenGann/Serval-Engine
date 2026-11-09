@@ -4360,7 +4360,8 @@ static void sys_page_numbers_are_fixed(void) {
     for (u32 k = 0; k < sizeof later / sizeof later[0]; k++)
         moved += later[k] != 38 + k;
     CHECK(moved == 0);
-    CHECK(VM_SYS_COUNT == 53);
+    CHECK(VM_SYS_MUSIC_TICKS == 53); // appended for rhythm games
+    CHECK(VM_SYS_COUNT == 54);
 }
 
 // vm.md "Engine calls": SYS random_range(lo, hi) is the engine's (the same
@@ -4872,7 +4873,8 @@ static void sys_set_colors_refuse_a_bad_array_or_count(void) {
 // vm.md "Engine calls": the sound calls (audio.h's music_* and sfx_*) reach
 // the platform with their arguments in push order, and those with a result
 // push it: music_playing, music_paused and sfx_playing a boolean, sfx_play
-// and sfx_play_ex a handle (on the host, the recorder's sound_value). The
+// and sfx_play_ex a handle, music_ticks a FIXED (on the host, the recorder's
+// sound_value). The
 // others push nothing, though the recorder offers 77: the 55 underneath is
 // all that is left. tests/rom/vm_platform_tests.c runs them on the GBA.
 static void sys_sound_calls_reach_the_platform(void) {
@@ -4926,6 +4928,9 @@ static void sys_sound_calls_reach_the_platform(void) {
     wait_frames(1);               //
     push8(0);                     // 55 volume
     sys(VM_SYS_SFX_SET_VOLUME);   // frame 14
+    wait_frames(1);               //
+    sys(VM_SYS_MUSIC_TICKS);      // 55 ticks: frame 15
+    stg(6);                       // glob[6] = 3.5 ticks
     stg(0);                       // glob[0] = 55
     op(VM_OP_HALT);               //
     CHECK(load());
@@ -4971,6 +4976,9 @@ static void sys_sound_calls_reach_the_platform(void) {
     CHECK(last_call(13, VM_SYS_SFX_STOP_ALL, 0, 0, 0, NULL));
     frame();
     CHECK(last_call(14, VM_SYS_SFX_SET_VOLUME, 0, 0, 0, NULL));
+    r->sound_value = FX(3) + FX_ONE / 2; // a FIXED passes whole
+    frame();
+    CHECK(last_call(15, VM_SYS_MUSIC_TICKS, 0, 0, 0, NULL) && vm_global(6) == FX(3) + FX_ONE / 2);
     CHECK(vm_global(0) == 55);
     CHECK(vm_idle());
     CHECK_WARNED(before, 0);
@@ -5069,29 +5077,30 @@ static void sys_sound_arguments_in_c_ranges(void) {
 }
 
 // vm.md "Opcode reference": a SYS call with a result and no arguments
-// (music_playing, music_paused) needs a free cell: on a full stack it
+// (music_playing, music_paused, music_ticks) needs a free cell: on a full stack it
 // overflows, warning and halting its context before the call is made. And
 // sfx_play_ex, the one call of 5 arguments, underflows on 4 (a different
 // kind of fault, below).
 static void sys_sound_results_need_room(void) {
     reset();
-    blob_begin(3, 0, GLOBALS);
+    blob_begin(4, 0, GLOBALS);
     witness(0);
-    for (u16 obj = 1; obj <= 2; obj++) {
+    static const u8 queries[] = {VM_SYS_MUSIC_PLAYING, VM_SYS_MUSIC_PAUSED, VM_SYS_MUSIC_TICKS};
+    for (u16 obj = 1; obj <= 3; obj++) {
         handler(obj, VM_EV_CREATE);
-        store(obj, 1);                                              //
-        for (s32 v = 1; v <= VM_STACK; v++)                         //
-            push8(v);                                               // a full stack
-        sys(obj == 1 ? VM_SYS_MUSIC_PLAYING : VM_SYS_MUSIC_PAUSED); // overflows: warns, halts
-        store(obj, 2);                                              // never runs
-        op(VM_OP_HALT);                                             //
+        store(obj, 1);                      //
+        for (s32 v = 1; v <= VM_STACK; v++) //
+            push8(v);                       // a full stack
+        sys(queries[obj - 1]);              // overflows: warns, halts
+        store(obj, 2);                      // never runs
+        op(VM_OP_HALT);                     //
     }
     CHECK(load());
 #ifndef SERVAL_GBA
     serval_host_vm_calls = (ServalHostVmCalls){.calls = 0};
 #endif
-    expect_faults_halt_only_themselves(2);
-    CHECK(vm_global(1) == 1 && vm_global(2) == 1);
+    expect_faults_halt_only_themselves(3);
+    CHECK(vm_global(1) == 1 && vm_global(2) == 1 && vm_global(3) == 1);
 
     reset();
     blob_begin(2, 0, GLOBALS);

@@ -79,8 +79,9 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
         1, 1, 1, 2,       // random_seed, fx_sin to angle_of (made by vm.c, never recorded)
         3, 3, 1, 1, 1,    // saves (made by vm.c, never recorded)
         5, 3, 4, 2, 1, 3, // text: print_format to set_style_color
+        0,                // music_ticks
     };
-    _Static_assert(VM_SYS_COUNT == 53, "add the new call's arity");
+    _Static_assert(VM_SYS_COUNT == 54, "add the new call's arity");
     ServalHostVmCalls* r = &serval_host_vm_calls;
     u32 n = fn < VM_SYS_COUNT ? arity[fn] : 0;
     r->calls++;
@@ -100,6 +101,7 @@ s32 serval_vm_platform_call(u32 fn, const s32* args, const void* ptr) {
     case VM_SYS_SFX_PLAY:
     case VM_SYS_SFX_PLAY_EX:
     case VM_SYS_SFX_PLAYING:
+    case VM_SYS_MUSIC_TICKS:
         return r->sound_value;
     default:
         return 0;

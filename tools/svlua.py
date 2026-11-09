@@ -1411,6 +1411,7 @@ ENGINE = {
     "music_paused": ((), BOOL, "SYS MUSIC_PAUSED"),
     "music_set_volume": ((INT,), None, "SYS MUSIC_SET_VOLUME"),
     "music_set_speed": ((INT,), None, "SYS MUSIC_SET_SPEED"),
+    "music_ticks": ((), FIXED, "SYS MUSIC_TICKS"),
     "sfx_play": ((INT,), INT, "SYS SFX_PLAY"),
     "sfx_play_ex": ((INT, INT, INT, FIXED, INT), INT, "SYS SFX_PLAY_EX"),
     "sfx_stop": ((INT,), None, "SYS SFX_STOP"),

@@ -271,6 +271,8 @@ enum {
     VM_SYS_TEXT_SET_COLOR,       // text, shadow -> text_set_color
     VM_SYS_TEXT_SET_STYLE,       // style -> text_set_style
     VM_SYS_TEXT_SET_STYLE_COLOR, // style, text, shadow -> text_set_style_color
+    // tracker music's position, for rhythm games (audio.h)
+    VM_SYS_MUSIC_TICKS, // -> music_ticks(): fixed
     VM_SYS_COUNT
 };
 

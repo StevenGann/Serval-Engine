@@ -386,7 +386,7 @@ typedef struct {
 // on music_playing(). Either stays until the next music_play().
 MusicPosition music_position(void);
 
-// music_position().ticks alone.
+// music_position().ticks alone. Scripts: music_ticks() (VM_SYS_MUSIC_TICKS).
 FIXED music_ticks(void);
 
 // A sampled effect playing, from sfx_play(): a handle, like Entity, that goes

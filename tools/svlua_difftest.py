@@ -88,7 +88,9 @@ SYS_ARITY = {"PSG_PLAY": 1, "PSG_MUSIC_PLAY": 1, "PSG_MUSIC_STOP": 0, "PSG_MUSIC
              "SAVE_READ": 3, "SAVE_ERASE": 1, "SAVE_SLOT_VERSION": 1, "SAVE_SLOT_SIZE": 1,
              # more text: TEXT_PRINT_FORMAT col, row, a, b, then its format
              "TEXT_PRINT_FORMAT": 4, "TEXT_PRINT_LINE": 2, "TEXT_CLEAR_AREA": 4,
-             "TEXT_SET_COLOR": 2, "TEXT_SET_STYLE": 1, "TEXT_SET_STYLE_COLOR": 3}
+             "TEXT_SET_COLOR": 2, "TEXT_SET_STYLE": 1, "TEXT_SET_STYLE_COLOR": 3,
+             # tracker music's position
+             "MUSIC_TICKS": 0}
 # The calls whose text the runner prints after their arguments.
 TEXT_CALLS = ("TEXT_PRINT", "TEXT_PRINT_CENTERED", "TEXT_PRINT_FORMAT", "TEXT_PRINT_LINE")
 # The palette calls: the arguments compared (not the array's number: Lua

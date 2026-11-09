@@ -301,6 +301,7 @@ SYS page v1 (append-only; the interpreter holds a static table of `{arity, retur
 | 50 | `TEXT_SET_COLOR` | `text_set_color` | text, shadow | |
 | 51 | `TEXT_SET_STYLE` | `text_set_style` | style | |
 | 52 | `TEXT_SET_STYLE_COLOR` | `text_set_style_color` | style, text, shadow | |
+| 53 | `MUSIC_TICKS` | `music_ticks` | | fixed |
 
 `text_print_number` prints the value in decimal. With a width of 1 or more it is right-aligned in that many columns, spaces in front, so a number that got shorter (10, then 9) leaves nothing behind; a number wider than the width prints in full. A width of 0 or less prints just the digits. Calls take at most 5 arguments (`sfx_play_ex`; 4 before it).
 
@@ -324,7 +325,9 @@ The save calls (42 to 46) keep a **RAM array** as a slot's data, its cells as th
 
 `TEXT_PRINT_FORMAT` (47) prints `text_format(string, a, b)` from a cell, with no C function of its own, like `TEXT_PRINT_NUMBER`. Its string may hold at most two conversions, each of `%d %i %u %x %c` with flags `-` and `0` and a width, and `%%` anywhere; anything else, a `%s` first of all (it would read an integer as a pointer), warns and prints nothing. `TEXT_PRINT_LINE` (48) takes a string as `TEXT_PRINT` does. Colors (50 to 52) are their cells' low 16 bits.
 
-A call with a result and no arguments (`MUSIC_PLAYING`, `MUSIC_PAUSED`) needs a free cell for it: on a full stack it overflows (warns, halts the context) before the call is made. `audio_bank_set` has no call: it takes a pointer, and the bank is the game's configuration, registered from C at boot as `vm_bind`'s songs and paths are.
+`MUSIC_TICKS` (53) pushes `music_ticks()`, a `FIXED` cell: the tracker music's ticks heard since row 0, for a script that keeps time with its music ([audio.md](audio.md#position)); 0 without a bank, as in C. It was appended after the freeze, for the `rhythm` example; `music_position()`, a struct, has no call.
+
+A call with a result and no arguments (`MUSIC_PLAYING`, `MUSIC_PAUSED`, `MUSIC_TICKS`) needs a free cell for it: on a full stack it overflows (warns, halts the context) before the call is made. `audio_bank_set` has no call: it takes a pointer, and the bank is the game's configuration, registered from C at boot as `vm_bind`'s songs and paths are.
 
 Calls arrive appended, with their feature's implementation, as `SCREEN_SET_BLEND` did with alpha blending's, `SPRITE_SET_COLORS` and `TILESET_SET_COLORS` with palette writes' and the sound calls with tracker music's and sampled effects', and as do calls for API added later; or for API that scripts turn out to need, as the map and text calls (31 to 37) did when a platformer was written as a script (Studio Advance's port of the example, Serval Dash). Runtime sprite tiles (`sprite_set_tiles()`) and raster effects have none: a script can't hold tile data or per-line tables. The Lua subset keeps scripts from declaring the name of any engine C function, planned ([lua.md](lua.md#planned-functions)) or not ([lua.md](lua.md#c-functions)), so each call's builtin takes its C name without breaking a script. The numbers above never change.
 

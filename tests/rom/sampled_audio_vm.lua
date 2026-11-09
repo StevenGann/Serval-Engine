@@ -1,5 +1,5 @@
 -- sampled_audio_vm.lua: a script's tracker music and sampled effects,
--- through the VM's SYS calls (17 to 30) to Maxmod, with the sound bank of
+-- through the VM's SYS calls (17 to 30, 53) to Maxmod, with the sound bank of
 -- the sampled audio test ROM (test_bank.h: tone.mod, a held note; beep.wav,
 -- 0.1 s at 1000 Hz; hum.wav, a looped 500 Hz). Each object is a thread
 -- tests/rom/sampled_audio_vm_tests.c starts for one case and checks, from C,
@@ -10,6 +10,7 @@ Effects = object {}
 Stop = object {}
 Strays = object {}
 Pads = object {}
+Ticks = object {}
 
 playing = false -- music_playing() after music_play
 paused = false  -- music_paused() after music_pause
@@ -22,6 +23,7 @@ beeping = false -- sfx_playing(beep), a frame after it began
 stopped = true  -- sfx_playing(hum) after sfx_stop
 strays = 0      -- what sfx_play of an ID no bank has returned
 recent = array(16)
+ticks = 0.0     -- music_ticks(), each frame
 
 -- Plays the module looped, pauses it, resumes it two frames later and
 -- stops it two frames after that.
@@ -95,6 +97,15 @@ function Pads:room_start()
     else
       scan = scan + 1
     end
+    wait(1)
+  end
+end
+
+-- Plays the module and reads its position every frame.
+function Ticks:room_start()
+  music_play(MOD_TONE, true)
+  while true do
+    ticks = music_ticks()
     wait(1)
   end
 end

@@ -412,7 +412,8 @@ end
 -- music_stop, and is paused from music_pause until music_resume,
 -- music_play or music_stop; each sfx_play and sfx_play_ex returns the next
 -- handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
--- or sfx_stop_all.
+-- or sfx_stop_all; music_ticks() is F - 1 (fixed) in frame F, a tick a
+-- frame from 0, whatever the music does.
 local music_on, music_held = false, false
 local next_sfx, sfx_on = 1, {}
 local function u16_or(v, outside)
@@ -440,6 +441,10 @@ function env.music_resume() call("MUSIC_RESUME") music_held = false end
 function env.music_paused() call("MUSIC_PAUSED") return music_held end
 function env.music_set_volume(v) call("MUSIC_SET_VOLUME", clamp(v, 0, 255)) end
 function env.music_set_speed(p) call("MUSIC_SET_SPEED", p < 0 and 1 or u16_or(p, 0xFFFF)) end
+function env.music_ticks()
+  call("MUSIC_TICKS")
+  return (math.max(frame or 1, 1) - 1) * 1.0
+end
 function env.sfx_play(id)
   call("SFX_PLAY", u16_or(id, 0xFFFF))
   return new_sfx()

@@ -30,7 +30,8 @@
 // until music_stop, and is paused from music_pause until music_resume,
 // music_play or music_stop; each sfx_play and sfx_play_ex returns the next
 // handle (1, 2, ... 65535, then 1 again), which plays until sfx_stop of it
-// or sfx_stop_all. --map loads the test playfield below (map_load, background
+// or sfx_stop_all; music_ticks() is 256 x (F - 1) in frame F, a tick a
+// frame from 0, whatever the music does. --map loads the test playfield below (map_load, background
 // 2) before the blob, for the map calls (vm.c makes them: they print
 // nothing); without it there is no playfield (map_cell 0, map_set_cell
 // warns).
@@ -222,6 +223,9 @@ static void sound(ServalHostVmCalls* r) {
         break;
     case VM_SYS_MUSIC_PAUSED:
         r->sound_value = music_held;
+        break;
+    case VM_SYS_MUSIC_TICKS:
+        r->sound_value = frame > 0 ? (s32)(frame - 1) * 256 : 0;
         break;
     case VM_SYS_SFX_PLAY:
     case VM_SYS_SFX_PLAY_EX:

@@ -2,7 +2,8 @@
 // sound bank registered: the threads of tests/rom/sampled_audio_vm.lua,
 // compiled by svlua.py and assembled at build time (serval_add_script() in
 // tests/CMakeLists.txt, with the bank's generated header, test_bank.h), make
-// the VM's SYS calls 17 to 30, which src/gba/vm_platform.c passes to Maxmod.
+// the VM's SYS calls 17 to 30 and 53, which src/gba/vm_platform.c passes to
+// Maxmod.
 // What the script's queries answered is in its globals; what played is
 // checked from C, and numerically in the samples Maxmod mixed, as in
 // tests/rom/sampled_audio_tests.c. Part of the sampled audio test ROM
@@ -180,6 +181,32 @@ static void a_script_plays_and_stops_effects(void) {
     end();
 }
 
+// vm.md "Engine calls": music_ticks from a script is C's music_ticks() in
+// the same frame, FIXED and whole: below 0 in the frame of music_play(),
+// then rising every frame.
+static void a_script_reads_music_ticks(void) {
+    begin();
+    u32 warnings = debug_warning_count();
+    run(OBJ_TICKS);
+    FIXED last = 0;
+    u32 wrong = 0;
+    for (u32 f = 0; f < 30; f++) {
+        frame_begin();
+        vm_step();
+        FIXED ticks = vm_global(G_TICKS);
+        wrong += ticks != music_ticks();
+        wrong += f == 0 ? ticks >= 0 : ticks <= last;
+        last = ticks;
+        vm_events();
+        frame_end();
+    }
+    CHECK(wrong == 0);
+    CHECK(last > FX(6)); // more than a row at 125 BPM, speed 6, in half a second
+    CHECK(debug_warning_count() == warnings);
+    music_stop();
+    end();
+}
+
 // CPU cycles, from the cascaded timers serval_init() starts.
 static u32 cycles(void) {
     u32 hi, lo;
@@ -221,4 +248,4 @@ TEST_SUITE(gba_sampled_audio_vm_tests, "gba_sampled_audio_vm",
            {"a script plays, pauses and stops music", a_script_plays_pauses_and_stops_music},
            {"a script sets the music volume", a_script_sets_the_music_volume},
            {"a script plays and stops effects", a_script_plays_and_stops_effects},
-           {"costs", costs});
+           {"a script reads music_ticks", a_script_reads_music_ticks}, {"costs", costs});

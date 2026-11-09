@@ -876,8 +876,9 @@ static const u8 sys_arity[VM_SYS_COUNT] = {
     1, 1, 1, 2,                                        // random_seed, then trig: fx_sin to angle_of
     3, 3, 1, 1, 1,                                     // saves: save_write to save_slot_size
     5, 3, 4, 2, 1, 3,                                  // text: print_format to set_style_color
+    0,                                                 // music_ticks
 };
-_Static_assert(VM_SYS_COUNT == 53, "add the new call to sys_arity, SYS_RETURNS and sys_call");
+_Static_assert(VM_SYS_COUNT == 54, "add the new call to sys_arity, SYS_RETURNS and sys_call");
 // A mask of 64 bits since the calls passed 32; SYS_RESULT(fn) tests it.
 #define SYS_RETURNS                                                                                \
     (1ull << VM_SYS_RANDOM_RANGE | 1ull << VM_SYS_BUTTON_DOWN | 1ull << VM_SYS_BUTTON_PRESSED |    \
@@ -885,7 +886,8 @@ _Static_assert(VM_SYS_COUNT == 53, "add the new call to sys_arity, SYS_RETURNS a
      1ull << VM_SYS_SFX_PLAY_EX | 1ull << VM_SYS_SFX_PLAYING | 1ull << VM_SYS_MAP_CELL |           \
      1ull << VM_SYS_MAP_COLLISION_AT | 1ull << VM_SYS_MAP_TAGS_IN | 1ull << VM_SYS_FX_SIN |        \
      1ull << VM_SYS_FX_COS | 1ull << VM_SYS_ANGLE_OF | 1ull << VM_SYS_SAVE_WRITE |                 \
-     1ull << VM_SYS_SAVE_READ | 1ull << VM_SYS_SAVE_SLOT_VERSION | 1ull << VM_SYS_SAVE_SLOT_SIZE)
+     1ull << VM_SYS_SAVE_READ | 1ull << VM_SYS_SAVE_SLOT_VERSION | 1ull << VM_SYS_SAVE_SLOT_SIZE | \
+     1ull << VM_SYS_MUSIC_TICKS)
 _Static_assert(VM_SYS_COUNT <= 64, "SYS_RETURNS is a mask of 64 bits");
 #define SYS_RESULT(fn) ((SYS_RETURNS >> (fn) & 1u) != 0)
 

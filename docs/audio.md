@@ -171,7 +171,7 @@ On the web the cost doesn't matter: the player, the mixer and Direct Sound take 
 - `music_pause()` / `music_resume()` hold the music exactly where it is; `music_paused()` tells paused from playing. Pausing with nothing playing, pausing twice and resuming music that isn't paused do nothing; `music_play()`, `music_stop()` and `audio_bank_set()` end a pause. (Maxmod: `mmPause()`, which silences the module's channels and stops its time, and `mmResume()`.) Effects play on.
 - `music_set_volume()`: 0 (silent) to 255 (the default: the module's own volumes), from the module's next tick (at most a few frames), for this module and the next, and across banks. (Maxmod: `mmSetModuleVolume()`, 0-1024.)
 - `music_set_speed()`: percent of the module's tempo, from where it is, pitch unchanged; 0 means 100, and values outside 50-200 are clamped with a warning: Maxmod's tempo factor ranges from 0.5 to 2.0 (`mmSetModuleTempo()`, `0x200`-`0x800` in Q10). Without a module playing it is ignored, with a warning (as `psg_music_set_tempo()`).
-- **Scripts:** SYS calls 17 to 24, the Lua builtins `music_play(id, loop)` to `music_set_speed(percent)` by the same names ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)); a script names the module by its `MOD_*`.
+- **Scripts:** SYS calls 17 to 24, the Lua builtins `music_play(id, loop)` to `music_set_speed(percent)` by the same names ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)); a script names the module by its `MOD_*`. And `music_ticks()`, SYS call 53 ([below](#position)).
 - **Where it is:** `music_position()` and `music_ticks()` ([below](#position)).
 
 ## Position
@@ -209,7 +209,7 @@ FIXED music_ticks(void);              // music_position().ticks
 
 Tested in mGBA (`tests/rom/sampled_audio_tests.c`, on `position.mod`, a click on every row with a speed change and a jump back: [`make-example-audio.py`](../tools/make-example-audio.py)'s `tests` set): `ticks` exact after 1, 10 and 100 frames, every row's click in the mix where `ticks` crosses its row (within 2 samples of where `ticks` puts it), frozen through a pause and exact again after it, never decreasing across `music_set_speed()` and the jump back, frozen at the module's end and after `music_stop()`, reset by `music_play()`, the warnings, and a function of the VBlanks through frames that overrun and halves mixed late.
 
-**Scripts:** not yet (a SYS call for `music_ticks()` is to come; `music_position()`, a struct, stays C's).
+**Scripts:** `music_ticks()`, SYS call 53, the Lua builtin of the same name, fixed ([vm.md](vm.md#engine-calls), [lua.md](lua.md#engine-functions)); `music_position()`, a struct, stays C's.
 
 ## Sampled sound effects
 

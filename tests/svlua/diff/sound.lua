@@ -4,6 +4,8 @@
 -- passed back, a fresh handle each frame; pitches fixed and integer; and
 -- values outside C's ranges, which the VM clamps (warning once per kind) or
 -- maps (an ID past a u16 to 65535, a handle to 0, a negative speed to 1).
+-- music_ticks() is the stand-in's clock: 0 on frame 1, a tick (fixed 1.0)
+-- more each frame.
 -- diff: frames=6 start=Jukebox attach=Ship warnings=allowed
 Jukebox = object {}
 Ship = object { components = C_POS }
@@ -15,6 +17,8 @@ local hum <const> = 2
 engine = 0
 score = 0
 heard = 0
+ticks = 0.0
+beats = 0
 
 function Jukebox:room_start()
   music_play(theme, true)
@@ -49,4 +53,6 @@ function Ship:step()
   if sfx_playing(h) then heard = heard + 1000 end
   self.last = h
   sfx_stop(-1)
+  ticks = music_ticks()
+  if music_ticks() >= 2 then beats = beats + math.floor(ticks * 3 / 2) end
 end

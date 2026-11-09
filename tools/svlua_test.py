@@ -574,6 +574,10 @@ REJECTED = {
                                r"^\+ needs numbers, and music_playing\(\.\.\.\) is a boolean$"),
     "sound_no_result": (OBJ + "function A:step() local x = music_stop() end", 3, 29,
                         r"^music_stop\(\) returns no value$"),
+    "music_ticks_arity": (OBJ + "function A:step() local t = music_ticks(1) end", 3, 29,
+                          r"^music_ticks takes 0 arguments, not 1$"),
+    "music_ticks_condition": (OBJ + "function A:step() if music_ticks() then end end", 3, 22,
+                              r"^conditions must be booleans: music_ticks\(\.\.\.\) is fixed"),
     "sound_redefined": ("function sfx_play() end", 1, 10,
                         r"^sfx_play is an engine function; a script can't redefine it$"),
     "sound_top_local": ("local music_set_volume = 0", 1, 7,
@@ -1739,7 +1743,8 @@ SYS_ARITY = (1, 1, 0, 0, 0, 2, 3, 2, 1, 1, 1, 3, 4, 1, 4, 4, 3,  # vm.md's SYS p
              0, 1, 1,  # text: text_clear to text_print_centered (row, then its text)
              1, 1, 1, 2,  # random_seed, fx_sin to angle_of (made by vm.c: never printed)
              3, 3, 1, 1, 1,  # saves (made by vm.c: never printed)
-             4, 2, 4, 2, 1, 3)  # text: print_format (four, then its format) to set_style_color
+             4, 2, 4, 2, 1, 3,  # text: print_format (four, then its format) to set_style_color
+             0)  # music_ticks
 COLOR_CALLS = ("SPRITE_SET_COLORS", "TILESET_SET_COLORS")  # their colors follow the arguments
 
 
@@ -1916,7 +1921,7 @@ class Golden(unittest.TestCase):
                          # sound: tracker music and sampled effects
                          "MUSIC_PLAY", "MUSIC_STOP", "MUSIC_PLAYING", "MUSIC_PAUSE",
                          "MUSIC_RESUME", "MUSIC_PAUSED", "MUSIC_SET_VOLUME", "MUSIC_SET_SPEED",
-                         "SFX_PLAY", "SFX_PLAY_EX", "SFX_STOP", "SFX_PLAYING", "SFX_STOP_ALL",
+                         "MUSIC_TICKS", "SFX_PLAY", "SFX_PLAY_EX", "SFX_STOP", "SFX_PLAYING", "SFX_STOP_ALL",
                          "SFX_SET_VOLUME",
                          # the map and text
                          "MAP_CELL", "MAP_SET_CELL", "MAP_COLLISION_AT", "MAP_TAGS_IN",
@@ -2716,6 +2721,27 @@ end
                           (3, "SFX_STOP"), (3, "SFX_PLAYING"), (3, "MUSIC_STOP"),
                           (3, "MUSIC_PLAYING"), (3, "MUSIC_PAUSED"), (3, "SFX_STOP_ALL"),
                           (3, "SFX_PLAYING")])
+
+    @needs_runner
+    def test_music_ticks_is_fixed(self):
+        """music_ticks() is SYS MUSIC_TICKS, no arguments, a fixed result.
+        The runner's stand-in answers 256 x (frame - 1): 0 on frame 1, a
+        tick more each frame, the same however often a frame asks."""
+        script = OBJ + """first = 0.0
+later = 0.0
+twice = 0
+beats = 0
+function A:room_start()
+  first = music_ticks()
+  wait(3)
+  later = music_ticks()
+  if music_ticks() == later then twice = 1 end
+  beats = math.floor(later / 2)
+end"""
+        vm = run_vm(script, frames=4, start=["A"])
+        self.assertEqual(vm.globals, {"FIRST": 0, "LATER": 3 * 256, "TWICE": 1, "BEATS": 1})
+        self.assertEqual(vm.calls_of("MUSIC_TICKS"), [(), (), ()])
+        self.assertEqual(svlua.compile_source(script, "t.lua").count("SYS MUSIC_TICKS"), 3)
 
     @needs_runner
     def test_sound_arguments_reach_c_in_its_ranges(self):

@@ -7,6 +7,7 @@
 ; --- Instance fields ---
 
 .field SHOT 0                           ; sound.lua:16 instance field shot (integer)
+.field BEAT 1                           ; sound.lua:29 instance field beat (integer)
 
 ; --- Objects ---
 
@@ -97,20 +98,28 @@ ship_step_if5_end:                      ; sound.lua:27
     PUSH 0                              ; sound.lua:28
     SYS SFX_PLAY_EX                     ; sound.lua:28
     DROP                                ; sound.lua:28 the result isn't used
-    ; 29: end
-    HALT                                ; sound.lua:29
+    ; 29: self.beat = math.floor(music_ticks() / 6) -- rows, at speed 6: ticks are fixed
+    SELF                                ; sound.lua:29
+    SYS MUSIC_TICKS                     ; sound.lua:29
+    PUSH 1536                           ; sound.lua:29 (6.0)
+    FXDIV                               ; sound.lua:29
+    PUSH 8                              ; sound.lua:29
+    SHR                                 ; sound.lua:29 math.floor: the whole part
+    SETP FIELD_BEAT                     ; sound.lua:29
+    ; 30: end
+    HALT                                ; sound.lua:30
 
 ; --- Ship:destroy, a reaction: it runs to completion ---
-.handler SHIP DESTROY                   ; sound.lua:31
-    ; 32: sfx_stop(engine)
-    LDG ENGINE                          ; sound.lua:32
-    SYS SFX_STOP                        ; sound.lua:32
-    ; 33: sfx_stop_all()
-    SYS SFX_STOP_ALL                    ; sound.lua:33
-    ; 34: sfx_set_volume(0)
-    PUSH 0                              ; sound.lua:34
-    SYS SFX_SET_VOLUME                  ; sound.lua:34
-    ; 35: music_stop()
-    SYS MUSIC_STOP                      ; sound.lua:35
-    ; 36: end
-    HALT                                ; sound.lua:36
+.handler SHIP DESTROY                   ; sound.lua:32
+    ; 33: sfx_stop(engine)
+    LDG ENGINE                          ; sound.lua:33
+    SYS SFX_STOP                        ; sound.lua:33
+    ; 34: sfx_stop_all()
+    SYS SFX_STOP_ALL                    ; sound.lua:34
+    ; 35: sfx_set_volume(0)
+    PUSH 0                              ; sound.lua:35
+    SYS SFX_SET_VOLUME                  ; sound.lua:35
+    ; 36: music_stop()
+    SYS MUSIC_STOP                      ; sound.lua:36
+    ; 37: end
+    HALT                                ; sound.lua:37
