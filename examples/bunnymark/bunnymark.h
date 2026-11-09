@@ -25,4 +25,11 @@ void gravity_set(int x, int y);
 // the HUD. Call between frame_begin() and frame_end().
 void bunnymark_update(void);
 
+// The interactive demo's presentation, which the benchmark leaves out: a
+// night scene behind the bunnies with a CPU meter in the HUD
+// (bunnymark_scenery_load(), after bunnymark_init()), and its animation, the
+// meter and the stars (bunnymark_scenery_update(), after bunnymark_update()).
+void bunnymark_scenery_load(void);
+void bunnymark_scenery_update(void);
+
 #endif // BUNNYMARK_H
