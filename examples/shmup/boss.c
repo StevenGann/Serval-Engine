@@ -40,6 +40,10 @@ bool boss_defeated(void) {
     return state == BOSS_DEFEATED;
 }
 
+bool boss_enraged(void) {
+    return enraged && state != BOSS_NONE;
+}
+
 static Entity spawn_part(EnemyKind k, u16 sprite, int w, int h, int hit_points) {
     // Not C_ENEMY yet: shots pass through while it comes in.
     u32 i = spawn(0, sprite, w, h, FX(FIELD_W / 2), FX(-48));
@@ -198,6 +202,7 @@ void boss_update(void) {
             int y = core_y + random_range(-24, 24);
             explode(FX(x), FX(y), 1, 3);
             psg_play(SND_BOOM);
+            shake_screen(6);
         }
         if (t >= DYING_FRAMES) {
             explode(FX(core_x), FX(core_y), 6, 16);

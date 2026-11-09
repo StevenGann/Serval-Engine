@@ -36,12 +36,12 @@
 
 // Entity budget. The engine has 128 entities and 128 hardware sprites, and
 // every entity here has a sprite, so the caps below add up to at most 120
-// sprites, leaving room for the 3 drawn by hand (the focus hitbox and two HUD
-// icons): 120 + 3 = 123 of 128. A cannon's head is a metasprite of two
-// pieces, one more hardware sprite each: with the two a fort shows at once,
-// 125.
+// sprites, leaving room for the 4 drawn by hand (the focus hitbox, the
+// muzzle flash and two HUD icons): 120 + 4 = 124 of 128. A cannon's head is a
+// metasprite of two pieces, one more hardware sprite each: with the two a
+// fort shows at once, 126.
 //   player 1 + shots 20 + enemies 14 + boss parts 3 + enemy bullets 48
-//   + explosions and sparks 32 + items 2 = 120
+//   + explosions, shock rings and sparks 32 + items 2 = 120
 // Each spawn checks its cap (counted once per frame with ecs_count), so the
 // engine never runs out of entities. Overload degrades gracefully: past a cap
 // the extra shot, bullet or spark is simply not created (a boss spiral gets a
@@ -129,6 +129,9 @@ extern int score;
 extern int stage_frame;   // frames since the stage started scrolling
 extern bool player_alive; // false while waiting to respawn and after game over
 void add_score(int points);
+// Shakes the backgrounds (the map and the stars) for `frames` frames: big
+// explosions, a bomb. A longer shake than the one under way replaces it.
+void shake_screen(int frames);
 
 void game_init(void);
 void game_frame(void);
@@ -192,6 +195,7 @@ void boss_start(void);           // enters from the top
 void boss_update(void);          // movement and attacks
 bool boss_active(void);          // entered and not yet destroyed
 bool boss_defeated(void);        // its final explosion is over
+bool boss_enraged(void);         // in its last phase (red)
 void boss_part_destroyed(u32 i); // a pod or the core ran out of hit points
 void boss_bomb(void);            // a bomb hits it
 
@@ -229,6 +233,8 @@ enum {
     SPR_DOME,    // the cannon's pieces...
     SPR_BARRELS, // ...closed, firing
     SPR_CANNON,  // the cannon's head: a metasprite of the two, frames closed and firing
+    SPR_RING,    // a big explosion's shock ring, 4 frames, played once (animated)
+    SPR_MUZZLE,  // the ship's muzzle flash
     SPRITE_COUNT
 };
 
@@ -251,6 +257,7 @@ enum { SHIP_FRAME_LEVEL, SHIP_FRAME_LEVEL2, SHIP_FRAME_BANK, SHIP_FRAME_BANK2 };
 enum { SHOT_FRAME_BOLT, SHOT_FRAME_HEAVY, SHOT_FRAME_NEEDLE };
 #define SPARK_FRAMES 12 // how long a spark's animation lasts
 #define BOOM_FRAMES 20  // how long an explosion's animation lasts
+#define RING_FRAMES 18  // how long a shock ring's animation lasts
 
 // Background tiles and metatiles the stage map uses (art.c builds them).
 enum {
@@ -277,8 +284,14 @@ extern const Tileset tileset;
 extern Metatile stage_metatiles[MT_COUNT];
 extern const MapLayer stars_layer; // background 3, wrapping, half speed
 extern const MapLayer panel_layer; // background 1: the HUD panel
+extern const MapLayer logo_layer;  // background 1 on the title: the logo
+extern const MapLayer box_layer;   // background 1: the frame of the high-score table
 void art_build(void);              // converts the ASCII art (once, at boot)
 void art_light_frame(u32 frame, const u32** tiles, u16* first); // the hull light's tiles
+void art_gauge(int level);   // the panel's power gauge shows level (1 to MAX_POWER)
+void art_twinkle(u32 frame); // the stars twinkle (palette changes), every frame
+enum { SKY_NORMAL, SKY_WARN1, SKY_WARN2, SKY_RAGE, SKY_COUNT };
+const Color* art_sky(u32 sky); // a backdrop color per scanline, for raster_backdrop
 
 // --- Sound (sound.c) ---------------------------------------------------------
 

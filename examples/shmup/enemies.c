@@ -350,6 +350,17 @@ void clear_bullets(bool score_them) {
 // `booms` explosions around (x, y) and `sparks` sparks flying out: as many as
 // the effect cap allows (an explosion amid many others gets fewer sparks).
 void explode(FIXED x, FIXED y, int booms, int sparks) {
+    // A big one (a gunship, a cannon, the ship, the boss) also sends out a
+    // shock ring and shakes the screen.
+    if (booms >= 3) {
+        shake_screen(booms * 5);
+        u32 i = fx_count < MAX_FX ? spawn(C_FX | C_ANIM, SPR_RING, 2, 2, x, y) : MAX_ENT;
+        if (i != MAX_ENT) {
+            fx_count++;
+            timer[i] = RING_FRAMES;
+            spr_depth[i] = DEPTH_FX;
+        }
+    }
     for (int k = 0; k < booms && fx_count < MAX_FX; k++) {
         // Two statements, not two random_range() calls in one argument
         // list: C leaves the order of arguments open (GCC for the GBA and

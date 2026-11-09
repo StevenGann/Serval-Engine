@@ -16,6 +16,7 @@ typedef enum {
 
 typedef enum { STAGE_WAVES, STAGE_WARNING, STAGE_BOSS } StagePhase;
 
+// The backdrop under the sky (art_sky, a color per scanline).
 #define BACKDROP COLOR_RGB(6, 4, 16)
 #define FADE_STEP 2         // brightness per frame: 8 frames from black to normal
 #define PAGE_FRAMES 300     // attract pages alternate every 5 seconds
@@ -24,6 +25,12 @@ typedef enum { STAGE_WAVES, STAGE_WARNING, STAGE_BOSS } StagePhase;
 #define FIRST_EXTEND 50000  // an extra ship at 50,000 points...
 #define EXTEND_EVERY 100000 // ...and every 100,000 after
 #define MAX_LIVES 9
+#define LOGO_DROP 20 // frames the title logo takes to drop into place
+
+// Text styles (text_set_style): TEXT_NORMAL white, TEXT_HIGHLIGHT yellow, and
+// these two, set in game_init().
+#define TEXT_LABEL 2 // the panel's labels and the subtitles: pale cyan
+#define TEXT_ALERT 3 // WARNING and GAME OVER: red
 
 u8 kind[MAX_ENT];
 s16 hp[MAX_ENT];
@@ -48,6 +55,8 @@ static int fade = SCREEN_BRIGHTNESS_MIN;
 static int flash_level; // a white flash fading out (stage clear)
 static bool fading_out;
 static void (*next_screen)(void);
+static int logo_frame;      // TITLE: frames since the logo began to drop in
+static u32 sky = SKY_COUNT; // the sky shown (art_sky), SKY_COUNT before the first
 #ifdef SERVAL_DEBUG
 static bool show_cpu;
 static u32 cpu_peak;
@@ -113,6 +122,19 @@ static void gather(void) {
 }
 
 static int drift; // pixels the stars have scrolled on by themselves (the boss fight)
+static int shake; // frames of screen shake left
+
+void shake_screen(int frames) {
+    shake = int_max(shake, frames);
+}
+
+// The sky behind the field: set only when it changes.
+static void set_sky(u32 which) {
+    if (which != sky) {
+        sky = which;
+        raster_backdrop(art_sky(which));
+    }
+}
 
 // The camera climbs the stage a pixel per frame, scrolling the map and the
 // turrets on it down the screen; flying things have SPRITE_SCREEN, so they
@@ -120,13 +142,27 @@ static int drift; // pixels the stars have scrolled on by themselves (the boss f
 // and the starfield scrolls on by itself for as long as the fight lasts:
 // map_set_scroll moves it half a pixel per frame (its scroll_factor's speed),
 // counting on rather than wrapping, so the stars never jump.
+//
+// A shake moves both backgrounds a pixel or two from there, in a fixed
+// pattern (not random: the same input must play the same game everywhere),
+// weaker as it ends. The sprites stay put: the world rumbles under them.
 static void scroll(void) {
-    if (cam_y > 0) {
-        camera_set(0, --cam_y);
-    } else {
-        drift++;
-        map_set_scroll(3, 0, -((drift + 1) / 2)); // rounded down, as for the camera
+    static const s8 shake_x[8] = {2, -2, 1, -1, 2, 0, -2, 1};
+    static const s8 shake_y[8] = {1, 0, -1, 1, 0, -1, 1, 0};
+    int dx = 0, dy = 0;
+    if (shake > 0) {
+        shake--;
+        int k = shake % 8;
+        bool strong = shake > 8;
+        dx = strong ? shake_x[k] : shake_x[k] / 2;
+        dy = strong ? shake_y[k] : 0;
     }
+    if (cam_y > 0)
+        camera_set(0, --cam_y);
+    else
+        drift++;
+    map_set_scroll(2, dx, dy);
+    map_set_scroll(3, dx, dy - (drift + 1) / 2); // rounded down, as for the camera
     gather();
 }
 
@@ -138,12 +174,16 @@ static void scroll(void) {
 
 static int shown_score = -1, shown_best = -1, shown_lives = -1, shown_bombs = -1, shown_power = -1;
 
+// The labels sit on the panel's plates, the values in the wells under them
+// (art.c draws the panel).
 static void panel_labels(void) {
+    text_set_style(TEXT_LABEL);
     text_print(PANEL_COL + 1, 1, "SCORE");
     text_print(PANEL_COL + 1, 4, "HI");
     text_print(PANEL_COL + 1, 7, "SHIPS");
     text_print(PANEL_COL + 1, 10, "BOMBS");
     text_print(PANEL_COL + 1, 13, "POWER");
+    text_set_style(TEXT_NORMAL);
     shown_score = shown_best = shown_lives = shown_bombs = shown_power = -1;
 }
 
@@ -158,11 +198,8 @@ static void draw_panel(void) {
         text_print(PANEL_COL + 3, 8, text_format("x%d", shown_lives = lives));
     if (bombs != shown_bombs)
         text_print(PANEL_COL + 3, 11, text_format("x%d", shown_bombs = bombs));
-    if (power != shown_power) {
-        shown_power = power;
-        text_print(PANEL_COL + 1, 14,
-                   power >= MAX_POWER ? "MAX   " : text_format("LV %d  ", power));
-    }
+    if (power != shown_power) // the gauge: a segment per level, gold at MAX
+        art_gauge(shown_power = power);
     // The icons: sprites above the panel (background 1), below its text.
     sprite_draw(SPR_ICON_SHIP, 0, (PANEL_COL + 1) * 8, 8 * 8, SPRITE_ABOVE_FOREGROUND);
     sprite_draw(SPR_ICON_BOMB, 0, (PANEL_COL + 1) * 8, 11 * 8, SPRITE_ABOVE_FOREGROUND);
@@ -218,18 +255,41 @@ static void update_brightness(void) {
 
 // --- Screens -------------------------------------------------------------------
 
+// The frame behind the high-score table and the initials, on background 1,
+// see-through: the stars show dimly through it.
+static void show_box(void) {
+    map_set_scroll(1, 0, 0);
+    map_load(&box_layer);
+    screen_set_blend(LAYER_FOREGROUND, LAYER_BACKGROUND | LAYER_BACKDROP, 12, 4);
+}
+
+// The title: the logo (background 1) drops in from above, over the text.
 static void show_title_page(void) {
     text_clear();
     if (scores_page) {
+        show_box();
         text_print_centered(1, "PRESS START");
         scores_draw(highlight);
     } else {
-        text_print_centered(4, "S T A R   V E L D T");
-        text_print_centered(6, "A SERVAL ENGINE SHOOTER");
-        text_print_centered(13, "D-PAD:MOVE A:FIRE B:BOMB");
-        text_print_centered(15, "R:FOCUS  START:PAUSE");
+        screen_set_blend(0, 0, 0, 0);
+        logo_frame = 0;
+        map_set_scroll(1, 0, 80); // above the screen
+        map_load(&logo_layer);
+        text_set_style(TEXT_LABEL);
+        text_print_centered(9, "A SERVAL ENGINE SHOOTER");
+        text_set_style(TEXT_NORMAL);
+        text_print_centered(15, "D-PAD:MOVE A:FIRE B:BOMB");
+        text_print_centered(17, "R:FOCUS  START:PAUSE");
         text_print_centered(19, text_format("HI %d", scores_best()));
     }
+}
+
+// The logo's drop: from 80 pixels up, overshooting a little, then settling.
+static void drop_logo(void) {
+    static const s8 drop[LOGO_DROP] = {80, 66, 53, 41, 30, 21, 13, 7,  2, -2,
+                                       -4, -5, -5, -4, -3, -2, -1, -1, 0, 0};
+    if (logo_frame < LOGO_DROP)
+        map_set_scroll(1, 0, drop[logo_frame++]);
 }
 
 static void enter_title(bool table, int frames) {
@@ -238,6 +298,9 @@ static void enter_title(bool table, int frames) {
     state_timer = frames;
     ecs_reset();
     stage_hide();
+    set_sky(SKY_NORMAL);
+    shake = 0;
+    map_set_scroll(2, 0, 0);
     map_set_scroll(3, 0, 0); // the stars follow the camera again
     map_load(&stars_layer);
     psg_music_stop();
@@ -262,12 +325,20 @@ static void begin_stage(void) {
     cam_y = stage_start_y;
     camera_set(0, cam_y); // before loading the layers, so they are drawn there
     drift = 0;
+    shake = 0;
+    map_set_scroll(1, 0, 0); // the logo may have been dropping
+    map_set_scroll(2, 0, 0);
     map_set_scroll(3, 0, 0);
+    screen_set_blend(0, 0, 0, 0);
+    set_sky(SKY_NORMAL);
     stage_show();
     text_clear();
     panel_labels();
+    text_set_style(TEXT_HIGHLIGHT);
     text_print_centered_in(0, FIELD_COLS, 7, "STAGE 1");
+    text_set_style(TEXT_LABEL);
     text_print_centered_in(0, FIELD_COLS, 9, "THE STAR VELDT");
+    text_set_style(TEXT_NORMAL);
     player_spawn();
     psg_music_play(&stage_song);
 #ifdef SERVAL_DEBUG
@@ -291,8 +362,12 @@ static void show_entry(void) {
     state = ENTRY;
     ecs_reset();
     stage_hide();
+    set_sky(SKY_NORMAL);
+    shake = 0;
+    map_set_scroll(2, 0, 0);
     map_set_scroll(3, 0, 0);
     map_load(&stars_layer);
+    show_box();
     psg_music_stop();
     entry_begin(score, cleared);
     psg_play(SND_EXTEND);
@@ -313,7 +388,9 @@ static void game_over(void) {
     state_timer = 0;
     psg_music_stop();
     psg_play(SND_GAME_OVER);
+    text_set_style(TEXT_ALERT);
     text_print_centered_in(0, FIELD_COLS, 8, "GAME OVER");
+    text_set_style(TEXT_NORMAL);
 }
 
 static void start_clear(void) {
@@ -324,7 +401,10 @@ static void start_clear(void) {
     invulnerable = 10000;
     bonus = lives * 10000 + bombs * 2000;
     psg_music_play(&clear_song);
+    set_sky(SKY_NORMAL);
+    text_set_style(TEXT_HIGHLIGHT);
     text_print_centered_in(0, FIELD_COLS, 6, "STAGE CLEAR!");
+    text_set_style(TEXT_NORMAL);
 }
 
 // --- Each frame ------------------------------------------------------------------
@@ -364,10 +444,16 @@ static void update_stage(void) {
         break;
     case STAGE_WARNING:
         state_timer++;
-        if (state_timer % 32 == 0)
+        if (state_timer % 32 == 0) {
+            text_set_style(TEXT_ALERT);
             text_print_centered_in(0, FIELD_COLS, 8, "WARNING");
-        else if (state_timer % 32 == 20)
+            text_set_style(TEXT_NORMAL);
+        } else if (state_timer % 32 == 20) {
             text_clear_area(0, 8, FIELD_COLS, 1);
+        }
+        // The sky pulses red from the bottom while WARNING shows.
+        int beat = state_timer % 32;
+        set_sky(beat >= 20 ? SKY_NORMAL : beat < 4 || beat >= 16 ? SKY_WARN1 : SKY_WARN2);
         if (state_timer == 40)
             text_print_centered_in(0, FIELD_COLS, 10, "THE HIVE LANTERN");
         if (state_timer == 150)
@@ -376,6 +462,7 @@ static void update_stage(void) {
             stage_phase = STAGE_BOSS;
             text_clear_area(0, 8, FIELD_COLS, 1);
             text_clear_area(0, 10, FIELD_COLS, 1);
+            set_sky(SKY_NORMAL);
             boss_start();
 #ifdef SERVAL_DEBUG
             cpu_peak = 0;
@@ -383,6 +470,8 @@ static void update_stage(void) {
         }
         break;
     case STAGE_BOSS:
+        if (boss_enraged()) // its last phase reddens the sky
+            set_sky(SKY_RAGE);
         if (boss_defeated())
             start_clear();
         break;
@@ -445,6 +534,8 @@ static void update_entry(void) {
 
 static void update_title(bool start) {
     camera_set(0, --cam_y); // the stars drift by
+    if (!scores_page)
+        drop_logo();
     if (start) {
         highlight = -1;
         start_game();
@@ -452,9 +543,9 @@ static void update_title(bool start) {
     }
     if (!scores_page) {
         if ((state_timer / 30) % 2)
-            text_print_centered(10, "PRESS START");
+            text_print_centered(11, "PRESS START");
         else
-            text_print_line(0, 10, "");
+            text_print_line(0, 11, "");
     }
     if (--state_timer == 0) {
         scores_page = !scores_page;
@@ -475,6 +566,9 @@ void game_init(void) {
     tileset_load(&tileset);
     psg_table_set(sound_table, SOUND_COUNT);
     text_set_shadow(true); // readable over stars and explosions
+    text_set_style_color(TEXT_LABEL, COLOR_RGB(150, 215, 255), COLOR_RGB(0, 0, 24));
+    text_set_style_color(TEXT_ALERT, COLOR_RGB(255, 80, 80), COLOR_RGB(40, 0, 0));
+    set_sky(SKY_NORMAL); // art_build() has drawn it
     scores_load();
     highlight = -1;
     show_title();
@@ -482,6 +576,8 @@ void game_init(void) {
 
 void game_frame(void) {
     update_brightness();
+    if (state != PAUSED)
+        art_twinkle(frame_count());
     bool start = button_pressed(BUTTON_START);
     if (!fading_out) {
         switch (state) {
@@ -515,8 +611,10 @@ void game_frame(void) {
 
     // Drawing: sprites drawn by hand first (in front), then every entity,
     // higher spr_depth in front (game.h lists the depths).
-    if (state == TITLE && !scores_page)
-        sprite_draw(SPR_SHIP, (u8)(frame_count() / 3 % 2), 120, 138, 0);
+    if (state == TITLE && !scores_page) { // the ship, bobbing gently
+        int bob = fx_to_int(fx_sin((u16)(frame_count() * ANGLE_DEG(3))) * 2);
+        sprite_draw(SPR_SHIP, (u8)(frame_count() / 3 % 2), 120, 109 + bob, 0);
+    }
     if (state == PLAYING || state == PAUSED || state == GAME_OVER || state == CLEAR) {
         draw_panel();
         player_draw();

@@ -21,6 +21,7 @@ u32 player;
 int lives, bombs, power;
 int invulnerable;
 static int fire_cooldown;
+static int muzzle; // frames left showing the muzzle flash
 static int respawn_timer;
 int bomb_glow; // frames left of the bomb's white flash (game.c)
 
@@ -101,6 +102,7 @@ static void fire(bool focus) {
             shot(x + FX(6), y + FX(4), 18, SHOT_FRAME_NEEDLE, 1);
         }
     }
+    muzzle = 3;
     psg_play(SND_SHOT);
 }
 
@@ -111,6 +113,7 @@ static void fire(bool focus) {
 static void bomb(void) {
     bombs--;
     bomb_glow = 16;
+    shake_screen(16);
     invulnerable = int_max(invulnerable, BOMB_INVULNERABLE);
     clear_bullets(true);
     ECS_FOR_EACH(e, C_ENEMY) {
@@ -161,6 +164,8 @@ void player_update(void) {
 
     if (fire_cooldown > 0)
         fire_cooldown--;
+    if (muzzle > 0)
+        muzzle--;
     if (button_down(BUTTON_A) && fire_cooldown == 0) {
         fire(focus);
         fire_cooldown = FIRE_EVERY;
@@ -169,11 +174,16 @@ void player_update(void) {
         bomb();
 }
 
-// While focusing, the hitbox shows as a bright dot: drawn by hand before
-// sys_render_by_depth, so it is in front of the ship.
+// While focusing, the hitbox shows as a bright dot, and after each volley a
+// flash blooms at the nose: drawn by hand before sys_render_by_depth, so they
+// are in front of the ship. The flash is hidden while the ship blinks.
 void player_draw(void) {
-    if (player_alive && button_down(BUTTON_R))
+    if (!player_alive)
+        return;
+    if (button_down(BUTTON_R))
         sprite_draw(SPR_HITBOX, 0, fx_to_int(pos_x[player]), fx_to_int(pos_y[player]), 0);
+    if (muzzle > 0 && !(spr_flags[player] & SPRITE_HIDDEN))
+        sprite_draw(SPR_MUZZLE, 0, fx_to_int(player_x()), fx_to_int(player_y()) - 11, 0);
 }
 
 void player_hit(void) {

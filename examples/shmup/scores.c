@@ -82,8 +82,8 @@ static void draw_entry(void) {
         char c = letters[choice[k]];
         shown[k] = c == ' ' ? '_' : c;
     }
-    text_print_centered(10, text_format("%c  %c  %c", shown[0], shown[1], shown[2]));
-    text_print_centered(11, text_format("%c  %c  %c", cursor == 0 ? '^' : ' ',
+    text_print_centered(11, text_format("%c  %c  %c", shown[0], shown[1], shown[2]));
+    text_print_centered(12, text_format("%c  %c  %c", cursor == 0 ? '^' : ' ',
                                         cursor == 1 ? '^' : ' ', cursor == 2 ? '^' : ' '));
 }
 
@@ -97,11 +97,11 @@ void entry_begin(int score, bool cleared) {
     // it is released and pressed again.
     button_repeat_reset();
     text_clear();
-    text_print_centered(3, "NEW HIGH SCORE");
-    text_print_centered(5, text_format("%d   PLACE %d", score, entry_rank + 1));
-    text_print_centered(8, "ENTER YOUR INITIALS");
+    text_print_centered(4, "NEW HIGH SCORE");
+    text_print_centered(7, text_format("%d   PLACE %d", score, entry_rank + 1));
+    text_print_centered(9, "ENTER YOUR INITIALS");
     text_print_centered(14, "UP/DOWN:LETTER  A:NEXT");
-    text_print_centered(16, "B:BACK  START:DONE");
+    text_print_centered(15, "B:BACK  START:DONE");
     draw_entry();
 }
 

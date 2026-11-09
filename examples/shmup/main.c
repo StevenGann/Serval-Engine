@@ -14,8 +14,18 @@
 //     camera), turrets on the map, scrolling with it
 //   - A narrow playfield with a HUD panel: the left 176 pixels are the field,
 //     the right 64 a panel on background 1 (in front of sprites, held still
-//     by MAP_LAYER_FIXED) with the score, high score, ships, bombs and power
-//     in text and sprite icons
+//     by MAP_LAYER_FIXED): a plate for each of the score, high score, ships,
+//     bombs and power, in text and sprite icons, the power as a gauge whose
+//     tiles are redrawn for each level (tileset_set_tiles). The panel, the
+//     title logo and the high-score frame are pictures laid out tile by tile
+//     and cut into screen-sized layers of metatiles at boot (art.c)
+//   - A sky behind everything: a backdrop color per scanline
+//     (raster_backdrop), deep blue to a violet glow, swapped for reddened
+//     tables while the boss warning pulses and in its last phase; stars that
+//     twinkle by palette writes (tileset_set_colors)
+//   - Juice: screen shake on big explosions and bombs (the backgrounds
+//     offset with map_set_scroll for a few frames), a shock ring sprite
+//     around big explosions, a muzzle flash at the ship's nose
 //   - Many short-lived entities on a budget (game.h): shots, enemy bullets,
 //     explosions and sparks, each capped so the total stays within the
 //     engine's 128 entities and 128 sprites; past a cap the extra bullet or
@@ -50,9 +60,12 @@
 //     group (SPRITE_PALETTE)
 //   - Per-frame lists of each kind of entity (ecs_gather), so collisions and
 //     updates loop over a few slots instead of the whole pool
-//   - Screen fades and white flashes (screen_set_brightness), text with a
-//     drop shadow, text centered on the field (text_print_centered_in), a
-//     highlighted entry in the high-score table (text styles)
+//   - Screen fades and white flashes (screen_set_brightness), a title logo
+//     that drops in with a bounce (map_set_scroll on a fixed layer), a
+//     see-through frame behind the high-score table (screen_set_blend), text
+//     with a drop shadow, text centered on the field (text_print_centered_in),
+//     text styles in four colors (the labels pale cyan, warnings red, the
+//     newest high score yellow)
 //   - Music (PsgSong): an original stage tune and boss tune on all three tone
 //     generators, paused with the game (psg_music_pause), the boss tune sped
 //     up in its last phase (psg_music_set_tempo), a fanfare played once; sound
@@ -72,68 +85,78 @@
 // What to expect when booting the ROM:
 //   - First the Serval Engine splash: "made with" and the engine's logo (about
 //     3 seconds; any button skips it once the logo is in).
-//   - The title fades in over a slowly scrolling starfield with purple
-//     nebula wisps: "S T A R   V E L D T", a blinking "PRESS START", the
-//     controls, the high score and the ship, a silver dart with orange ear
-//     fins and a flickering flame. Every 5 seconds it alternates with the
-//     "HIGH SCORES" table (top 5; a star marks runs that beat the boss). On a
-//     first boot it holds made-up scores, KIT 30000 down to ZOE 5000; the
-//     table survives power-off (in mGBA, the .sav file next to the ROM).
+//   - The title fades in over a slowly scrolling starfield with purple and teal
+//     nebulae, twinkling stars and a sky that glows violet toward the bottom:
+//     the logo drops in from the top and bounces into place ("STAR" in small
+//     cyan italics between speed lines over a big chrome-gold "VELDT" with a
+//     purple drop shadow), then "A SERVAL ENGINE SHOOTER" in cyan, a blinking
+//     "PRESS START", the ship (a silver dart with orange ear fins and a
+//     flickering flame) bobbing gently, the controls and the high score. Every
+//     5 seconds it alternates with the "HIGH SCORES" table in a see-through
+//     steel frame with a header band (top 5; a star marks runs that beat the
+//     boss). On a first boot it holds made-up scores, KIT 30000 down to ZOE
+//     5000; the table survives power-off (in mGBA, the .sav file next to the
+//     ROM).
 //   - START: a rising jingle, a fade to the stage. Grey asteroids, cyan
-//     crystals and later steel station hulls scroll down the field behind
-//     the stars; "STAGE 1 / THE STAR VELDT" shows for 3 seconds. The panel on
-//     the right shows SCORE, HI, SHIPS (3), BOMBS (3) and POWER (LV 1). The
-//     stage tune, a driving melody in D minor over pumping bass and drums,
-//     loops about every 25 seconds.
-//   - The D-pad moves the ship (it banks left and right); holding A fires
-//     twin green bolts with a soft hiss (the drums give way while firing);
-//     holding R focuses: slower, the side shots straight ahead, and a white
-//     dot shows the hitbox. B fires a bomb: a white flash and a roar, every
-//     enemy bullet vanishes (10 points each), enemies on screen take damage,
-//     and the ship is safe for a moment.
+//     crystals and later steel station hulls scroll down the field behind the
+//     stars; "STAGE 1 / THE STAR VELDT" (yellow and cyan) shows for 3 seconds.
+//     The steel panel on the right has five plates, a cyan label over a dark
+//     well each: SCORE, HI, SHIPS (3), BOMBS (3) and POWER, a gauge of four
+//     segments (one lit green; all four gold at MAX). The stage tune, a driving
+//     melody in D minor over pumping bass and drums, loops about every 25
+//     seconds.
+//   - The D-pad moves the ship (it banks left and right); holding A fires twin
+//     green bolts with a soft hiss and a flash at the nose (the drums give way
+//     while firing); holding R focuses: slower, the side shots straight ahead,
+//     and a white dot shows the hitbox. B fires a bomb: a white flash, a roar
+//     and a shaking screen, every enemy bullet vanishes (10 points each),
+//     enemies on screen take damage, and the ship is safe for a moment.
 //   - Enemies come in waves: purple darts in lines, swoops, side entries,
 //     zigzags and dives, some firing pink orbs at the ship; spinning
 //     four-bladed spinners weave down firing blue three-way spreads; green
 //     gunships hover and fire rings and aimed fans (most drop a capsule);
-//     orange carriers drift down and drop one too. Turrets on the station
-//     hulls open their red eye before firing pairs of shots; destroyed, they
-//     leave a glowing crater. Lamps on the hulls blink. Twice (after about 50
-//     and 90 seconds) a fort comes by with two big cannons in round
-//     emplacements: steel domes with a red eye and long twin barrels (well
-//     past the dome) that swing smoothly about the dome to follow the ship
-//     (a ship that keeps moving stays ahead of them) and, once aimed, fire
-//     three pairs of pink shots with muzzle flashes. They take many hits
-//     (3,000 points); destroyed, the head spins away shrinking to nothing and
-//     a big glowing crater is left. Shot enemies flash white and burst into
-//     fireballs and sparks (100 to 2,000 points).
-//   - A blue P capsule raises the power (a chime): side needles at level 2,
-//     two more at 3, heavier bolts at MAX (then P gives 2,000 points). A pink
-//     B capsule adds a bomb (up to 5).
-//   - A hit loses the ship in a big explosion with a deep rumble, clears the
-//     enemy bullets and drops a power level; a new ship appears at the
-//     bottom after a moment, blinking for 2 seconds. An extra ship at 50,000
-//     points and every 100,000 after (a jingle).
+//     orange carriers drift down and drop one too. Turrets on the station hulls
+//     open their red eye before firing pairs of shots; destroyed, they leave a
+//     glowing crater. Lamps on the hulls blink. Twice (after about 50 and 90
+//     seconds) a fort comes by with two big cannons in round emplacements:
+//     steel domes with a red eye and long twin barrels (well past the dome)
+//     that swing smoothly about the dome to follow the ship (a ship that keeps
+//     moving stays ahead of them) and, once aimed, fire three pairs of pink
+//     shots with muzzle flashes. They take many hits (3,000 points); destroyed,
+//     the head spins away shrinking to nothing and a big glowing crater is
+//     left. Shot enemies flash white and burst into fireballs and sparks (100
+//     to 2,000 points); big ones (gunships, cannons) also send out a shock ring
+//     and shake the screen.
+//   - A blue P capsule raises the power (a chime): side needles at level 2, two
+//     more at 3, heavier bolts at MAX (then P gives 2,000 points). A pink B
+//     capsule adds a bomb (up to 5).
+//   - A hit loses the ship in a big explosion (a shock ring, the screen
+//     shaking) with a deep rumble, clears the enemy bullets and drops a power
+//     level; a new ship appears at the bottom after a moment, blinking for 2
+//     seconds. An extra ship at 50,000 points and every 100,000 after (a
+//     jingle).
 //   - After about 110 seconds the stage tune stops, an alarm sounds and
-//     "WARNING / THE HIVE LANTERN" flashes; the boss tune starts (E minor,
-//     grinding bass) and the Hive Lantern comes down: a purple armored
-//     lantern with a glowing orange core and two steel gun pods. It sways
-//     from side to side: first the pods fire aimed three-way bursts and the
-//     core slow rings; below about two thirds of its strength the core spins
-//     a double blue spiral; below one third it turns red, its core purple,
-//     the tune speeds up, and it fires rings and pink fans while swaying
-//     faster. The pods can be shot off (5,000 points each).
-//   - Destroying the core: a chain of explosions, then a big one, a white
-//     flash, a short fanfare, "STAGE CLEAR!" (50,000 points) and a bonus for
-//     ships and bombs left counted into the score with ticks.
-//   - With no ships left: "GAME OVER" with a falling tune.
-//   - After either, the screen fades; a score that makes the table brings
-//     "NEW HIGH SCORE" and three letters: UP and DOWN change the letter
-//     (a blip; held, they run through the letters; one still held from the
-//     game does nothing until pressed again), A moves on, B back, START (or
+//     "WARNING" flashes in red over "THE HIVE LANTERN" while the sky pulses red
+//     from the bottom; the boss tune starts (E minor, grinding bass) and the
+//     Hive Lantern comes down: a purple armored lantern with a glowing orange
+//     core and two steel gun pods. It sways from side to side: first the pods
+//     fire aimed three-way bursts and the core slow rings; below about two
+//     thirds of its strength the core spins a double blue spiral; below one
+//     third it turns red, its core purple, the sky reddens, the tune speeds up,
+//     and it fires rings and pink fans while swaying faster. The pods can be
+//     shot off (5,000 points each).
+//   - Destroying the core: a chain of explosions shaking the screen, then a big
+//     one, a white flash, a short fanfare, "STAGE CLEAR!" (50,000 points) and a
+//     bonus for ships and bombs left counted into the score with ticks.
+//   - With no ships left: "GAME OVER" in red with a falling tune.
+//   - After either, the screen fades; a score that makes the table brings "NEW
+//     HIGH SCORE" in the steel frame and three letters: UP and DOWN change the
+//     letter (a blip; held, they run through the letters; one still held from
+//     the game does nothing until pressed again), A moves on, B back, START (or
 //     A on the last) saves it with a chime and shows the table with the new
 //     entry in yellow.
-//   - START pauses ("PAUSED", a tick; the music stops) and resumes (it
-//     carries on where it stopped).
+//   - START pauses ("PAUSED", a tick; the music stops) and resumes (it carries
+//     on where it stopped).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   R = S, START = Enter, SELECT = Backspace.)
 //
