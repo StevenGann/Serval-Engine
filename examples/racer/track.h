@@ -243,6 +243,10 @@ u32 race_step(Race* r, u16 buttons);
 // The car's speed for the speedometer: 0 .. 290.
 int race_speed_kmh(const Race* r);
 
+// A distance in hundredths of a kilometre, rounded down: the results'
+// "distance reached". Any FIXED distance converts without overflowing.
+u32 race_hundredths_km(FIXED distance);
+
 // --- Records ----------------------------------------------------------------
 
 // The saved bests, frames; 0 means none yet.

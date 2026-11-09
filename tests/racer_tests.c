@@ -1066,6 +1066,28 @@ static void savanna_data(void) {
     CHECK(track_curve_at(&savanna, -1) == track_curve_at(&savanna, len - 1));
 }
 
+// The results' distance: a unit is 0.256 m (top speed, 5.25 units a frame,
+// is 290 km/h), so hundredths of a kilometre are units * 64 / 2500.
+static void distance_km(void) {
+    CHECK(race_hundredths_km(0) == 0);
+    CHECK(race_hundredths_km(FX(2500)) == 64); // 640 m
+    CHECK(race_hundredths_km(FX(2539)) == 64); // rounds down
+    CHECK(race_hundredths_km(FX(2540)) == 65);
+    // A lap of the savanna is about 3.97 km, a race three of them.
+    u32 lap = (u32)track_length(&savanna) >> FX_SHIFT;
+    CHECK(race_hundredths_km(track_length(&savanna)) == lap * 64 / 2500);
+    CHECK(race_hundredths_km(track_length(&savanna)) >= 390);
+    CHECK(race_hundredths_km(track_length(&savanna)) <= 400);
+    CHECK(race_hundredths_km(3 * track_length(&savanna)) == 3 * lap * 64 / 2500);
+    // The largest distance a FIXED holds converts without overflowing.
+    CHECK(race_hundredths_km(0x7FFFFFFF) == 8388607u * 64 / 2500);
+    // Flat out for 35 seconds (or until the clock runs out): over 2 km.
+    Race r;
+    start_racing(&r, &straight);
+    hold(&r, BUTTON_A, 35 * 60);
+    CHECK(race_hundredths_km(r.travelled) >= 200);
+}
+
 TEST_SUITE(racer_tests, "racer", {"wrap_invariant", wrap_invariant},
            {"straight_centred", straight_centred}, {"width_and_depth", width_and_depth},
            {"stripes_move_toward_player", stripes_move_toward_player},
@@ -1075,4 +1097,4 @@ TEST_SUITE(racer_tests, "racer", {"wrap_invariant", wrap_invariant},
            {"traffic_waits_behind", traffic_waits_behind}, {"traffic_queues", traffic_queues},
            {"skids", skids}, {"timing", timing}, {"scripted_race", scripted_race},
            {"race_start_resets", race_start_resets}, {"records", records},
-           {"savanna_data", savanna_data});
+           {"distance_km", distance_km}, {"savanna_data", savanna_data});

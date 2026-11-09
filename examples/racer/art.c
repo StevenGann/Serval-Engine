@@ -877,9 +877,48 @@ static u32* pack(const u8* pixels, int pitch, int x0, int y0, int w, int h, u32*
 
 // --- The sprites -----------------------------------------------------------------------------
 
-// Room for every frame: the jeep 160 tiles, the logo 160, the countdown 80,
-// the objects 409 (art_build counts them into obj_tiles_used).
+// The objects' full sizes: build_objects() draws each at these, and the
+// tile count below adds them up.
+#define ACACIA_W 64
+#define ACACIA_H 64
+#define MOUND_W 32
+#define MOUND_H 64
+#define ROCK_W 32
+#define ROCK_H 32
+#define SIGN_W 32
+#define SIGN_H 32
+#define GIRAFFE_W 32
+#define GIRAFFE_H 64
+#define POST_W 16
+#define POST_H 32
+#define BANNER_W 64
+#define BANNER_H 32
+#define TRUCK_W 64
+#define TRUCK_H 64
+
+// Tiles of an object built by build_object(): its four size classes, each
+// the picture reduced by 2^class in a box at least 8x8.
+#define CLASS_SIDE(n, c) (((n) >> (c)) < 8 ? 8 : ((n) >> (c)))
+#define CLASS_TILES(w, h, c) (CLASS_SIDE(w, c) * CLASS_SIDE(h, c) / 64)
+#define OBJECT_TILES(w, h)                                                                         \
+    (CLASS_TILES(w, h, 0) + CLASS_TILES(w, h, 1) + CLASS_TILES(w, h, 2) + CLASS_TILES(w, h, 3))
+_Static_assert(ROAD_SIZE_CLASSES == 4, "OBJECT_TILES counts four size classes");
+
+// Every frame's tiles: the jeep 160, the logo 160, the countdown 80 (three
+// digits of 32x32 and GO in 64x32), the objects 398. art_build() counts what
+// it packs into obj_tiles_used, which stays at this.
+#define JEEP_TILES (JEEP_FRAMES * JEEP_W * JEEP_H / 64)
+#define LETTER_TILES (LOGO_FRAMES * 64 * 32 / 64 + 3 * 32 * 32 / 64 + 64 * 32 / 64)
+#define OBJECTS_TILES                                                                              \
+    (OBJECT_TILES(ACACIA_W, ACACIA_H) + OBJECT_TILES(MOUND_W, MOUND_H) +                           \
+     OBJECT_TILES(ROCK_W, ROCK_H) + OBJECT_TILES(SIGN_W, SIGN_H) +                                 \
+     OBJECT_TILES(GIRAFFE_W, GIRAFFE_H) + OBJECT_TILES(POST_W, POST_H) +                           \
+     OBJECT_TILES(BANNER_W, BANNER_H) + OBJECT_TILES(JEEP_W, JEEP_H) +                             \
+     OBJECT_TILES(TRUCK_W, TRUCK_H))
 #define OBJ_TILE_MAX 832
+_Static_assert(JEEP_TILES + LETTER_TILES + OBJECTS_TILES <= OBJ_TILE_MAX,
+               "the sprites' art outgrows obj_tiles: raise OBJ_TILE_MAX (1,024 at most)");
+_Static_assert(OBJ_TILE_MAX <= 1024, "sprite tiles: 1,024 at most (the hardware's 32 KB)");
 static u32 obj_tiles[OBJ_TILE_MAX * 8] SERVAL_EWRAM_BSS;
 u16 obj_tiles_used;
 
@@ -1039,31 +1078,31 @@ static u32* build_object(int object, int w, int h, int palette, u32* out) {
 static u32* build_objects(u32* out) {
     canvas_clear();
     paint(acacia_art, 64, scenery_keys, 0, 0);
-    out = build_object(OBJ_ACACIA, 64, 64, PAL_SCENERY, out);
+    out = build_object(OBJ_ACACIA, ACACIA_W, ACACIA_H, PAL_SCENERY, out);
     canvas_clear();
     paint(mound_art, 64, scenery_keys, 0, 0);
-    out = build_object(OBJ_MOUND, 32, 64, PAL_SCENERY, out);
+    out = build_object(OBJ_MOUND, MOUND_W, MOUND_H, PAL_SCENERY, out);
     canvas_clear();
     paint(rock_art, 32, scenery_keys, 0, 0);
-    out = build_object(OBJ_ROCK, 32, 32, PAL_SCENERY, out);
+    out = build_object(OBJ_ROCK, ROCK_W, ROCK_H, PAL_SCENERY, out);
     canvas_clear();
     paint(sign_art, 32, scenery_keys, 0, 0);
-    out = build_object(OBJ_SIGN, 32, 32, PAL_SCENERY, out);
+    out = build_object(OBJ_SIGN, SIGN_W, SIGN_H, PAL_SCENERY, out);
     canvas_clear();
     paint(giraffe_art, 64, scenery_keys, 0, 0);
-    out = build_object(OBJ_GIRAFFE, 32, 64, PAL_SCENERY, out);
+    out = build_object(OBJ_GIRAFFE, GIRAFFE_W, GIRAFFE_H, PAL_SCENERY, out);
     canvas_clear();
     draw_post();
-    out = build_object(OBJ_POST, 16, 32, PAL_SCENERY, out);
+    out = build_object(OBJ_POST, POST_W, POST_H, PAL_SCENERY, out);
     canvas_clear();
     draw_banner();
-    out = build_object(OBJ_BANNER, 64, 32, PAL_SCENERY, out);
+    out = build_object(OBJ_BANNER, BANNER_W, BANNER_H, PAL_SCENERY, out);
     canvas_clear();
     paint_mirrored(jeep_half, JEEP_W, JEEP_H, jeep_keys); // no serval at this wheel
     out = build_object(OBJ_JEEP, JEEP_W, JEEP_H, PAL_TRAFFIC, out);
     canvas_clear();
-    paint_mirrored(truck_half, 64, 64, jeep_keys);
-    return build_object(OBJ_TRUCK, 64, 64, PAL_TRAFFIC, out);
+    paint_mirrored(truck_half, TRUCK_W, TRUCK_H, jeep_keys);
+    return build_object(OBJ_TRUCK, TRUCK_W, TRUCK_H, PAL_TRAFFIC, out);
 }
 
 // Text in the big letters onto the canvas, its top-left at (x0, y0): each

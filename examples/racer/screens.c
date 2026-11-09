@@ -12,8 +12,8 @@
 
 #define LOGO_Y 0       // SAVANNA's pieces' top; RUN's are LOGO_Y + 32
 #define START_ROW 10   // PRESS START
-#define RECORDS_ROW 13 // BEST RACE and BEST LAP under it
-#define ERASED_ROW 16  // the erase's confirmation
+#define RECORDS_ROW 13 // BEST RACE, and BEST LAP two rows under it
+#define ERASED_ROW 17  // the erase's confirmation
 #define ERASED_FRAMES 150
 #define BLINK 64 // PRESS START: on for 40 frames of 64
 #define BLINK_ON 40
@@ -29,7 +29,7 @@ static const char* record(u32 frames) {
 static void title_records(void) {
     const Records* rec = records_get();
     text_print_line(6, RECORDS_ROW, text_format("BEST RACE %s", record(rec->best_race)));
-    text_print_line(6, RECORDS_ROW + 1, text_format("BEST LAP  %s", record(rec->best_lap)));
+    text_print_line(6, RECORDS_ROW + 2, text_format("BEST LAP  %s", record(rec->best_lap)));
 }
 
 void title_show(void) {
@@ -67,20 +67,16 @@ void title_draw(u32 frames) {
 
 // --- Results -------------------------------------------------------------------------
 
-#define RESULT_ROW 2  // FINISH or TIME UP
-#define TOTAL_ROW 4   // the race time, or the distance reached
-#define LAPS_ROW 6    // the three laps
-#define FAILED_ROW 10 // SAVE FAILED
-#define BESTS_ROW 12  // the records as they stand now
-#define BACK_ROW 16   // PRESS A
+// A blank row between any two lines: each line's shadow falls on the row
+// under it, onto the capitals of a line there.
+#define RESULT_ROW 1  // FINISH or TIME UP
+#define TOTAL_ROW 3   // the race time, or the distance reached
+#define LAPS_ROW 5    // the three laps, every other row
+#define FAILED_ROW 11 // SAVE FAILED
+#define BESTS_ROW 13  // the records as they stand now, BEST LAP two rows under
+#define BACK_ROW 17   // PRESS A
 #define LABEL_COL 2   // RACE, LAP n, BEST ...
 #define MARK_COL 19   // BEST, NEW RECORD (ten letters, to the last column)
-
-// Hundredths of a kilometre in d track units (a unit is about 0.256 m: top
-// speed, 5.25 units a frame, is 290 km/h).
-static u32 hundredths_km(FIXED d) {
-    return (u32)(d >> FX_SHIFT) * 64 / 25000;
-}
 
 static void mark(int row, const char* s) {
     text_set_style(TEXT_HIGHLIGHT);
@@ -98,7 +94,7 @@ void results_show(const Race* r, u32 fell) {
         if (fell & RECORD_RACE)
             mark(TOTAL_ROW, "NEW RECORD");
     } else {
-        u32 km = hundredths_km(r->travelled);
+        u32 km = race_hundredths_km(r->travelled);
         text_print(LABEL_COL, TOTAL_ROW, text_format("DISTANCE %u.%02u KM", km / 100, km % 100));
     }
     // The laps; the race's fastest completed one marked.
@@ -108,9 +104,9 @@ void results_show(const Race* r, u32 fell) {
             best = i;
     for (int i = 0; i < RACE_LAPS; i++) {
         u32 t = i < r->lap ? r->lap_times[i] : 0;
-        text_print(LABEL_COL, LAPS_ROW + i, text_format("LAP %d  %s", i + 1, record(t)));
+        text_print(LABEL_COL, LAPS_ROW + 2 * i, text_format("LAP %d  %s", i + 1, record(t)));
         if (i == best)
-            mark(LAPS_ROW + i, fell & RECORD_LAP ? "NEW RECORD" : "BEST");
+            mark(LAPS_ROW + 2 * i, fell & RECORD_LAP ? "NEW RECORD" : "BEST");
     }
     if (fell && records_save_failed()) {
         text_set_style(TEXT_WARNING);
@@ -119,7 +115,7 @@ void results_show(const Race* r, u32 fell) {
     }
     const Records* rec = records_get();
     text_print(LABEL_COL, BESTS_ROW, text_format("BEST RACE %s", record(rec->best_race)));
-    text_print(LABEL_COL, BESTS_ROW + 1, text_format("BEST LAP  %s", record(rec->best_lap)));
+    text_print(LABEL_COL, BESTS_ROW + 2, text_format("BEST LAP  %s", record(rec->best_lap)));
     shown_blink = false;
 }
 

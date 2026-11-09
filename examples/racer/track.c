@@ -512,6 +512,15 @@ int race_speed_kmh(const Race* r) {
     return (r->speed * KMH_K) >> 10;
 }
 
+// A unit is 0.256 m (KMH_K's top speed, 5.25 units a frame, is 290 km/h):
+// 10 m, a hundredth of a kilometre, is 2500 / 64 units. A FIXED holds at
+// most 2^23 whole units, so the product stays under 2^29.
+u32 race_hundredths_km(FIXED distance) {
+    if (distance <= 0)
+        return 0;
+    return (u32)(distance >> FX_SHIFT) * 64 / 2500;
+}
+
 // --- Records ----------------------------------------------------------------
 
 u32 records_update(Records* rec, const Race* r) {

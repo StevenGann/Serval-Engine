@@ -132,7 +132,8 @@ static void title_frame(void) {
         fade_to(start_race);
     } else if (!fade && button_down(BUTTON_L) && button_down(BUTTON_R) &&
                button_pressed(BUTTON_SELECT)) {
-        // Hidden, for demos: hold L and R and press SELECT.
+        // Hidden, for demos: it acts when SELECT is pressed while L and R
+        // are held.
         records_erase();
         title_erased();
         ev |= EV_ERASED;
@@ -174,7 +175,9 @@ static void show_results(void) {
 
 // The race's picture: the road, the HUD, the jeep, then everything in front
 // of it, nearest first. `running`: a frame of racing (not paused, not over),
-// so the sky and the time of day move on.
+// so the sky and the time of day move on. Behind the results only the road,
+// the sky and the jeep stay: the text must read, and the scenery, traffic
+// and the checkpoints' white checks would be under it.
 static void draw_race(bool running) {
     road_frame(&road, &savanna, race.distance, race.lateral);
     if (state != PAUSED) {
@@ -186,7 +189,8 @@ static void draw_race(bool running) {
     if (state != RESULTS)
         hud_draw(&race, since_go, state == PAUSED);
     jeep_draw_race(&race, &road, shake);
-    objects_draw(&savanna, &road, race.distance, race.traffic, race.traffic_count, shake);
+    if (state != RESULTS)
+        objects_draw(&savanna, &road, race.distance, race.traffic, race.traffic_count, shake);
     hud_readout_draw();
 }
 
