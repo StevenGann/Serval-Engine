@@ -42,6 +42,7 @@ save = "Save data that survives power-off"
 vm = "Game logic written for the bytecode VM"
 effects = "Screen and color effects: blending, palette writes, raster effects"
 benchmark = "Measures the engine's performance"
+surface = "The pixel surface: a picture the game draws itself (3D)"
 
 [examples.hello]
 title = "SERVAL HELLO"
@@ -119,3 +120,10 @@ summary = "Tracker music and sampled sound effects from a sound bank: two origin
 tags = ["tracker", "sound", "vm", "text"]
 level = 2
 thumbnail = { frame = 300, keys = ["240:D:2", "260:l:2"] }
+
+[examples.raycaster]
+title = "WISP WARREN"
+summary = "A first-person maze game drawn by the game itself on the pixel surface: textured walls that darken with distance, sliding doors, a key and a locked door, wisps that chase and strike, a HUD of sprites; a ray per column in fixed point with no division, 30 pictures a second"
+tags = ["surface", "sprites", "music", "text"]
+level = 4
+thumbnail = { frame = 640, keys = ["200:S:2", "260:A:2", "350:U:60", "420:B:2", "460:U:50", "520:r:30"] }
