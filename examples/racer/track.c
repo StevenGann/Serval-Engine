@@ -18,12 +18,15 @@
 // - a curve pushes the car toward its outside in proportion to speed and
 //   curvature; at top speed in the sharpest curve, full steering into it
 //   only just wins.
-// - the car stays within CAR_MAX_X, half a road width past either edge.
+// - the car stays within CAR_MAX_X, a quarter of the road's width past
+//   either edge.
 //
 // Collisions are along the track, not on screen: the car hits a roadside
 // object when, off the road and level with it sideways, it drives past the
-// object's distance; it bumps a vehicle when, level with it sideways, it
-// would close to less than BUMP_GAP behind it.
+// object's distance; it bumps a vehicle when, level with it sideways and
+// faster than it, it would close to less than BUMP_GAP behind it. A vehicle
+// that catches up with a slower car never bumps it: it waits BUMP_GAP
+// behind until the car moves aside or pulls away.
 //
 // No division anywhere: speeds, steering and the speedometer are multiplies
 // and shifts.
@@ -58,7 +61,6 @@
 // side by side block the road. The car stops BUMP_GAP behind it.
 #define HIT_X (FX_ONE * 3 / 10)
 #define BUMP_X (FX_ONE * 5 / 8)
-#define BUMP_GAP FX(12)
 
 // Traffic the car has left this far behind (out of sight, below the
 // screen's bottom) drives on from TRAFFIC_AHEAD in front of it, out of
@@ -282,6 +284,23 @@ void race_start(Race* r, const Track* t, u32 seed) {
     }
 }
 
+// A skid is a sustained thing a sound can follow: it starts once hard
+// steering at speed has lasted RACE_SKID_START frames (a tap of the stick
+// never skids), and goes on RACE_SKID_TAIL frames after it ends (so steering
+// let go and taken again is one skid, not two).
+static u32 skid(Race* r, bool hard) {
+    if (!hard)
+        r->skid_hold = 0;
+    else if (r->skid_hold < RACE_SKID_START)
+        r->skid_hold++;
+    u32 ev = r->skid_hold >= RACE_SKID_START || r->skid_tail > 0 ? RACE_EV_SKID : 0;
+    if (r->skid_hold >= RACE_SKID_START)
+        r->skid_tail = RACE_SKID_TAIL;
+    else if (r->skid_tail > 0)
+        r->skid_tail--;
+    return ev;
+}
+
 // Steering and the curve's push; the car's state on or off the road.
 static u32 steer(Race* r, u16 buttons) {
     u32 ev = 0;
@@ -294,9 +313,9 @@ static u32 steer(Race* r, u16 buttons) {
     r->car_state = int_abs(r->lateral) > FX_ONE ? CAR_OFFROAD : CAR_NORMAL;
     if (r->car_state == CAR_OFFROAD)
         ev |= RACE_EV_OFFROAD;
-    else if (r->steer && r->speed >= SKID_SPEED && int_abs(curve) >= SKID_CURVE)
-        ev |= RACE_EV_SKID;
-    return ev;
+    bool hard = r->car_state == CAR_NORMAL && r->steer && r->speed >= SKID_SPEED &&
+                int_abs(curve) >= SKID_CURVE;
+    return ev | skid(r, hard);
 }
 
 // Accelerating, braking, coasting, and the off-road limit.
@@ -316,6 +335,7 @@ static void throttle(Race* r, u16 buttons) {
 // A crash's frames: the car spins where it is, then is put back on the road.
 static void spin(Race* r) {
     r->steer = 0;
+    r->skid_hold = r->skid_tail = 0;
     r->braking = false;
     if (--r->crash_timer == 0) {
         r->car_state = CAR_NORMAL;
@@ -325,7 +345,9 @@ static void spin(Race* r) {
 }
 
 // Shortens the car's move this frame if it would close on a vehicle ahead
-// in its way: it stops BUMP_GAP behind it, slower than it.
+// in its way: it stops BUMP_GAP behind it, slower than it. Only a car
+// faster than the vehicle bumps it; one the vehicle catches up with makes
+// it wait (move_traffic()).
 static u32 bump_traffic(Race* r, FIXED lap, FIXED* advance) {
     u32 ev = 0;
     if (r->car_state == CAR_CRASHED)
@@ -333,7 +355,7 @@ static u32 bump_traffic(Race* r, FIXED lap, FIXED* advance) {
     for (int i = 0; i < r->traffic_count; i++) {
         const Vehicle* v = &r->traffic[i];
         FIXED gap = ahead_of(r->distance, v->distance, lap);
-        if (gap < 0 || int_abs(v->lateral - r->lateral) >= BUMP_X)
+        if (gap < 0 || *advance <= v->speed || int_abs(v->lateral - r->lateral) >= BUMP_X)
             continue;
         if (gap + v->speed - *advance < BUMP_GAP) {
             *advance = int_max(0, gap + v->speed - BUMP_GAP);
@@ -345,9 +367,21 @@ static u32 bump_traffic(Race* r, FIXED lap, FIXED* advance) {
     return ev;
 }
 
-static void move_traffic(Race* r, FIXED lap) {
-    for (int i = 0; i < r->traffic_count; i++)
-        r->traffic[i].distance = around(r->traffic[i].distance + r->traffic[i].speed, lap);
+// Traffic drives on, `from` being where the car was before its move. A
+// vehicle that was behind the car and within its reach sideways never
+// passes through it: it waits BUMP_GAP behind the car, at the car's pace,
+// until the car moves out of its lane or pulls away (never backward).
+static void move_traffic(Race* r, FIXED lap, FIXED from) {
+    for (int i = 0; i < r->traffic_count; i++) {
+        Vehicle* v = &r->traffic[i];
+        FIXED move = v->speed;
+        FIXED behind = ahead_of(v->distance, from, lap); // the car ahead of it by this
+        if (behind > 0 && int_abs(v->lateral - r->lateral) < BUMP_X) {
+            FIXED room = behind + ahead_of(from, r->distance, lap) - BUMP_GAP;
+            move = int_clamp(room, 0, move);
+        }
+        v->distance = around(v->distance + move, lap);
+    }
 }
 
 // Traffic left behind drives on from out of sight ahead.
@@ -446,11 +480,11 @@ u32 race_step(Race* r, u16 buttons) {
     }
     FIXED lap = track_length(r->track);
     ev |= bump_traffic(r, lap, &advance);
-    move_traffic(r, lap);
 
     FIXED from = r->distance;
     r->travelled += advance;
     ev |= pass_checkpoints(r, lap, from + advance);
+    move_traffic(r, lap, from);
     if (r->car_state == CAR_OFFROAD)
         ev |= hit_scenery(r, lap, from, from + advance);
     recycle_traffic(r, lap);

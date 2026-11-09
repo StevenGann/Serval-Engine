@@ -86,6 +86,12 @@ typedef struct {
 // The two lanes, and the one speed all traffic drives at, track units per
 // frame: about half the car's top speed. One speed, so vehicles never close
 // on each other: never two side by side, never one through another.
+//
+// Collisions with traffic are only along the road: the car bumps a vehicle
+// only by running into it from behind (RACE_EV_BUMP), and a vehicle that
+// catches the car up waits behind it. A vehicle alongside the car never
+// collides with it, so its sprite may overlap the jeep's side; the game
+// draws them as they are.
 #define TRAFFIC_LANE_LEFT (-FX_ONE / 2)
 #define TRAFFIC_LANE_RIGHT (FX_ONE / 2)
 #define TRAFFIC_SPEED (FX(11) / 4) // 2.75: 151 km/h
@@ -137,12 +143,17 @@ int track_segment_at(const Track* t, FIXED distance, FIXED* end);
 #define CAR_TOP_SPEED (FX(21) / 4)
 // Top speed off the road: a third.
 #define CAR_OFFROAD_SPEED (CAR_TOP_SPEED / 3)
-// How far out the car can go: half a road width past an edge.
+// How far out the car can go: 1.5 half-road widths, a quarter of the road's
+// width past an edge (further would put the jeep half off screen, road.c).
 #define CAR_MAX_X (FX(3) / 2)
 // A crash lasts this long (frames) before the car is put back on the road.
 #define CAR_CRASH_FRAMES 90
 // The picture shakes this long after a bump (frames).
 #define CAR_BUMP_FRAMES 16
+// Traffic and the car keep this far apart along the track (track units):
+// a bumped car stops this far behind the vehicle, and a vehicle catching
+// the car from behind waits this far behind it.
+#define BUMP_GAP FX(12)
 
 // Race.car_state.
 enum {
@@ -177,6 +188,8 @@ typedef struct Race {
     u8 bump_timer;   // frames left of a bump's shake
     s8 steer;        // -1 left, 0, 1 right: what is held, for the jeep's frame
     bool braking;    // B held, for the brake lights
+    u8 skid_hold;    // frames hard steering has lasted, up to RACE_SKID_START
+    u8 skid_tail;    // frames the skid goes on for (RACE_EV_SKID while > 0)
     FIXED travelled; // track units driven since GO (for "distance reached")
 
     // Traffic.
@@ -207,7 +220,13 @@ typedef struct Race {
 #define RACE_EV_CRASH (1u << 5)      // the car hit scenery
 #define RACE_EV_BUMP (1u << 6)       // the car ran into a vehicle from behind
 #define RACE_EV_OFFROAD (1u << 7)    // held: the car is off the road
-#define RACE_EV_SKID (1u << 8)       // held: hard steering at speed in a curve
+#define RACE_EV_SKID (1u << 8)       // held: a skid (RACE_SKID_START, _TAIL)
+
+// A skid: steering held, on the road, at three quarters of top speed or
+// more, in a curve at least half the sharpest, for RACE_SKID_START frames
+// in a row; it goes on RACE_SKID_TAIL frames after that ends.
+#define RACE_SKID_START 8
+#define RACE_SKID_TAIL 12
 
 // Sets up a race on a track: the car on the start line, at rest, the
 // countdown running, traffic at its spawns, the clock full. The same seed

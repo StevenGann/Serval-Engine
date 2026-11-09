@@ -266,19 +266,19 @@ static void stripes_move_toward_player(void) {
     CHECK(fastest < SEGMENT_LENGTH); // a period is two segments
 
     // Haze: a row where a stripe period is shorter than two groups is
-    // SHADE_HAZE; in fact every row where one segment is (road_row_haze),
-    // and only those; the nearest rows have stripes.
+    // SHADE_HAZE; in fact every row where one segment spans fewer than four
+    // lines, about one and a half groups (road_row_haze), and only those:
+    // rows 0-4. From line 104 down there are stripes.
     for (int row = 0; row < ROAD_ROWS; row++) {
         int top = HORIZON + row * 8;
         FIXED two_groups = road_depth(top) - road_depth(top + 6);
         if (2 * SEGMENT_LENGTH < two_groups)
             CHECK(road_row_haze(row));
-        CHECK(road_row_haze(row) == (SEGMENT_LENGTH < two_groups));
+        CHECK(road_row_haze(row) == (SEGMENT_LENGTH < road_depth(top) - road_depth(top + 4)));
+        CHECK(road_row_haze(row) == (row <= 4));
         for (int g = 0; g < ROAD_GROUPS; g++)
             CHECK((a.shade[row][g] == SHADE_HAZE) == road_row_haze(row));
     }
-    CHECK(road_row_haze(0));
-    CHECK(!road_row_haze(ROAD_ROWS - 1) && !road_row_haze(ROAD_ROWS / 2));
 }
 
 static void stripes_continuous_across_lap(void) {
@@ -471,6 +471,40 @@ static void car_physics(void) {
     CHECK(curve.speed == CAR_TOP_SPEED);
 }
 
+static void skids(void) {
+    Race r;
+    start_racing(&r, &straight);
+    hold(&r, BUTTON_A, 400);
+    r.track = &sharp_right;
+    Race top = r;
+    // Hard steering at speed in a sharp curve: a skid from its
+    // RACE_SKID_START-th frame, for as long as it lasts, and RACE_SKID_TAIL
+    // frames more.
+    int frame = 0, first = 0;
+    for (; frame < 40; frame++)
+        if ((race_step(&r, BUTTON_A | BUTTON_RIGHT) & RACE_EV_SKID) && !first)
+            first = frame + 1;
+    CHECK(first == RACE_SKID_START);
+    CHECK(race_step(&r, BUTTON_A | BUTTON_RIGHT) & RACE_EV_SKID);
+    int tail = 0;
+    while ((race_step(&r, BUTTON_A) & RACE_EV_SKID) && tail < 100)
+        tail++;
+    CHECK(tail == RACE_SKID_TAIL);
+    // Taps shorter than that never skid.
+    r = top;
+    u32 ev = 0;
+    for (int i = 0; i < 48; i++)
+        ev |= race_step(&r, (u16)(BUTTON_A | ((i & 7) < RACE_SKID_START - 2 ? BUTTON_RIGHT : 0)));
+    CHECK(!(ev & RACE_EV_SKID));
+    // Nor does steering on a straight, or slowly.
+    start_racing(&r, &straight);
+    hold(&r, BUTTON_A, 400);
+    CHECK(!(hold(&r, BUTTON_A | BUTTON_LEFT, 30) & RACE_EV_SKID));
+    r = top;
+    r.speed = CAR_TOP_SPEED / 2;
+    CHECK(!(hold(&r, BUTTON_RIGHT, 30) & RACE_EV_SKID));
+}
+
 // A straight circuit with a rock just beyond the right edge, 60 segments in.
 static const TrackSegment rocky_segments[] = {{200, 0}};
 static const Scenery rocky_scenery[] = {{60 * SEGMENT_LENGTH, FX_ONE * 13 / 10, SCENERY_ROCK}};
@@ -572,6 +606,98 @@ static void bump(void) {
     CHECK(!(ev & (RACE_EV_BUMP | RACE_EV_CRASH)));
 }
 
+// A straight circuit with a jeep in the right lane 20 units behind the
+// start line (close enough not to drive on from ahead).
+static const TrafficSpawn behind_spawn[] = {
+    {200 * SEGMENT_LENGTH - FX(20), TRAFFIC_LANE_RIGHT, TRAFFIC_JEEP},
+};
+static const Track behind = {
+    .segments = rocky_segments,
+    .segment_count = 1,
+    .traffic = behind_spawn,
+    .traffic_count = 1,
+    .start_time = 60 * 60 * 10,
+};
+
+// Runs `frames` frames of r holding `buttons`, and counts the frames where
+// the vehicle behind is not at least BUMP_GAP behind the car, and the bumps.
+static void wait_behind(Race* r, u16 buttons, int frames, int* close, int* bumps) {
+    for (int i = 0; i < frames; i++) {
+        FIXED speed = r->speed;
+        u32 ev = race_step(r, buttons);
+        *bumps += (ev & RACE_EV_BUMP) != 0;
+        *close += gap(r->track, r->distance, r->traffic[0].distance) > -BUMP_GAP;
+        // Its speed is the car's own doing: never raised by traffic.
+        *bumps += r->speed > speed && !(buttons & BUTTON_A);
+    }
+}
+
+static void traffic_waits_behind(void) {
+    Race r;
+    int close = 0, bumps = 0;
+    // A car at rest in a lane: the vehicle catching it waits behind it.
+    start_racing(&r, &behind);
+    r.lateral = TRAFFIC_LANE_RIGHT;
+    wait_behind(&r, 0, 300, &close, &bumps);
+    CHECK(close == 0 && bumps == 0);
+    CHECK(r.speed == 0 && r.distance == 0);
+    // Off the road (but within its reach), slower than it, accelerating.
+    start_racing(&r, &behind);
+    r.lateral = FX_ONE * 11 / 10;
+    r.speed = FX(1);
+    wait_behind(&r, BUTTON_A, 300, &close, &bumps);
+    CHECK(close == 0 && bumps == 0);
+    CHECK(r.speed == CAR_OFFROAD_SPEED);
+    // Out of its lane, the car lets it by.
+    start_racing(&r, &behind);
+    r.lateral = TRAFFIC_LANE_LEFT;
+    u32 ev = hold(&r, 0, 60);
+    CHECK(!(ev & RACE_EV_BUMP));
+    CHECK(gap(&behind, r.distance, r.traffic[0].distance) > FX(100));
+    // Pulling away, the car leaves it behind (where it soon drives on from
+    // out of sight ahead) and never bumps it.
+    start_racing(&r, &behind);
+    r.lateral = TRAFFIC_LANE_RIGHT;
+    hold(&r, 0, 60);
+    ev = 0;
+    bool away = false;
+    for (int i = 0; i < 300; i++) {
+        ev |= race_step(&r, BUTTON_A);
+        away |= gap(&behind, r.distance, r.traffic[0].distance) > FX(960);
+    }
+    CHECK(!(ev & RACE_EV_BUMP));
+    CHECK(away);
+
+    // Slower than a vehicle just ahead (steered in alongside it): no bump,
+    // since the car isn't closing on it; it draws away.
+    start_racing(&r, &lone);
+    r.lateral = TRAFFIC_LANE_RIGHT;
+    r.speed = FX(1);
+    r.traffic[0].distance = r.distance + FX(5);
+    ev = 0;
+    for (int i = 0; i < 30; i++) {
+        FIXED speed = r.speed;
+        ev |= race_step(&r, 0);
+        CHECK(r.speed <= speed);
+    }
+    CHECK(!(ev & RACE_EV_BUMP));
+    CHECK(gap(&lone, r.distance, r.traffic[0].distance) > FX(40));
+
+    // After a crash: the car is put back in the middle, in reach of both
+    // lanes, at rest, with a vehicle coming; it waits behind.
+    start_racing(&r, &behind);
+    r.lateral = CAR_MAX_X;
+    r.car_state = CAR_CRASHED;
+    r.crash_timer = 2;
+    close = bumps = 0;
+    wait_behind(&r, 0, 240, &close, &bumps);
+    CHECK(r.car_state == CAR_NORMAL && r.lateral == 0);
+    CHECK(close == 0 && bumps == 0);
+    CHECK(r.speed == 0);
+    ev = hold(&r, BUTTON_A, 300);
+    CHECK(!(ev & RACE_EV_BUMP) && r.speed == CAR_TOP_SPEED);
+}
+
 // A short straight circuit with two checkpoints.
 static const TrackSegment loop_segments[] = {{20, 0}, {20, 0}};
 static const Checkpoint loop_checkpoints[] = {{0, 600}, {20 * SEGMENT_LENGTH, 900}};
@@ -656,12 +782,15 @@ static void timing(void) {
 // Drives a whole race of t with driver, until it is over; counts events.
 typedef struct {
     int crashes, bumps, checkpoints;
-    int crowded; // frames with two vehicles nearer each other than 250
-    int popped;  // vehicles that drove on from ahead within sight
+    int crowded;  // frames with two vehicles nearer each other than 250
+    int popped;   // vehicles that drove on from ahead within sight
+    int skidding; // frames of RACE_EV_SKID
+    int skids;    // skids (runs of RACE_EV_SKID)
 } Tally;
 
 static Tally drive(Race* r, u16 (*driver)(const Race*)) {
-    Tally n = {0, 0, 0, 0, 0};
+    Tally n = {0, 0, 0, 0, 0, 0, 0};
+    bool was_skidding = false;
     static RoadFrame f;
     hold(r, 0, RACE_COUNTDOWN);
     for (int frames = 0; !r->over && frames < 60 * 60 * 10; frames++) {
@@ -675,6 +804,10 @@ static Tally drive(Race* r, u16 (*driver)(const Race*)) {
             if (ahead > before[i] + FX(100)) // recycled: it must come from out of sight
                 n.popped += road_project(&f, ahead, r->traffic[i].lateral).visible;
         }
+        bool skidding = (ev & RACE_EV_SKID) != 0;
+        n.skidding += skidding;
+        n.skids += skidding && !was_skidding;
+        was_skidding = skidding;
         n.crashes += (ev & RACE_EV_CRASH) != 0;
         n.bumps += (ev & RACE_EV_BUMP) != 0;
         n.checkpoints += (ev & RACE_EV_CHECKPOINT) != 0;
@@ -712,6 +845,10 @@ static void scripted_race(void) {
     CHECK(n.crashes == 0 && n.bumps == 0);
     CHECK(n.crowded == 0); // traffic never side by side: always a way through
     CHECK(n.popped == 0);  // nor does it appear from nowhere
+    // Skids are sustained, a few a lap: in the sharp curves, not every frame
+    // the driver touches the stick (measured: 17 skids, 524 frames).
+    CHECK(n.skids >= 6 && n.skids <= 30);
+    CHECK(n.skidding < 15 * 60 && n.skidding > n.skids * RACE_SKID_TAIL);
     CHECK(n.checkpoints == 2 * RACE_LAPS - 1);
     CHECK(r.race_time >= 140 * 60 && r.race_time <= 160 * 60);
     CHECK(r.time_left >= 5 * 60 && r.time_left <= 15 * 60);
@@ -734,7 +871,8 @@ static bool same_race(const Race* a, const Race* b) {
                 a->finished == b->finished && a->distance == b->distance &&
                 a->lateral == b->lateral && a->speed == b->speed && a->car_state == b->car_state &&
                 a->crash_timer == b->crash_timer && a->bump_timer == b->bump_timer &&
-                a->steer == b->steer && a->braking == b->braking && a->travelled == b->travelled &&
+                a->steer == b->steer && a->braking == b->braking && a->skid_hold == b->skid_hold &&
+                a->skid_tail == b->skid_tail && a->travelled == b->travelled &&
                 a->traffic_count == b->traffic_count && a->time_left == b->time_left &&
                 a->race_time == b->race_time && a->last_bonus == b->last_bonus &&
                 a->lap == b->lap && a->lap_start == b->lap_start &&
@@ -874,6 +1012,7 @@ TEST_SUITE(racer_tests, "racer", {"wrap_invariant", wrap_invariant},
            {"stripes_move_toward_player", stripes_move_toward_player},
            {"stripes_continuous_across_lap", stripes_continuous_across_lap},
            {"projection", projection}, {"car_physics", car_physics},
-           {"crash_and_recovery", crash_and_recovery}, {"bump", bump}, {"timing", timing},
+           {"crash_and_recovery", crash_and_recovery}, {"bump", bump},
+           {"traffic_waits_behind", traffic_waits_behind}, {"skids", skids}, {"timing", timing},
            {"scripted_race", scripted_race}, {"race_start_resets", race_start_resets},
            {"records", records}, {"savanna_data", savanna_data});

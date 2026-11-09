@@ -56,8 +56,9 @@
 // it moves down the screen. A car moving under a segment a frame never
 // moves the stripes more than half a period (light and dark) between frames,
 // so the eye never sees them crawling backwards. Far up, a segment spans
-// fewer lines than two groups, so groups would show stripes at random: rows
-// that far are SHADE_HAZE, the mix of the two.
+// fewer lines than about one and a half groups (four lines), so groups
+// would show stripes at random: rows that far (lines 64-103) are
+// SHADE_HAZE, the mix of the two.
 
 #include "road.h"
 
@@ -104,7 +105,7 @@ void road_init(void) {
         far_line++;
     for (int row = 0; row < ROAD_ROWS; row++) {
         int top = row * 8;
-        row_haze[row] = SEGMENT_LENGTH < line_depth[top] - line_depth[top + 6];
+        row_haze[row] = SEGMENT_LENGTH < line_depth[top] - line_depth[top + 4];
     }
 }
 

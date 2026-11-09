@@ -64,8 +64,8 @@ int road_group(int y);
 FIXED road_group_depth(int row, int group);
 
 // Whether a tile row is too far for stripes (its shades are all SHADE_HAZE):
-// a segment there spans fewer lines than two groups, so the stripes would
-// alias. Fixed: the near rows are never haze.
+// a segment there spans fewer than four lines (about one and a half groups),
+// so the stripes would alias. Fixed: rows 0-4 (lines 64-103) are haze.
 bool road_row_haze(int row);
 
 // One frame of the road.
