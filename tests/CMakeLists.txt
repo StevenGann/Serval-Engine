@@ -90,7 +90,7 @@ if(SERVAL_TARGET_WEB)
     # lz77: the suites that need the web's BIOS stand-ins, in a page of their
     # own (web/main.c), which CI runs with tools/web-shots.py: the LZ77
     # loaders' ROM suite and their check.
-    serval_add_rom(serval_web_tests SOURCES web/main.c test.c lz77_tests.c rom/lz77_tests.c
+    serval_add_rom(serval_web_tests SOURCES web/main.c test.c lz77_tests.c rom/lz77_tests.c web/rtc_tests.c
                    TITLE "SERVAL TESTS" GAME_CODE "SVTW")
     target_link_libraries(serval_web_tests PRIVATE serval_warnings)
     serval_add_lz77(serval_web_tests lz77_tiles lz77/padded.inc

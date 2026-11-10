@@ -32,6 +32,14 @@
   no device) and appends it before "done" as "audio <rate> <base64>": 16-bit
   stereo samples, little-endian (tools/web-shots.py audio=FILE writes a WAV).
 
+  The clock (src/web/rtc.c, rtc.h): a normal page reads the browser's local
+  time. Test mode takes the clock from the hash, so runs are deterministic:
+  "&rtc=SECONDS" starts it at SECONDS since 2000-01-01 00:00:00 and advances it
+  one second per 60 frames; "&rtcstep=FRAME:SECONDS" (repeatable) adds SECONDS
+  (negative to go back) from that frame on. "&rtc=none" gives the game no clock,
+  in any mode (tools/web-shots.py rtc=SECONDS, rtcstep=FRAME:SECONDS and
+  rtc=none do the same). Test mode without "rtc=" uses the local time.
+
   The title and game code (serval_add_rom()'s TITLE and GAME_CODE) are filled
   in by cmake/ServalWeb.cmake, escaped: the title in <title>, and both as JSON
   in <script id="serval-rom">, which the script below reads.
@@ -112,6 +120,14 @@
     audio: params.get("audio") === "1" ? [] : null, // each frame's samples, 16-bit
   } : null;
   let frame = 0;
+
+  // The clock (see the comment at the top): seconds since 2000-01-01, or -1.
+  const RTC_MAX = 3155759999;
+  const rtc = {
+    none: params.get("rtc") === "none",
+    start: test && params.has("rtc") && params.get("rtc") !== "none" ? Number(params.get("rtc")) : null,
+    steps: params.getAll("rtcstep").map(s => { const [f, n] = s.split(":"); return { frame: Number(f), seconds: Number(n) }; }),
+  };
 
   // Scale to the largest whole multiple that fits (any size if none does).
   function layout() {
@@ -332,6 +348,18 @@
       }
       await nextFrame();
       Module.HEAPU16[KEYINPUT >> 1] = ~buttons() & 0x3FF;
+    },
+    servalRtcSeconds() {
+      if (rtc.none) return -1;
+      let s;
+      if (rtc.start !== null) {
+        s = rtc.start + Math.floor(frame / 60);
+        for (const step of rtc.steps) if (step.frame <= frame) s += step.seconds;
+      } else {
+        const d = new Date();
+        s = (Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) - Date.UTC(2000, 0, 1)) / 1000;
+      }
+      return Math.min(Math.max(Math.floor(s), 0), RTC_MAX);
     },
     servalSaveLoad(dst, size) {
       let data = null;

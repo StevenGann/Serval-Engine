@@ -8,7 +8,8 @@ so the shots can be compared with an emulator's.
 
 Usage: tools/web-shots.py [--require-picture] PAGE.html FRAMES OUT_PREFIX
                           [shot=N]... [key=FRAME:KEYS:LENGTH]... [save=FILE]
-                          [audio=FILE] [expect-title=TEXT] [expect-save-key=TEXT]
+                          [audio=FILE] [rtc=SECONDS|none] [rtcstep=FRAME:SECONDS]...
+                          [expect-title=TEXT] [expect-save-key=TEXT]
 Writes OUT_PREFIX-<frame>.png for each shot. audio=FILE writes the sound of
 the FRAMES frames to FILE, a 16-bit stereo WAV at the page's sample rate (48
 kHz), as the web build made it (the PSG, tracker music and sampled effects).
@@ -16,6 +17,10 @@ save=FILE stands in for the cartridge's save memory (as big as the game's
 save type, like an mGBA .sav):
 the game starts from FILE if it exists, and FILE gets the save memory at the
 end if the game used it, so consecutive runs see each other's saves.
+rtc=SECONDS starts the game's real-time clock at SECONDS since 2000-01-01
+(762525296 is 2024-02-29 12:34:56) and advances it one second per 60 frames;
+rtcstep=FRAME:SECONDS adds SECONDS to it from that frame on; rtc=none gives
+the game no clock. Without rtc= the page uses the local time.
 --require-picture fails if a shot is a single flat color (a smoke test that
 the game draws). expect-title and expect-save-key fail unless the page's
 title (as the browser shows it) and the localStorage key of its saves are
@@ -108,6 +113,7 @@ def main():
         sys.exit(__doc__)
     page, frames, prefix = args[0], int(args[1]), args[2]
     shots, keys, save, audio, expect = [], [], None, None, {}
+    rtc, rtcsteps = None, []
     for arg in args[3:]:
         name, _, value = arg.partition("=")
         if name == "shot":
@@ -116,6 +122,10 @@ def main():
             keys.append(value)
         elif name == "save":
             save = value
+        elif name == "rtc":
+            rtc = value
+        elif name == "rtcstep":
+            rtcsteps.append(value)
         elif name == "audio":
             audio = value
         elif name in ("expect-title", "expect-save-key"):
@@ -143,6 +153,10 @@ def main():
         fragment += "&saveurl=/serval-save.sav"
     if audio:
         fragment += "&audio=1"
+    if rtc:
+        fragment += "&rtc=" + rtc
+    for step in rtcsteps:
+        fragment += "&rtcstep=" + step
     url = f"http://127.0.0.1:{server.server_address[1]}/{filename}#{fragment}"
     # Virtual time runs the page's timers as fast as it can, and the DOM is
     # dumped once nothing is left to run (the page stops after the last frame).

@@ -101,7 +101,7 @@ jobs:
       # lz77: suites that need the web's BIOS stand-ins in place (tests/web/main.c):
       # a failed check ends the page early, so it doesn't finish its frames.
       - name: Run the web test page
-        run: tools/web-shots.py --require-picture build/web/tests/serval_web_tests.html 10 build/web/tests/serval_web_tests shot=10
+        run: tools/web-shots.py --require-picture build/web/tests/serval_web_tests.html 10 build/web/tests/serval_web_tests shot=10 rtc=762525296
 
       # debug link: the debug link end to end (CTest svlink_e2e,
       # tools/svlink_test.py): fireflies' debug page driven by tools/svlink.py
