@@ -68,6 +68,7 @@ static struct {
     int mark_count;     //
     bool castle_landed; // the castling being shown: the king has landed
     bool save_pending;  // the save is written in a frame of its own
+    bool recorded;      // this game's result is in the record
     u8 settle;          // frames before the computer may start thinking
     bool announced;     // the result shown
     bool readout;
@@ -265,10 +266,20 @@ static void play_move(u32 mv, int done) {
 static void save(void) {
     const Match* m = st.m;
     st.save_pending = false;
-    if (m->result == RESULT_NONE)
+    if (m->result == RESULT_NONE) {
         board_records_save_game(m);
-    else
+    } else if (!st.recorded) {
         board_records_end_game(m);
+        st.recorded = true;
+    }
+}
+
+// Before the game is left (NEW GAME, QUIT): writes a save still waiting, and
+// counts a game that ended under the open menu (its last move may still be
+// sliding, so its save was not asked for yet) once.
+static void flush_save(void) {
+    if (st.save_pending || (st.m->result != RESULT_NONE && !st.recorded))
+        save();
 }
 
 // The sounds of what the animation did this frame.
@@ -558,17 +569,18 @@ static bool menu_buttons(PlayExit* exit) {
         close_menu();
         break;
     case ITEM_NEW:
+        flush_save();
         stop_thinking();
         match_new(m, (GameKind)m->game, (MatchMode)m->mode, m->human_side, m->level);
         reset_board();
+        st.recorded = false;
         st.save_pending = true; // a game not begun: the saved one is forgotten
         set_view_side();
         home_cursor();
         close_menu();
         break;
     case ITEM_QUIT:
-        if (st.save_pending)
-            save();
+        flush_save();
         stop_thinking();
         view_animation_stop();
         view_set_dim(false);
@@ -706,7 +718,10 @@ void play_begin(Match* m, bool resumed) {
     search_pace_init(&st.pace);
     st.stepped = 0;
     st.ui = UI_BOARD;
-    st.thinking = st.pending = st.save_pending = false;
+    st.thinking = st.pending = st.recorded = false;
+    // A new game replaces the saved one at once (its first save forgets it),
+    // so CONTINUE never offers the old game with this one's board side.
+    st.save_pending = !resumed;
     st.settle = 2;
     bool left_flipped = board_records_saved_flip(); // read before the view side sets it
     set_view_side();
