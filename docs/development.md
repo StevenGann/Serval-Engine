@@ -285,27 +285,27 @@ The fit's first number is what a frame costs whatever its ops (the scheduler's v
 
 ## Memory use
 
-IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not): release builds and debug builds (the `gba-debug` preset: CMake's Debug configuration, -O0) at `270bba5` for most rows (the later ones are as the paragraph below the table explains), with every planned function implemented. A ROM may use up to 30,464 bytes ([below](#debug-builds)):
+IWRAM (32 KB, the fast RAM) holds the engine's hot code, the ECS pools, the shadow OAM and the stack, and is shared with the game. Unused engine code is dropped at link time (`--gc-sections`), so use depends on the features a game calls. Measured with `arm-none-eabi-size -A` on the `.elf` files (`.iwram`, code and initialized data, plus `.bss`; the games' own data included, the stack not): release builds and debug builds (the `gba-debug` preset: CMake's Debug configuration, -O0) after the examples' art pass (November 2026; earlier measurements in the paragraph below the table), with every planned function implemented. A ROM may use up to 30,464 bytes ([below](#debug-builds)):
 
 | Example | Release | Debug |
 | --- | --- | --- |
-| `hello` | 9,640 bytes | 14,844 bytes |
-| `effects` | 11,804 bytes | 17,532 bytes |
-| `racer` | 12,528 bytes | 18,272 bytes |
-| `servle` | 14,000 bytes | 19,976 bytes |
-| `jukebox` | 14,176 bytes | 14,572 bytes |
-| `raycaster` | 15,988 bytes | 25,520 bytes |
-| `shmup` | 16,364 bytes | 22,588 bytes |
-| `blackjack` | 17,896 bytes | 23,512 bytes |
-| `pong` | 18,308 bytes | 23,572 bytes |
-| `bunnymark` | 18,452 bytes | 23,708 bytes |
-| `asteroids` | 19,084 bytes | 24,852 bytes |
-| `rhythm` | 19,620 bytes | 25,192 bytes |
-| `fireflies` | 20,324 bytes | 26,280 bytes |
-| `platformer` | 21,364 bytes | 26,988 bytes |
-| `breakout` | 21,872 bytes | 27,708 bytes |
+| `hello` | 9,668 bytes | 14,888 bytes |
+| `effects` | 11,844 bytes | 17,580 bytes |
+| `racer` | 12,544 bytes | 18,292 bytes |
+| `servle` | 14,036 bytes | 20,016 bytes |
+| `raycaster` | 16,012 bytes | 25,560 bytes |
+| `shmup` | 16,428 bytes | 22,672 bytes |
+| `blackjack` | 17,916 bytes | 23,528 bytes |
+| `rhythm` | 19,764 bytes | 25,336 bytes |
+| `pong` | 20,296 bytes | 25,916 bytes |
+| `bunnymark` | 20,332 bytes | 25,936 bytes |
+| `fireflies` | 20,368 bytes | 26,344 bytes |
+| `jukebox` | 20,628 bytes | 26,548 bytes |
+| `asteroids` | 21,008 bytes | 27,136 bytes |
+| `platformer` | 21,436 bytes | 27,068 bytes |
+| `breakout` | 21,948 bytes | 27,788 bytes |
 
-At `b7c86d4`, before the sound features, the release builds were 4-24 bytes larger (`hello` 9,660, `breakout` 21,884): the wave channel moved the PSG's voices to EWRAM, and Maxmod's hooks add 8 bytes. At `8801ead`, the API freeze's last code change, they were 56-96 bytes smaller (`hello` 9,564, `breakout` 21,800): kinematic bodies and the planned features since (below). At `01fd31b` the release builds were within 300 bytes of `8801ead`'s. `platformer`'s row was measured again when it grew to four stages (it was 21,328 and 26,592 bytes): its spawn list moved to EWRAM, beside the level's cells and the map layers it now builds there, and the stages' code and data add almost nothing to IWRAM. `servle` was measured when it was added, with `main` at `6cdbaf5` merged in, and `racer` when it was added (its raster effect's loop and the PSG's music player included; its tables and pictures are in EWRAM), and `rhythm` when it was added (Maxmod's IWRAM included, as in `jukebox`, beside the sprite drawing that `jukebox` doesn't link; its art, its tables and its play state are in EWRAM, 79 KB in release). `jukebox` was measured again then: 408 bytes more in release and 416 in Debug than at `270bba5`, from changes before the music's position (its release build measured the same just before that was added). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)).
+At `b7c86d4`, before the sound features, the release builds were 4-24 bytes larger (`hello` 9,660, `breakout` 21,884): the wave channel moved the PSG's voices to EWRAM, and Maxmod's hooks add 8 bytes. At `8801ead`, the API freeze's last code change, they were 56-96 bytes smaller (`hello` 9,564, `breakout` 21,800): kinematic bodies and the planned features since (below). At `01fd31b` the release builds were within 300 bytes of `8801ead`'s. `platformer`'s row was measured again when it grew to four stages (it was 21,328 and 26,592 bytes): its spawn list moved to EWRAM, beside the level's cells and the map layers it now builds there, and the stages' code and data add almost nothing to IWRAM. `servle` was measured when it was added, with `main` at `6cdbaf5` merged in, and `racer` when it was added (its raster effect's loop and the PSG's music player included; its tables and pictures are in EWRAM), and `rhythm` when it was added (Maxmod's IWRAM included, as in `jukebox`, beside the sprite drawing that `jukebox` doesn't link; its art, its tables and its play state are in EWRAM, 79 KB in release). `jukebox` was measured again then: 408 bytes more in release and 416 in Debug than at `270bba5`, from changes before the music's position (its release build measured the same just before that was added). `fireflies` measured 21,060 bytes when it was added; its blob is now ROM data built at build time, and the boot-time assembler's label and string tables (536 bytes of IWRAM) are gone. The VM keeps its state in EWRAM, with 61 bytes of IWRAM ([vm.md](vm.md#implementation-notes)). The art pass that followed added 20-150 bytes to most examples (their pictures are built at boot in EWRAM or VRAM); four grew more by linking engine code they hadn't used: `bunnymark` (+1,880), `asteroids` (+1,924) and `pong` (+1,988) the map layer's streaming for a backdrop layer, and `jukebox` (+6,452) the sprite drawing, depth sort and entity pools for its first sprites.
 
 Depth sorting by what the depths need and the metasprite hook in the drawing paths added about 350 bytes (`hello`: 9,180 at `2a3f5a1`); drawing a metasprite's pieces and counting scanlines run from ROM, and the scanline table is in EWRAM. Sprite scaling and `sprite_stats()` add about 500 bytes to every game that draws sprites (the transformed draw path, which handles rotation, scaling, hidden sprites and palettes, and the matrix keys; building a new matrix runs from ROM and `spr_scale` lives in EWRAM), and a fixed-point `body_max_fall` 128 bytes to games with bodies.
 
@@ -319,9 +319,9 @@ The linker script reserves 2 KB below the stack and fails the build if IWRAM ove
 
 ### Debug builds
 
-Debug builds (-O0) use more IWRAM than release builds of the same game, 5,204 to 6,224 bytes more for the examples that draw sprites (the table above; `jukebox`, which draws none, 396: Maxmod is built with -O2 in every configuration), nearly all of it the engine's IWRAM code, which is larger unoptimized (measured at `393c36f`, when it was 4,968 to 5,980): drawing sprites takes 8,452 bytes instead of 3,548 (every game that draws sprites), the ECS queries 60-656 bytes more, the map streaming loops 272 and the linker's veneers for calls between IWRAM and ROM 72-108; the debug checks' warn-once flags add up to 92 bytes of `.bss`. `sys_physics()`' code takes 160 bytes less (6,128 instead of 6,288), since unoptimized it bounces bodies through calls rather than inlined copies ([runtime-systems.md](runtime-systems.md#physics)). Before `393c36f` it took 13,644 bytes (since `cf9d54b` inlined the perfect bounce), and at `3aebd4e` none of the six examples with bodies, nor the test ROM, linked in Debug.
+Debug builds (-O0) use more IWRAM than release builds of the same game, 5,220 to 6,244 bytes more for the examples that draw sprites (the table above; Maxmod, in `jukebox` and `rhythm`, is built with -O2 in every configuration), nearly all of it the engine's IWRAM code, which is larger unoptimized (measured at `393c36f`, when it was 4,968 to 5,980): drawing sprites takes 8,452 bytes instead of 3,548 (every game that draws sprites), the ECS queries 60-656 bytes more, the map streaming loops 272 and the linker's veneers for calls between IWRAM and ROM 72-108; the debug checks' warn-once flags add up to 92 bytes of `.bss`. `sys_physics()`' code takes 160 bytes less (6,128 instead of 6,288), since unoptimized it bounces bodies through calls rather than inlined copies ([runtime-systems.md](runtime-systems.md#physics)). Before `393c36f` it took 13,644 bytes (since `cf9d54b` inlined the perfect bounce), and at `3aebd4e` none of the six examples with bodies, nor the test ROM, linked in Debug.
 
-So a game's own budget is up to 6,200 bytes smaller in a Debug build: one that uses more than about 24,200 bytes of IWRAM in release (30,464 less 6,200) may not link in Debug. RelWithDebInfo (-O2 with the debug checks on, the `gba-ci` preset) uses about as much as release (within 1.2 KB: games with bodies 750-1,120 bytes less, the others 150-500 more), so such a game can debug with it. The test ROM (`serval_tests`), which links most of the engine, uses 28,284 bytes in Debug and 21,916 in release (at `270bba5`); its largest fixtures are in EWRAM to leave that room. Maxmod doesn't fit beside it, so the sampled-audio tests are a ROM of their own (`serval_tests_sampled_audio`: 14,152 bytes in Debug, 13,772 in release).
+So a game's own budget is up to 6,250 bytes smaller in a Debug build: one that uses more than about 24,200 bytes of IWRAM in release (30,464 less 6,250) may not link in Debug. RelWithDebInfo (-O2 with the debug checks on, the `gba-ci` preset) uses about as much as release (within 1.2 KB: games with bodies 750-1,120 bytes less, the others 150-500 more), so such a game can debug with it. The test ROM (`serval_tests`), which links most of the engine, uses 28,284 bytes in Debug and 21,916 in release (at `270bba5`); its largest fixtures are in EWRAM to leave that room. Maxmod doesn't fit beside it, so the sampled-audio tests are a ROM of their own (`serval_tests_sampled_audio`: 14,152 bytes in Debug, 13,772 in release).
 
 ## Checking what a game shows and plays
 

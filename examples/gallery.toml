@@ -46,7 +46,7 @@ surface = "The pixel surface: a picture the game draws itself (3D)"
 
 [examples.hello]
 title = "SERVAL HELLO"
-summary = "The smallest game: one sprite moved with the D-pad"
+summary = "The smallest game: a serval kitten walked around a meadow with the D-pad"
 tags = ["sprites"]
 level = 1
 thumbnail = { frame = 30 }
@@ -138,7 +138,7 @@ thumbnail = { frame = 300, keys = ["240:D:2", "260:l:2"] }
 
 [examples.raycaster]
 title = "WISP WARREN"
-summary = "A first-person maze game drawn by the game itself on the pixel surface: textured walls that fade into a blue haze, torches, sliding doors, a key and a locked door, wisps that chase and strike, a title and menus of sprites over the running view; a ray per column in fixed point with no division, 30 pictures a second"
+summary = "A first-person maze game drawn by the game itself on the pixel surface: textured walls that fade into a blue haze, torches, sliding doors, a key and a locked door, wisps that chase and strike, oil urns that slide and burst when shot, a title and menus of sprites over the running view; a ray per column in fixed point with no division, 30 pictures a second"
 tags = ["surface", "sprites", "effects", "music"]
 level = 4
 thumbnail = { frame = 720, keys = ["240:S:2", "300:A:2", "430:U:60", "500:B:2", "540:U:50", "600:r:30"] }
