@@ -24,6 +24,8 @@ _start:
     .byte   0x00                    @ 0xBD header checksum
     .fill   2, 1, 0                 @ 0xBE reserved
 
+    .fill   32, 1, 0                @ 0xC0-0xDF: zero (the cartridge GPIO port is at 0xC4-0xC9; docs/rtc.md)
+
 .Lreset:
     @ IRQ mode stack, then stay in system mode for main().
     mov     r0, #0x12

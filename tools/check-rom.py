@@ -3,6 +3,8 @@
 
 - The ROM is padded beyond the multiboot size and has a valid header
   (fixed value, checksum, title and game code): gbafix.py ran.
+- Bytes 0xC0-0xDF are zero: the cartridge GPIO port (real-time clock) is at
+  0xC4-0xC9, and emulators write its state into the ROM there.
 - newlib's libc.a is not in the link map: games stay free of its license.
 - The code contains no BLX instruction: the ARM7TDMI (ARMv4T) has none, so
   one would crash on hardware.
@@ -31,6 +33,7 @@ TITLE_OFFSET, TITLE_LEN = 0xA0, 12
 GAME_CODE_OFFSET, GAME_CODE_LEN = 0xAC, 4
 FIXED_VALUE_OFFSET = 0xB2
 CHECKSUM_OFFSET = 0xBD
+GPIO_AREA = (0xC0, 0xE0)
 
 
 def check_rom(path, title, game_code):
@@ -40,8 +43,11 @@ def check_rom(path, title, game_code):
     if len(rom) <= MULTIBOOT_MAX_SIZE:
         errors.append(f"{path}: {len(rom)} bytes; ROMs of 256 KiB or less can be mistaken "
                       "for multiboot images (did gbafix.py run?)")
-    if len(rom) < 0xC0:
+    if len(rom) < GPIO_AREA[1]:
         return errors + [f"{path}: too small to contain a ROM header"]
+    if any(rom[GPIO_AREA[0]:GPIO_AREA[1]]):
+        errors.append(f"{path}: bytes 0xC0-0xDF must be zero (the cartridge GPIO port at "
+                      "0xC4-0xC9: real-time clock; emulators write its state into the ROM there)")
     if rom[FIXED_VALUE_OFFSET] != 0x96:
         errors.append(f"{path}: header fixed value is 0x{rom[FIXED_VALUE_OFFSET]:02X}, "
                       "not 0x96 (did gbafix.py run?)")
