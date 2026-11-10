@@ -5,7 +5,7 @@ serval_add_rom(bunnymark SOURCES bunnymark/main.c bunnymark/bunnymark.c
                TITLE "BUNNYMARK" GAME_CODE "SVBM")
 target_link_libraries(bunnymark PRIVATE serval_warnings)
 
-serval_add_rom(pong SOURCES pong/main.c TITLE "PONG" GAME_CODE "SVPG")
+serval_add_rom(pong SOURCES pong/main.c pong/art.c TITLE "PONG" GAME_CODE "SVPG")
 target_link_libraries(pong PRIVATE serval_warnings)
 
 serval_add_rom(asteroids SOURCES asteroids/main.c asteroids/scores.c TITLE "ASTEROIDS"
