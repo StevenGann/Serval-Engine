@@ -32,6 +32,7 @@ int main(void) {
         &rhythm_tests,                         // rhythm: judging, score, calibration
         &chess_tests,                          // boardgames: chess moves, perft
         &checkers_tests,                       // boardgames: checkers moves, perft
+        &boardgames_tests,                     // boardgames: search, evaluations, match
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }
