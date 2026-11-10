@@ -5,12 +5,11 @@
 // in the side panel, where play shows its panel. The title shows the logo
 // (four 64x32 sprites) and two pieces of the game the cursor is on, its
 // board numbered for checkers; the setup's board is seen from the side
-// chosen (its labels turn). After ATTRACT_IDLE frames
-// with no button held the title gives the board to the attract mode: the
-// computer plays itself at CUB, chess and checkers by turns, undimmed and in
-// silence, until the game ends (or ATTRACT_PLIES), and any button brings
-// the menu back at once. It never writes the save: no record, no game in
-// progress.
+// chosen (its labels turn). After ATTRACT_IDLE frames with no button held
+// the title gives the board to the attract mode: the computer plays itself
+// at CUB, chess and checkers by turns, undimmed and in silence, until the
+// game ends (or ATTRACT_PLIES), and any button brings the menu back at
+// once. It never writes the save: no record, no game in progress.
 //
 // Code in ROM and state in EWRAM: nothing here is in a hurry.
 
@@ -56,6 +55,7 @@ static struct {
     u8 row;   // the setup's
     u8 players, side, level;
     u8 panel_game; // the game whose record the panel shows, 0xFF none
+    bool deaf;     // the title is fading in: buttons are ignored
     u16 idle;
     u16 message;          // frames left of the hint row's message
     bool asking;          // the erase prompt
@@ -386,6 +386,11 @@ Screen screens_title_frame(Match* m) {
     if (sc.shown != SCREEN_TITLE + 1)
         title_enter(m, sc.came_from_setup);
     sc.came_from_setup = false;
+    if (sc.deaf) { // fading in: drawn, but no button is heard
+        draw_logo();
+        view_draw_match(m);
+        return SCREEN_TITLE;
+    }
     if (sc.attract) {
         if (!button_pressed(BUTTON_ANY) && attract_frame(m))
             return SCREEN_TITLE;
@@ -545,4 +550,8 @@ Screen screens_setup_frame(Match* m) {
     }
     view_draw_match(m);
     return SCREEN_SETUP;
+}
+
+void screens_title_deaf(bool deaf) {
+    sc.deaf = deaf;
 }

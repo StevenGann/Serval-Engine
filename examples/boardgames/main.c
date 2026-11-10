@@ -51,21 +51,23 @@
 //     is saved; CHESS; CHECKERS. UP/DOWN move the cursor (a tick), A or
 //     START chooses (a knock). The panel at the right shows the record of
 //     the game the cursor is on: wins, draws and losses against CUB, HUNTER
-//     and SERVAL, and the two-player games played.
+//     and SERVAL, and the two-player games played. If the last write
+//     failed, a red SAVE FAILED shows there (the game still plays).
 //   - CONTINUE resumes the saved game (either kind) exactly where it was
 //     left, settings and board side included. A save that can no longer be
 //     replayed is dropped with "SAVED GAME LOST" in red and a low "no".
 //   - Holding L + R and pressing SELECT (in any order) asks, in red, "ERASE
 //     RECORDS AND SAVED GAME?" (a two-note chime): A erases both and says
-//     RECORDS ERASED (a hard knock; SAVE FAILED in red if the write failed),
-//     B leaves everything as it was (a tick).
+//     RECORDS ERASED (a hard knock), or, if the write failed, SAVE FAILED in
+//     red and the low "no"; B leaves everything as it was (a tick).
 //   - After 20 seconds with no button held the attract mode starts: the
 //     board brightens and the computer plays itself at CUB, chess the first
 //     time, checkers the next, and so on, in silence, the panel as in play
 //     and its status line saying DEMO GAME and PRESS ANY BUTTON by turns.
-//     It stops at the end of the game or at move 80, holds the last
-//     position four seconds and goes back to the menu; any button goes back
-//     at once (and does nothing else). It saves nothing.
+//     It stops at the end of the game or after 80 moves (160
+//     plies), holds the last position four seconds and goes back to the
+//     menu; any button goes back at once (and does nothing else). It saves
+//     nothing.
 //   - The setup, after choosing a game, over the dimmed board: PLAYERS (1
 //     PLAYER or 2 PLAYERS) and, for one player, YOUR SIDE (chess WHITE,
 //     BLACK or RANDOM; checkers DARK, LIGHT or RANDOM, with "DARK MOVES
@@ -148,12 +150,14 @@ int main(void) {
     sound_init();
     board_records_load();
     Screen screen = SCREEN_TITLE;
-    for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b += 2) { // the title fades in
+    screens_title_deaf(true); // buttons are ignored while the title fades in
+    for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b += 2) {
         frame_begin();
         screen_set_brightness(b);
         screens_title_frame(&match);
         frame_end();
     }
+    screens_title_deaf(false);
     for (;;) {
         frame_begin();
         Screen next = screen;
