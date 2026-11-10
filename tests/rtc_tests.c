@@ -82,14 +82,15 @@ static void end(void) {
 // 2024-02-29 12:34:56
 static const u8 leap_day[7] = {0x24, 0x02, 0x29, 0x04, 0x12, 0x34, 0x56};
 
-// The number of warnings given since `before`, in a debug build; 0 otherwise.
-static u32 warned_since(u32 before) {
 #ifdef SERVAL_DEBUG
-    return debug_warning_count() - before;
+#define WARNINGS(n) (n)
 #else
-    (void)before;
-    return 0;
+#define WARNINGS(n) 0
 #endif
+
+// The number of warnings given since `before`.
+static u32 warned_since(u32 before) {
+    return debug_warning_count() - before;
 }
 
 static void check_time(RtcTime t, u32 seconds) {
@@ -110,9 +111,8 @@ static void rtc_conversions_round_trip(void) {
 
     // Every day: the offset time of day moves with it.
     RtcTime t = {2000, 1, 1, 0, 0, 0};
-    u32 s = 0;
     u32 bad = 0;
-    for (u32 day = 0; day < 36525; day++, s += 86400u + 3601u) {
+    for (u32 day = 0; day < 36525; day++) {
         u32 seconds = day * 86400u + (day * 3601u) % 86400u;
         RtcTime r;
         rtc_time_from_seconds(seconds, &r);
@@ -153,9 +153,9 @@ static void rtc_conversion_limits(void) {
         serval_rtc_forget(); // the warning is given once; this call site's own
         u32 before = debug_warning_count();
         CHECK(rtc_seconds_from_time(&bad[i]) == 0);
-        CHECK(warned_since(before) == 1);
+        CHECK(warned_since(before) == WARNINGS(1));
         CHECK(rtc_seconds_from_time(&bad[i]) == 0);
-        CHECK(warned_since(before) == 1); // once
+        CHECK(warned_since(before) == WARNINGS(1)); // once
     }
 
     u32 before = debug_warning_count();
@@ -163,14 +163,14 @@ static void rtc_conversion_limits(void) {
     rtc_time_from_seconds(3155760000u, &t);
     CHECK(t.year == 2099 && t.month == 12 && t.day == 31 && t.hour == 23 && t.minute == 59 &&
           t.second == 59);
-    CHECK(warned_since(before) == 1);
+    CHECK(warned_since(before) == WARNINGS(1));
     rtc_time_from_seconds(4000000000u, &t);
-    CHECK(t.year == 2099 && warned_since(before) == 1);
+    CHECK(t.year == 2099 && warned_since(before) == WARNINGS(1));
 
     before = debug_warning_count();
     CHECK(rtc_seconds_from_time(NULL) == 0);
     rtc_time_from_seconds(0, NULL);
-    CHECK(warned_since(before) == 1);
+    CHECK(warned_since(before) == WARNINGS(2)); // one per function
     end();
 }
 
@@ -201,7 +201,7 @@ static void rtc_present_reads_time(void) {
     CHECK(rtc_seconds() == 762525296u);
     CHECK(!rtc_was_reset());
     CHECK(fake.resets == 0);
-    CHECK(warned_since(before) == 0);
+    CHECK(warned_since(before) == WARNINGS(0));
     end();
 }
 
@@ -221,7 +221,7 @@ static void rtc_power_lost_resets_and_sets_24h(void) {
     begin(RTC_STATUS_POWER | RTC_STATUS_24H, leap_day);
     CHECK(rtc_present());
     CHECK(fake.resets == 1);
-    CHECK(fake.status_writes >= 1 && fake.last_status_write == RTC_STATUS_24H);
+    CHECK(fake.status_writes == 1 && fake.last_status_write == RTC_STATUS_24H);
     CHECK(rtc_was_reset());
     end();
 }
@@ -243,6 +243,7 @@ static void rtc_open_bus_is_absent(void) {
     CHECK(!rtc_present());
     CHECK(rtc_seconds() == 0);
     CHECK(!rtc_read(&t) && t.year == 0);
+    CHECK(!rtc_was_reset()); // no clock, nothing was reset
     end();
 }
 
@@ -292,10 +293,10 @@ static void rtc_backwards_warns_once(void) {
     CHECK(rtc_seconds() == 762525296u);
     set_clock(762525296u - 3600u);
     CHECK(rtc_seconds() == 762521696u);
-    CHECK(warned_since(before) == 1);
+    CHECK(warned_since(before) == WARNINGS(1));
     set_clock(762521696u - 3600u);
     CHECK(rtc_seconds() == 762518096u);
-    CHECK(warned_since(before) == 1);
+    CHECK(warned_since(before) == WARNINGS(1));
     end();
 }
 
@@ -309,7 +310,7 @@ static void rtc_invalid_after_probe_keeps_last_good(void) {
     CHECK(t.year == 2024 && t.month == 2 && t.day == 29 && t.hour == 12 && t.minute == 34 &&
           t.second == 56);
     CHECK(rtc_seconds() == 762525296u);
-    CHECK(warned_since(before) == 1);
+    CHECK(warned_since(before) == WARNINGS(1));
     end();
 }
 

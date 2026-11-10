@@ -67,6 +67,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/psg_wave.c
     src/core/random.c
     src/core/rtc.c
+    src/core/rtc_convert.c # the conversions alone: no clock device linked
     src/core/save.c
     src/core/splash_logic.c
     src/core/sprite_table.c

@@ -18,8 +18,8 @@ void rtc_time_from_seconds(u32 s, RtcTime* out);
 - `rtc_present()`: a working clock was found. Without one (a cartridge without the chip, an emulator that does not give the game one, the host) `rtc_read()` zeroes `*out` and returns false, and `rtc_seconds()` returns 0. Games check `rtc_present()` once and offer their game without time when it is false.
 - `rtc_read()` fills in the date and time (2000 to 2099) and returns true. If the chip returns nonsense twice running, it returns false with the last good time, and a debug build warns once.
 - `rtc_seconds()`: the same time as seconds since 2000-01-01 00:00:00, 0 to 3155759999 (2099-12-31 23:59:59). This is what a game stores: two seconds counts subtract.
-- `rtc_was_reset()`: the chip had lost its power before this run (a dead battery, or a cartridge never powered), so its time is not the real date. Games treat the first run after that as a new start.
-- `rtc_seconds_from_time()` and `rtc_time_from_seconds()` convert between the two, for showing a date or building one. A field out of range gives 0, a count past 3155759999 gives 2099-12-31 23:59:59, and a debug build warns once. They do not touch the clock and work on every platform.
+- `rtc_was_reset()`: the chip had lost its power before this run (a dead battery, or a cartridge never powered), so its time is not the real date. Games treat the first run after that as a new start. It is always false without a clock.
+- `rtc_seconds_from_time()` and `rtc_time_from_seconds()` convert between the two, for showing a date or building one. A field out of range gives 0, a count past 3155759999 gives 2099-12-31 23:59:59, and a debug build warns once. They do not touch the clock and work on every platform; a game that only converts links no clock.
 
 ## How the clock is found
 
@@ -29,7 +29,7 @@ The first call to `rtc_present()`, `rtc_read()`, `rtc_seconds()` or `rtc_was_res
 2. If bit 6 (24-hour mode) is clear, write `0x40` and read the status again; still clear means there is no chip.
 3. Read the date and time. Every nibble must be a decimal digit, the month 1 to 12, the day within that month, the hour at most 23 and the minute and second at most 59. A cartridge without a chip, where the port reads as open bus (all ones) or zeros, fails here. The weekday is ignored.
 
-A game that never calls these functions does not link the clock at all.
+Only `rtc_present()`, `rtc_read()`, `rtc_seconds()` and `rtc_was_reset()` link the clock (on the GBA, its driver and the ID string that tells emulators the game has one); a game that never calls them, or that only calls the two conversions, does not.
 
 ## Elapsed time, not the date
 

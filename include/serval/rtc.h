@@ -37,12 +37,14 @@ bool rtc_present(void);
 bool rtc_read(RtcTime* out);
 
 // The time as seconds since 2000-01-01 00:00:00, 0 to 3155759999 (2099-12-31
-// 23:59:59); 0 without a clock. If it is lower than the previous call's, the
+// 23:59:59); 0 without a clock. If the chip returns nonsense, the last good
+// time's seconds. If it is lower than the previous call's, the
 // clock was changed or went back an hour for daylight saving time.
 u32 rtc_seconds(void);
 
 // True when the clock had lost its power before this run (a dead battery or a
-// new cartridge): its time was reset and is not the real date.
+// new cartridge): its time was reset and is not the real date. Always false
+// without a clock.
 bool rtc_was_reset(void);
 
 // Conversions between a date and time and seconds since 2000-01-01 00:00:00.

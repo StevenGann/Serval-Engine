@@ -9,6 +9,7 @@
 // Tests swap in their own (tests/rtc_tests.c).
 
 #include "serval/platform.h"
+#include "serval/rtc.h"
 
 typedef struct RtcDevice {
     u8 (*read_status)(void); // the status byte; an absent chip reads 0
@@ -23,6 +24,12 @@ typedef struct RtcDevice {
 
 extern const RtcDevice serval_platform_rtc_device;
 extern const RtcDevice* serval_rtc_device; // initially the platform's; tests point it at their own
+
+// The conversions (src/core/rtc_convert.c, an object of its own so that a game
+// that only converts links no device); rtc.c validates and reads with them.
+bool serval_rtc_fields_valid(const RtcTime* t);
+u32 serval_rtc_to_seconds(const RtcTime* t); // fields already valid
+void serval_rtc_convert_forget(void);        // the conversions' warnings, for serval_rtc_forget
 
 // Tests: forget the probe's result (and the warnings given), so the next call
 // probes again.
