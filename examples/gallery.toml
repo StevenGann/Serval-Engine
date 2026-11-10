@@ -162,3 +162,12 @@ level = 3
 # song, notes falling in all four lanes, PERFECT and the combo over the
 # serval; the frames around it look the same.
 thumbnail = { frame = 1110, keys = ["400:S:2", "440:D:2", "450:r:2", "462:R:2", "470:A:2"] }
+
+[examples.boardgames]
+title = "PAWS & KINGS"
+summary = "Chess and checkers in one cartridge: both games' rules as portable C proven by perft counts, one search shared by both through a table of functions, a maple and walnut board drawn at boot with servals for knights"
+tags = ["sprites", "tilemaps", "effects", "save"]
+level = 4
+# The chess start position for now; play comes with the play screen (it
+# gets frames of a game in progress then).
+thumbnail = { frame = 400, keys = [] }

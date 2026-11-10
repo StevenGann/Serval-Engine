@@ -129,6 +129,16 @@ add_custom_command(
 serval_add_soundbank(rhythm rhythm_bank ${rhythm_audio})
 target_sources(rhythm PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rhythm_charts.h")
 
+# PAWS & KINGS, chess and checkers: a portable core (both games' rules, one
+# search for both, the save; tested on the host in tests/) and the GBA side
+# (the art drawn at boot, the board view).
+serval_add_rom(boardgames SOURCES boardgames/main.c boardgames/chess_board.c
+               boardgames/chess_rules.c boardgames/chess_eval.c boardgames/checkers.c
+               boardgames/checkers_eval.c boardgames/search.c boardgames/match.c
+               boardgames/records.c boardgames/art.c boardgames/view.c
+               TITLE "PAWS & KINGS" GAME_CODE "SVPK")
+target_link_libraries(boardgames PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -143,4 +153,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(raycaster)
     serval_add_rom_checks(racer)
     serval_add_rom_checks(rhythm)
+    serval_add_rom_checks(boardgames)
 endif()
