@@ -10,29 +10,41 @@ void test_output(const char* line) {
 
 int main(void) {
     static const TestSuite* const suites[] = {
-        &ecs_tests,           &random_tests,
-        &text_format_tests,   &math_tests,
-        &physics_tests,       &map_tests,
+        &ecs_tests,
+        &random_tests,
+        &text_format_tests,
+        &math_tests,
+        &physics_tests,
+        &map_tests,
         &map_slope_tests, // ladders and slopes
-        &web_ppu_tests,       &web_apu_tests,
+        &web_ppu_tests,
+        &web_apu_tests,
         &web_mixer_tests, // maxmod: the web's mixer
-        &anim_tests,          &psg_sequencer_tests,
+        &anim_tests,
+        &psg_sequencer_tests,
         &psg_wave_tests, // wave channel
-        &save_tests,          &input_tests,
-        &path_tests,          &vm_tests,
-        &splash_logic_tests,  &color_tests,
-        &planned_audio_tests, &planned_sprites_tests,
-        &planned_map_tests,   &planned_screen_tests,
-        &lz77_tests,          &web_lz77_tests, // lz77:
-        &planned_debug_tests,                  // debug link: debug.h's planned names (none)
-        &link_tests,                           // debug link: the agent
-        &link_vm_tests,                        // debug link (E6): its VM part
-        &link_reload_tests,                    // debug link (E9): its hot reload
-        &racer_tests,                          // racer: the road and the race
-        &rhythm_tests,                         // rhythm: judging, score, calibration
-        &chess_tests,                          // boardgames: chess moves, perft
-        &checkers_tests,                       // boardgames: checkers moves, perft
-        &boardgames_tests,                     // boardgames: search, evaluations, match
+        &save_tests,
+        &rtc_tests,
+        &input_tests,
+        &path_tests,
+        &vm_tests,
+        &splash_logic_tests,
+        &color_tests,
+        &planned_audio_tests,
+        &planned_sprites_tests,
+        &planned_map_tests,
+        &planned_screen_tests,
+        &lz77_tests,
+        &web_lz77_tests,      // lz77:
+        &planned_debug_tests, // debug link: debug.h's planned names (none)
+        &link_tests,          // debug link: the agent
+        &link_vm_tests,       // debug link (E6): its VM part
+        &link_reload_tests,   // debug link (E9): its hot reload
+        &racer_tests,         // racer: the road and the race
+        &rhythm_tests,        // rhythm: judging, score, calibration
+        &chess_tests,         // boardgames: chess moves, perft
+        &checkers_tests,      // boardgames: checkers moves, perft
+        &boardgames_tests,    // boardgames: search, evaluations, match
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

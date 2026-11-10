@@ -66,6 +66,7 @@ set(SERVAL_PORTABLE_SOURCES
     src/core/psg_sequencer.c
     src/core/psg_wave.c
     src/core/random.c
+    src/core/rtc.c
     src/core/save.c
     src/core/splash_logic.c
     src/core/sprite_table.c
@@ -98,6 +99,7 @@ if(SERVAL_TARGET_GBA)
         src/gba/palette.c
         src/gba/psg.c
         src/gba/raster.c
+        src/gba/rtc.c
         src/gba/sampled_audio.c
         src/gba/screen.c
         src/gba/splash.c
@@ -164,6 +166,7 @@ elseif(SERVAL_TARGET_WEB)
         src/web/mixer.c
         src/web/platform.c
         src/web/ppu.c
+        src/web/rtc.c
         "${CMAKE_CURRENT_BINARY_DIR}/sys8_glyphs.c"
     )
     target_compile_definitions(serval PUBLIC SERVAL_WEB)

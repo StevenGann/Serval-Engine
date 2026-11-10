@@ -60,6 +60,7 @@ int main(void) {
         &psg_sequencer_tests,
         &psg_wave_tests, // wave channel
         &gba_wave_tests, // wave channel
+        &rtc_tests,      // the real-time clock, on fakes
         &input_tests,
         &path_tests,
         &gba_ecs_cost_tests,

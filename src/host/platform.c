@@ -3,6 +3,7 @@
 // VM's platform calls are recorded for the tests.
 
 #include "../core/map_internal.h"
+#include "../core/rtc_internal.h"
 #include "../core/save_internal.h"
 #include "../core/vm_internal.h"
 #include "../core/warn.h"
@@ -62,6 +63,24 @@ static bool host_save_write(u32 offset, const u8* src, u32 count) {
 
 const SaveDevice serval_platform_save_device = {
     .read = host_save_read, .write = host_save_write, SAVE_LAYOUT_SRAM};
+
+// The clock: none on the host (status 0, a date-time of zeros, writes ignored).
+static u8 host_rtc_status(void) {
+    return 0;
+}
+static void host_rtc_write_status(u8 status) {
+    (void)status;
+}
+static void host_rtc_reset(void) {}
+static void host_rtc_datetime(u8 raw[7]) {
+    memset(raw, 0, 7);
+}
+
+const RtcDevice serval_platform_rtc_device = {.read_status = host_rtc_status,
+                                              .write_status = host_rtc_write_status,
+                                              .reset = host_rtc_reset,
+                                              .read_datetime = host_rtc_datetime,
+                                              .id = NULL};
 
 // The VM's sound, music, text, button, brightness, blending and palette calls,
 // its tracker music and sampled effects calls, and its text_clear,
