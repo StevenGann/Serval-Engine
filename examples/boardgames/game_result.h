@@ -4,8 +4,8 @@
 // How a game ends, for both games of the cartridge. chess_result() (chess_rules.h)
 // reports RESULT_NONE (play on), CHECKMATE, STALEMATE, REPETITION, FIFTY,
 // MATERIAL and LENGTH; checkers' rules report NONE, NO_MOVES (the side to
-// move has no piece that can move: it loses), FORTY (forty moves without a
-// capture or a king-less advance: a draw), REPETITION and LENGTH.
+// move has no piece that can move: it loses), FORTY (80 plies, 40 by each
+// side, with no capture and no man moved: a draw), REPETITION and LENGTH.
 
 typedef enum {
     RESULT_NONE,

@@ -79,5 +79,7 @@ extern const TestSuite racer_tests;
 extern const TestSuite rhythm_tests;
 // boardgames: the chess core's board and moves (examples/boardgames/chess_board.c)
 extern const TestSuite chess_tests;
+// boardgames: the checkers core (examples/boardgames/checkers.c)
+extern const TestSuite checkers_tests;
 
 #endif // SERVAL_TEST_H
