@@ -138,6 +138,13 @@ int match_notation(Match* m, int ply, char out[24]) {
     return n;
 }
 
+bool match_can_undo(const Match* m) {
+    if (m->mode == MODE_TWO_PLAYERS || m->count >= 2)
+        return m->count > 0; // two plies: one of them the human's
+    // One ply: the human's if the computer is to move now.
+    return m->count == 1 && match_side_to_move(m) != m->human_side;
+}
+
 bool match_computer_to_move(const Match* m) {
     return m->mode == MODE_ONE_PLAYER && m->result == RESULT_NONE &&
            match_side_to_move(m) != m->human_side;

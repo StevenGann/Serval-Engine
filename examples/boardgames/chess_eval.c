@@ -60,7 +60,7 @@ static const s8 pst_queen[64] = {
     -18, -10, -8, -2, -6, -8, -10, -18, //
 };
 // The king hides in the middlegame and comes to the centre in the endgame.
-static const s8 pst_king_mid[64] = {
+const s8 chess_king_mid[64] = {
     -32, -42, -42, -52, -52, -42, -42, -32, //
     -32, -42, -42, -52, -52, -42, -42, -32, //
     -32, -42, -42, -52, -52, -42, -42, -32, //
@@ -70,7 +70,7 @@ static const s8 pst_king_mid[64] = {
     16,  16,  -4,  -6,  -6,  -4,  16,  16,  //
     18,  28,  12,  -2,  0,   8,   30,  20,  //
 };
-static const s8 pst_king_end[64] = {
+const s8 chess_king_end[64] = {
     -48, -36, -28, -20, -20, -28, -36, -48, //
     -30, -18, -8,  0,   0,   -8,  -18, -30, //
     -28, -8,  18,  28,  28,  18,  -8,  -28, //
@@ -81,11 +81,13 @@ static const s8 pst_king_end[64] = {
     -48, -32, -28, -28, -28, -28, -32, -48, //
 };
 
-static const s8* const pst[7] = {0, pst_pawn, pst_knight, pst_bishop, pst_rook, pst_queen, 0};
-static const s16 piece_value[7] = {0, 100, 320, 330, 500, 900, 0};
+const s8* const chess_pst[7] = {0, pst_pawn, pst_knight, pst_bishop, pst_rook, pst_queen, 0};
+const s16 chess_piece_value[7] = {0, 100, 320, 330, 500, 900, 0};
 // The game phase each piece is worth: 24 with all of them on the board.
-static const u8 phase_weight[7] = {0, 0, 1, 1, 2, 4, 0};
+const u8 chess_phase_weight[7] = {0, 0, 1, 1, 2, 4, 0};
 #define PHASE_MAX 24
+// A king's square, 0..63, from the 0x88 one the position keeps.
+#define TO64_KING(s) (((s) + ((s) & 7)) >> 1)
 
 // Pawn structure.
 #define DOUBLED 14  // each pawn beyond the first on a file
@@ -95,80 +97,106 @@ static const u8 passed_bonus[8] = {0, 8, 12, 20, 34, 56, 90, 0};
 
 // --- The evaluation -------------------------------------------------------------
 
+// Pawns as 64 bits: byte f is file f, its bit r rank r (Position.pawns).
+typedef unsigned long long Pawns;
+#define BYTES(b) (0x0101010101010101ull * (b)) // b in every byte
+
+// Bits shifted n ranks down each file (within each byte).
+static Pawns rank_down(Pawns x, int n) {
+    return (x >> n) & BYTES((u8)(0xFF >> n));
+}
+
+// Each byte's count of set bits.
+static Pawns byte_counts(Pawns x) {
+    x -= (x >> 1) & BYTES(0x55);
+    x = (x & BYTES(0x33)) + ((x >> 2) & BYTES(0x33));
+    return (x + (x >> 4)) & BYTES(0x0F);
+}
+
+// The sum of the bytes (at most 255).
+static int byte_sum(Pawns x) {
+    x += x >> 32;
+    x += x >> 16;
+    x += x >> 8;
+    return (int)(x & 0xFF);
+}
+
+// One side's pawn structure: own and their pawns as seen from that side
+// (rank 0 its first rank).
+static int pawn_side(Pawns own, Pawns their) {
+    Pawns counts = byte_counts(own);
+    // 1 in each byte of a file with pawns.
+    Pawns files = own | rank_down(own, 4);
+    files |= rank_down(files, 2);
+    files = (files | rank_down(files, 1)) & BYTES(1);
+    Pawns isolated = files & ~(files << 8) & ~(files >> 8);
+    int score = -DOUBLED * (byte_sum(counts) - byte_sum(files)) -
+                ISOLATED * byte_sum(counts & (isolated * 0xFF));
+    // Passed: no pawn of theirs ahead on its file or the files beside it.
+    // ahead: the ranks below one of their pawns on those files.
+    Pawns near = their | (their << 8) | (their >> 8);
+    Pawns ahead = rank_down(near, 1);
+    ahead |= rank_down(ahead, 1);
+    ahead |= rank_down(ahead, 2);
+    ahead |= rank_down(ahead, 4);
+    Pawns passed = own & ~ahead;
+    for (int rank = 1; passed && rank < 7; rank++) // pawns stand on ranks 2 to 7
+        score += passed_bonus[rank] * byte_sum((passed >> rank) & BYTES(1));
+    return score;
+}
+
+// A side's pawns turned to its own view: the ranks reversed in every byte.
+static Pawns pawns_turned(Pawns x) {
+    x = ((x >> 1) & BYTES(0x55)) | ((x & BYTES(0x55)) << 1);
+    x = ((x >> 2) & BYTES(0x33)) | ((x & BYTES(0x33)) << 2);
+    return ((x >> 4) & BYTES(0x0F)) | ((x & BYTES(0x0F)) << 4);
+}
+
+// The pawn structure's worth to White (White's pawns' less Black's): doubled
+// and isolated pawns, passed pawns by how far they have come. Rarely run
+// (the cache below): not in IWRAM.
+__attribute__((noinline)) static int pawn_structure(const u32* pawns) {
+    Pawns white = (Pawns)pawns[1] << 32 | pawns[0];
+    Pawns black = (Pawns)pawns[3] << 32 | pawns[2];
+    return pawn_side(white, black) - pawn_side(pawns_turned(black), pawns_turned(white));
+}
+
+// The pawn structures worked out lately, by their pawns: the search meets
+// the same few again and again. An entry holds its pawns whole, so a hit is
+// always the right one; all zero, it is the structure with no pawns, whose
+// worth is 0. Only time depends on what it holds.
+#define PAWN_CACHE_BITS 8
+typedef struct {
+    u32 pawns[4];
+    int score;
+} PawnEntry;
+static PawnEntry pawn_cache[1 << PAWN_CACHE_BITS] SERVAL_EWRAM_BSS;
+
 // Run from IWRAM as ARM code on the GBA: the search evaluates at most of its
-// nodes.
+// nodes. The material and piece-square sums, the phase and the pawns come
+// with the position (pos_make() keeps them), so nothing here scans the board.
 CHESS_HOT int chess_eval(const Position* p) {
-    int score[2] = {0, 0}; // [0] White, [1] Black
-    int phase = 0;
-    int king_sq[2] = {0, 0};
-    // Per file (index file + 1, with an empty file each side): pawn counts,
-    // White's lowest pawn rank and Black's highest.
-    u8 pawns[2][10] = {{0}, {0}};
-    s8 white_low[10], black_high[10];
-    u8 pawn_sq[2][16];
-    int pawn_count[2] = {0, 0};
-    for (int f = 0; f < 10; f++) {
-        white_low[f] = 8;
-        black_high[f] = -1;
-    }
+    int s = p->psq[0] - p->psq[1]; // White's view until the end
 
-    for (int rank = 0; rank < 8; rank++) {
-        const u8* row = &p->board[rank * 16];
-        for (int file = 0; file < 8; file++) {
-            Piece pc = row[file];
-            if (pc == EMPTY)
-                continue;
-            int kind = PIECE_KIND(pc), c = PIECE_COLOR(pc) >> 3;
-            int sq = rank * 8 + file, idx = c ? sq : sq ^ 56;
-            if (kind == KING) {
-                king_sq[c] = idx;
-                continue;
-            }
-            score[c] += piece_value[kind] + pst[kind][idx];
-            phase += phase_weight[kind];
-            if (kind == PAWN) {
-                pawns[c][file + 1]++;
-                if (pawn_count[c] < 16)
-                    pawn_sq[c][pawn_count[c]++] = (u8)sq;
-                if (c == 0 && rank < white_low[file + 1])
-                    white_low[file + 1] = (s8)rank;
-                if (c == 1 && rank > black_high[file + 1])
-                    black_high[file + 1] = (s8)rank;
-            }
-        }
+    // The pawn structure, from the cache if it is there.
+    u32 w0 = p->pawns[0], w1 = p->pawns[1], w2 = p->pawns[2], w3 = p->pawns[3];
+    u32 h = w0 * 0x9E3779B1u + w1 * 0x85EBCA77u + w2 * 0xC2B2AE3Du + w3 * 0x27D4EB2Fu;
+    PawnEntry* e = &pawn_cache[h >> (32 - PAWN_CACHE_BITS)];
+    if (e->pawns[0] != w0 || e->pawns[1] != w1 || e->pawns[2] != w2 || e->pawns[3] != w3) {
+        e->pawns[0] = w0;
+        e->pawns[1] = w1;
+        e->pawns[2] = w2;
+        e->pawns[3] = w3;
+        e->score = pawn_structure(p->pawns);
     }
-
-    // Pawn structure.
-    for (int c = 0; c < 2; c++) {
-        for (int f = 1; f <= 8; f++)
-            if (pawns[c][f] > 1)
-                score[c] -= DOUBLED * (pawns[c][f] - 1);
-        for (int i = 0; i < pawn_count[c]; i++) {
-            int sq = pawn_sq[c][i], f = SQ_FILE(sq) + 1, rank = SQ_RANK(sq);
-            if (pawns[c][f - 1] == 0 && pawns[c][f + 1] == 0)
-                score[c] -= ISOLATED;
-            bool passed;
-            if (c == 0)
-                passed =
-                    black_high[f - 1] <= rank && black_high[f] <= rank && black_high[f + 1] <= rank;
-            else
-                passed =
-                    white_low[f - 1] >= rank && white_low[f] >= rank && white_low[f + 1] >= rank;
-            if (passed)
-                score[c] += passed_bonus[c ? 7 - rank : rank];
-        }
-    }
+    s += e->score;
 
     // The kings, tapered by the material left.
-    if (phase > PHASE_MAX)
-        phase = PHASE_MAX;
-    for (int c = 0; c < 2; c++)
-        score[c] +=
-            (pst_king_mid[king_sq[c]] * phase + pst_king_end[king_sq[c]] * (PHASE_MAX - phase)) /
-            PHASE_MAX;
-
-    int s = score[0] - score[1];
-    return pos_side(p) == WHITE ? s : -s;
+    int phase = p->phase > PHASE_MAX ? PHASE_MAX : p->phase;
+    int w = TO64_KING(p->king[0]) ^ 56, b = TO64_KING(p->king[1]);
+    s += (chess_king_mid[w] * phase + chess_king_end[w] * (PHASE_MAX - phase)) / PHASE_MAX;
+    s -= (chess_king_mid[b] * phase + chess_king_end[b] * (PHASE_MAX - phase)) / PHASE_MAX;
+    return p->side == WHITE ? s : -s;
 }
 
 // --- The search's table -----------------------------------------------------------
@@ -176,9 +204,11 @@ CHESS_HOT int chess_eval(const Position* p) {
 static Move scratch[MAX_MOVES] SERVAL_EWRAM_BSS;
 
 // For quiescence, the captures (and promotions) less those that lose
-// material at once: a piece taking a cheaper one that is defended (QxP with
-// the pawn guarded). Without this, a tactical middlegame's quiescence runs
-// to tens of thousands of nodes.
+// material at once: a piece taking one worth clearly less (QUIESCE_MARGIN)
+// that is defended (QxP with the pawn guarded). Near-even trades (BxN) stay.
+// Without this, a tactical middlegame's quiescence runs to tens of thousands
+// of nodes.
+#define QUIESCE_MARGIN 50
 static int game_gen(void* pos, u32* out, bool noisy_only) {
     Position* p = pos;
     if (!noisy_only) {
@@ -188,14 +218,15 @@ static int game_gen(void* pos, u32* out, bool noisy_only) {
         return n;
     }
     int n = pos_gen_captures(p, scratch), kept = 0;
-    int them = pos_side(p) ^ BLACK;
+    int them = p->side ^ BLACK;
     for (int i = 0; i < n; i++) {
         Move m = scratch[i];
-        int flags = MOVE_FLAGS(m), to = MOVE_TO(m);
+        int flags = MOVE_FLAGS(m), to = MOVE_TO(m), from = MOVE_FROM(m);
         if (flags == MF_CAPTURE) {
-            int victim = piece_value[PIECE_KIND(pos_piece(p, to))];
-            int attacker = piece_value[PIECE_KIND(pos_piece(p, MOVE_FROM(m)))];
-            if (victim < attacker && pos_attacked(p, to, them))
+            // The board read directly (0x88: rank * 16 + file).
+            int victim = chess_piece_value[PIECE_KIND(p->board[to + (to & ~7)])];
+            int attacker = chess_piece_value[PIECE_KIND(p->board[from + (from & ~7)])];
+            if (victim + QUIESCE_MARGIN < attacker && pos_attacked(p, to, them))
                 continue;
         }
         out[kept++] = m;
@@ -264,7 +295,7 @@ CHESS_HOT static int game_order(const void* pos, u32 mv) {
     if (kind == KING)
         return 100;
     int flip = PIECE_COLOR(pc) ? 0 : 56;
-    return 100 + pst[kind][to ^ flip] - pst[kind][from ^ flip];
+    return 100 + chess_pst[kind][to ^ flip] - chess_pst[kind][from ^ flip];
 }
 
 static bool game_in_check(const void* pos) {
@@ -289,17 +320,20 @@ const SearchGame chess_search_game = {
     .in_check = game_in_check,
     .noisy_forced = false,
     .ply = game_ply,
+    .frame_work = 630, // measured: HUNTER and SERVAL from Kiwipete, release build
 };
 
-// Measured on the GBA at SEARCH_NODES_PER_FRAME (about 410 nodes a second):
-// CUB answers in about 1.3 s, shallow and with its random margin and weak
-// moves (beatable, though it takes what it is given); HUNTER in about 2.5 s
-// (depth 2-3 in a middlegame); SERVAL stops at 2,800 nodes, about 7 s, which
-// is depth 3 in a busy middlegame and 4-5 in quieter positions and endgames.
+// Measured on the GBA (release build, games played on from Kiwipete, about
+// 1,400-1,500 nodes a second): CUB answers in about 0.6 s, at most 1.5 s,
+// shallow and with its random margin and weak moves (beatable, though it takes
+// what it is given); HUNTER in about 2.6 s, at most 3 s (depth 1-3); SERVAL
+// stops at 10,000 nodes, about 7 s, at most 7.5 s (8 in a gba-ci
+// build): depth 2-3 in Kiwipete itself (white's depth 3 takes 17,000 nodes),
+// 3-4 in the middlegames that follow, deeper in quieter positions.
 static const SearchLevel levels[LEVEL_COUNT] = {
-    [LEVEL_CUB] = {2, 500, 60, 150, 0, 0},
-    [LEVEL_HUNTER] = {4, 1000, 0, 0, 0, 0},
-    [LEVEL_SERVAL] = {8, 2800, 0, 0, 8, 15},
+    [LEVEL_CUB] = {2, 1500, 60, 150, 0, 0},
+    [LEVEL_HUNTER] = {4, 3600, 0, 0, 0, 0},
+    [LEVEL_SERVAL] = {8, 10000, 0, 0, 8, 15},
 };
 
 const SearchLevel* chess_level(int level) {

@@ -14,6 +14,11 @@
 // side to move scores the same.
 int chess_eval(const Position* p);
 
+// The king's piece-square tables, the middlegame's and the endgame's (as
+// chess_pst[]: White's view as printed), tapered by the phase.
+extern const s8 chess_king_mid[64];
+extern const s8 chess_king_end[64];
+
 extern const SearchGame chess_search_game;
 
 // LEVEL_CUB, LEVEL_HUNTER or LEVEL_SERVAL (anything else gives CUB).

@@ -3,10 +3,11 @@
 // A frame: the buttons (the menu's, the result's, or the board's: the
 // cursor, picking and moving), then the computer (a search started, a step
 // of it, or its move played once the board has stopped moving), then the
-// drawing. The computer thinks SEARCH_NODES_PER_FRAME nodes a frame, but not
-// in a frame that already did something heavy (a move played and saved, an
-// undo, the search set up, the screen dimmed): the move found does not
-// depend on which frames it thought in, only on how many nodes, so this
+// drawing. The computer thinks as much a frame as the frame has time for
+// (search_pace(), from the last frame's cycles; a fixed amount on the web),
+// but not in a frame that already did something heavy (a move played and
+// saved, an undo, the search set up, the screen dimmed): the move found does
+// not depend on which frames it thought in, or how much in each, so this
 // changes nothing but the time, and keeps every frame inside its budget.
 
 #include "play.h"
@@ -72,6 +73,8 @@ static struct {
     bool readout;
     u32 readout_peak, readout_frames;
     char readout_text[12];
+    SearchPace pace; // the work a frame (GBA)
+    u32 stepped;     // the search's work this frame
 } st SERVAL_EWRAM_BSS;
 
 // --- Small helpers ------------------------------------------------------------------
@@ -412,7 +415,7 @@ static void stop_thinking(void) {
 // move once found and the board is still. Returns true if it did something
 // heavy.
 
-static bool computer(bool busy) {
+static bool computer(bool busy, u32 allowance) {
     Match* m = st.m;
     if (st.settle) { // the screen's first frames redraw everything
         st.settle--;
@@ -424,9 +427,12 @@ static bool computer(bool busy) {
         return true;
     }
     if (st.thinking && !busy) {
-        // Half the nodes while a move is shown moving: those frames draw
+        // Half the work while a move is shown moving: those frames draw
         // more.
-        if (!search_step(view_animating() ? SEARCH_NODES_PER_FRAME / 2 : SEARCH_NODES_PER_FRAME))
+        u32 before = search_work();
+        bool done = search_step(view_animating() ? (allowance + 1) / 2 : allowance);
+        st.stepped = search_work() - before;
+        if (!done)
             return false;
         st.thinking = false;
         st.pending = true;
@@ -448,7 +454,7 @@ static void draw_menu(void) {
     text_set_style(TEXT_HIGHLIGHT);
     text_print_centered_in(BOARD_COL, BOARD_COLS, MENU_ROW, "PAUSED");
     for (int i = 0; i < ITEM_COUNT; i++) {
-        bool off = i == ITEM_UNDO && st.m->count == 0;
+        bool off = i == ITEM_UNDO && !match_can_undo(st.m);
         text_set_style(off ? STYLE_DIM : i == st.item ? TEXT_HIGHLIGHT : TEXT_NORMAL);
         const char* s = item_names[i];
         text_print_centered_in(BOARD_COL, BOARD_COLS, MENU_ROW + 2 + 2 * i,
@@ -511,7 +517,7 @@ static bool menu_buttons(PlayExit* exit) {
         close_menu();
         break;
     case ITEM_UNDO:
-        if (m->count == 0) {
+        if (!match_can_undo(m)) { // nothing of the human's to take back
             sound_no();
             return false;
         }
@@ -673,6 +679,8 @@ static void readout(void) {
 
 void play_begin(Match* m) {
     st.m = m;
+    search_pace_init(&st.pace);
+    st.stepped = 0;
     st.ui = UI_BOARD;
     st.thinking = st.pending = st.save_pending = false;
     st.settle = 2;
@@ -729,8 +737,15 @@ PlayExit play_frame(void) {
         save();
         busy = true;
     }
+    // The work this frame may do thinking, from the last frame's (search.h).
+#ifdef SERVAL_WEB
+    u32 allowance = match_search_game(m)->frame_work;
+#else
+    u32 allowance = search_pace(&st.pace, frame_cpu_cycles(), st.stepped, frame_budget_cycles());
+#endif
+    st.stepped = 0;
     if (st.ui != UI_OVER)
-        busy |= computer(busy);
+        busy |= computer(busy, allowance);
     know_position();
 
     // The view: highlights, targets, marks, the chooser, the cursor.
@@ -749,7 +764,9 @@ PlayExit play_frame(void) {
     else if (st.ui == UI_BOARD)
         view_draw_cursor(st.cursor);
     sound_events(view_draw_match(m));
-    if (m->result != RESULT_NONE && !st.announced && !view_animating())
+    // A game that ended while the menu was open (START during the last
+    // move's slide) is announced once the menu closes.
+    if (m->result != RESULT_NONE && !st.announced && !view_animating() && st.ui != UI_MENU)
         announce();
     view_panel(m, status_line());
     return PLAY_CONTINUE;

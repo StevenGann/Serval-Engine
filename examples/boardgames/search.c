@@ -92,6 +92,7 @@ static int done_depth, done_score;
 static u32 done_best, chosen;
 static int chosen_score;
 static u32 nodes, rng;
+static u32 work; // SEARCH_WORK_* units done
 
 // --- Small helpers ------------------------------------------------------------
 
@@ -166,6 +167,13 @@ static u32 pick_next(Frame* f) {
     return m;
 }
 
+// The game's moves, its work counted.
+static int gen(u32* out, bool noisy) {
+    int n = game->gen(pos, out, noisy);
+    work += SEARCH_WORK_GEN + (u32)n;
+    return n;
+}
+
 // --- Nodes --------------------------------------------------------------------
 
 // Sets up the node at frames[sp] just entered. Returns true with *value when
@@ -180,7 +188,7 @@ static bool enter(Frame* f, int* value) {
     if (game->is_draw(pos)) {
         // A side with no legal move is mated (or has lost) before any draw
         // by the clocks or repetition: checkmate takes precedence.
-        if (top + MAX_MOVES <= SEARCH_STACK_MOVES && game->gen(pos, &stack_moves[top], false) == 0)
+        if (top + MAX_MOVES <= SEARCH_STACK_MOVES && gen(&stack_moves[top], false) == 0)
             *value = game->no_moves_score(pos, ply);
         else
             *value = 0;
@@ -193,24 +201,33 @@ static bool enter(Frame* f, int* value) {
     if (f->depth <= 0) {
         f->quiesce = 1;
         bool all = game->quiesce_in_check_all && game->in_check && game->in_check(pos);
-        int n = game->gen(pos, &stack_moves[top], !all);
-        if (all) {
-            if (n == 0) {
+        int n = 0;
+        if (all || game->noisy_forced) {
+            n = gen(&stack_moves[top], !all);
+            if (all && n == 0) {
                 *value = game->no_moves_score(pos, ply);
                 return true;
             }
-            f->best = -SEARCH_INF;
-        } else if (n > 0 && game->noisy_forced) {
-            f->best = -SEARCH_INF;
-        } else {
+        }
+        if (!all && (!game->noisy_forced || n == 0)) {
+            // Standing pat: the evaluation first, and the moves only if it
+            // does not already cut off (most quiescence nodes do).
             int stand = game->eval(pos);
-            if (stand >= f->beta || n == 0) {
+            if (stand >= f->beta) {
+                *value = stand;
+                return true;
+            }
+            if (!game->noisy_forced)
+                n = gen(&stack_moves[top], true);
+            if (n == 0) {
                 *value = stand;
                 return true;
             }
             f->best = stand;
             if (stand > f->alpha)
                 f->alpha = stand;
+        } else {
+            f->best = -SEARCH_INF;
         }
         f->count = (u16)n;
         top += n;
@@ -231,7 +248,7 @@ static bool enter(Frame* f, int* value) {
                 }
             }
         }
-        int n = game->gen(pos, &stack_moves[top], false);
+        int n = gen(&stack_moves[top], false);
         if (n == 0) {
             *value = game->no_moves_score(pos, ply);
             return true;
@@ -336,10 +353,10 @@ static void start_iteration(int depth) {
     f->state = F_NEXT;
 }
 
-// Sorts the root's moves by this iteration's scores, best first, equals in
-// the order they were tried; keeps them as the last completed iteration's.
-static void complete_iteration(void) {
-    for (int i = 1; i < root_count; i++) {
+// Sorts the root's first count moves by this iteration's scores, best
+// first, equals in the order they were tried, into done_*.
+static void sort_root(int count) {
+    for (int i = 1; i < count; i++) {
         u32 m = root_moves[i];
         int s = root_scores[i], j = i;
         for (; j > 0 && root_scores[j - 1] < s; j--) {
@@ -349,11 +366,16 @@ static void complete_iteration(void) {
         root_moves[j] = m;
         root_scores[j] = s;
     }
-    memcpy(done_moves, root_moves, sizeof(u32) * (u32)root_count);
-    memcpy(done_scores, root_scores, sizeof(int) * (u32)root_count);
-    done_depth = iter_depth;
+    memcpy(done_moves, root_moves, sizeof(u32) * (u32)count);
+    memcpy(done_scores, root_scores, sizeof(int) * (u32)count);
     done_best = root_moves[0];
     done_score = root_scores[0];
+}
+
+// Keeps the iteration just completed as the last whole one.
+static void complete_iteration(void) {
+    sort_root(root_count);
+    done_depth = iter_depth;
 }
 
 // The opening rule's margin, if it applies now.
@@ -363,12 +385,14 @@ static int opening_margin(void) {
     return 0;
 }
 
-// Picks the move from the last completed iteration and stops.
-static void finish(void) {
+// Picks the move from the root's moves in done_moves (count of them, best
+// first: the last completed iteration's, or those the first searched) and
+// stops.
+static void finish(int count) {
     running = false;
     chosen = done_best;
     chosen_score = done_score;
-    if (done_score > SEARCH_MATE_BOUND || root_count < 2)
+    if (done_score > SEARCH_MATE_BOUND || count < 2)
         return; // a mate is played as found
     int margin = level->random_margin;
     if (opening_margin() > margin)
@@ -378,7 +402,7 @@ static void finish(void) {
     if (margin == 0)
         return;
     int k = 1;
-    while (k < root_count && done_scores[k] >= done_score - margin &&
+    while (k < count && done_scores[k] >= done_score - margin &&
            done_scores[k] > -SEARCH_MATE_BOUND)
         k++;
     if (k > 1) {
@@ -396,6 +420,7 @@ void search_start(const SearchGame* g, const void* p, const SearchLevel* lv, u32
     running = true;
     trivial = false;
     nodes = 0;
+    work = 0;
     rng = seed;
     done_depth = 0;
     done_score = 0;
@@ -439,7 +464,7 @@ void search_start(const SearchGame* g, const void* p, const SearchLevel* lv, u32
     start_iteration(1);
 }
 
-bool search_step(u32 node_budget) {
+bool search_step(u32 budget) {
     if (!running)
         return true;
     if (trivial) {
@@ -452,14 +477,14 @@ bool search_step(u32 node_budget) {
         tt_cleared += TT_CHUNK;
         return false;
     }
-    u32 spent = 0;
+    u32 start = work;
     for (;;) {
         Frame* f = &frames[sp];
         int value;
         if (f->state == F_ENTER) {
-            if (spent >= node_budget)
+            if (work - start >= budget)
                 return false;
-            spent++;
+            work += SEARCH_WORK_NODE;
             nodes++;
             if (nodes > level->max_nodes && (done_depth > 0 || frames[0].best_move != NO_MOVE)) {
                 // Out of nodes: back to the root, keep the last whole iteration
@@ -469,11 +494,14 @@ bool search_step(u32 node_budget) {
                 for (; sp > 0; sp--)
                     game->unmake(pos);
                 if (done_depth > 0) {
-                    finish();
+                    finish(root_count);
                 } else {
-                    running = false;
-                    chosen = frames[0].best_move;
-                    chosen_score = frames[0].best;
+                    // The first iteration's root moves searched to the end
+                    // (all but the one under way), chosen among as a whole
+                    // iteration's are.
+                    int searched = frames[0].next - 1;
+                    sort_root(searched);
+                    finish(searched);
                 }
                 return true;
             }
@@ -491,7 +519,7 @@ bool search_step(u32 node_budget) {
         int s = done_score < 0 ? -done_score : done_score;
         if (iter_depth >= level->max_depth || iter_depth >= SEARCH_PLY_MAX - 1 ||
             s >= SEARCH_MATE - iter_depth) {
-            finish();
+            finish(root_count);
             return true;
         }
         start_iteration(iter_depth + 1);
@@ -514,6 +542,10 @@ u32 search_nodes(void) {
     return nodes;
 }
 
+u32 search_work(void) {
+    return work;
+}
+
 void search_abort(void) {
     if (running && !trivial)
         for (; sp > 0; sp--)
@@ -527,4 +559,28 @@ void search_abort(void) {
 
 bool search_running(void) {
     return running;
+}
+
+// --- The pace -----------------------------------------------------------------
+
+void search_pace_init(SearchPace* pace) {
+    pace->cycles_per_unit = 0;
+}
+
+// A frame costlier per unit than the estimate raises it at once; a cheaper
+// one lowers it a sixteenth of the way. So the estimate follows the costliest
+// frames lately, and the allowance it gives keeps a frame whose work costs
+// more than most near the target: the average frame stays a little under it.
+u32 search_pace(SearchPace* pace, u32 last_cycles, u32 last_work, u32 budget) {
+    if (last_work) {
+        u32 sample = last_cycles / last_work;
+        if (sample >= pace->cycles_per_unit)
+            pace->cycles_per_unit = sample;
+        else
+            pace->cycles_per_unit -= (pace->cycles_per_unit - sample) >> 4;
+    }
+    if (!pace->cycles_per_unit)
+        return SEARCH_WORK_PER_FRAME;
+    u32 n = budget / 1000 * SEARCH_PACE_TARGET / pace->cycles_per_unit;
+    return n < 1 ? 1 : n > SEARCH_PACE_MAX ? SEARCH_PACE_MAX : n;
 }

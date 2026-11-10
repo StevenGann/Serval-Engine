@@ -76,17 +76,38 @@ typedef struct {
 // A position and the plies that led to it. Treat as opaque: read it with the
 // pos_*() functions.
 typedef struct Position {
-    u8 board[128];                      // 0x88: square = rank * 16 + file
-    u8 side;                            // WHITE or BLACK, to move
-    u8 castling;                        // CASTLE_* bits
-    s8 ep;                              // en passant target (0..63) or -1
-    u8 king[2];                         // each side's king, 0x88 ([0] White, [1] Black)
-    u16 halfmove;                       // plies since the last capture or pawn move
-    u16 fullmove;                       // FEN's move number
-    u16 ply;                            // plies made since the position was set
+    u8 board[128]; // 0x88: square = rank * 16 + file
+    u8 side;       // WHITE or BLACK, to move
+    u8 castling;   // CASTLE_* bits
+    s8 ep;         // en passant target (0..63) or -1
+    u8 king[2];    // each side's king, 0x88 ([0] White, [1] Black)
+    u16 halfmove;  // plies since the last capture or pawn move
+    u16 fullmove;  // FEN's move number
+    u16 ply;       // plies made since the position was set
+    // Kept by pos_make() and pos_unmake() for the evaluation (chess_eval.c),
+    // so that it need not scan the board: the pawns (pawns[side * 2] files
+    // a-d, pawns[side * 2 + 1] files e-h, a byte a file from the low end and
+    // a bit a rank), each side's material and piece-square values (its king
+    // left out) and the phase its pieces make.
+    u32 pawns[4];
+    s16 psq[2];
+    u8 phase;
+    // Whether the side to move is in check: 0 not known yet, 1 no, 2 yes.
+    u8 check_known;
+    // Each side's pieces, a bit a square (0..63): [side][0] a1-h4, [1] a5-h8.
+    // Move generation finds the pieces from these.
+    u32 occ[2][2];
     ChessKey keys[POS_HISTORY_MAX + 1]; // keys[ply] is the current key
     PosUndo undo[POS_HISTORY_MAX];
 } Position;
+
+// The evaluation's tables (chess_eval.c), which a Position keeps summed: each
+// kind's value, its piece-square table (White's view as printed: a white
+// piece on sq reads entry sq ^ 56, a black one entry sq; NULL for the king)
+// and its share of the game phase.
+extern const s16 chess_piece_value[7];
+extern const s8* const chess_pst[7];
+extern const u8 chess_phase_weight[7];
 
 // The standard starting position.
 void pos_start(Position* p);

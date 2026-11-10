@@ -36,6 +36,9 @@ bool match_play(Match* m, u32 mv);
 // back to the human's turn (or to the start if the computer moved first and
 // that is all). Returns the plies taken back, 0 at the start.
 int match_undo(Match* m);
+// Whether match_undo() would take back a move of the human's: with two
+// players, any move; with one, not while the only move is the computer's.
+bool match_can_undo(const Match* m);
 // A new game of m's kind and settings with these moves played; false if one
 // is illegal (or comes after the end), leaving a new game.
 bool match_replay(Match* m, const u32* moves, int count);

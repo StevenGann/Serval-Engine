@@ -201,6 +201,57 @@ static u32 lcg(u32* s) {
     return *s >> 8;
 }
 
+// --- The pace ---------------------------------------------------------------------
+
+// The GBA's frames simulated: other work of `other` cycles, and the
+// search's work costing 160 to 240 cycles a unit, varying from frame to
+// frame (chess's spread on the GBA, measured); the frame's cycles fed back as
+// frame_cpu_cycles() would. Returns the busiest frame after the first 30,
+// and the average, as thousandths of the budget.
+static void pace_case(u32 other, u32* busiest, u32* average) {
+    const u32 budget = 280896;
+    SearchPace pace;
+    search_pace_init(&pace);
+    u32 s = 17, cycles = 0, work = 0, sum = 0, frames = 0;
+    *busiest = 0;
+    for (int frame = 0; frame < 1030; frame++) {
+        u32 n = search_pace(&pace, cycles, work, budget);
+        CHECK(n >= 1 && n <= SEARCH_PACE_MAX);
+        cycles = other + n * (160 + (lcg(&s) & 0xFFFF) * 80 / 0x10000);
+        work = n;
+        if (frame >= 30) {
+            u32 permille = cycles * 1000 / budget;
+            if (permille > *busiest)
+                *busiest = permille;
+            sum += permille;
+            frames++;
+        }
+    }
+    *average = sum / frames;
+}
+
+static void search_pace_adapts(void) {
+    SearchPace pace;
+    search_pace_init(&pace);
+    // With nothing learnt yet, and from a frame that did not think, the
+    // starting allowance.
+    CHECK(search_pace(&pace, 0, 0, 280896) == SEARCH_WORK_PER_FRAME);
+    CHECK(search_pace(&pace, 250000, 0, 280896) == SEARCH_WORK_PER_FRAME);
+    // A frame that thought cheaply asks for more; one that ran long, less.
+    CHECK(search_pace(&pace, 100000, SEARCH_WORK_PER_FRAME, 280896) > SEARCH_WORK_PER_FRAME);
+    search_pace_init(&pace);
+    CHECK(search_pace(&pace, 270000, SEARCH_WORK_PER_FRAME, 280896) < SEARCH_WORK_PER_FRAME);
+    // Simulated: the frames settle near SEARCH_PACE_TARGET (76% of the
+    // budget) and none reaches 95%, with little or much other work.
+    u32 busiest, average;
+    static const u32 others[3] = {20000, 60000, 120000};
+    for (int i = 0; i < 3; i++) {
+        pace_case(others[i], &busiest, &average);
+        CHECK(average >= 650 && average <= 800);
+        CHECK(busiest < 950);
+    }
+}
+
 static void search_legal_always(void) {
     u32 s = 99;
     for (int game = 0; game < 50; game++) {
@@ -348,6 +399,140 @@ static void eval_symmetric(void) {
     CHECK(ck_from_text(&kother, "W:W18,19,K24,32:B3,K6,11,15"));
     CHECK(ck_eval(&kpos) == ck_eval(&kother));
     CHECK(ck_eval(&kpos) != 0);
+}
+
+// The position as FEN (the move counters left as "0 1").
+static void write_fen(const Position* p, char* out) {
+    static const char letters[] = " PNBRQK  pnbrqk";
+    for (int rank = 7; rank >= 0; rank--) {
+        int empty = 0;
+        for (int file = 0; file < 8; file++) {
+            Piece pc = pos_piece(p, SQ(file, rank));
+            if (!pc) {
+                empty++;
+                continue;
+            }
+            if (empty)
+                *out++ = (char)('0' + empty);
+            empty = 0;
+            *out++ = letters[pc];
+        }
+        if (empty)
+            *out++ = (char)('0' + empty);
+        if (rank)
+            *out++ = '/';
+    }
+    *out++ = ' ';
+    *out++ = pos_side(p) == WHITE ? 'w' : 'b';
+    *out++ = ' ';
+    u8 c = pos_castling(p);
+    for (int i = 0; i < 4; i++)
+        if (c & (1 << i))
+            *out++ = "KQkq"[i];
+    if (!c)
+        *out++ = '-';
+    *out++ = ' ';
+    int ep = pos_ep_square(p);
+    if (ep >= 0) {
+        *out++ = (char)('a' + SQ_FILE(ep));
+        *out++ = (char)('1' + SQ_RANK(ep));
+    } else {
+        *out++ = '-';
+    }
+    strcpy(out, " 0 1");
+}
+
+// The evaluation as first written, from the board alone: material,
+// piece-square tables, the kings tapered by the phase, doubled, isolated and
+// passed pawns.
+static int reference_eval(const Position* p) {
+    static const u8 bonus[8] = {0, 8, 12, 20, 34, 56, 90, 0};
+    int score[2] = {0, 0}, phase = 0, king[2] = {0, 0};
+    int count[2][10] = {{0}}, low[10], high[10]; // by file + 1: White's lowest, Black's highest
+    for (int f = 0; f < 10; f++)
+        low[f] = 8, high[f] = -1;
+    for (int sq = 0; sq < 64; sq++) {
+        Piece pc = pos_piece(p, sq);
+        if (!pc)
+            continue;
+        int kind = PIECE_KIND(pc), c = PIECE_COLOR(pc) >> 3, idx = c ? sq : sq ^ 56;
+        if (kind == KING) {
+            king[c] = idx;
+            continue;
+        }
+        score[c] += chess_piece_value[kind] + chess_pst[kind][idx];
+        phase += chess_phase_weight[kind];
+        if (kind == PAWN) {
+            int f = SQ_FILE(sq) + 1, r = SQ_RANK(sq);
+            count[c][f]++;
+            if (c == 0 && r < low[f])
+                low[f] = r;
+            if (c == 1 && r > high[f])
+                high[f] = r;
+        }
+    }
+    for (int sq = 0; sq < 64; sq++) {
+        Piece pc = pos_piece(p, sq);
+        if (PIECE_KIND(pc) != PAWN)
+            continue;
+        int c = PIECE_COLOR(pc) >> 3, f = SQ_FILE(sq) + 1, r = SQ_RANK(sq);
+        if (count[c][f - 1] == 0 && count[c][f + 1] == 0)
+            score[c] -= 12;
+        bool passed = true;
+        for (int g = f - 1; g <= f + 1; g++)
+            passed &= c == 0 ? high[g] <= r : low[g] >= r;
+        if (passed)
+            score[c] += bonus[c ? 7 - r : r];
+    }
+    for (int c = 0; c < 2; c++) {
+        for (int f = 1; f <= 8; f++)
+            if (count[c][f] > 1)
+                score[c] -= 14 * (count[c][f] - 1);
+    }
+    if (phase > 24)
+        phase = 24;
+    for (int c = 0; c < 2; c++)
+        score[c] += (chess_king_mid[king[c]] * phase + chess_king_end[king[c]] * (24 - phase)) / 24;
+    int s = score[0] - score[1];
+    return pos_side(p) == WHITE ? s : -s;
+}
+
+// The evaluation reads sums that make and unmake keep: after every move made
+// and taken back in random games (captures, castling, en passant and
+// promotions among them) it equals the evaluation of the same position set
+// up afresh, and the evaluation as first written, from the board.
+static void eval_incremental(void) {
+    static const char* const fens[] = {
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    };
+    char fen[100];
+    u32 s = 5;
+    int checked = 0;
+    for (int f = 0; f < 4; f++) {
+        for (int game = 0; game < 25; game++) {
+            CHECK(pos_from_fen(&cpos, fens[f]));
+            int made = 0;
+            for (; made < 40 && chess_result(&cpos) == RESULT_NONE; made++) {
+                int n = pos_gen_legal(&cpos, cmoves);
+                pos_make(&cpos, cmoves[(int)((lcg(&s) & 0xFFFF) * (u32)n >> 16)]);
+                write_fen(&cpos, fen);
+                CHECK(pos_from_fen(&cother, fen));
+                CHECK(chess_eval(&cpos) == chess_eval(&cother));
+                CHECK(chess_eval(&cpos) == reference_eval(&cpos));
+                checked++;
+            }
+            for (; made > 0; made--) {
+                pos_unmake(&cpos);
+                write_fen(&cpos, fen);
+                CHECK(pos_from_fen(&cother, fen));
+                CHECK(chess_eval(&cpos) == chess_eval(&cother));
+            }
+        }
+    }
+    CHECK(checked > 2000);
 }
 
 // --- The match ------------------------------------------------------------------
@@ -552,6 +737,117 @@ static void search_mate_beats_fifty(void) {
 }
 
 // An aborted search answers with its last whole iteration's move.
+// A search out of nodes before its first iteration is whole answers with
+// the best of the root's moves it has searched (search_depth() 0), the same
+// stepped as whole.
+#define KIWIPETE "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"
+static void search_first_iteration_cut(void) {
+    static const SearchLevel tiny = {8, 5, 0, 0, 0, 0};
+    CHECK(pos_from_fen(&cpos, KIWIPETE));
+    u32 m = think(&chess_search_game, &cpos, &tiny, 1);
+    CHECK(search_depth() == 0);
+    // The first root move by the order, Bxa6 (the best capture), is the one
+    // searched to the end by then (about 45 nodes); the next has just begun.
+    CHECK(m == chess_move(&cpos, "Bxa6"));
+    u32 nodes = search_nodes();
+    int score = search_score();
+    search_start(&chess_search_game, &cpos, &tiny, 1);
+    while (!search_step(1)) {
+    }
+    CHECK(search_best() == m);
+    CHECK(search_score() == score);
+    CHECK(search_nodes() == nodes);
+}
+
+// The partial first iteration chooses as a whole one does: with CUB's random
+// margin and weak moves, among the root's moves it has searched, by the seed.
+// (From the start: each root move takes a node or two, and many are near
+// equal. In Kiwipete the first iteration takes about 7,000 nodes, and CUB
+// stops at 1,500, so CUB always plays from a partial one there.)
+static void search_first_iteration_random(void) {
+    static const SearchLevel cub_cut = {2, 8, 60, 150, 0, 0};
+    static const SearchLevel plain_cut = {2, 8, 0, 0, 0, 0};
+    pos_start(&cpos);
+    u32 best = think(&chess_search_game, &cpos, &plain_cut, 1);
+    CHECK(search_depth() == 0);
+    u32 seen[20];
+    int distinct = 0;
+    bool other = false;
+    for (u32 seed = 1; seed <= 20; seed++) {
+        u32 m = think(&chess_search_game, &cpos, &cub_cut, seed);
+        CHECK(search_depth() == 0);
+        CHECK(chess_legal(&cpos, m));
+        other |= m != best;
+        bool known = false;
+        for (int i = 0; i < distinct; i++)
+            known |= seen[i] == m;
+        if (!known)
+            seen[distinct++] = m;
+    }
+    CHECK(distinct >= 3);
+    CHECK(other);
+    // Stepped, the same.
+    u32 m = think(&chess_search_game, &cpos, &cub_cut, 9);
+    search_start(&chess_search_game, &cpos, &cub_cut, 9);
+    while (!search_step(3)) {
+    }
+    CHECK(search_best() == m);
+}
+
+// The transposition table's generations run out every 63 searches, when the
+// table is cleared over the next search's first steps (nothing searched until
+// that is done): a search never sees an entry of the search 63 before it.
+// Here that one is a deeper search of the same position, whose entries would
+// cut the small search short; the searches between have a single legal move
+// (they count, and store nothing).
+static void search_table_wrap(void) {
+    static const SearchLevel deep = {4, 0xFFFFFFFFu, 0, 0, 0, 0};
+    static const SearchLevel small = {3, 0xFFFFFFFFu, 0, 0, 0, 0};
+    // The Italian game: depth 3 whole in about 1,900 nodes.
+    CHECK(
+        pos_from_fen(&cpos, "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"));
+    CHECK(pos_from_fen(&cother, "7k/8/8/8/8/8/6q1/7K w - - 0 1")); // Kxg2 only
+    think(&chess_search_game, &cpos, &deep, 5);
+    u32 want = think(&chess_search_game, &cpos, &small, 3), want_nodes = search_nodes();
+    for (int i = 0; i < 2; i++) {
+        think(&chess_search_game, &cpos, &deep, 5);
+        for (int j = 0; j < 62; j++)
+            think(&chess_search_game, &cother, &small, 3);
+        // 63 searches after the deep one: a wrap came between.
+        search_start(&chess_search_game, &cpos, &small, 3);
+        while (!search_step(i ? 7 : 0xFFFFFFFFu)) {
+        }
+        CHECK(search_best() == want);
+        CHECK(search_nodes() == want_nodes);
+    }
+}
+
+// Quiescence leaves out captures that lose material at once (a piece taking
+// a defended one worth clearly less), and keeps the rest: winning and
+// near-even captures, and captures of undefended pieces.
+static bool quiet_search_has(const char* fen, const char* san) {
+    CHECK(pos_from_fen(&cpos, fen));
+    Move m = chess_move(&cpos, san);
+    CHECK(m != MOVE_NONE);
+    static u32 noisy[MAX_MOVES];
+    int n = chess_search_game.gen(&cpos, noisy, true);
+    for (int i = 0; i < n; i++)
+        if (noisy[i] == m)
+            return true;
+    return false;
+}
+
+static void quiescence_filter(void) {
+    // The pawn on d5 is defended by e6.
+    CHECK(quiet_search_has("7k/8/4p3/3p4/4P3/8/8/K2Q4 w - - 0 1", "exd5"));
+    CHECK(!quiet_search_has("7k/8/4p3/3p4/4P3/8/8/K2Q4 w - - 0 1", "Qxd5"));
+    CHECK(quiet_search_has("7k/8/8/3p4/8/8/8/K2Q4 w - - 0 1", "Qxd5")); // undefended
+    // A bishop for a defended knight: near even, kept.
+    CHECK(quiet_search_has("7k/8/4p3/3n4/8/1B6/8/K7 w - - 0 1", "Bxd5"));
+    // A rook for a defended knight: dropped.
+    CHECK(!quiet_search_has("7k/8/4p3/3n4/8/8/8/K2R4 w - - 0 1", "Rxd5"));
+}
+
 static void search_abort_keeps_best(void) {
     CHECK(pos_from_fen(&cpos, "rnb1kbnr/pppp1ppp/8/8/4q3/2N5/PPPPPPPP/R1BQKBNR w KQkq - 0 1"));
     search_start(&chess_search_game, &cpos, chess_level(LEVEL_SERVAL), 1);
@@ -788,6 +1084,32 @@ static void records_erase_clears(void) {
     save_erase(0);
 }
 
+// UNDO is offered only when it takes back a move of the human's: in one
+// player games, not before the human has moved (the computer's first move
+// alone), in two player games after any move.
+static void match_can_undo_human(void) {
+    match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, WHITE, LEVEL_CUB);
+    CHECK(!match_can_undo(&match));
+    CHECK(play(&match, "e4"));
+    CHECK(match_can_undo(&match)); // the human's move, the computer thinking
+    CHECK(play(&match, "e5"));
+    CHECK(match_can_undo(&match));
+    match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, BLACK, LEVEL_CUB);
+    CHECK(play(&match, "Nf3")); // the computer's
+    CHECK(!match_can_undo(&match));
+    CHECK(play(&match, "Nf6"));
+    CHECK(match_can_undo(&match));
+    match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_LIGHT, LEVEL_CUB);
+    CHECK(play(&match, "11-15")); // Dark, the computer, moves first
+    CHECK(!match_can_undo(&match));
+    CHECK(play(&match, "22-18"));
+    CHECK(match_can_undo(&match));
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(!match_can_undo(&match));
+    CHECK(play(&match, "d4"));
+    CHECK(match_can_undo(&match));
+}
+
 // The SearchGame tables and a match agree with each other.
 static void match_feeds_search(void) {
     match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_LIGHT, LEVEL_CUB);
@@ -810,15 +1132,19 @@ TEST_SUITE(boardgames_tests, "boardgames", {"search_mate_in_one", search_mate_in
            {"search_checkers_wins_material", search_checkers_wins_material},
            {"search_resume_same_as_whole", search_resume_same_as_whole},
            {"search_seeded", search_seeded}, {"search_single_move", search_single_move},
-           {"search_legal_always", search_legal_always},
+           {"search_pace_adapts", search_pace_adapts}, {"search_legal_always", search_legal_always},
            {"search_matches_plain_negamax", search_matches_plain_negamax},
-           {"eval_symmetric", eval_symmetric}, {"match_undo_edges", match_undo_edges},
-           {"match_replay_rejects", match_replay_rejects},
+           {"eval_symmetric", eval_symmetric}, {"eval_incremental", eval_incremental},
+           {"match_undo_edges", match_undo_edges}, {"match_replay_rejects", match_replay_rejects},
            {"match_refuses_finished", match_refuses_finished},
            {"match_indices_round_trip", match_indices_round_trip},
            {"match_stores_indices", match_stores_indices},
            {"search_mate_beats_fifty", search_mate_beats_fifty},
            {"search_abort_keeps_best", search_abort_keeps_best},
+           {"search_first_iteration_cut", search_first_iteration_cut},
+           {"search_first_iteration_random", search_first_iteration_random},
+           {"search_table_wrap", search_table_wrap}, {"quiescence_filter", quiescence_filter},
+           {"match_can_undo_human", match_can_undo_human},
            {"match_feeds_search", match_feeds_search}, {"records_roundtrip", records_roundtrip},
            {"records_result_counts", records_result_counts},
            {"records_bad_saves", records_bad_saves},

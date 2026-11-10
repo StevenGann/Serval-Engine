@@ -82,6 +82,11 @@ static ChessKey z_castle[16] SERVAL_EWRAM_BSS;
 static ChessKey z_ep[8] SERVAL_EWRAM_BSS;
 static ChessKey z_side;
 static bool z_ready;
+// The evaluation's sums, built with the keys: a piece's value and
+// piece-square value (from its side's view) by piece (colour | kind) and
+// square, and its phase by piece.
+static s16 psq_table[16][64] SERVAL_EWRAM_BSS;
+static u8 phase_table[16];
 
 static u32 z_next(u32* x) {
     *x ^= *x << 13;
@@ -109,6 +114,13 @@ static void keys_init(void) {
     }
     u32 hi = z_next(&x);
     z_side = (ChessKey)hi << 32 | z_next(&x);
+    for (int kind = PAWN; kind < KING; kind++) {
+        for (int sq = 0; sq < 64; sq++) {
+            psq_table[WHITE | kind][sq] = (s16)(chess_piece_value[kind] + chess_pst[kind][sq ^ 56]);
+            psq_table[BLACK | kind][sq] = (s16)(chess_piece_value[kind] + chess_pst[kind][sq]);
+        }
+        phase_table[WHITE | kind] = phase_table[BLACK | kind] = chess_phase_weight[kind];
+    }
     z_ready = true;
 }
 
@@ -127,6 +139,40 @@ static ChessKey key_of(const u8* b, int side, int castling, int ep) {
     if (side == BLACK)
         key ^= z_side;
     return key;
+}
+
+// What a position keeps of its pieces besides the board (Position.occ, and
+// the evaluation's pawns, psq and phase) with a piece put on or taken off a
+// square (0..63).
+INLINE void sum_put(Position* p, Piece pc, int sq) {
+    int c = pc >> 3;
+    p->occ[c][sq >> 5] |= 1u << (sq & 31);
+    p->psq[c] = (s16)(p->psq[c] + psq_table[pc][sq]);
+    p->phase = (u8)(p->phase + phase_table[pc]);
+    if (PIECE_KIND(pc) == PAWN)
+        p->pawns[c * 2 + ((sq >> 2) & 1)] |= 1u << ((sq & 3) * 8 + (sq >> 3));
+}
+
+INLINE void sum_take(Position* p, Piece pc, int sq) {
+    int c = pc >> 3;
+    p->occ[c][sq >> 5] &= ~(1u << (sq & 31));
+    p->psq[c] = (s16)(p->psq[c] - psq_table[pc][sq]);
+    p->phase = (u8)(p->phase - phase_table[pc]);
+    if (PIECE_KIND(pc) == PAWN)
+        p->pawns[c * 2 + ((sq >> 2) & 1)] &= ~(1u << ((sq & 3) * 8 + (sq >> 3)));
+}
+
+// A piece moved from one square to another (0..63), the same piece after.
+INLINE void sum_move(Position* p, Piece pc, int from, int to) {
+    int c = pc >> 3;
+    p->psq[c] = (s16)(p->psq[c] + psq_table[pc][to] - psq_table[pc][from]);
+    u32* occ = p->occ[c];
+    occ[from >> 5] ^= 1u << (from & 31);
+    occ[to >> 5] ^= 1u << (to & 31);
+    if (PIECE_KIND(pc) == PAWN) {
+        p->pawns[c * 2 + ((from >> 2) & 1)] ^= 1u << ((from & 3) * 8 + (from >> 3));
+        p->pawns[c * 2 + ((to >> 2) & 1)] ^= 1u << ((to & 3) * 8 + (to >> 3));
+    }
 }
 
 // --- Attacks ----------------------------------------------------------------
@@ -167,12 +213,20 @@ CHESS_HOT static bool attacked88(const u8* b, int s, int by) {
            slides_to(b, s, straight_steps, (Piece)(by | ROOK), queen);
 }
 
+// Whether the side to move is in check, worked out once a position (the
+// search asks, then generates).
+INLINE bool check_now(Position* p) {
+    if (!p->check_known)
+        p->check_known = attacked88(p->board, p->king[p->side >> 3], p->side ^ BLACK) ? 2 : 1;
+    return p->check_known == 2;
+}
+
 bool pos_attacked(const Position* p, int sq, int by_color) {
     return attacked88(p->board, TO88(sq & 63), by_color);
 }
 
 bool pos_in_check(const Position* p) {
-    return attacked88(p->board, p->king[p->side >> 3], p->side ^ BLACK);
+    return check_now((Position*)p); // only the cache changes
 }
 
 // --- Reading ----------------------------------------------------------------
@@ -231,165 +285,217 @@ CHESS_HOT static bool leaves_king_safe(Position* p, int from, int to, int flags)
     return safe;
 }
 
-// A generation's state. Most moves need no test of the king's safety: with
-// the king not in check, a move by a piece other than the king that is not
-// pinned to it cannot expose it (en passant aside, which takes two pieces
-// off a rank). The others are made on the board and tested.
-typedef struct {
-    Position* p;
-    Move* out;
-    int count;
-    bool check;    // the side to move is in check: every move is tested
-    int king;      // its king (0x88)
-    int pin_count; // the pieces pinned to the king
-    u8 pinned[8];
-} Gen;
-
-INLINE bool needs_test(const Gen* g, int from, int flags) {
-    if (g->check || from == g->king || flags == MF_EP)
-        return true;
-    for (int i = 0; i < g->pin_count; i++)
-        if (g->pinned[i] == from)
-            return true;
-    return false;
+// The index of the lowest bit set in x (not 0), by a de Bruijn sequence:
+// the ARM7TDMI has no instruction that counts zeros.
+static const u8 debruijn[32] SERVAL_IWRAM_DATA = {
+    0,  1,  28, 2,  29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4,  8,
+    31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6,  11, 5,  10, 9,
+};
+INLINE int lowest_bit(u32 x) {
+    return debruijn[((x & (0u - x)) * 0x077CB531u) >> 27];
 }
 
-INLINE void add(Gen* g, int from, int to, int flags) {
-    if (!needs_test(g, from, flags) || leaves_king_safe(g->p, from, to, flags))
-        g->out[g->count++] = MOVE_MAKE(TO64(from), TO64(to), flags);
-}
+// Adds a move if it is legal: a move by a piece that is not the king, not
+// pinned to it, with the king not in check (`test` false), cannot expose the
+// king (en passant aside, which takes two pieces off a rank, so it is always
+// tested); the others are made on the board and tested.
+// In check, a move by another piece than the king (`free` false) must also
+// reach a square of `reach` (it takes the checking piece or steps between it
+// and the king), or it is dropped untested.
+#define REACHES(to) (free || (reach[TO64(to) >> 5] >> (TO64(to) & 31) & 1))
+#define ADD(from, to, flags, test)                                                                 \
+    do {                                                                                           \
+        if (REACHES(to) && (!(test) || leaves_king_safe(p, from, to, flags)))                      \
+            *o++ = MOVE_MAKE(TO64(from), TO64(to), flags);                                         \
+    } while (0)
 
-// Finds the pieces of the side to move pinned to its king: on each line out
-// of the king, its own piece with a slider of the other side behind it that
-// moves along that line.
-INLINE void find_pins(Gen* g) {
-    const u8* b = g->p->board;
-    int us = g->p->side;
-    g->pin_count = 0;
+// The four promotions, queen first; capture is MF_CAPTURE or 0.
+#define ADD_PROMOTIONS(from, to, capture, test)                                                    \
+    do {                                                                                           \
+        if (REACHES(to) && (!(test) || leaves_king_safe(p, from, to, capture))) {                  \
+            for (int promo = 3; promo >= 0; promo--)                                               \
+                *o++ = MOVE_MAKE(TO64(from), TO64(to), MF_PROMO | (capture) | promo);              \
+        }                                                                                          \
+    } while (0)
+
+// The squares (bits 0..63 of reach[2]) a move by another piece than the
+// king must reach to answer a check on the king (0x88) by colour `by`: the
+// checking piece's square and, for a slider, those between it and the king.
+// None in double check, which only the king can answer. Run only in check:
+// not in IWRAM.
+__attribute__((noinline)) static void check_reach(const u8* b, int king, int by, u32 reach[2]) {
+    int checkers = 0;
+    reach[0] = reach[1] = 0;
+    Piece pawn = (Piece)(by | PAWN), knight = (Piece)(by | KNIGHT), queen = (Piece)(by | QUEEN);
+    int behind = by == WHITE ? -16 : 16; // where its pawns attack from
+    for (int i = 0; i < 8; i++) {
+        int t = king + knight_steps[i];
+        if (!OFF(t) && b[t] == knight) {
+            reach[TO64(t) >> 5] |= 1u << (TO64(t) & 31);
+            checkers++;
+        }
+        if (i < 2) {
+            t = king + behind + (i ? 1 : -1);
+            if (!OFF(t) && b[t] == pawn) {
+                reach[TO64(t) >> 5] |= 1u << (TO64(t) & 31);
+                checkers++;
+            }
+        }
+    }
     for (int line = 0; line < 8; line++) {
-        bool diagonal = line < 4;
-        int step = diagonal ? diagonal_steps[line] : straight_steps[line - 4];
-        Piece slider = (Piece)((us ^ BLACK) | (diagonal ? BISHOP : ROOK));
-        Piece queen = (Piece)((us ^ BLACK) | QUEEN);
+        int step = queen_steps[line];
+        Piece slider = (Piece)(by | (line < 4 ? BISHOP : ROOK));
+        int t = king + step;
+        while (!OFF(t) && !b[t])
+            t += step;
+        if (OFF(t) || (b[t] != slider && b[t] != queen))
+            continue;
+        checkers++;
+        for (int u = king + step;; u += step) {
+            reach[TO64(u) >> 5] |= 1u << (TO64(u) & 31);
+            if (u == t)
+                break;
+        }
+    }
+    if (checkers > 1)
+        reach[0] = reach[1] = 0;
+}
+
+// The pieces of the side to move pinned to its king, as bits (0..63) of
+// pins[2]: on each line out of the king, its own piece with a slider of the
+// other side behind it that moves along that line.
+INLINE void find_pins(const u8* b, int king, int us, u32 pins[2]) {
+    Piece queen = (Piece)((us ^ BLACK) | QUEEN);
+    for (int line = 0; line < 8; line++) {
+        int step = queen_steps[line];
+        Piece slider = (Piece)((us ^ BLACK) | (line < 4 ? BISHOP : ROOK));
         int own = -1;
-        for (int t = g->king + step; !OFF(t); t += step) {
-            if (!b[t])
+        for (int t = king + step; !OFF(t); t += step) {
+            Piece pc = b[t];
+            if (!pc)
                 continue;
-            if (own < 0 && PIECE_COLOR(b[t]) == us) {
-                own = t;
+            if (own < 0 && PIECE_COLOR(pc) == us) {
+                own = TO64(t);
                 continue;
             }
-            if (own >= 0 && (b[t] == slider || b[t] == queen))
-                g->pinned[g->pin_count++] = (u8)own;
+            if (own >= 0 && (pc == slider || pc == queen))
+                pins[own >> 5] |= 1u << (own & 31);
             break;
         }
     }
 }
 
-// The four promotions, queen first; capture is MF_CAPTURE or 0.
-INLINE void add_promotions(Gen* g, int from, int to, int capture) {
-    if (needs_test(g, from, capture) && !leaves_king_safe(g->p, from, to, capture))
-        return; // the same test for all four
-    int f = TO64(from), t = TO64(to);
-    for (int kind = 3; kind >= 0; kind--)
-        g->out[g->count++] = MOVE_MAKE(f, t, MF_PROMO | capture | kind);
-}
-
-INLINE void gen_pawn(Gen* g, int s, bool noisy) {
-    const u8* b = g->p->board;
-    int us = g->p->side;
-    int up = us == WHITE ? 16 : -16;
-    int last = us == WHITE ? 7 : 0;  // the promotion rank
-    int start = us == WHITE ? 1 : 6; // the double step's rank
-    int one = s + up;
-    if (!OFF(one) && !b[one]) {
-        if (RANK88(one) == last)
-            add_promotions(g, s, one, 0);
-        else if (!noisy) {
-            add(g, s, one, MF_QUIET);
-            if (RANK88(s) == start && !b[one + up])
-                add(g, s, one + up, MF_DOUBLE);
-        }
-    }
-    for (int side = -1; side <= 1; side += 2) {
-        int t = one + side;
-        if (OFF(t))
-            continue;
-        if (b[t] && PIECE_COLOR(b[t]) != us) {
-            if (RANK88(t) == last)
-                add_promotions(g, s, t, MF_CAPTURE);
-            else
-                add(g, s, t, MF_CAPTURE);
-        } else if (g->p->ep >= 0 && t == TO88(g->p->ep)) {
-            add(g, s, t, MF_EP);
-        }
-    }
-}
-
-INLINE void gen_steps(Gen* g, int s, const s8* steps, int n, bool slide, bool noisy) {
-    const u8* b = g->p->board;
-    int us = g->p->side;
-    for (int i = 0; i < n; i++) {
-        int step = steps[i];
-        for (int t = s + step; !OFF(t); t += step) {
-            if (b[t]) {
-                if (PIECE_COLOR(b[t]) != us)
-                    add(g, s, t, MF_CAPTURE);
-                break;
-            }
-            if (!noisy)
-                add(g, s, t, MF_QUIET);
-            if (!slide)
-                break;
-        }
-    }
-}
-
-__attribute__((noinline)) static void gen_castling(Gen* g) {
-    Position* p = g->p;
+__attribute__((noinline)) static Move* gen_castling(Position* p, Move* o) {
     const u8* b = p->board;
+    const bool free = true; // never in check
+    const u32* reach = NULL;
     int them = p->side ^ BLACK;
     int home = p->side == WHITE ? 0x04 : 0x74; // e1 or e8
     u8 kside = p->side == WHITE ? CASTLE_WK : CASTLE_BK;
     u8 qside = p->side == WHITE ? CASTLE_WQ : CASTLE_BQ;
-    if (!(p->castling & (kside | qside)) || g->check)
-        return;
     // The rights guarantee king and rook at home; the king's last square is
-    // tested by add() like any king move.
+    // tested like any king move's.
     if ((p->castling & kside) && !b[home + 1] && !b[home + 2] && !attacked88(b, home + 1, them))
-        add(g, home, home + 2, MF_CASTLE_K);
+        ADD(home, home + 2, MF_CASTLE_K, true);
     if ((p->castling & qside) && !b[home - 1] && !b[home - 2] && !b[home - 3] &&
         !attacked88(b, home - 1, them))
-        add(g, home, home - 2, MF_CASTLE_Q);
+        ADD(home, home - 2, MF_CASTLE_Q, true);
+    return o;
 }
 
+// Compiled at -O2 even in -O3 builds (GCC): -O3 makes it half as big again
+// (4 KB of IWRAM) for 1% of the search's speed.
+#if defined(__OPTIMIZE__) && defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
+// The moves of the side to move into out (noisy: captures and promotions
+// only), in the order of their pieces' squares, a1 first. The pieces are
+// found from the occupancy bits, not by scanning the board.
 CHESS_HOT NOCLONE static int generate(Position* p, Move* out, bool noisy) {
-    Gen g = {.p = p, .out = out};
-    const u8* b = p->board;
-    int us = p->side;
-    g.king = p->king[us >> 3];
-    g.check = attacked88(b, g.king, us ^ BLACK);
-    if (!g.check)
-        find_pins(&g);
-    for (int s = 0; s < 128; s++) {
-        if (OFF(s)) {
-            s += 7;
-            continue;
+    u8* b = p->board;
+    int us = p->side, c = us >> 3;
+    int king = p->king[c];
+    bool check = check_now(p);
+    u32 pins[2] = {0, 0}, reach[2] = {0, 0};
+    if (!check)
+        find_pins(b, king, us, pins);
+    else
+        check_reach(b, king, us ^ BLACK, reach);
+    int up = us == WHITE ? 16 : -16;
+    int last = us == WHITE ? 7 : 0;  // the promotion rank
+    int start = us == WHITE ? 1 : 6; // the double step's rank
+    int ep = p->ep >= 0 ? TO88(p->ep) : -1;
+    Move* o = out;
+    for (int half = 0; half < 2; half++) {
+        for (u32 bits = p->occ[c][half]; bits; bits &= bits - 1) {
+            int s64 = half * 32 + lowest_bit(bits), s = TO88(s64);
+            Piece pc = b[s];
+            int kind = PIECE_KIND(pc);
+            bool test = check || (pins[half] >> (s64 & 31) & 1) || kind == KING;
+            bool free = !check || kind == KING;
+            if (kind == PAWN) {
+                int one = s + up;
+                if (!b[one]) { // a pawn is never on the last rank: one is on the board
+                    if (RANK88(one) == last)
+                        ADD_PROMOTIONS(s, one, 0, test);
+                    else if (!noisy) {
+                        ADD(s, one, MF_QUIET, test);
+                        if (RANK88(s) == start && !b[one + up])
+                            ADD(s, one + up, MF_DOUBLE, test);
+                    }
+                }
+                for (int side = -1; side <= 1; side += 2) {
+                    int t = one + side;
+                    if (OFF(t))
+                        continue;
+                    if (b[t] && PIECE_COLOR(b[t]) != us) {
+                        if (RANK88(t) == last)
+                            ADD_PROMOTIONS(s, t, MF_CAPTURE, test);
+                        else
+                            ADD(s, t, MF_CAPTURE, test);
+                    } else if (t == ep && leaves_king_safe(p, s, t, MF_EP)) {
+                        *o++ = MOVE_MAKE(TO64(s), TO64(t), MF_EP); // tested whatever the check
+                    }
+                }
+                continue;
+            }
+            const s8* steps = piece_steps[kind].steps;
+            int n = piece_steps[kind].count;
+            if (piece_steps[kind].slide) {
+                for (int i = 0; i < n; i++) {
+                    int step = steps[i];
+                    int t = s + step;
+                    for (; !OFF(t) && !b[t]; t += step)
+                        if (!noisy)
+                            ADD(s, t, MF_QUIET, test);
+                    if (!OFF(t) && PIECE_COLOR(b[t]) != us)
+                        ADD(s, t, MF_CAPTURE, test);
+                }
+            } else {
+                for (int i = 0; i < n; i++) {
+                    int t = s + steps[i];
+                    if (OFF(t))
+                        continue;
+                    if (!b[t]) {
+                        if (!noisy)
+                            ADD(s, t, MF_QUIET, test);
+                    } else if (PIECE_COLOR(b[t]) != us) {
+                        ADD(s, t, MF_CAPTURE, test);
+                    }
+                }
+            }
         }
-        Piece pc = b[s];
-        if (!pc || PIECE_COLOR(pc) != us)
-            continue;
-        int kind = PIECE_KIND(pc);
-        if (kind == PAWN)
-            gen_pawn(&g, s, noisy);
-        else
-            gen_steps(&g, s, piece_steps[kind].steps, piece_steps[kind].count,
-                      piece_steps[kind].slide, noisy);
     }
-    if (!noisy)
-        gen_castling(&g);
-    return g.count;
+    if (!noisy && !check &&
+        (p->castling & (us == WHITE ? CASTLE_WK | CASTLE_WQ : CASTLE_BK | CASTLE_BQ)))
+        o = gen_castling(p, o);
+    return (int)(o - out);
 }
+
+#if defined(__OPTIMIZE__) && defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 int pos_gen_legal(Position* p, Move* out) {
     return generate(p, out, false);
@@ -431,12 +537,19 @@ CHESS_HOT void pos_make(Position* p, Move m) {
     if (captured) {
         key ^= z_piece[captured][TO64(capsq)];
         b[capsq] = EMPTY;
+        sum_take(p, captured, TO64(capsq));
     }
     Piece moving = b[from];
     Piece placed = (flags & MF_PROMO) ? (Piece)(us | MOVE_PROMO_KIND(m)) : moving;
     b[from] = EMPTY;
     b[to] = placed;
     key ^= z_piece[moving][from64] ^ z_piece[placed][to64];
+    if (placed == moving) {
+        sum_move(p, moving, from64, to64);
+    } else {
+        sum_take(p, moving, from64);
+        sum_put(p, placed, to64);
+    }
 
     if (PIECE_KIND(moving) == KING) {
         p->king[us >> 3] = (u8)to;
@@ -447,6 +560,7 @@ CHESS_HOT void pos_make(Position* p, Move m) {
             b[rto] = rook;
             b[rfrom] = EMPTY;
             key ^= z_piece[rook][TO64(rfrom)] ^ z_piece[rook][TO64(rto)];
+            sum_move(p, rook, TO64(rfrom), TO64(rto));
         }
     }
 
@@ -464,6 +578,7 @@ CHESS_HOT void pos_make(Position* p, Move m) {
     if (us == BLACK)
         p->fullmove++;
     p->side ^= BLACK;
+    p->check_known = 0;
     key ^= z_side;
     p->keys[++p->ply] = key;
 }
@@ -474,14 +589,24 @@ CHESS_HOT void pos_unmake(Position* p) {
     const PosUndo* u = &p->undo[--p->ply];
     u8* b = p->board;
     p->side ^= BLACK;
+    p->check_known = 0;
     int us = p->side, flags = MOVE_FLAGS(u->move);
     int from = TO88(MOVE_FROM(u->move)), to = TO88(MOVE_TO(u->move));
     Piece placed = b[to];
     Piece moving = (flags & MF_PROMO) ? (Piece)(us | PAWN) : placed;
     b[to] = EMPTY;
     b[from] = moving;
-    if (u->captured)
-        b[flags == MF_EP ? (us == WHITE ? to - 16 : to + 16) : to] = u->captured;
+    if (placed == moving) {
+        sum_move(p, moving, MOVE_TO(u->move), MOVE_FROM(u->move));
+    } else {
+        sum_take(p, placed, MOVE_TO(u->move));
+        sum_put(p, moving, MOVE_FROM(u->move));
+    }
+    if (u->captured) {
+        int capsq = flags == MF_EP ? (us == WHITE ? to - 16 : to + 16) : to;
+        b[capsq] = u->captured;
+        sum_put(p, u->captured, TO64(capsq));
+    }
     if (PIECE_KIND(moving) == KING) {
         p->king[us >> 3] = (u8)from;
         if (flags == MF_CASTLE_K || flags == MF_CASTLE_Q) {
@@ -489,6 +614,7 @@ CHESS_HOT void pos_unmake(Position* p) {
             int rto = flags == MF_CASTLE_K ? to - 1 : to + 1;
             b[rfrom] = b[rto];
             b[rto] = EMPTY;
+            sum_move(p, b[rfrom], TO64(rto), TO64(rfrom));
         }
     }
     p->castling = u->state & 15;
@@ -658,6 +784,14 @@ bool pos_from_fen(Position* p, const char* fen) {
     p->fullmove = (u16)fullmove;
     p->ply = 0;
     p->keys[0] = key_of(b, side, castling, ep);
+    p->psq[0] = p->psq[1] = 0;
+    p->phase = 0;
+    memset(p->pawns, 0, sizeof(p->pawns));
+    memset(p->occ, 0, sizeof(p->occ));
+    p->check_known = 0;
+    for (int sq = 0; sq < 64; sq++)
+        if (b[TO88(sq)])
+            sum_put(p, b[TO88(sq)], sq);
     return true;
 }
 

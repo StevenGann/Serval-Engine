@@ -8,10 +8,11 @@
 //     notation proven by perft counts, checkers' with every jump path, one
 //     search shared by both games through a table of functions, and the save
 //   - A computer opponent that thinks across frames (search.c): the search
-//     keeps its tree on a stack of its own, so it stops after a fixed count
-//     of nodes each frame (SEARCH_NODES_PER_FRAME) and goes on the next,
-//     while the cursor moves, the pieces slide and THINKING animates; the
-//     same position, strength and seed give the same move on every build
+//     keeps its tree on a stack of its own, so it stops when the frame's
+//     share of work is done (as much as the last frames' cost says fits in
+//     the frame) and goes on the next, while the cursor moves, the pieces
+//     slide and THINKING animates; the same position, strength and seed
+//     give the same move on every build, however the work is split
 //   - Art drawn at boot from pixel rules and ASCII pictures (art.c): the
 //     table as one map (a maple and walnut board in a walnut frame with
 //     brass labels, on green felt, the side panel), each 16x16 cell a
@@ -73,8 +74,8 @@
 //     even mid-slide). L shows the CPU used a frame at the panel's foot.
 //   - START: the menu over the dimmed board: RESUME, UNDO (one player: your
 //     last move and the computer's reply; the computer stops thinking
-//     first), FLIP BOARD, NEW GAME, QUIT TO TITLE (the game stays saved).
-//     B or START resumes.
+//     first; dimmed while you have no move to take back), FLIP BOARD, NEW
+//     GAME, QUIT TO TITLE (the game stays saved). B or START resumes.
 //   - The end: the result over the dimmed board (CHECKMATE, STALEMATE, DRAW
 //     BY REPETITION, FIFTY-MOVE DRAW, DRAW: NOT ENOUGH MATERIAL; checkers'
 //     NO MOVES LEFT, DRAW: 40 MOVES; DRAW: GAME TOO LONG in either), who
