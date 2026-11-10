@@ -20,6 +20,7 @@ typedef struct Match {
     GameResult result;
     u16 count;
     u32 moves[GAME_PLY_MAX];
+    u8 move_index[GAME_PLY_MAX]; // moves[i]'s place in its position's legal list
     union {
         Position chess;
         CheckersPosition checkers;
@@ -45,7 +46,8 @@ bool match_replay(Match* m, const u32* moves, int count);
 bool match_replay_indices(Match* m, GameKind game, MatchMode mode, int human_side, int level,
                           const u8* idx, int count);
 // The index of the ply-th move played (0 = the first) in the legal list of the
-// position before it; -1 if there is no such move.
+// position before it; -1 if there is no such move. Read from the list match_play
+// fills as moves are played (the saves ask for every ply of a game).
 int match_move_index(Match* m, int ply);
 
 bool match_computer_to_move(const Match* m); // one player, game on, computer's turn

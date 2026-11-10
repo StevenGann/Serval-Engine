@@ -58,6 +58,7 @@ bool match_play(Match* m, u32 mv) {
     for (int i = 0; i < n; i++) {
         if (list[i] == mv) {
             make(m, mv);
+            m->move_index[m->count] = (u8)i;
             m->moves[m->count++] = mv;
             m->result = result(m);
             return true;
@@ -120,15 +121,7 @@ static void rewind_end(Match* m, int ply) {
 }
 
 int match_move_index(Match* m, int ply) {
-    if (ply < 0 || ply >= m->count)
-        return -1;
-    rewind_to(m, ply);
-    int n = legal(m), found = -1;
-    for (int i = 0; i < n && found < 0; i++)
-        if (list[i] == m->moves[ply])
-            found = i;
-    rewind_end(m, ply);
-    return found;
+    return ply < 0 || ply >= m->count ? -1 : m->move_index[ply];
 }
 
 int match_notation(Match* m, int ply, char out[24]) {

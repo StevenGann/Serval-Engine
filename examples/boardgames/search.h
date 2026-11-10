@@ -104,7 +104,9 @@ u32 search_best(void);
 int search_score(void);  // its score, the side to move's view
 int search_depth(void);  // the last iteration completed
 u32 search_nodes(void);  // nodes searched
-void search_abort(void); // stops the search; search_running() is false after
+// Stops the search; search_running() is false after, and search_best() and
+// search_score() are those of the last iteration completed (as before it).
+void search_abort(void);
 bool search_running(void);
 
 #endif // BOARDGAMES_SEARCH_H

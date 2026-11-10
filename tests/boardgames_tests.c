@@ -503,6 +503,64 @@ static void match_indices_round_trip(void) {
     CHECK(match_notation(&match, 6, text) == 0);
 }
 
+// The index each move is stored with as it is played is the one a fresh
+// replay finds, for both games, and undo keeps the list right.
+static void match_stores_indices(void) {
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    for (int i = 0; i < 30; i++) {
+        int n = pos_gen_legal(&match.pos.chess, cmoves);
+        CHECK(n > 0);
+        CHECK(match_play(&match, cmoves[(i * 7 + 3) % n]));
+    }
+    CHECK(match.count == 30);
+    pos_start(&cpos);
+    for (int i = 0; i < 30; i++) {
+        int n = pos_gen_legal(&cpos, cmoves), found = -1;
+        for (int k = 0; k < n; k++)
+            if (cmoves[k] == match.moves[i])
+                found = k;
+        CHECK(found >= 0);
+        CHECK(match.move_index[i] == found);
+        CHECK(match_move_index(&match, i) == found);
+        pos_make(&cpos, (Move)match.moves[i]);
+    }
+    // Undo, then a different move at that ply: its index replaces the old.
+    CHECK(match_undo(&match) == 1);
+    int n = pos_gen_legal(&match.pos.chess, cmoves);
+    CHECK(n > 1);
+    CHECK(match_play(&match, cmoves[n - 1]));
+    CHECK(match_move_index(&match, 29) == n - 1);
+    // Checkers: a game of the first move each time.
+    match_new(&match, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
+    for (int i = 0; i < 30 && match.result == RESULT_NONE; i++) {
+        int k = ck_gen_legal(&match.pos.checkers, kmoves);
+        CHECK(match_play(&match, kmoves[(i * 5) % k]));
+        CHECK(match_move_index(&match, i) == (i * 5) % k);
+    }
+}
+
+// A side with no move is mated before the fifty-move rule draws: mate on the
+// move that reaches halfmove 100 scores as mate.
+static void search_mate_beats_fifty(void) {
+    u32 m = think_chess("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 99 80", LEVEL_SERVAL, 1);
+    CHECK(m == chess_move(&cpos, "Rd8#"));
+    CHECK(search_score() == SEARCH_MATE - 1);
+}
+
+// An aborted search answers with its last whole iteration's move.
+static void search_abort_keeps_best(void) {
+    CHECK(pos_from_fen(&cpos, "rnb1kbnr/pppp1ppp/8/8/4q3/2N5/PPPPPPPP/R1BQKBNR w KQkq - 0 1"));
+    search_start(&chess_search_game, &cpos, chess_level(LEVEL_SERVAL), 1);
+    while (search_depth() < 2 && !search_step(50)) {
+    }
+    CHECK(search_running());
+    u32 before = search_best();
+    CHECK(before != 0);
+    search_abort();
+    CHECK(!search_running());
+    CHECK(search_best() == before);
+}
+
 // The SearchGame tables and a match agree with each other.
 static void match_feeds_search(void) {
     match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_LIGHT, LEVEL_CUB);
@@ -531,4 +589,7 @@ TEST_SUITE(boardgames_tests, "boardgames", {"search_mate_in_one", search_mate_in
            {"match_replay_rejects", match_replay_rejects},
            {"match_refuses_finished", match_refuses_finished},
            {"match_indices_round_trip", match_indices_round_trip},
+           {"match_stores_indices", match_stores_indices},
+           {"search_mate_beats_fifty", search_mate_beats_fifty},
+           {"search_abort_keeps_best", search_abort_keeps_best},
            {"match_feeds_search", match_feeds_search});

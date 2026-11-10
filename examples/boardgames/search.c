@@ -171,7 +171,12 @@ static bool enter(Frame* f, int* value) {
     f->best_move = NO_MOVE;
     f->alpha_orig = f->alpha;
     if (game->is_draw(pos)) {
-        *value = 0;
+        // A side with no legal move is mated (or has lost) before any draw
+        // by the clocks or repetition: checkmate takes precedence.
+        if (top + MAX_MOVES <= SEARCH_STACK_MOVES && game->gen(pos, &stack_moves[top], false) == 0)
+            *value = game->no_moves_score(pos, ply);
+        else
+            *value = 0;
         return true;
     }
     if (ply >= SEARCH_PLY_MAX - 1 || top + MAX_MOVES > SEARCH_STACK_MOVES) {
@@ -389,7 +394,10 @@ void search_start(const SearchGame* g, const void* p, const SearchLevel* lv, u32
     done_score = 0;
     done_best = chosen = 0;
     chosen_score = 0;
-    if (g->pos_size > SEARCH_POS_BYTES) { // cannot happen with the two games
+    // Refused silently (examples cannot use SERVAL_WARN): it cannot happen with
+    // the two games, whose files static-assert their positions into
+    // SEARCH_POS_BYTES.
+    if (g->pos_size > SEARCH_POS_BYTES) {
         running = false;
         return;
     }
@@ -487,6 +495,10 @@ void search_abort(void) {
     if (running && !trivial)
         for (; sp > 0; sp--)
             game->unmake(pos);
+    if (running) {
+        chosen = done_best;
+        chosen_score = done_score;
+    }
     running = false;
 }
 
