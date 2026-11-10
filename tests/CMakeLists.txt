@@ -415,7 +415,7 @@ else()
     # boardgames: the search, both evaluations and the match
     target_sources(serval_host_tests PRIVATE boardgames_tests.c ../examples/boardgames/search.c
                    ../examples/boardgames/chess_eval.c ../examples/boardgames/checkers_eval.c
-                   ../examples/boardgames/match.c)
+                   ../examples/boardgames/match.c ../examples/boardgames/records.c)
     serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
     # debug link: the agent against a fake endpoint (link_tests.c), with a

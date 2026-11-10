@@ -10,10 +10,14 @@
 
 #include <string.h>
 
+#include <serval/save.h>
+
 #include "../examples/boardgames/checkers_eval.h"
 #include "../examples/boardgames/chess_eval.h"
 #include "../examples/boardgames/chess_rules.h"
 #include "../examples/boardgames/match.h"
+#include "../examples/boardgames/records.h"
+#include "../src/core/save_internal.h" // a save memory that refuses writes
 
 // Positions and matches are large (they carry their history): static.
 static Position cpos, cother;
@@ -561,6 +565,229 @@ static void search_abort_keeps_best(void) {
     CHECK(search_best() == before);
 }
 
+static bool refuse_write(u32 offset, const u8* src, u32 count) {
+    (void)offset, (void)src, (void)count;
+    return false;
+}
+
+// --- The save -----------------------------------------------------------------
+
+static Match restored;
+
+// Plays a checkers game of pseudo-random moves from seed until a move jumps
+// three men (at least 3 x in its notation) and has been played; false if none
+// does within 300 plies.
+static bool ck_playout_to_triple(Match* m, u32 seed) {
+    match_new(m, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
+    u32 r = seed;
+    char text[24];
+    for (int i = 0; i < 300 && m->result == RESULT_NONE; i++) {
+        int n = ck_gen_legal(&m->pos.checkers, kmoves);
+        r = r * 1664525u + 1013904223u;
+        int pick = (int)((r >> 16) % (u32)n);
+        ck_notation(&m->pos.checkers, kmoves[pick], text);
+        int x = 0;
+        for (const char* c = text; *c; c++)
+            x += *c == 'x';
+        if (!match_play(m, kmoves[pick]))
+            return false;
+        if (x >= 3)
+            return true;
+    }
+    return false;
+}
+
+// A game in progress comes back from the save as the same game, both kinds,
+// with a three-man jump in the moves.
+static void records_roundtrip(void) {
+    save_erase(0);
+    board_records_load();
+    CHECK(!board_records_has_game());
+    static const char* const chess_line[] = {"e4", "e5", "Nf3", "Nc6", "Bb5"};
+    match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, BLACK, LEVEL_SERVAL);
+    for (int i = 0; i < 5; i++)
+        CHECK(play(&match, chess_line[i]));
+    ChessKey key = pos_key(&match.pos.chess);
+    board_records_save_game(&match);
+    CHECK(!board_records_save_failed());
+    board_records_load(); // as after a power-off
+    CHECK(board_records_has_game() && board_records_saved_kind() == GAME_CHESS);
+    match_new(&restored, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
+    CHECK(board_records_restore_game(&restored));
+    CHECK(restored.game == GAME_CHESS && restored.mode == MODE_ONE_PLAYER);
+    CHECK(restored.human_side == BLACK && restored.level == LEVEL_SERVAL);
+    CHECK(restored.count == 5 && pos_key(&restored.pos.chess) == key);
+    CHECK(restored.moves[4] == match.moves[4]);
+
+    bool found = false;
+    for (u32 seed = 1; seed < 200 && !found; seed++)
+        found = ck_playout_to_triple(&match, seed);
+    CHECK(found);
+    CHECK(match.count >= 3);
+    ChessKey kkey = ck_key(&match.pos.checkers);
+    board_records_save_game(&match);
+    board_records_load();
+    CHECK(board_records_has_game() && board_records_saved_kind() == GAME_CHECKERS);
+    CHECK(board_records_restore_game(&restored));
+    CHECK(restored.game == GAME_CHECKERS && restored.mode == MODE_TWO_PLAYERS);
+    CHECK(restored.count == match.count && ck_key(&restored.pos.checkers) == kkey);
+    for (int i = 0; i < match.count; i++)
+        CHECK(restored.moves[i] == match.moves[i]);
+    save_erase(0);
+}
+
+// Wins, draws and losses go in their place by game and strength; a game ended
+// is no longer in progress.
+static void records_result_counts(void) {
+    save_erase(0);
+    board_records_load();
+    // A chess win at HUNTER: Fool's mate, 1.f3 e5 2.g4 Qh4#, is Black's win.
+    match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, BLACK, LEVEL_HUNTER);
+    CHECK(play(&match, "f3") && play(&match, "e5") && play(&match, "g4") && play(&match, "Qh4#"));
+    board_records_save_game(&match); // over: nothing to keep
+    CHECK(!board_records_has_game());
+    board_records_end_game(&match);
+    CHECK(board_records_get(GAME_CHESS)->wins[LEVEL_HUNTER] == 1);
+    // A chess loss at SERVAL: the same game, the human White.
+    match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, WHITE, LEVEL_SERVAL);
+    CHECK(play(&match, "f3") && play(&match, "e5") && play(&match, "g4") && play(&match, "Qh4#"));
+    board_records_end_game(&match);
+    CHECK(board_records_get(GAME_CHESS)->losses[LEVEL_SERVAL] == 1);
+    // A checkers draw at CUB (a game by the forty-move rule is long; set the result).
+    match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_DARK, LEVEL_CUB);
+    CHECK(play(&match, "9-13"));
+    match.result = RESULT_FORTY;
+    board_records_end_game(&match);
+    CHECK(board_records_get(GAME_CHECKERS)->draws[LEVEL_CUB] == 1);
+    // A two-player checkers game, then one more.
+    for (int g = 0; g < 2; g++) {
+        match_new(&match, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
+        CHECK(play(&match, "9-13"));
+        match.result = RESULT_NO_MOVES;
+        board_records_end_game(&match);
+    }
+    // Everything in its place and nothing elsewhere.
+    for (int g = 0; g < 2; g++) {
+        const GameRecord* r = board_records_get((GameKind)g);
+        for (int l = 0; l < LEVEL_COUNT; l++) {
+            int w = g == GAME_CHESS && l == LEVEL_HUNTER;
+            int d = g == GAME_CHECKERS && l == LEVEL_CUB;
+            int lo = g == GAME_CHESS && l == LEVEL_SERVAL;
+            CHECK(r->wins[l] == w && r->draws[l] == d && r->losses[l] == lo);
+        }
+        CHECK(r->two_player_games == (g == GAME_CHECKERS ? 2 : 0));
+    }
+    // A game in progress is forgotten by ending a game, and by itself.
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(play(&match, "e4"));
+    board_records_save_game(&match);
+    CHECK(board_records_has_game());
+    board_records_end_game(&match); // not over: forgotten, not counted
+    CHECK(!board_records_has_game() && board_records_get(GAME_CHESS)->two_player_games == 0);
+    board_records_save_game(&match);
+    board_records_forget_game();
+    CHECK(!board_records_has_game());
+    // And all of it comes back after a power-off.
+    board_records_load();
+    CHECK(board_records_get(GAME_CHESS)->wins[LEVEL_HUNTER] == 1);
+    CHECK(board_records_get(GAME_CHECKERS)->two_player_games == 2);
+    CHECK(!board_records_has_game());
+    save_erase(0);
+}
+
+// Saves that cannot be read: another version, another size, a damaged game,
+// a saved illegal move.
+static void records_bad_saves(void) {
+    save_erase(0);
+    board_records_load();
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(play(&match, "e4") && play(&match, "e5"));
+    match.result = RESULT_NONE;
+    match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_DARK, LEVEL_HUNTER);
+    CHECK(play(&match, "9-13"));
+    board_records_save_game(&match);
+    board_records_end_game(&match); // a record of nothing: forgotten only
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(play(&match, "e4") && play(&match, "e5"));
+    board_records_save_game(&match);
+    u32 size = save_slot_size(0);
+    CHECK(size > 0 && size <= SAVE_SLOT_MAX);
+    static u8 raw[SAVE_SLOT_MAX];
+    CHECK(save_read(0, raw, size, 1) == SAVE_OK);
+
+    // Another version: no game, no records.
+    CHECK(save_write(0, raw, size, 2));
+    board_records_load();
+    CHECK(!board_records_has_game());
+    CHECK(board_records_get(GAME_CHESS)->two_player_games == 0);
+    // Another size.
+    CHECK(save_write(0, raw, size - 2, 1));
+    board_records_load();
+    CHECK(!board_records_has_game());
+    // The good save once more reads.
+    CHECK(save_write(0, raw, size, 1));
+    board_records_load();
+    CHECK(board_records_has_game());
+    CHECK(board_records_restore_game(&restored) && restored.count == 2);
+
+    // An index past the list's end: restore fails, the game is forgotten, and
+    // the forgetting is saved. The index is the last byte of the moves (the
+    // struct's end is the 800-byte move array) at ply 0.
+    raw[size - GAME_PLY_MAX] = 255;
+    CHECK(save_write(0, raw, size, 1));
+    board_records_load();
+    CHECK(board_records_has_game());
+    CHECK(!board_records_restore_game(&restored));
+    CHECK(!board_records_has_game());
+    CHECK(restored.count == 0);
+    board_records_load();
+    CHECK(!board_records_has_game());
+    // A game with settings this version cannot play is dropped at load.
+    raw[size - GAME_PLY_MAX] = 0;
+    raw[1] = 7; // the kind
+    CHECK(save_write(0, raw, size, 1));
+    board_records_load();
+    CHECK(!board_records_has_game());
+    save_erase(0);
+    board_records_load();
+    CHECK(!board_records_restore_game(&restored)); // no game to restore
+}
+
+// Erasing clears the records and the game, and saves.
+static void records_erase_clears(void) {
+    save_erase(0);
+    board_records_load();
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(play(&match, "e4"));
+    board_records_save_game(&match);
+    match.result = RESULT_STALEMATE;
+    board_records_end_game(&match);
+    match_new(&match, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
+    CHECK(play(&match, "9-13"));
+    board_records_save_game(&match);
+    CHECK(board_records_has_game());
+    board_records_erase();
+    CHECK(!board_records_save_failed());
+    CHECK(!board_records_has_game());
+    CHECK(board_records_get(GAME_CHESS)->two_player_games == 0);
+    board_records_load();
+    CHECK(!board_records_has_game());
+    CHECK(board_records_get(GAME_CHESS)->two_player_games == 0);
+    CHECK(save_slot_size(0) > 0); // saved cleared, not left as it was
+
+    // A save the memory refuses sets the flag; the next that works clears it.
+    SaveDevice refusing = *serval_save_device;
+    refusing.write = refuse_write;
+    const SaveDevice* real = serval_save_device;
+    serval_save_device = &refusing;
+    board_records_erase();
+    CHECK(board_records_save_failed());
+    serval_save_device = real;
+    board_records_erase();
+    CHECK(!board_records_save_failed());
+    save_erase(0);
+}
+
 // The SearchGame tables and a match agree with each other.
 static void match_feeds_search(void) {
     match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_LIGHT, LEVEL_CUB);
@@ -592,4 +819,7 @@ TEST_SUITE(boardgames_tests, "boardgames", {"search_mate_in_one", search_mate_in
            {"match_stores_indices", match_stores_indices},
            {"search_mate_beats_fifty", search_mate_beats_fifty},
            {"search_abort_keeps_best", search_abort_keeps_best},
-           {"match_feeds_search", match_feeds_search});
+           {"match_feeds_search", match_feeds_search}, {"records_roundtrip", records_roundtrip},
+           {"records_result_counts", records_result_counts},
+           {"records_bad_saves", records_bad_saves},
+           {"records_erase_clears", records_erase_clears});

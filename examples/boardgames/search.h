@@ -101,9 +101,9 @@ bool search_step(u32 node_budget);
 // The chosen move once finished (the best so far before); 0 if the position
 // had no legal move.
 u32 search_best(void);
-int search_score(void);  // its score, the side to move's view
-int search_depth(void);  // the last iteration completed
-u32 search_nodes(void);  // nodes searched
+int search_score(void); // its score, the side to move's view
+int search_depth(void); // the last iteration completed
+u32 search_nodes(void); // nodes searched
 // Stops the search; search_running() is false after, and search_best() and
 // search_score() are those of the last iteration completed (as before it).
 void search_abort(void);
