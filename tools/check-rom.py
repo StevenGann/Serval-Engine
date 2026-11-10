@@ -13,6 +13,9 @@
   (serval_add_rom's SAVE: "SRAM_V", "FLASH512_V", "FLASH1M_V" or "EEPROM_V"),
   which emulators and flash carts look for to give the game its save memory;
   if it doesn't, the ROM contains none.
+- If the game links the real-time clock's driver (rtc.h), the ROM contains
+  "SIIRTC_V001" on a 4-byte boundary, which emulators look for to give the
+  game a clock; if it doesn't, the ROM contains no "SIIRTC_V".
 
 Usage: check-rom.py --rom R.gba [--map R.map] [--elf R.elf --objdump OBJDUMP]
                     [--title T | --title-hex HEX] [--game-code C | --game-code-hex HEX]
@@ -131,6 +134,34 @@ def check_save_id(rom_path, map_path, save_type):
     return []
 
 
+RTC_ID = b"SIIRTC_V001"
+
+
+def check_rtc_id(rom_path, map_path):
+    """The clock's ID string is in the ROM, on a 4-byte boundary, if its driver was linked."""
+    with open(map_path, encoding="utf-8", errors="replace") as f:
+        linked = f.read().split("Linker script and memory map", 1)[-1]
+    rtc = re.search(r"^\s*\.rodata\.serval_rtc\b", linked, re.MULTILINE)
+    with open(rom_path, "rb") as f:
+        rom = f.read()
+    prefix = RTC_ID[:8]
+    found = []
+    at = rom.find(prefix)
+    while at >= 0:
+        found.append(at)
+        at = rom.find(prefix, at + 1)
+    if not rtc:
+        if found:
+            listed = ", ".join(f"0x{at:X}" for at in found)
+            return [f"{rom_path}: doesn't link the clock's driver but contains {prefix.decode()!r} "
+                    f"(at {listed}): emulators would give it a clock"]
+        return []
+    if not any(at % 4 == 0 and rom[at:at + len(RTC_ID)] == RTC_ID for at in found):
+        return [f"{rom_path}: links the clock's driver but has no {RTC_ID.decode()!r} on a 4-byte "
+                "boundary: emulators won't give it a clock"]
+    return []
+
+
 def check_no_blx(elf, objdump):
     result = subprocess.run([objdump, "-d", elf], capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -177,6 +208,7 @@ def main():
         if args.map:
             errors += check_map(args.map)
             errors += check_save_id(args.rom, args.map, args.save_type)
+            errors += check_rtc_id(args.rom, args.map)
         if args.elf:
             errors += check_no_blx(args.elf, args.objdump)
     except OSError as e:

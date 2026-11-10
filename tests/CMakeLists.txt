@@ -150,6 +150,7 @@ if(SERVAL_TARGET_GBA)
                 rom/wave_tests.c
                 rom/vm_sound_tests.c
                 rom/surface_tests.c
+                rom/rtc_tests.c # the real-time clock: the cartridge's GPIO driver
                 rom/compat_tonc_first.c rom/compat_serval_first.c
         TITLE "SERVAL TESTS"
         GAME_CODE "SVTS")

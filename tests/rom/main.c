@@ -30,6 +30,7 @@ extern const TestSuite gba_link_tests;     // debug link: the agent, dormant wit
 // debug link (E9): a hot reload's cost
 extern const TestSuite gba_link_reload_tests;
 extern const TestSuite gba_surface_tests; // surface: the pixel surface
+extern const TestSuite gba_rtc_tests;     // the real-time clock: the cartridge's GPIO driver
 
 void test_output(const char* line) {
     debug_log(line);
@@ -61,6 +62,7 @@ int main(void) {
         &psg_wave_tests, // wave channel
         &gba_wave_tests, // wave channel
         &rtc_tests,      // the real-time clock, on fakes
+        &gba_rtc_tests,  // the real-time clock: the cartridge's, absent in mGBA
         &input_tests,
         &path_tests,
         &gba_ecs_cost_tests,
