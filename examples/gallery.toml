@@ -165,7 +165,7 @@ thumbnail = { frame = 1110, keys = ["400:S:2", "440:D:2", "450:r:2", "462:R:2", 
 
 [examples.boardgames]
 title = "PAWS & KINGS"
-summary = "Chess and checkers in one cartridge, against the computer at three strengths or for two players: both games' rules as portable C proven by perft counts, one search shared by both through a table of functions that thinks a little every frame while the board stays alive, a maple and walnut board drawn at boot with servals for knights, a saved game to continue and a record per strength"
+summary = "Chess and checkers in one cartridge, against the computer at three strengths or for two players: both games' rules as portable C proven by perft counts, one search shared by both through a table of functions that thinks a little every frame while the board stays alive, a maple and walnut board drawn at boot with servals for knights, hot code in IWRAM, a saved game to continue (one byte a move), a record per strength and an attract mode"
 tags = ["sprites", "tilemaps", "effects", "save"]
 level = 4
 # CHESS, 2 PLAYERS, then e4 e5 Nf3 Nc6 Bc4, and Black's knight on g8 picked
