@@ -1,4 +1,5 @@
-// chess: Serval Chess's board and move generation (examples/boardgames/chess_board.c),
+// chess: Serval Chess's board, move generation, results and notation
+// (examples/boardgames/chess_board.c, chess_rules.c),
 // natively. Perft counts the legal move tree from well-known positions to a
 // few plies against published totals, so every rule of movement (castling,
 // en passant, promotion, pins, checks) is proven by numbers no other bug
@@ -8,7 +9,10 @@
 
 #include "test.h"
 
+#include <string.h>
+
 #include "../examples/boardgames/chess_board.h"
+#include "../examples/boardgames/chess_rules.h"
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -313,6 +317,178 @@ static void attacks_and_check(void) {
     CHECK(pos_halfmove(&pos) == 1);
 }
 
+// --- Transposition ------------------------------------------------------------
+
+static void key_transposition(void) {
+    pos_start(&pos);
+    play(&pos, "g1f3");
+    play(&pos, "g8f6");
+    play(&pos, "b1c3");
+    play(&pos, "b8c6");
+    pos_start(&other);
+    play(&other, "b1c3");
+    play(&other, "b8c6");
+    play(&other, "g1f3");
+    play(&other, "g8f6");
+    CHECK(pos_key(&pos) == pos_key(&other));
+    CHECK(same_position(&pos, &other));
+}
+
+// --- Results ------------------------------------------------------------------
+
+static void result_mate_and_stalemate(void) {
+    pos_start(&pos);
+    CHECK(chess_result(&pos) == RESULT_NONE);
+    play(&pos, "f2f3");
+    play(&pos, "e7e5");
+    play(&pos, "g2g4");
+    CHECK(chess_result(&pos) == RESULT_NONE);
+    play(&pos, "d8h4");
+    CHECK(chess_result(&pos) == RESULT_CHECKMATE);
+    CHECK(pos_from_fen(&pos, "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"));
+    CHECK(chess_result(&pos) == RESULT_STALEMATE);
+    // In check with an escape: play on.
+    CHECK(pos_from_fen(&pos, "7k/8/5K2/8/8/8/8/7R b - - 0 1"));
+    CHECK(pos_in_check(&pos));
+    CHECK(chess_result(&pos) == RESULT_NONE);
+}
+
+static void result_repetition(void) {
+    static const char* const shuffle[8] = {"g1f3", "g8f6", "f3g1", "f6g8",
+                                           "g1f3", "g8f6", "f3g1", "f6g8"};
+    pos_start(&pos);
+    for (int i = 0; i < 8; i++) {
+        play(&pos, shuffle[i]);
+        // The start position has now come up twice (ply 4), a third time on ply 8.
+        CHECK(chess_result(&pos) == (i == 7 ? RESULT_REPETITION : RESULT_NONE));
+    }
+    // A pawn move in between breaks the chain.
+    pos_start(&pos);
+    for (int i = 0; i < 4; i++)
+        play(&pos, shuffle[i]);
+    play(&pos, "e2e4");
+    play(&pos, "e7e5");
+    for (int i = 0; i < 8; i++)
+        play(&pos, shuffle[i]);
+    CHECK(chess_result(&pos) == RESULT_REPETITION);
+    pos_start(&pos);
+    for (int i = 0; i < 4; i++)
+        play(&pos, shuffle[i]);
+    play(&pos, "e2e4");
+    play(&pos, "e7e5");
+    for (int i = 0; i < 4; i++)
+        play(&pos, shuffle[i]);
+    CHECK(chess_result(&pos) == RESULT_NONE); // only the second time since e5
+}
+
+static void result_fifty(void) {
+    CHECK(pos_from_fen(&pos, "4k3/8/8/8/8/8/8/R3K3 w - - 99 80"));
+    play(&pos, "e1e2");
+    CHECK(pos_halfmove(&pos) == 100);
+    CHECK(chess_result(&pos) == RESULT_FIFTY);
+    CHECK(pos_from_fen(&pos, "4k3/8/8/8/8/8/r7/R3K3 w - - 99 80"));
+    play(&pos, "a1a2");
+    CHECK(pos_halfmove(&pos) == 0);
+    CHECK(chess_result(&pos) == RESULT_NONE);
+}
+
+static void result_material(void) {
+    static const struct {
+        const char* fen;
+        GameResult want;
+    } cases[] = {
+        {"4k3/8/8/8/8/8/8/4K3 w - - 0 1", RESULT_MATERIAL},
+        {"4k3/8/8/8/8/8/8/3BK3 w - - 0 1", RESULT_MATERIAL},
+        {"4k3/8/8/8/8/8/8/3NK3 w - - 0 1", RESULT_MATERIAL},
+        {"2b1k3/8/8/8/8/8/8/4KB2 w - - 0 1", RESULT_MATERIAL}, // c8, f1: both light
+        {"4kb2/8/8/8/8/8/8/4KB2 w - - 0 1", RESULT_NONE},      // f8 dark, f1 light
+        {"4k3/8/8/8/8/8/8/2NNK3 w - - 0 1", RESULT_NONE},
+        {"4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", RESULT_NONE},
+        {"4k3/8/8/8/8/8/8/3RK3 w - - 0 1", RESULT_NONE},
+        {"4k3/8/8/8/8/8/8/3QK3 w - - 0 1", RESULT_NONE},
+        {"4kn2/8/8/8/8/8/8/4KB2 w - - 0 1", RESULT_NONE},
+    };
+    for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        CHECK(pos_from_fen(&pos, cases[i].fen));
+        CHECK(chess_result(&pos) == cases[i].want);
+    }
+}
+
+static void result_length(void) {
+    // Replaying 800 plies without a repetition or a fifty-move draw is not
+    // possible by hand: the test sets the ply count (the history it would
+    // look back through is not read with a fresh halfmove clock).
+    pos_start(&pos);
+    pos.ply = GAME_PLY_MAX - 1;
+    CHECK(chess_result(&pos) == RESULT_NONE);
+    pos.ply = GAME_PLY_MAX;
+    CHECK(pos_ply(&pos) == GAME_PLY_MAX);
+    CHECK(chess_result(&pos) == RESULT_LENGTH);
+}
+
+// --- Notation -----------------------------------------------------------------
+
+// SAN of the move "e2e4" in the position written as FEN.
+static bool san_is(const char* fen, const char* uci, const char* want) {
+    char out[8];
+    if (!pos_from_fen(&pos, fen))
+        return false;
+    Move m = find(&pos, uci);
+    if (m == MOVE_NONE)
+        return false;
+    int n = chess_san(&pos, m, out);
+    return n == (int)strlen(want) && strcmp(out, want) == 0;
+}
+
+static void san_cases(void) {
+    CHECK(san_is("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "g1f3", "Nf3"));
+    CHECK(san_is("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e2e4", "e4"));
+    CHECK(san_is("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", "exd5"));
+    CHECK(san_is("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1g1", "O-O"));
+    CHECK(san_is("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1", "O-O-O"));
+    CHECK(san_is("7k/4P3/8/8/8/8/8/K7 w - - 0 1", "e7e8q", "e8=Q+"));
+    CHECK(san_is("3r3k/4P3/8/8/8/8/8/K7 w - - 0 1", "e7d8n", "exd8=N"));
+    CHECK(san_is("7k/8/8/8/8/8/5p2/K4Q2 w - - 0 1", "f1f2", "Qxf2"));
+    CHECK(san_is("6k1/5ppp/8/8/8/8/8/K3Q3 w - - 0 1", "e1e8", "Qe8#"));
+    CHECK(san_is("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", "h5f7",
+                 "Qxf7#"));
+    // Disambiguation: by file, by rank, by both (three queens).
+    CHECK(san_is("4k3/8/8/8/8/5N2/8/1N2K3 w - - 0 1", "b1d2", "Nbd2"));
+    CHECK(san_is("4k3/8/8/8/8/5N2/8/1N2K3 w - - 0 1", "f3d2", "Nfd2"));
+    CHECK(san_is("4k3/8/8/8/8/8/R7/K6R w - - 0 1", "a2h2", "Rah2"));
+    CHECK(san_is("4k3/8/8/8/R7/8/8/R3K3 w - - 0 1", "a1a3", "R1a3"));
+    CHECK(san_is("4k3/8/8/8/R7/8/8/R3K3 w - - 0 1", "a4a3", "R4a3"));
+    CHECK(san_is("8/k7/8/8/4Q2Q/8/8/K6Q w - - 0 1", "h4e1", "Qh4e1"));
+    // En passant.
+    CHECK(san_is("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6", "exd6"));
+}
+
+static void find_moves(void) {
+    CHECK(pos_from_fen(&pos, "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1"));
+    Move m = chess_find(&pos, square("e1"), square("g1"), 0);
+    CHECK(m != MOVE_NONE && MOVE_FLAGS(m) == MF_CASTLE_K);
+    m = chess_find(&pos, square("e1"), square("c1"), 0);
+    CHECK(m != MOVE_NONE && MOVE_FLAGS(m) == MF_CASTLE_Q);
+    CHECK(chess_find(&pos, square("e1"), square("e3"), 0) == MOVE_NONE);
+    CHECK(chess_find(&pos, square("a1"), square("h8"), 0) == MOVE_NONE);
+    CHECK(!chess_is_promotion(&pos, square("a1"), square("a8")));
+    CHECK(pos_from_fen(&pos, "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"));
+    m = chess_find(&pos, square("e5"), square("d6"), 0);
+    CHECK(m != MOVE_NONE && MOVE_FLAGS(m) == MF_EP);
+    CHECK(pos_from_fen(&pos, "3r3k/4P3/8/8/8/8/8/K7 w - - 0 1"));
+    CHECK(chess_is_promotion(&pos, square("e7"), square("e8")));
+    CHECK(chess_is_promotion(&pos, square("e7"), square("d8")));
+    CHECK(!chess_is_promotion(&pos, square("a1"), square("a2")));
+    static const int kinds[4] = {KNIGHT, BISHOP, ROOK, QUEEN};
+    for (int i = 0; i < 4; i++) {
+        m = chess_find(&pos, square("e7"), square("e8"), kinds[i]);
+        CHECK(m != MOVE_NONE && (MOVE_FLAGS(m) & 8) && MOVE_PROMO_KIND(m) == kinds[i]);
+    }
+    m = chess_find(&pos, square("e7"), square("d8"), ROOK);
+    CHECK(m != MOVE_NONE && MOVE_PROMO_KIND(m) == ROOK && (MOVE_FLAGS(m) & MF_CAPTURE));
+    CHECK(chess_find(&pos, square("e7"), square("e8"), 0) == MOVE_NONE);
+}
+
 TEST_SUITE(chess_tests, "chess", {"perft_start", perft_start}, {"perft_kiwipete", perft_kiwipete},
            {"perft_position3", perft_position3}, {"perft_position4", perft_position4},
            {"perft_position5", perft_position5}, {"make_unmake_restores", make_unmake_restores},
@@ -320,5 +496,9 @@ TEST_SUITE(chess_tests, "chess", {"perft_start", perft_start}, {"perft_kiwipete"
            {"captures_are_the_noisy_legal_moves", captures_are_the_noisy_legal_moves},
            {"fen_rejects", fen_rejects}, {"castling_conditions", castling_conditions},
            {"ep_only_immediately", ep_only_immediately},
-           {"promotions_four_ways", promotions_four_ways},
-           {"attacks_and_check", attacks_and_check});
+           {"promotions_four_ways", promotions_four_ways}, {"attacks_and_check", attacks_and_check},
+           {"key_transposition", key_transposition},
+           {"result_mate_and_stalemate", result_mate_and_stalemate},
+           {"result_repetition", result_repetition}, {"result_fifty", result_fifty},
+           {"result_material", result_material}, {"result_length", result_length},
+           {"san_cases", san_cases}, {"find_moves", find_moves});
