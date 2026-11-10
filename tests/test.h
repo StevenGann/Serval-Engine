@@ -77,5 +77,7 @@ extern const TestSuite link_reload_tests;
 extern const TestSuite racer_tests;
 // rhythm: Beat Paws' judging and scoring (examples/rhythm/judge.c)
 extern const TestSuite rhythm_tests;
+// boardgames: the chess core's board and moves (examples/boardgames/chess_board.c)
+extern const TestSuite chess_tests;
 
 #endif // SERVAL_TEST_H

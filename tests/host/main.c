@@ -30,6 +30,7 @@ int main(void) {
         &link_reload_tests,                    // debug link (E9): its hot reload
         &racer_tests,                          // racer: the road and the race
         &rhythm_tests,                         // rhythm: judging, score, calibration
+        &chess_tests,                          // boardgames: chess moves, perft
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }
