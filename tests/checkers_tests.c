@@ -176,6 +176,36 @@ static void ck_perft_start(void) {
     CHECK(ck_ply(&pos) == 0); // perft leaves the position as it found it
 }
 
+// The independent counter's board for a position set from text.
+static unsigned long long bf_perft(const CheckersPosition* p, int depth) {
+    static const int values[8] = {BF_EMPTY, BF_DARK_MAN,  BF_DARK_KING,  0,
+                                  0,        BF_LIGHT_MAN, BF_LIGHT_KING, 0};
+    BfBoard x;
+    memset(&x, 0, sizeof x);
+    for (int s = 0; s < 32; s++)
+        x.b[ck_square_rank(s)][ck_square_file(s)] = values[ck_piece(p, s) & 7];
+    return bf_count(&x, ck_side(p) == CK_DARK, depth);
+}
+
+// Positions with kings and men, the king circuit and a man whose jump could go
+// on backward among them: both counters agree to four plies.
+static void ck_perft_positions(void) {
+    static const char* const texts[] = {
+        "W:WK22,29:B2,18,19,26,27",      // the king circuit (ck_king_circuit), and more
+        "W:W22,K30:B11,18,19",           // a man's jump a king would continue backward
+        "B:W18,19,K27,30:B6,10,K14,K23", // kings and men, captures both ways
+        "W:W21,22,25,K32:B5,9,K17,K28",
+    };
+    for (unsigned t = 0; t < sizeof texts / sizeof texts[0]; t++) {
+        CHECK(ck_from_text(&pos, texts[t]));
+        for (int d = 1; d <= 4; d++) {
+            unsigned long long n = ck_perft(&pos, d);
+            CHECK(n > 0);
+            CHECK(n == bf_perft(&pos, d));
+        }
+    }
+}
+
 // --- The board ----------------------------------------------------------------
 
 static void ck_squares(void) {
@@ -317,6 +347,74 @@ static void ck_king_backward_capture(void) {
     CHECK(find(&pos, "18-14") != CK_MOVE_NONE && find(&pos, "18-23") != CK_MOVE_NONE);
 }
 
+// The squares m jumps over, into taken; returns how many, -1 if two repeat.
+static int captured_squares(CkMove m, int* taken) {
+    int count = ck_move_is_jump(m) ? ck_move_steps(m) : 0;
+    int s = CK_MOVE_FROM(m);
+    for (int i = 0; i < count; i++) {
+        int t = ck_move_landing(m, i);
+        int over = ck_square_at((ck_square_file(s) + ck_square_file(t)) >> 1,
+                                (ck_square_rank(s) + ck_square_rank(t)) >> 1);
+        for (int k = 0; k < i; k++)
+            if (taken[k] == over)
+                return -1;
+        taken[i] = over;
+        s = t;
+    }
+    return count;
+}
+
+static void ck_king_circuit(void) {
+    // Light's king on 22 (c3) goes round d4, f4, f2 and d2 and lands on its
+    // own square again, either way round; it takes each man once.
+    CHECK(ck_from_text(&pos, "W:WK22:B18,19,26,27"));
+    int n = ck_gen_legal(&pos, moves);
+    CHECK(n == 2);
+    CHECK(find(&pos, "22x15x24x31x22") != CK_MOVE_NONE);
+    CHECK(find(&pos, "22x31x24x15x22") != CK_MOVE_NONE);
+    for (int i = 0; i < n; i++) {
+        int taken[CK_JUMPS_MAX];
+        CHECK(captured_squares(moves[i], taken) == ck_move_steps(moves[i]));
+        CHECK(ck_move_to(moves[i]) == N(22));
+    }
+    play(&pos, "22x15x24x31x22");
+    for (int s = 0; s < 32; s++)
+        CHECK(ck_piece(&pos, s) == (s == N(22) ? (CK_LIGHT | CK_KING) : CK_EMPTY));
+    ck_unmake(&pos);
+    CHECK(ck_from_text(&other, "W:WK22:B18,19,26,27"));
+    CHECK(same_position(&pos, &other));
+    // Every jump of a crowded position takes each piece at most once.
+    CHECK(ck_from_text(&pos, "B:W18,19,K27,30:B6,10,K14,K23"));
+    n = ck_gen_legal(&pos, moves);
+    CHECK(n > 0);
+    for (int i = 0; i < n; i++) {
+        int taken[CK_JUMPS_MAX];
+        CHECK(ck_move_is_jump(moves[i]));
+        CHECK(captured_squares(moves[i], taken) == ck_move_steps(moves[i]));
+    }
+}
+
+static void ck_man_jumps_forward_only(void) {
+    // Light's man on 22 takes 18 to land on 15; from there a king could take
+    // 19 backward to 24, but a man's move ends.
+    CHECK(ck_from_text(&pos, "W:W22:B18,19"));
+    int n = ck_gen_legal(&pos, moves);
+    CHECK(n == 1 && find(&pos, "22x15") != CK_MOVE_NONE);
+    int next[4], land = N(15);
+    CHECK(ck_continuations(&pos, N(22), &land, 1, next) == 0);
+    // A king from the same square goes on.
+    CHECK(ck_from_text(&pos, "W:WK22:B18,19"));
+    n = ck_gen_legal(&pos, moves);
+    CHECK(n == 1 && find(&pos, "22x15x24") != CK_MOVE_NONE);
+    CHECK(ck_continuations(&pos, N(22), &land, 1, next) == 1 && next[0] == N(24));
+    // The same for Dark, moving down: its man on 6 takes 10 to 15, and a
+    // king would then take 11 backward (up) to 8.
+    CHECK(ck_from_text(&pos, "B:W10,11:B6"));
+    CHECK(ck_gen_legal(&pos, moves) == 1 && find(&pos, "6x15") != CK_MOVE_NONE);
+    CHECK(ck_from_text(&pos, "B:W10,11:BK6"));
+    CHECK(ck_gen_legal(&pos, moves) == 1 && find(&pos, "6x15x8") != CK_MOVE_NONE);
+}
+
 // --- Make and unmake, keys --------------------------------------------------
 
 static void ck_make_unmake_restores(void) {
@@ -417,7 +515,9 @@ static void ck_results(void) {
         play(&pos, shuffle[i & 3]);
         CHECK(ck_result(&pos) == (i == 7 ? RESULT_REPETITION : RESULT_NONE));
     }
-    // A man move in between breaks the chain.
+    // After a man move the count starts afresh (no earlier position can match
+    // one after it): the position after the men's moves, seen a second time,
+    // is not a draw yet.
     CHECK(ck_from_text(&pos, "B:W30,K32:B3,K1"));
     for (int i = 0; i < 4; i++)
         play(&pos, shuffle[i]);
@@ -426,7 +526,7 @@ static void ck_results(void) {
     play(&pos, "30-26");
     for (int i = 0; i < 4; i++)
         play(&pos, shuffle[i]);
-    CHECK(ck_result(&pos) == RESULT_NONE); // only the second time since the men moved
+    CHECK(ck_result(&pos) == RESULT_NONE);
 
     // Forty moves each with no capture and no man moved: kings wander (found
     // by a search that backs out of dead ends), never to a position seen
@@ -484,10 +584,12 @@ static void ck_notation_cases(void) {
 }
 
 TEST_SUITE(checkers_tests, "checkers", {"ck_perft_start", ck_perft_start},
-           {"ck_squares", ck_squares}, {"ck_text_rejects", ck_text_rejects},
-           {"ck_forced_capture", ck_forced_capture}, {"ck_multi_jump", ck_multi_jump},
-           {"ck_crowning_ends_move", ck_crowning_ends_move},
+           {"ck_perft_positions", ck_perft_positions}, {"ck_squares", ck_squares},
+           {"ck_text_rejects", ck_text_rejects}, {"ck_forced_capture", ck_forced_capture},
+           {"ck_multi_jump", ck_multi_jump}, {"ck_crowning_ends_move", ck_crowning_ends_move},
            {"ck_king_backward_capture", ck_king_backward_capture},
+           {"ck_king_circuit", ck_king_circuit},
+           {"ck_man_jumps_forward_only", ck_man_jumps_forward_only},
            {"ck_make_unmake_restores", ck_make_unmake_restores},
            {"ck_key_incremental", ck_key_incremental}, {"ck_results", ck_results},
            {"ck_notation_cases", ck_notation_cases});

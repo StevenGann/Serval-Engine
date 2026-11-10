@@ -31,6 +31,9 @@
 //
 // So a1 (29) is each side's single corner and 1-5 and 28-32 the double
 // corners. Nothing here divides.
+//
+// Call ck_start() or ck_from_text() before any other ck_ function: they build
+// the move tables and keys the others use (once, at first use).
 
 #include "chess_board.h" // ChessKey, MAX_MOVES, GAME_PLY_MAX, SEARCH_PLY_MAX
 #include "game_result.h"
