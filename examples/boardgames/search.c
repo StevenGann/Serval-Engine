@@ -565,22 +565,30 @@ bool search_running(void) {
 
 void search_pace_init(SearchPace* pace) {
     pace->cycles_per_unit = 0;
+    pace->last_allowance = 0;
 }
 
 // A frame costlier per unit than the estimate raises it at once; a cheaper
 // one lowers it a sixteenth of the way. So the estimate follows the costliest
 // frames lately, and the allowance it gives keeps a frame whose work costs
 // more than most near the target: the average frame stays a little under it.
+// A frame that did much less work than it was allowed (the step that
+// finished a search, a few nodes) teaches nothing: its cycles are mostly the
+// frame's other work, and shared among so few units they would make the
+// next search start slow.
 u32 search_pace(SearchPace* pace, u32 last_cycles, u32 last_work, u32 budget) {
-    if (last_work) {
+    if (last_work && last_work >= pace->last_allowance / SEARCH_PACE_SAMPLE_MIN) {
         u32 sample = last_cycles / last_work;
         if (sample >= pace->cycles_per_unit)
             pace->cycles_per_unit = sample;
         else
             pace->cycles_per_unit -= (pace->cycles_per_unit - sample) >> 4;
     }
-    if (!pace->cycles_per_unit)
-        return SEARCH_WORK_PER_FRAME;
-    u32 n = budget / 1000 * SEARCH_PACE_TARGET / pace->cycles_per_unit;
-    return n < 1 ? 1 : n > SEARCH_PACE_MAX ? SEARCH_PACE_MAX : n;
+    u32 n = SEARCH_WORK_PER_FRAME;
+    if (pace->cycles_per_unit) {
+        n = budget / 1000 * SEARCH_PACE_TARGET / pace->cycles_per_unit;
+        n = n < 1 ? 1 : n > SEARCH_PACE_MAX ? SEARCH_PACE_MAX : n;
+    }
+    pace->last_allowance = n;
+    return n;
 }

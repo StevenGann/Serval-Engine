@@ -226,7 +226,10 @@ bool pos_attacked(const Position* p, int sq, int by_color) {
 }
 
 bool pos_in_check(const Position* p) {
-    return check_now((Position*)p); // only the cache changes
+    // The cast is safe: no Position is ever const-defined (every one is a
+    // writable object, static or in a Match), and only the check cache,
+    // which the answer does not depend on, is written.
+    return check_now((Position*)p);
 }
 
 // --- Reading ----------------------------------------------------------------

@@ -126,13 +126,17 @@ enum { LEVEL_CUB, LEVEL_HUNTER, LEVEL_SERVAL, LEVEL_COUNT };
 // (its other work shared among them).
 typedef struct SearchPace {
     u32 cycles_per_unit;
+    u32 last_allowance; // what search_pace() gave last
 } SearchPace;
+// A frame that did less than 1/SEARCH_PACE_SAMPLE_MIN of the work it was
+// given (a search finished early in it) is not taken as a sample.
+#define SEARCH_PACE_SAMPLE_MIN 4
 
 void search_pace_init(SearchPace* pace);
 // The work for this frame, from the frame before: last_cycles (its
 // frame_cpu_cycles()) and last_work (the work it did, search_work()'s
-// difference; 0 if it did not think, which teaches nothing). Two divisions a
-// frame.
+// difference; 0 if it did not think, which teaches nothing, and so does a
+// frame that did much less than it was given). Two divisions a frame.
 u32 search_pace(SearchPace* pace, u32 last_cycles, u32 last_work, u32 budget);
 
 // Starts a search of pos (copied, g->pos_size bytes) at the level; seed drives

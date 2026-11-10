@@ -241,6 +241,12 @@ static void search_pace_adapts(void) {
     CHECK(search_pace(&pace, 100000, SEARCH_WORK_PER_FRAME, 280896) > SEARCH_WORK_PER_FRAME);
     search_pace_init(&pace);
     CHECK(search_pace(&pace, 270000, SEARCH_WORK_PER_FRAME, 280896) < SEARCH_WORK_PER_FRAME);
+    // The frame that finished a search, a few units of work in a frame of
+    // other work, is no sample: the next search does not start slow.
+    search_pace_init(&pace);
+    u32 given = search_pace(&pace, 0, 0, 280896);
+    u32 next = search_pace(&pace, 100000, given, 280896);
+    CHECK(search_pace(&pace, 120000, 3, 280896) == next);
     // Simulated: the frames settle near SEARCH_PACE_TARGET (76% of the
     // budget) and none reaches 95%, with little or much other work.
     u32 busiest, average;
@@ -736,7 +742,6 @@ static void search_mate_beats_fifty(void) {
     CHECK(search_score() == SEARCH_MATE - 1);
 }
 
-// An aborted search answers with its last whole iteration's move.
 // A search out of nodes before its first iteration is whole answers with
 // the best of the root's moves it has searched (search_depth() 0), the same
 // stepped as whole.
@@ -848,6 +853,7 @@ static void quiescence_filter(void) {
     CHECK(!quiet_search_has("7k/8/4p3/3n4/8/8/8/K2R4 w - - 0 1", "Rxd5"));
 }
 
+// An aborted search answers with its last whole iteration's move.
 static void search_abort_keeps_best(void) {
     CHECK(pos_from_fen(&cpos, "rnb1kbnr/pppp1ppp/8/8/4q3/2N5/PPPPPPPP/R1BQKBNR w KQkq - 0 1"));
     search_start(&chess_search_game, &cpos, chess_level(LEVEL_SERVAL), 1);
