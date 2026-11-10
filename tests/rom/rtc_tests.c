@@ -38,10 +38,27 @@ static void rtc_gba_absent_leaves_port_closed(void) {
     CHECK(rtc_seconds() == 0);
     CHECK(!rtc_was_reset());
     CHECK(debug_warning_count() == before);
-    // Control back at 0: reads there are the ROM's own bytes, zeros.
+    // Control back at 0: reads there are the ROM's own bytes, zeros. Without
+    // a clock mGBA drops every GPIO store, so these only bite with one: CTest
+    // rtc_probe_capture checks control again with mGBA's clock on.
     CHECK(*(volatile u16*)0x080000C8 == 0);
     CHECK(*(volatile u16*)0x080000C4 == 0);
     CHECK(*(volatile u16*)0x080000C6 == 0);
+}
+
+// Each transaction turns interrupts off and puts REG_IME back as it found it,
+// whether on or off.
+static void rtc_gba_probe_restores_ime(void) {
+    u16 ime = REG_IME;
+    use_the_cartridge();
+    REG_IME = 1;
+    (void)rtc_present();
+    CHECK(REG_IME == 1);
+    use_the_cartridge();
+    REG_IME = 0;
+    (void)rtc_present();
+    CHECK(REG_IME == 0);
+    REG_IME = ime;
 }
 
 static void rtc_gba_id_in_rom(void) {
@@ -66,4 +83,5 @@ static void rtc_gba_probe_cost(void) {
 
 TEST_SUITE(gba_rtc_tests, "gba_rtc",
            {"absent_leaves_port_closed", rtc_gba_absent_leaves_port_closed},
-           {"id_in_rom", rtc_gba_id_in_rom}, {"probe_cost", rtc_gba_probe_cost});
+           {"probe_restores_ime", rtc_gba_probe_restores_ime}, {"id_in_rom", rtc_gba_id_in_rom},
+           {"probe_cost", rtc_gba_probe_cost});

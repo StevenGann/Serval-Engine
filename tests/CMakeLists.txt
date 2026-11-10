@@ -333,6 +333,22 @@ if(SERVAL_TARGET_GBA)
     # images: white screen in mGBA 0.8), no libc.a in the map, no BLX.
     serval_add_rom_checks(serval_tests)
 
+    # the real-time clock: the GBA driver against mGBA's clock, in the capture
+    # tool (not in this repository; CLAUDE.md "Verifying visuals and sound"),
+    # which gives this game code a clock with rtc=SECONDS; skipped without it.
+    serval_add_rom(serval_rtc_probe SOURCES rom/rtc_probe_main.c
+        TITLE "SERVAL RTC" GAME_CODE "SVRT")
+    target_link_libraries(serval_rtc_probe PRIVATE serval_warnings)
+    serval_add_rom_checks(serval_rtc_probe)
+    set(SERVAL_MGBA_CAPTURE "$ENV{HOME}/opt/mgba-capture/capture" CACHE FILEPATH
+        "The capture tool built on mGBA's core (CTest rtc_probe_capture)")
+    add_test(NAME rtc_probe_capture
+        COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/rom/rtc_probe_capture.py"
+                --capture "${SERVAL_MGBA_CAPTURE}"
+                --rom "$<TARGET_FILE_DIR:serval_rtc_probe>/serval_rtc_probe.gba"
+                --out "${CMAKE_CURRENT_BINARY_DIR}/rtc_probe_capture")
+    set_tests_properties(rtc_probe_capture PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+
     # script benchmark: scriptmark_bench and fireflies_bench (tools/bench.sh)
     add_subdirectory(bench)
 

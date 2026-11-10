@@ -20,8 +20,8 @@
 // answers, so SIO has turned around), about 1 microsecond at 3/1 wait states;
 // after a write the chip is left alone for about 200 microseconds. Interrupts
 // are off for each transaction (REG_IME, restored after), so a handler can't
-// stretch a bit. Not hot: the clock is read at most a few times a second, so
-// this stays Thumb code in ROM.
+// stretch a bit. Not hot: a read is a few thousand cycles (a date-time read
+// 3,600 to 4,700, interrupts off for most of it), so this stays Thumb code in ROM.
 //
 // Without a clock the stores go nowhere and every bit reads as the ROM's zero:
 // the status reads 0 and src/core/rtc.c finds no clock.
@@ -46,6 +46,9 @@
 
 // About 200 microseconds, in CPU cycles (16.78 MHz).
 #define SETTLE_CYCLES 3400
+// The wait's bound if timer 2 isn't running: each iteration takes several
+// cycles, so the timer ends the wait first when it runs.
+#define SETTLE_MAX_ITERATIONS 3400
 
 // The ID string emulators look for in the ROM to give the game a clock
 // (Nintendo's library put "SIIRTC_V" and its version there; scanners match it
@@ -128,11 +131,10 @@ static void end(const Port* p) {
 
 // Leaves the chip alone for about 200 microseconds after a write. Timer 2 is
 // the low half of the engine's cycle counter (serval_init()); the iteration
-// cap ends the wait even if it isn't running, each iteration being several
-// cycles.
+// bound ends the wait even if it isn't running.
 static void settle(void) {
     u16 start = REG_TM2D;
-    for (u32 n = 0; n < SETTLE_CYCLES; n++)
+    for (u32 n = 0; n < SETTLE_MAX_ITERATIONS; n++)
         if ((u16)(REG_TM2D - start) >= SETTLE_CYCLES)
             break;
 }
