@@ -54,7 +54,7 @@
 //     and SERVAL, and the two-player games played. If the last write
 //     failed, a red SAVE FAILED shows there (the game still plays).
 //   - CONTINUE resumes the saved game (either kind) exactly where it was
-//     left, settings and board side included. A save that can no longer be
+//     left, settings and the board's flip (SELECT) included. A save that can no longer be
 //     replayed is dropped with "SAVED GAME LOST" in red and a low "no".
 //   - Holding L + R and pressing SELECT (in any order) asks, in red, "ERASE
 //     RECORDS AND SAVED GAME?" (a two-note chime): A erases both and says
@@ -107,13 +107,14 @@
 //     reaching the far row is crowned with a sparkle and a chime.
 //   - The computer (one-player games) thinks while the board stays alive:
 //     THINKING with a moving dot, the cursor still moves. CUB answers in
-//     about a second and makes mistakes, HUNTER in two or three, SERVAL in
+//     under a second and makes mistakes, HUNTER in two or three, SERVAL in
 //     about seven. Every move is saved as it is played.
 //   - SELECT flips the board (pieces, cursor, labels and effects follow,
 //     even mid-slide). L shows the CPU used a frame at the panel's foot.
 //   - START: the menu over the dimmed board: RESUME, UNDO (one player: your
 //     last move and the computer's reply; the computer stops thinking
-//     first; dimmed while you have no move to take back), FLIP BOARD, NEW
+//     first; dimmed while you have no move to take back, or the game has just
+//     ended), FLIP BOARD, NEW
 //     GAME, QUIT TO TITLE (the game stays saved: CONTINUE). B or START
 //     resumes.
 //   - The end: the result over the dimmed board (CHECKMATE, STALEMATE, DRAW
@@ -139,7 +140,7 @@
 #include "sound.h"
 #include "view.h"
 
-static Match match SERVAL_EWRAM_BSS; // about 27 KB: never on the stack
+static Match match SERVAL_EWRAM_BSS; // about 18 KB: never on the stack
 
 int main(void) {
     serval_init();
@@ -175,7 +176,7 @@ int main(void) {
         }
         frame_end();
         if (next == SCREEN_PLAY && screen != SCREEN_PLAY)
-            play_begin(&match);
+            play_begin(&match, screen == SCREEN_TITLE); // from the title: CONTINUE
         screen = next;
     }
 }

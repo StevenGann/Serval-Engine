@@ -7,10 +7,10 @@
 #include <serval/save.h>
 
 #define RECORDS_SLOT 0
-#define RECORDS_VERSION 1
+#define RECORDS_VERSION 2
 
 typedef struct SaveData {
-    u8 has_game, kind, mode, human_side, level, reserved;
+    u8 has_game, kind, mode, human_side, level, flip;
     u16 count;
     GameRecord record[2]; // by GameKind
     u8 moves[GAME_PLY_MAX];
@@ -33,7 +33,7 @@ static void clear(void) {
 // Whether the saved game's settings mean a game this version can play.
 static bool game_valid(void) {
     if (data.kind > GAME_CHECKERS || data.mode > MODE_TWO_PLAYERS || data.level >= LEVEL_COUNT ||
-        data.count > GAME_PLY_MAX || data.reserved)
+        data.count > GAME_PLY_MAX || data.flip > 1)
         return false;
     if (data.kind == GAME_CHESS)
         return data.human_side == WHITE || data.human_side == BLACK;
@@ -49,6 +49,14 @@ void board_records_load(void) {
         data.has_game = 0; // a game this version cannot play; the records stay
         data.count = 0;
     }
+}
+
+bool board_records_saved_flip(void) {
+    return data.flip != 0;
+}
+
+void board_records_set_flip(bool flipped) {
+    data.flip = flipped;
 }
 
 const GameRecord* board_records_get(GameKind game) {
@@ -94,7 +102,7 @@ void board_records_save_game(const Match* m) {
     data.level = m->level;
     data.count = m->count;
     for (int i = 0; i < m->count; i++)
-        data.moves[i] = m->move_index[i];
+        data.moves[i] = (u8)match_move_index(m, i);
     save();
 }
 

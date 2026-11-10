@@ -9,6 +9,8 @@
 
 #include "chess_board.h"
 
+// memcpy and memset: the engine-provided C library routines (src/gba/libc.c)
+// that the repo's portable code uses.
 #include <string.h>
 
 #define TO88(sq) ((sq) + ((sq) & ~7))
@@ -804,7 +806,7 @@ void pos_start(Position* p) {
 
 // --- Perft ------------------------------------------------------------------
 
-unsigned long long perft(Position* p, int depth) {
+unsigned long long chess_perft(Position* p, int depth) {
     if (depth <= 0)
         return 1;
     Move list[MAX_MOVES];
@@ -814,7 +816,7 @@ unsigned long long perft(Position* p, int depth) {
     unsigned long long nodes = 0;
     for (int i = 0; i < n; i++) {
         pos_make(p, list[i]);
-        nodes += perft(p, depth - 1);
+        nodes += chess_perft(p, depth - 1);
         pos_unmake(p);
     }
     return nodes;

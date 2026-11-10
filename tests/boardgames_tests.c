@@ -910,9 +910,12 @@ static void records_roundtrip(void) {
     for (int i = 0; i < 5; i++)
         CHECK(play(&match, chess_line[i]));
     ChessKey key = pos_key(&match.pos.chess);
+    board_records_set_flip(true);
     board_records_save_game(&match);
     CHECK(!board_records_save_failed());
+    board_records_set_flip(false);
     board_records_load(); // as after a power-off
+    CHECK(board_records_saved_flip());
     CHECK(board_records_has_game() && board_records_saved_kind() == GAME_CHESS);
     match_new(&restored, GAME_CHECKERS, MODE_TWO_PLAYERS, CK_DARK, LEVEL_CUB);
     CHECK(board_records_restore_game(&restored));
@@ -927,8 +930,10 @@ static void records_roundtrip(void) {
     CHECK(found);
     CHECK(match.count >= 3);
     ChessKey kkey = ck_key(&match.pos.checkers);
+    board_records_set_flip(false);
     board_records_save_game(&match);
     board_records_load();
+    CHECK(!board_records_saved_flip());
     CHECK(board_records_has_game() && board_records_saved_kind() == GAME_CHECKERS);
     CHECK(board_records_restore_game(&restored));
     CHECK(restored.game == GAME_CHECKERS && restored.mode == MODE_TWO_PLAYERS);
@@ -1002,9 +1007,6 @@ static void records_result_counts(void) {
 static void records_bad_saves(void) {
     save_erase(0);
     board_records_load();
-    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
-    CHECK(play(&match, "e4") && play(&match, "e5"));
-    match.result = RESULT_NONE;
     match_new(&match, GAME_CHECKERS, MODE_ONE_PLAYER, CK_DARK, LEVEL_HUNTER);
     CHECK(play(&match, "9-13"));
     board_records_save_game(&match);
@@ -1015,28 +1017,28 @@ static void records_bad_saves(void) {
     u32 size = save_slot_size(0);
     CHECK(size > 0 && size <= SAVE_SLOT_MAX);
     static u8 raw[SAVE_SLOT_MAX];
-    CHECK(save_read(0, raw, size, 1) == SAVE_OK);
+    CHECK(save_read(0, raw, size, 2) == SAVE_OK);
 
     // Another version: no game, no records.
-    CHECK(save_write(0, raw, size, 2));
+    CHECK(save_write(0, raw, size, 3));
     board_records_load();
     CHECK(!board_records_has_game());
     CHECK(board_records_get(GAME_CHESS)->two_player_games == 0);
     // Another size.
-    CHECK(save_write(0, raw, size - 2, 1));
+    CHECK(save_write(0, raw, size - 2, 2));
     board_records_load();
     CHECK(!board_records_has_game());
     // The good save once more reads.
-    CHECK(save_write(0, raw, size, 1));
+    CHECK(save_write(0, raw, size, 2));
     board_records_load();
     CHECK(board_records_has_game());
     CHECK(board_records_restore_game(&restored) && restored.count == 2);
 
     // An index past the list's end: restore fails, the game is forgotten, and
-    // the forgetting is saved. The index is the last byte of the moves (the
-    // struct's end is the 800-byte move array) at ply 0.
+    // the forgetting is saved. The index is the first byte of the moves (the
+    // struct's end is the 800-byte move array), ply 0.
     raw[size - GAME_PLY_MAX] = 255;
-    CHECK(save_write(0, raw, size, 1));
+    CHECK(save_write(0, raw, size, 2));
     board_records_load();
     CHECK(board_records_has_game());
     CHECK(!board_records_restore_game(&restored));
@@ -1047,7 +1049,12 @@ static void records_bad_saves(void) {
     // A game with settings this version cannot play is dropped at load.
     raw[size - GAME_PLY_MAX] = 0;
     raw[1] = 7; // the kind
-    CHECK(save_write(0, raw, size, 1));
+    CHECK(save_write(0, raw, size, 2));
+    board_records_load();
+    CHECK(!board_records_has_game());
+    raw[1] = 0;
+    raw[5] = 2; // the flip is 0 or 1
+    CHECK(save_write(0, raw, size, 2));
     board_records_load();
     CHECK(!board_records_has_game());
     save_erase(0);
@@ -1094,6 +1101,10 @@ static void records_erase_clears(void) {
 // player games, not before the human has moved (the computer's first move
 // alone), in two player games after any move.
 static void match_can_undo_human(void) {
+    // Over, nothing is taken back: the result is counted once.
+    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
+    CHECK(play(&match, "f3") && play(&match, "e5") && play(&match, "g4") && play(&match, "Qh4#"));
+    CHECK(match.result != RESULT_NONE && !match_can_undo(&match));
     match_new(&match, GAME_CHESS, MODE_ONE_PLAYER, WHITE, LEVEL_CUB);
     CHECK(!match_can_undo(&match));
     CHECK(play(&match, "e4"));

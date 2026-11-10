@@ -87,33 +87,33 @@ static bool same_position(const Position* a, const Position* b) {
 
 static void perft_start(void) {
     pos_start(&pos);
-    CHECK(perft(&pos, 1) == 20);
-    CHECK(perft(&pos, 2) == 400);
-    CHECK(perft(&pos, 3) == 8902);
-    CHECK(perft(&pos, 4) == 197281);
+    CHECK(chess_perft(&pos, 1) == 20);
+    CHECK(chess_perft(&pos, 2) == 400);
+    CHECK(chess_perft(&pos, 3) == 8902);
+    CHECK(chess_perft(&pos, 4) == 197281);
     CHECK(pos_ply(&pos) == 0); // perft leaves the position as it found it
 }
 
 static void perft_kiwipete(void) {
     CHECK(pos_from_fen(&pos, KIWIPETE));
-    CHECK(perft(&pos, 1) == 48);
-    CHECK(perft(&pos, 2) == 2039);
-    CHECK(perft(&pos, 3) == 97862);
+    CHECK(chess_perft(&pos, 1) == 48);
+    CHECK(chess_perft(&pos, 2) == 2039);
+    CHECK(chess_perft(&pos, 3) == 97862);
 }
 
 static void perft_position3(void) {
     CHECK(pos_from_fen(&pos, "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"));
-    CHECK(perft(&pos, 4) == 43238);
+    CHECK(chess_perft(&pos, 4) == 43238);
 }
 
 static void perft_position4(void) {
     CHECK(pos_from_fen(&pos, "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"));
-    CHECK(perft(&pos, 3) == 9467);
+    CHECK(chess_perft(&pos, 3) == 9467);
 }
 
 static void perft_position5(void) {
     CHECK(pos_from_fen(&pos, "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"));
-    CHECK(perft(&pos, 3) == 62379);
+    CHECK(chess_perft(&pos, 3) == 62379);
 }
 
 // --- Make and unmake, keys --------------------------------------------------

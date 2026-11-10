@@ -120,7 +120,7 @@ static void rewind_end(Match* m, int ply) {
         make(m, m->moves[i]);
 }
 
-int match_move_index(Match* m, int ply) {
+int match_move_index(const Match* m, int ply) {
     return ply < 0 || ply >= m->count ? -1 : m->move_index[ply];
 }
 
@@ -139,6 +139,8 @@ int match_notation(Match* m, int ply, char out[24]) {
 }
 
 bool match_can_undo(const Match* m) {
+    if (m->result != RESULT_NONE)
+        return false; // over: the result is the record's to count once
     if (m->mode == MODE_TWO_PLAYERS || m->count >= 2)
         return m->count > 0; // two plies: one of them the human's
     // One ply: the human's if the computer is to move now.

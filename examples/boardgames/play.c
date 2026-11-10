@@ -479,12 +479,35 @@ static void close_menu(void) {
     button_repeat_reset();
 }
 
+// Flips or unflips the board and remembers it for the save, which it asks
+// for in a game under way (a finished game's is not saved again).
+static void set_flip(bool flipped) {
+    view_set_flipped(flipped);
+    board_records_set_flip(flipped);
+}
+
+static void flip_board(void) {
+    set_flip(!view_flipped());
+    const Match* m = st.m;
+    if (m->count > 0 && m->result == RESULT_NONE)
+        st.save_pending = true;
+}
+
 static void set_view_side(void) {
     const Match* m = st.m;
     // Unflipped, White (chess) and Light (checkers) are at the bottom.
     bool human_on_top =
         m->game == GAME_CHECKERS ? m->human_side == CK_DARK : m->human_side == BLACK;
-    view_set_flipped(m->mode == MODE_ONE_PLAYER && human_on_top);
+    set_flip(m->mode == MODE_ONE_PLAYER && human_on_top);
+}
+
+// The cursor starts in front of the human's pieces.
+static void home_cursor(void) {
+    bool top = st.m->mode == MODE_ONE_PLAYER && view_flipped();
+    if (is_checkers())
+        st.cursor = (s8)(top ? SQ(3, 5) : SQ(2, 2)); // d6 or c3, before the front row
+    else
+        st.cursor = (s8)(top ? SQ(4, 6) : SQ(4, 1));
 }
 
 // After an undo or a new game: nothing moving, nothing picked, the board
@@ -531,7 +554,7 @@ static bool menu_buttons(PlayExit* exit) {
         sound_move();
         break;
     case ITEM_FLIP:
-        view_set_flipped(!view_flipped());
+        flip_board();
         close_menu();
         break;
     case ITEM_NEW:
@@ -540,6 +563,7 @@ static bool menu_buttons(PlayExit* exit) {
         reset_board();
         st.save_pending = true; // a game not begun: the saved one is forgotten
         set_view_side();
+        home_cursor();
         close_menu();
         break;
     case ITEM_QUIT:
@@ -677,25 +701,23 @@ static void readout(void) {
 
 // --- The frame ----------------------------------------------------------------------------
 
-void play_begin(Match* m) {
+void play_begin(Match* m, bool resumed) {
     st.m = m;
     search_pace_init(&st.pace);
     st.stepped = 0;
     st.ui = UI_BOARD;
     st.thinking = st.pending = st.save_pending = false;
     st.settle = 2;
+    bool left_flipped = board_records_saved_flip(); // read before the view side sets it
     set_view_side();
     view_set_chooser(-1, 0);
     view_set_marks(NULL, 0);
     view_set_dim(false);
     reset_board();
     clear_board_text();
-    // The cursor starts in front of the human's pieces.
-    bool top = m->mode == MODE_ONE_PLAYER && view_flipped();
-    if (is_checkers())
-        st.cursor = (s8)(top ? SQ(3, 5) : SQ(2, 2)); // d6 or c3, before the front row
-    else
-        st.cursor = (s8)(top ? SQ(4, 6) : SQ(4, 1));
+    home_cursor(); // in front of the human's pieces, whichever way the board shows
+    if (resumed)
+        set_flip(left_flipped); // as the player left it
     button_repeat_reset();
 }
 
@@ -705,7 +727,7 @@ PlayExit play_frame(void) {
     bool busy = false;
     readout();
     if (button_pressed(BUTTON_SELECT) && st.ui != UI_MENU)
-        view_set_flipped(!view_flipped());
+        flip_board();
 
     know_position();
     switch (st.ui) {

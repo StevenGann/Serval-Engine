@@ -51,7 +51,7 @@ bool match_replay_indices(Match* m, GameKind game, MatchMode mode, int human_sid
 // The index of the ply-th move played (0 = the first) in the legal list of the
 // position before it; -1 if there is no such move. Read from the list match_play
 // fills as moves are played (the saves ask for every ply of a game).
-int match_move_index(Match* m, int ply);
+int match_move_index(const Match* m, int ply);
 
 bool match_computer_to_move(const Match* m); // one player, game on, computer's turn
 int match_side_to_move(const Match* m);      // WHITE/BLACK or CK_DARK/CK_LIGHT

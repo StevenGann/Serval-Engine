@@ -146,6 +146,6 @@ ChessKey pos_key(const Position* p);
 ChessKey pos_key_at(const Position* p, int plies_back);
 
 // The number of leaf nodes of the legal move tree depth plies deep.
-unsigned long long perft(Position* p, int depth);
+unsigned long long chess_perft(Position* p, int depth);
 
 #endif // BOARDGAMES_CHESS_BOARD_H

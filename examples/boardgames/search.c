@@ -21,6 +21,8 @@
 
 #include "search.h"
 
+// memcpy and memset: the engine-provided C library routines (src/gba/libc.c)
+// that the repo's portable code uses.
 #include <string.h>
 
 #define NO_MOVE 0xFFFFFFFFu

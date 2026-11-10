@@ -12,8 +12,8 @@ typedef enum { PLAY_CONTINUE, PLAY_QUIT_TO_TITLE } PlayExit;
 
 // Starts showing m, a new game or one restored (m stays the caller's; keep it
 // in EWRAM): the board from the human's side in one-player games, White's (or
-// Light's) in two.
-void play_begin(Match* m);
+// Light's) in two; a restored game (resumed) with the flip it was left in.
+void play_begin(Match* m, bool resumed);
 
 // One frame of play: input, the computer's thinking, the drawing. Call
 // between frame_begin() and frame_end(). PLAY_QUIT_TO_TITLE when the player

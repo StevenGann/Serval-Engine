@@ -28,6 +28,12 @@ const GameRecord* board_records_get(GameKind game);
 bool board_records_has_game(void);
 GameKind board_records_saved_kind(void);
 
+// The board's flip, saved with the game in progress: set whenever the view
+// flips (kept in memory; written with the next save of the game), and read
+// back for a game restored.
+bool board_records_saved_flip(void);
+void board_records_set_flip(bool flipped);
+
 // Replays the saved game into m; false, with the saved game forgotten, if it
 // cannot be (an index past a list's end, a move after the end).
 bool board_records_restore_game(Match* m);
