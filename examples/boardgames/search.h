@@ -74,7 +74,8 @@ typedef struct SearchGame {
 } SearchGame;
 
 // A strength: the deepest iteration, the nodes after which the search stops
-// (keeping its last whole iteration; the first always completes), the root's
+// (keeping its last whole iteration, or, if the first is not whole by then,
+// the best of the root's moves it has searched: at least one), the root's
 // random choice among moves within random_margin of the best, the chance in a
 // thousand of a deliberate weak move (a random move not losing more than
 // SEARCH_BLUNDER_LOSS), and for the first opening_plies plies of the game a
@@ -91,6 +92,17 @@ enum { LEVEL_CUB, LEVEL_HUNTER, LEVEL_SERVAL, LEVEL_COUNT };
 
 // What a deliberate weak move may give away at most.
 #define SEARCH_BLUNDER_LOSS 250
+
+// The nodes a game searches a frame (search_step()'s budget): one count for
+// every build and both games, so that the same position, strength and seed
+// give the same move everywhere (the move depends on the nodes searched, never
+// on the frames they took). Measured on the GBA (release build): a chess node
+// costs about 13,000 cycles, a checkers node 8,500, so 7 nodes keep the
+// busiest thinking frame, the board and the panel drawn too, under 75% of the
+// frame in Kiwipete and in a crowded checkers middlegame (8 reached 87%). The
+// play screen gives the search half of it while a piece slides. About 410
+// nodes a second.
+#define SEARCH_NODES_PER_FRAME 7
 
 // Starts a search of pos (copied, g->pos_size bytes) at the level; seed drives
 // the root's random choices. Ends any search running.

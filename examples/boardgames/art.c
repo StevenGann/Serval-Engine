@@ -63,7 +63,7 @@ static u16 add_tile(const u32* words) {
 }
 
 // One metatile's pixels, a colour index each, cut into its four tiles.
-static u8 cell[16][16];
+static u8 cell[16][16] SERVAL_EWRAM_BSS; // used at boot only
 
 static Metatile cell_metatile(int bank) {
     Metatile m = {.collision = MAP_EMPTY};
@@ -695,7 +695,7 @@ static int d2(int x, int y) {
 // Outlines what is drawn in the 16x16 block at (x0, 0) with `outline`:
 // every empty pixel beside a drawn one.
 static void outline16(int x0, int outline) {
-    static u8 drawn[16][16];
+    static u8 drawn[16][16] SERVAL_EWRAM_BSS; // at boot only
     for (int y = 0; y < 16; y++)
         for (int x = 0; x < 16; x++)
             drawn[y][x] = get(x0 + x, y) != 0;
@@ -965,6 +965,27 @@ static void build_sprites(void) {
         sprite_table[i] = &sprites[i];
 }
 
+// The table and the sprites dimmed (art_set_dim): every colour mixed most of
+// the way toward a dark brown, at boot, so that dimming is only a copy.
+#define DIM_TINT COLOR_RGB(16, 10, 8)
+#define DIM_AMOUNT 150
+static Color dim_bg[BG_BANKS * 16] SERVAL_EWRAM_BSS;
+static Color dim_obj[OBJ_PALETTES * 16] SERVAL_EWRAM_BSS;
+
+static void build_dim(void) {
+    for (int i = 0; i < BG_BANKS * 16; i++)
+        dim_bg[i] = color_mix(bg_palettes[i], DIM_TINT, DIM_AMOUNT);
+    for (int i = 0; i < OBJ_PALETTES * 16; i++)
+        dim_obj[i] = color_mix((&obj_palettes[0][0])[i], DIM_TINT, DIM_AMOUNT);
+}
+
+void art_set_dim(bool on) {
+    // Colour 0 of bank 0 is the backdrop, left alone; the alert bank's
+    // colours are the flash's (view.c writes them).
+    tileset_set_colors(1, (on ? dim_bg : bg_palettes) + 1, BG_BANKS * 16 - 1);
+    sprite_set_colors(SPR_PIECE, 0, on ? dim_obj : &obj_palettes[0][0], OBJ_PALETTES * 16);
+}
+
 // --- Building and loading
 // -------------------------------------------------------------------------
 
@@ -978,6 +999,7 @@ void art_build(void) {
     build_table();
     table_tileset.tile_count = bg_tiles_used;
     build_sprites();
+    build_dim();
 }
 
 void art_load(void) {

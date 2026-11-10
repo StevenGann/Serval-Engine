@@ -124,11 +124,14 @@ const SearchGame checkers_search_game = {
     .ply = game_ply,
 };
 
-// Placeholders until the strengths are measured on the GBA (Task 7).
+// Measured on the GBA at SEARCH_NODES_PER_FRAME (about 410 nodes a second):
+// CUB answers within about 1.2 s, with its random margin and weak moves; HUNTER
+// in about 2.2 s (depth 4-5); SERVAL stops at 2,800 nodes, at most about 7 s
+// (depth 6-9 in a crowded middlegame).
 static const SearchLevel levels[LEVEL_COUNT] = {
-    [LEVEL_CUB] = {3, 3000, 40, 150, 0, 0},
-    [LEVEL_HUNTER] = {8, 40000, 0, 0, 0, 0},
-    [LEVEL_SERVAL] = {14, 100000, 0, 0, 8, 15},
+    [LEVEL_CUB] = {3, 500, 40, 150, 0, 0},
+    [LEVEL_HUNTER] = {8, 1000, 0, 0, 0, 0},
+    [LEVEL_SERVAL] = {14, 2800, 0, 0, 8, 15},
 };
 
 const SearchLevel* checkers_level(int level) {

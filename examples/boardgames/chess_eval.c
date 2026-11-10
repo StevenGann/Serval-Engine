@@ -95,7 +95,9 @@ static const u8 passed_bonus[8] = {0, 8, 12, 20, 34, 56, 90, 0};
 
 // --- The evaluation -------------------------------------------------------------
 
-int chess_eval(const Position* p) {
+// Run from IWRAM as ARM code on the GBA: the search evaluates at most of its
+// nodes.
+CHESS_HOT int chess_eval(const Position* p) {
     int score[2] = {0, 0}; // [0] White, [1] Black
     int phase = 0;
     int king_sq[2] = {0, 0};
@@ -173,12 +175,32 @@ int chess_eval(const Position* p) {
 
 static Move scratch[MAX_MOVES] SERVAL_EWRAM_BSS;
 
+// For quiescence, the captures (and promotions) less those that lose
+// material at once: a piece taking a cheaper one that is defended (QxP with
+// the pawn guarded). Without this, a tactical middlegame's quiescence runs
+// to tens of thousands of nodes.
 static int game_gen(void* pos, u32* out, bool noisy_only) {
     Position* p = pos;
-    int n = noisy_only ? pos_gen_captures(p, scratch) : pos_gen_legal(p, scratch);
-    for (int i = 0; i < n; i++)
-        out[i] = scratch[i];
-    return n;
+    if (!noisy_only) {
+        int n = pos_gen_legal(p, scratch);
+        for (int i = 0; i < n; i++)
+            out[i] = scratch[i];
+        return n;
+    }
+    int n = pos_gen_captures(p, scratch), kept = 0;
+    int them = pos_side(p) ^ BLACK;
+    for (int i = 0; i < n; i++) {
+        Move m = scratch[i];
+        int flags = MOVE_FLAGS(m), to = MOVE_TO(m);
+        if (flags == MF_CAPTURE) {
+            int victim = piece_value[PIECE_KIND(pos_piece(p, to))];
+            int attacker = piece_value[PIECE_KIND(pos_piece(p, MOVE_FROM(m)))];
+            if (victim < attacker && pos_attacked(p, to, them))
+                continue;
+        }
+        out[kept++] = m;
+    }
+    return kept;
 }
 
 static void game_make(void* pos, u32 m) {
@@ -219,11 +241,13 @@ static bool game_is_draw(void* pos) {
 // Captures by most valuable victim, then least valuable attacker; a queen's
 // promotion with them; quiet moves by how much the piece-square table likes
 // the move.
-static int game_order(const void* pos, u32 mv) {
+CHESS_HOT static int game_order(const void* pos, u32 mv) {
     const Position* p = pos;
     Move m = (Move)mv;
     int from = MOVE_FROM(m), to = MOVE_TO(m), flags = MOVE_FLAGS(m);
-    Piece pc = pos_piece(p, from);
+    // The board read directly (0x88: rank * 16 + file), not by pos_piece(),
+    // which is ROM code.
+    Piece pc = p->board[from + (from & ~7)];
     int kind = PIECE_KIND(pc);
     int v = 0;
     if (flags & MF_PROMO) {
@@ -232,7 +256,7 @@ static int game_order(const void* pos, u32 mv) {
         v = SEARCH_ORDER_NOISY + 80;
     }
     if (flags & MF_CAPTURE) {
-        int victim = flags == MF_EP ? PAWN : PIECE_KIND(pos_piece(p, to));
+        int victim = flags == MF_EP ? PAWN : PIECE_KIND(p->board[to + (to & ~7)]);
         return (v ? v : SEARCH_ORDER_NOISY) + victim * 10 - kind;
     }
     if (v)
@@ -267,11 +291,15 @@ const SearchGame chess_search_game = {
     .ply = game_ply,
 };
 
-// Placeholders until the strengths are measured on the GBA (Task 7).
+// Measured on the GBA at SEARCH_NODES_PER_FRAME (about 410 nodes a second):
+// CUB answers in about 1.3 s, shallow and with its random margin and weak
+// moves (beatable, though it takes what it is given); HUNTER in about 2.5 s
+// (depth 2-3 in a middlegame); SERVAL stops at 2,800 nodes, about 7 s, which
+// is depth 3 in a busy middlegame and 4-5 in quieter positions and endgames.
 static const SearchLevel levels[LEVEL_COUNT] = {
-    [LEVEL_CUB] = {2, 2000, 60, 150, 0, 0},
-    [LEVEL_HUNTER] = {5, 40000, 0, 0, 0, 0},
-    [LEVEL_SERVAL] = {8, 100000, 0, 0, 8, 15},
+    [LEVEL_CUB] = {2, 500, 60, 150, 0, 0},
+    [LEVEL_HUNTER] = {4, 1000, 0, 0, 0, 0},
+    [LEVEL_SERVAL] = {8, 2800, 0, 0, 8, 15},
 };
 
 const SearchLevel* chess_level(int level) {

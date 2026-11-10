@@ -2,7 +2,9 @@
 // rank * 16 + file, and a step off the board sets a bit of 0x88, so move
 // generation needs no bounds tables and no division. Legal moves are the
 // pseudo-legal ones whose king is not attacked once the move is made on the
-// board alone (no keys, no history); make and unmake keep an undo record a
+// board alone (no keys, no history), a test only the moves that might fail
+// it need (the king's, a pinned piece's, en passant, all when in check);
+// make and unmake keep an undo record a
 // ply and update the Zobrist key as they go.
 
 #include "chess_board.h"
@@ -18,6 +20,29 @@ static const s8 knight_steps[8] = {33, 31, 18, 14, -14, -18, -31, -33};
 static const s8 king_steps[8] = {17, 16, 15, 1, -1, -15, -16, -17};
 static const s8 diagonal_steps[4] = {17, 15, -15, -17};
 static const s8 straight_steps[4] = {16, 1, -1, -16};
+static const s8 queen_steps[8] = {17, 15, -15, -17, 16, 1, -1, -16}; // diagonals first
+
+// Each piece's steps (by kind; pawns have their own rules).
+static const struct {
+    const s8* steps;
+    u8 count;
+    bool slide;
+} piece_steps[7] = {
+    [KNIGHT] = {knight_steps, 8, false}, [BISHOP] = {diagonal_steps, 4, true},
+    [ROOK] = {straight_steps, 4, true},  [QUEEN] = {queen_steps, 8, true},
+    [KING] = {king_steps, 8, false},
+};
+
+// The hottest code, the search's, runs from IWRAM as ARM code on the GBA
+// (SERVAL_IWRAM_CODE): move generation (one function, its helpers inlined
+// into it), the attack test, make and unmake. Elsewhere these are plain C.
+#define INLINE static inline __attribute__((always_inline))
+// One copy of generate() in IWRAM, not one a value of `noisy` (GCC).
+#if defined(__GNUC__) && !defined(__clang__)
+#define NOCLONE __attribute__((noclone))
+#else
+#define NOCLONE
+#endif
 
 // The rights a move from or to each square keeps: a king or rook leaving
 // home, or a rook taken there, ends that side's castling.
@@ -106,7 +131,7 @@ static ChessKey key_of(const u8* b, int side, int castling, int ep) {
 
 // --- Attacks ----------------------------------------------------------------
 
-static bool slides_to(const u8* b, int s, const s8* steps, Piece a, Piece c) {
+INLINE bool slides_to(const u8* b, int s, const s8* steps, Piece a, Piece c) {
     for (int i = 0; i < 4; i++) {
         int step = steps[i];
         for (int t = s + step; !OFF(t); t += step) {
@@ -121,7 +146,7 @@ static bool slides_to(const u8* b, int s, const s8* steps, Piece a, Piece c) {
 }
 
 // Whether a piece of colour by attacks the 0x88 square s on board b.
-static bool attacked88(const u8* b, int s, int by) {
+CHESS_HOT static bool attacked88(const u8* b, int s, int by) {
     Piece pawn = (Piece)(by | PAWN);
     int behind = by == WHITE ? -16 : 16; // where its pawns attack from
     if (!OFF(s + behind - 1) && b[s + behind - 1] == pawn)
@@ -190,7 +215,7 @@ ChessKey pos_key_at(const Position* p, int plies_back) {
 
 // Whether the move leaves the mover's king unattacked: made and taken back
 // on the board alone. Castling's other squares are checked by the generator.
-static bool leaves_king_safe(Position* p, int from, int to, int flags) {
+CHESS_HOT static bool leaves_king_safe(Position* p, int from, int to, int flags) {
     u8* b = p->board;
     int us = p->side;
     int capsq = flags == MF_EP ? (us == WHITE ? to - 16 : to + 16) : to;
@@ -206,27 +231,71 @@ static bool leaves_king_safe(Position* p, int from, int to, int flags) {
     return safe;
 }
 
+// A generation's state. Most moves need no test of the king's safety: with
+// the king not in check, a move by a piece other than the king that is not
+// pinned to it cannot expose it (en passant aside, which takes two pieces
+// off a rank). The others are made on the board and tested.
 typedef struct {
     Position* p;
     Move* out;
     int count;
+    bool check;    // the side to move is in check: every move is tested
+    int king;      // its king (0x88)
+    int pin_count; // the pieces pinned to the king
+    u8 pinned[8];
 } Gen;
 
-static void add(Gen* g, int from, int to, int flags) {
-    if (leaves_king_safe(g->p, from, to, flags))
+INLINE bool needs_test(const Gen* g, int from, int flags) {
+    if (g->check || from == g->king || flags == MF_EP)
+        return true;
+    for (int i = 0; i < g->pin_count; i++)
+        if (g->pinned[i] == from)
+            return true;
+    return false;
+}
+
+INLINE void add(Gen* g, int from, int to, int flags) {
+    if (!needs_test(g, from, flags) || leaves_king_safe(g->p, from, to, flags))
         g->out[g->count++] = MOVE_MAKE(TO64(from), TO64(to), flags);
 }
 
+// Finds the pieces of the side to move pinned to its king: on each line out
+// of the king, its own piece with a slider of the other side behind it that
+// moves along that line.
+INLINE void find_pins(Gen* g) {
+    const u8* b = g->p->board;
+    int us = g->p->side;
+    g->pin_count = 0;
+    for (int line = 0; line < 8; line++) {
+        bool diagonal = line < 4;
+        int step = diagonal ? diagonal_steps[line] : straight_steps[line - 4];
+        Piece slider = (Piece)((us ^ BLACK) | (diagonal ? BISHOP : ROOK));
+        Piece queen = (Piece)((us ^ BLACK) | QUEEN);
+        int own = -1;
+        for (int t = g->king + step; !OFF(t); t += step) {
+            if (!b[t])
+                continue;
+            if (own < 0 && PIECE_COLOR(b[t]) == us) {
+                own = t;
+                continue;
+            }
+            if (own >= 0 && (b[t] == slider || b[t] == queen))
+                g->pinned[g->pin_count++] = (u8)own;
+            break;
+        }
+    }
+}
+
 // The four promotions, queen first; capture is MF_CAPTURE or 0.
-static void add_promotions(Gen* g, int from, int to, int capture) {
-    if (!leaves_king_safe(g->p, from, to, capture))
+INLINE void add_promotions(Gen* g, int from, int to, int capture) {
+    if (needs_test(g, from, capture) && !leaves_king_safe(g->p, from, to, capture))
         return; // the same test for all four
     int f = TO64(from), t = TO64(to);
     for (int kind = 3; kind >= 0; kind--)
         g->out[g->count++] = MOVE_MAKE(f, t, MF_PROMO | capture | kind);
 }
 
-static void gen_pawn(Gen* g, int s, bool noisy) {
+INLINE void gen_pawn(Gen* g, int s, bool noisy) {
     const u8* b = g->p->board;
     int us = g->p->side;
     int up = us == WHITE ? 16 : -16;
@@ -257,7 +326,7 @@ static void gen_pawn(Gen* g, int s, bool noisy) {
     }
 }
 
-static void gen_steps(Gen* g, int s, const s8* steps, int n, bool slide, bool noisy) {
+INLINE void gen_steps(Gen* g, int s, const s8* steps, int n, bool slide, bool noisy) {
     const u8* b = g->p->board;
     int us = g->p->side;
     for (int i = 0; i < n; i++) {
@@ -276,14 +345,14 @@ static void gen_steps(Gen* g, int s, const s8* steps, int n, bool slide, bool no
     }
 }
 
-static void gen_castling(Gen* g) {
+__attribute__((noinline)) static void gen_castling(Gen* g) {
     Position* p = g->p;
     const u8* b = p->board;
     int them = p->side ^ BLACK;
     int home = p->side == WHITE ? 0x04 : 0x74; // e1 or e8
     u8 kside = p->side == WHITE ? CASTLE_WK : CASTLE_BK;
     u8 qside = p->side == WHITE ? CASTLE_WQ : CASTLE_BQ;
-    if (!(p->castling & (kside | qside)) || attacked88(b, home, them))
+    if (!(p->castling & (kside | qside)) || g->check)
         return;
     // The rights guarantee king and rook at home; the king's last square is
     // tested by add() like any king move.
@@ -294,10 +363,14 @@ static void gen_castling(Gen* g) {
         add(g, home, home - 2, MF_CASTLE_Q);
 }
 
-static int generate(Position* p, Move* out, bool noisy) {
-    Gen g = {p, out, 0};
+CHESS_HOT NOCLONE static int generate(Position* p, Move* out, bool noisy) {
+    Gen g = {.p = p, .out = out};
     const u8* b = p->board;
     int us = p->side;
+    g.king = p->king[us >> 3];
+    g.check = attacked88(b, g.king, us ^ BLACK);
+    if (!g.check)
+        find_pins(&g);
     for (int s = 0; s < 128; s++) {
         if (OFF(s)) {
             s += 7;
@@ -306,27 +379,12 @@ static int generate(Position* p, Move* out, bool noisy) {
         Piece pc = b[s];
         if (!pc || PIECE_COLOR(pc) != us)
             continue;
-        switch (PIECE_KIND(pc)) {
-        case PAWN:
+        int kind = PIECE_KIND(pc);
+        if (kind == PAWN)
             gen_pawn(&g, s, noisy);
-            break;
-        case KNIGHT:
-            gen_steps(&g, s, knight_steps, 8, false, noisy);
-            break;
-        case BISHOP:
-            gen_steps(&g, s, diagonal_steps, 4, true, noisy);
-            break;
-        case ROOK:
-            gen_steps(&g, s, straight_steps, 4, true, noisy);
-            break;
-        case QUEEN:
-            gen_steps(&g, s, diagonal_steps, 4, true, noisy);
-            gen_steps(&g, s, straight_steps, 4, true, noisy);
-            break;
-        default:
-            gen_steps(&g, s, king_steps, 8, false, noisy);
-            break;
-        }
+        else
+            gen_steps(&g, s, piece_steps[kind].steps, piece_steps[kind].count,
+                      piece_steps[kind].slide, noisy);
     }
     if (!noisy)
         gen_castling(&g);
@@ -352,7 +410,7 @@ static int ep_after_double(const u8* b, int from, int to, int them) {
     return -1;
 }
 
-void pos_make(Position* p, Move m) {
+CHESS_HOT void pos_make(Position* p, Move m) {
     if (p->ply >= POS_HISTORY_MAX)
         return;
     u8* b = p->board;
@@ -410,7 +468,7 @@ void pos_make(Position* p, Move m) {
     p->keys[++p->ply] = key;
 }
 
-void pos_unmake(Position* p) {
+CHESS_HOT void pos_unmake(Position* p) {
     if (!p->ply)
         return;
     const PosUndo* u = &p->undo[--p->ply];

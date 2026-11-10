@@ -76,8 +76,15 @@ static const SearchLevel* level;
 static void* const pos = pos_buf.bytes;
 static bool running, trivial;
 static u8 tt_generation; // 1..63
-static int sp;           // the frame being worked on
-static int top;          // the move stack's first free place
+// When the generations run out the table is cleared, TT_CHUNK entries a
+// step before the search begins (all of it at once would be most of a
+// frame on the GBA): tt_cleared is how far that has come, TT_SIZE when no
+// clearing is under way. Nothing is searched until it is done, so the move
+// found is the same.
+#define TT_CHUNK (TT_SIZE / 16)
+static int tt_cleared = TT_SIZE;
+static int sp;  // the frame being worked on
+static int top; // the move stack's first free place
 static int root_count;
 static int root_margin; // root moves this close to the best get exact scores
 static int iter_depth;  // the iteration under way
@@ -402,9 +409,11 @@ void search_start(const SearchGame* g, const void* p, const SearchLevel* lv, u32
         return;
     }
     memcpy(pos_buf.bytes, p, g->pos_size);
-    if (++tt_generation >= 64) {
-        memset(tt, 0, sizeof(tt));
+    if (tt_cleared < TT_SIZE) {
+        tt_cleared = 0; // a clearing left unfinished begins again; the generation stays 1
+    } else if (++tt_generation >= 64) {
         tt_generation = 1;
+        tt_cleared = 0;
     }
     for (int i = 0; i < SEARCH_PLY_MAX; i++)
         killers[i][0] = killers[i][1] = NO_MOVE;
@@ -438,6 +447,11 @@ bool search_step(u32 node_budget) {
         chosen = done_best;
         return true;
     }
+    if (tt_cleared < TT_SIZE) {
+        memset(&tt[tt_cleared], 0, sizeof(TtEntry) * TT_CHUNK);
+        tt_cleared += TT_CHUNK;
+        return false;
+    }
     u32 spent = 0;
     for (;;) {
         Frame* f = &frames[sp];
@@ -447,11 +461,20 @@ bool search_step(u32 node_budget) {
                 return false;
             spent++;
             nodes++;
-            if (nodes > level->max_nodes && done_depth > 0) {
-                // Out of nodes: back to the root, keep the last whole iteration.
+            if (nodes > level->max_nodes && (done_depth > 0 || frames[0].best_move != NO_MOVE)) {
+                // Out of nodes: back to the root, keep the last whole iteration
+                // or, if the first is not whole yet, the best of the root's
+                // moves it has searched (so that a position whose first
+                // iteration is long still answers in time).
                 for (; sp > 0; sp--)
                     game->unmake(pos);
-                finish();
+                if (done_depth > 0) {
+                    finish();
+                } else {
+                    running = false;
+                    chosen = frames[0].best_move;
+                    chosen_score = frames[0].best;
+                }
                 return true;
             }
             if (!enter(f, &value))

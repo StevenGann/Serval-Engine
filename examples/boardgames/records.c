@@ -18,7 +18,7 @@ typedef struct SaveData {
 
 _Static_assert(sizeof(SaveData) <= SAVE_SLOT_MAX, "the records fit a save slot");
 
-static SaveData data;
+static SaveData data SERVAL_EWRAM_BSS; // read once, written now and then: not IWRAM
 static bool save_failed;
 
 static void save(void) {

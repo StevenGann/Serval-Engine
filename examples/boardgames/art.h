@@ -135,4 +135,9 @@ void art_build(void);
 // table (background 2). Call with the screen black (view_init() does).
 void art_load(void);
 
+// Dims the whole picture but the text, behind a menu or a result, or puts
+// its colours back (palette writes, in VBlank). view.c's alert flash writes
+// BANK_ALERT's square colours itself: call view_set_dim(), not this.
+void art_set_dim(bool on);
+
 #endif // BOARDGAMES_ART_H

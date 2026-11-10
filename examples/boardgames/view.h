@@ -32,8 +32,13 @@ int view_square_y(int sq);
 
 // Draws every piece of m's position (or, while an animation runs, of the
 // animation's), the marks and the targets, and moves the animation and the
-// highlights on. Call every frame, after view_draw_cursor().
-void view_draw_match(const Match* m);
+// highlights on. Call every frame, after view_draw_cursor(). Returns what
+// the animation did this frame (VIEW_* bits), for the sounds.
+u32 view_draw_match(const Match* m);
+#define VIEW_LANDED 1   // a piece landed (a slide or a hop ended)
+#define VIEW_CAPTURED 2 // and took a piece
+#define VIEW_CROWNED 4  // and became another (a promotion, a crowning)
+#define VIEW_DONE 8     // the last step landed (the effects may still run)
 
 // The squares tinted: the last move's two, the king in check's (flashing
 // red; unused in checkers) and the selected piece's. -1 for none. Kept
@@ -59,9 +64,30 @@ void view_draw_cursor(int sq);
 // checkers hops landing by landing, each piece it jumps going in a puff,
 // and a crowning sparkles. Until view_animating() is false the view shows
 // the animation, not the match it is given, so the caller may play the
-// move at once.
+// move at once. Nothing happens if the move's square holds no piece.
 void view_animate(const Match* before, u32 move);
+// The same with the first `done` landings already made (a checkers jump
+// the player landed step by step, view_set_lift()): the pieces they jumped
+// go in their puffs at once and the piece hops on from the last of them.
+void view_animate_from(const Match* before, u32 move, int done);
 bool view_animating(void);
+// Ends the animation and the effects at once (an undo, a new game).
+void view_animation_stop(void);
+
+// The piece on `from` shown on `at` instead (a checkers jump landed part of
+// the way, before the move is complete); -1 for none. Kept until changed.
+void view_set_lift(int from, int at);
+
+// The promotion chooser: on the four squares beside `sq` (as seen, along its
+// rank: `sq` and the next three toward the board's middle), tinted, a queen,
+// rook, bishop and knight of `color` (WHITE or BLACK) hiding the pieces
+// there (the caller draws the cursor on the one chosen). sq -1 hides it.
+void view_set_chooser(int sq, int color);
+// The chooser's i-th square (0..3), for the cursor and the tint.
+int view_chooser_square(int i);
+
+// Dims everything but the text (behind a menu or a result), or not.
+void view_set_dim(bool on);
 
 // The side panel: the game, the opponent ("VS SERVAL") or "2 PLAYERS",
 // whose turn it is and the move number, the pieces each side has taken, the
@@ -73,5 +99,9 @@ bool view_animating(void);
 // can write because the notation of a past move is found by taking moves
 // back and playing them again (match_notation()); m is as it was after.
 void view_panel(Match* m, const char* status);
+
+// A line at the panel's foot (the CPU readout), NULL or "" for none. Kept
+// until changed; printed only when it changes.
+void view_footer(const char* line);
 
 #endif // BOARDGAMES_VIEW_H

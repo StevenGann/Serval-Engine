@@ -12,6 +12,16 @@
 
 #include <serval/core.h>
 
+// The search's hottest functions (move generation, make and unmake, the
+// evaluation) are SERVAL_IWRAM_CODE, ARM code in IWRAM on the GBA, in
+// optimized builds; unoptimized (Debug) ARM code would not fit IWRAM, so
+// there they stay in ROM.
+#ifdef __OPTIMIZE__
+#define CHESS_HOT SERVAL_IWRAM_CODE
+#else
+#define CHESS_HOT
+#endif
+
 typedef u8 Piece; // EMPTY or colour | kind
 enum { EMPTY = 0, PAWN = 1, KNIGHT, BISHOP, ROOK, QUEEN, KING };
 enum { WHITE = 0, BLACK = 8 }; // the colour bit
