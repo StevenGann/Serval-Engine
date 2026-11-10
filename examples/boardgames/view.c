@@ -422,12 +422,18 @@ void view_set_chooser(int sq, int color) {
     chooser_color = (s8)color;
 }
 
+static bool pieces_shown = true;
+
 void view_set_dim(bool on) {
     if (on == dimmed)
         return;
     dimmed = on;
     art_set_dim(on);
     alert_level = 0xFF; // the flash writes its colours again
+}
+
+void view_set_pieces_shown(bool on) {
+    pieces_shown = on;
 }
 
 u32 view_draw_match(const Match* m) {
@@ -454,7 +460,7 @@ u32 view_draw_match(const Match* m) {
         }
         board = board_now;
     }
-    for (int sq = 0; sq < 64; sq++)
+    for (int sq = 0; sq < 64 && pieces_shown; sq++)
         if (board[sq] && !on_chooser(sq))
             draw_piece(board[sq], view_square_x(sq), view_square_y(sq));
     // The puffs, the marks and the targets behind the pieces: drawn after
@@ -737,6 +743,15 @@ void view_panel(Match* m, const char* status) {
         draw_status(shown_status);
     }
     draw_icons(m);
+}
+
+void view_panel_clear(void) {
+    shown.valid = false;
+    status_valid = false;
+    plies_valid = false;
+    shown_status[0] = '\0';
+    shown_footer[0] = '\0';
+    text_clear_area(PANEL_COL, 0, PANEL_COLS, TEXT_ROWS);
 }
 
 void view_footer(const char* line) {

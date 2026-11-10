@@ -1,28 +1,39 @@
 // boardgames: "PAWS & KINGS", chess and checkers in one cartridge, against
-// the computer at three strengths or for two players. (This file grows with
-// the game; its final description comes with the title screen.)
+// the computer at three strengths (CUB, HUNTER, SERVAL) or for two players.
 //
 // Demonstrates:
+//   - Two games through one search (search.c): iterative deepening,
+//     alpha-beta, quiescence and a transposition table written once and
+//     driven by each game through a SearchGame table of functions
+//     (chess_eval.c, checkers_eval.c: generate, make, unmake, evaluate,
+//     key, draws), moves crossing it as u32
 //   - A board game's portable core, host-tested (tests/chess_tests.c,
 //     tests/checkers_tests.c, tests/boardgames_tests.c): chess's rules and
-//     notation proven by perft counts, checkers' with every jump path, one
-//     search shared by both games through a table of functions, and the save
-//   - A computer opponent that thinks across frames (search.c): the search
-//     keeps its tree on a stack of its own, so it stops when the frame's
-//     share of work is done (as much as the last frames' cost says fits in
-//     the frame) and goes on the next, while the cursor moves, the pieces
-//     slide and THINKING animates; the same position, strength and seed
-//     give the same move on every build, however the work is split
+//     notation proven by perft counts, checkers' with every jump path, the
+//     search, the match and the save
+//   - A computer that thinks across frames: the search keeps its tree on a
+//     stack of its own, so it stops when the frame's allowance is done and
+//     goes on the next, while the cursor moves, the pieces slide and
+//     THINKING animates. The allowance follows the frame (search_pace():
+//     the cycles each unit of work took lately, aiming at 76% of the
+//     frame); the same position, strength and seed give the same move on
+//     every build, however the work is split
 //   - Art drawn at boot from pixel rules and ASCII pictures (art.c): the
 //     table as one map (a maple and walnut board in a walnut frame with
 //     brass labels, on green felt, the side panel), each 16x16 cell a
 //     metatile, tiles kept once; both games' pieces as 16x16 sprites in two
-//     palettes, the knight a serval's head
+//     palettes, the knight a serval's head; the logo's letters blown up
+//     from a 5x7 font into four 64x32 sprites
 //   - map_set_cell() for what changes on the board (view.c): the labels
 //     that follow the board when it is flipped, checkers' square numbers,
 //     and the highlighted squares, which are the same tiles in another
 //     palette bank (the king in check's flashes by palette writes); the
-//     whole picture dimmed behind the menu by palette writes
+//     whole picture dimmed behind the menus by palette writes, the logo
+//     left bright
+//   - Saves (records.c, save.h): one versioned struct holding each game's
+//     record per strength and the game in progress as one byte a move (its
+//     index in the legal-move list), written after every move outside the
+//     search and replayed by CONTINUE
 //   - SPRITE_BLEND sprites (the move targets) darkening the board under
 //     them, the rest of the sprites opaque
 //   - PSG sound effects (sound.c): knocks on the noise channel, chimes and
@@ -31,22 +42,48 @@
 //     a CPU readout
 //
 // What to expect when booting the ROM:
-//   - The Serval Engine splash, then a temporary chooser over the dimmed
-//     board (Task 8 replaces it with the title and the setup screens): GAME
-//     CHESS or CHECKERS, PLAYERS 1 or 2, SIDE (the human's colour), LEVEL
-//     CUB, HUNTER or SERVAL. UP/DOWN pick a line, LEFT/RIGHT change it, A
-//     starts the game; CONTINUE, shown when a game is saved, resumes it.
+//   - The Serval Engine splash, then the title fades in: PAWS & KINGS in
+//     gold letters (the & in ivory) over the dimmed, empty board, a menu
+//     under it and two pieces of the game the cursor is on facing each
+//     other at the board's foot (servals' heads for chess, crowned discs for
+//     checkers; the board shows checkers' square numbers then). CONTINUE,
+//     with the saved game's kind under it ("CHESS GAME"), only when a game
+//     is saved; CHESS; CHECKERS. UP/DOWN move the cursor (a tick), A or
+//     START chooses (a knock). The panel at the right shows the record of
+//     the game the cursor is on: wins, draws and losses against CUB, HUNTER
+//     and SERVAL, and the two-player games played.
+//   - CONTINUE resumes the saved game (either kind) exactly where it was
+//     left, settings and board side included. A save that can no longer be
+//     replayed is dropped with "SAVED GAME LOST" in red and a low "no".
+//   - Holding L + R and pressing SELECT (in any order) asks, in red, "ERASE
+//     RECORDS AND SAVED GAME?" (a two-note chime): A erases both and says
+//     RECORDS ERASED (a hard knock; SAVE FAILED in red if the write failed),
+//     B leaves everything as it was (a tick).
+//   - After 20 seconds with no button held the attract mode starts: the
+//     board brightens and the computer plays itself at CUB, chess the first
+//     time, checkers the next, and so on, in silence, the panel as in play
+//     and its status line saying DEMO GAME and PRESS ANY BUTTON by turns.
+//     It stops at the end of the game or at move 80, holds the last
+//     position four seconds and goes back to the menu; any button goes back
+//     at once (and does nothing else). It saves nothing.
+//   - The setup, after choosing a game, over the dimmed board: PLAYERS (1
+//     PLAYER or 2 PLAYERS) and, for one player, YOUR SIDE (chess WHITE,
+//     BLACK or RANDOM; checkers DARK, LIGHT or RANDOM, with "DARK MOVES
+//     FIRST" under it) and STRENGTH (CUB, HUNTER, SERVAL). UP/DOWN pick a
+//     line, LEFT/RIGHT change it (a tick; the board's labels turn to the
+//     side chosen), A or START begins (a knock), B goes back to the title.
 //   - The board: squares of maple and walnut, its frame lettered A-H along
 //     the bottom and 1-8 up the left in brass (chess; checkers numbers its
 //     dark squares 1-32 small in their corners instead); ivory and ebony
 //     pieces with dark outlines, the knights servals' heads (big ears, amber
 //     eyes), the kings with a gold cross; checkers' men discs with a paw
 //     print, its kings crowned. In one-player games the human's side is at
-//     the bottom. The panel at the right: the game, the opponent ("VS CUB")
-//     or 2 PLAYERS, whose turn and the move number, the pieces each side has
-//     taken, the last six moves (SAN in chess, 11-15 / 15x24 in checkers)
-//     and the status: YOUR MOVE, THINKING with a moving dot, CHECK in red,
-//     MUST JUMP, or the result.
+//     the bottom; playing Black (chess) or Light (checkers) the computer
+//     moves first. The panel at the right: the game, the opponent ("VS
+//     CUB") or 2 PLAYERS, whose turn and the move number, the pieces each
+//     side has taken, the last six moves (SAN in chess, 11-15 / 15x24 in
+//     checkers) and the status: YOUR MOVE, THINKING with a moving dot,
+//     CHECK in red, MUST JUMP, or the result.
 //   - The D-pad moves the yellow cursor (corner brackets that pulse),
 //     repeating when held. A on one of your pieces picks it up (a tick; its
 //     square turns green) and shows where it can go: dots, and rings on
@@ -69,101 +106,38 @@
 //   - The computer (one-player games) thinks while the board stays alive:
 //     THINKING with a moving dot, the cursor still moves. CUB answers in
 //     about a second and makes mistakes, HUNTER in two or three, SERVAL in
-//     about seven.
+//     about seven. Every move is saved as it is played.
 //   - SELECT flips the board (pieces, cursor, labels and effects follow,
 //     even mid-slide). L shows the CPU used a frame at the panel's foot.
 //   - START: the menu over the dimmed board: RESUME, UNDO (one player: your
 //     last move and the computer's reply; the computer stops thinking
 //     first; dimmed while you have no move to take back), FLIP BOARD, NEW
-//     GAME, QUIT TO TITLE (the game stays saved). B or START resumes.
+//     GAME, QUIT TO TITLE (the game stays saved: CONTINUE). B or START
+//     resumes.
 //   - The end: the result over the dimmed board (CHECKMATE, STALEMATE, DRAW
 //     BY REPETITION, FIFTY-MOVE DRAW, DRAW: NOT ENOUGH MATERIAL; checkers'
 //     NO MOVES LEFT, DRAW: 40 MOVES; DRAW: GAME TOO LONG in either), who
-//     won, a jingle (higher for a win than for a loss or a draw); A goes
-//     back to the chooser and the record is saved.
+//     won, a jingle (higher for a win than for a loss or a draw); the
+//     record is saved and the saved game forgotten; A goes back to the
+//     title.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
 // into the portable core (chess_board.c, chess_rules.c, chess_eval.c,
 // checkers.c, checkers_eval.c, search.c, match.c, records.c), art.c (the
-// pictures, drawn at boot), view.c (the board and the panel), play.c (the
-// play screen) and sound.c.
+// pictures, drawn at boot), view.c (the board and the panel), screens.c
+// (the title, the setup and the attract mode), play.c (the play screen) and
+// sound.c. main.c runs one screen a frame.
 
 #include "art.h"
 #include "play.h"
 #include "records.h"
+#include "screens.h"
 #include "sound.h"
 #include "view.h"
 
 static Match match SERVAL_EWRAM_BSS; // about 27 KB: never on the stack
-
-// --- The temporary chooser (Task 8 replaces it with the title) ------------------
-
-enum { ROW_CONTINUE, ROW_GAME, ROW_PLAYERS, ROW_SIDE, ROW_LEVEL, ROWS };
-static int choice[ROWS] = {0, 0, 0, 0, 0};
-static const int choices[ROWS] = {1, 2, 2, 2, LEVEL_COUNT};
-
-static void draw_chooser(int row) {
-    static const char* const games[2] = {"CHESS", "CHECKERS"};
-    static const char* const players[2] = {"1 PLAYER", "2 PLAYERS"};
-    static const char* const sides[2][2] = {{"WHITE", "BLACK"}, {"DARK", "LIGHT"}};
-    static const char* const levels[LEVEL_COUNT] = {"CUB", "HUNTER", "SERVAL"};
-    text_clear_area(0, 0, 19, TEXT_ROWS);
-    const char* lines[ROWS] = {
-        "CONTINUE",
-        games[choice[ROW_GAME]],
-        players[choice[ROW_PLAYERS]],
-        sides[choice[ROW_GAME]][choice[ROW_SIDE]],
-        levels[choice[ROW_LEVEL]],
-    };
-    for (int i = board_records_has_game() ? 0 : 1; i < ROWS; i++) {
-        text_set_style(i == row ? TEXT_HIGHLIGHT : TEXT_NORMAL);
-        text_print_centered_in(1, 18, 5 + 2 * i,
-                               i == row ? text_format("< %s >", lines[i]) : lines[i]);
-    }
-    text_set_style(STYLE_DIM);
-    text_print_centered_in(1, 18, 17, "A: PLAY");
-    text_set_style(TEXT_NORMAL);
-}
-
-// Runs the chooser until A; sets up match.
-static void choose(void) {
-    int row = board_records_has_game() ? ROW_CONTINUE : ROW_GAME;
-    view_set_dim(true);
-    draw_chooser(row);
-    button_repeat_reset();
-    for (;;) {
-        frame_begin();
-        int first = board_records_has_game() ? ROW_CONTINUE : ROW_GAME;
-        int step = button_repeat(BUTTON_DOWN) ? 1 : button_repeat(BUTTON_UP) ? -1 : 0;
-        int turn = button_repeat(BUTTON_RIGHT) ? 1 : button_repeat(BUTTON_LEFT) ? -1 : 0;
-        if (step && row + step >= first && row + step < ROWS) {
-            row += step;
-            draw_chooser(row);
-        } else if (turn) {
-            choice[row] = (choice[row] + choices[row] + turn) % choices[row];
-            draw_chooser(row);
-        }
-        if (button_pressed(BUTTON_A | BUTTON_START)) {
-            random_seed(random_entropy()); // the computer's choices differ from game to game
-            if (row != ROW_CONTINUE || !board_records_restore_game(&match)) {
-                GameKind game = choice[ROW_GAME] ? GAME_CHECKERS : GAME_CHESS;
-                int side = game == GAME_CHECKERS ? (choice[ROW_SIDE] ? CK_LIGHT : CK_DARK)
-                                                 : (choice[ROW_SIDE] ? BLACK : WHITE);
-                match_new(&match, game, choice[ROW_PLAYERS] ? MODE_TWO_PLAYERS : MODE_ONE_PLAYER,
-                          side, choice[ROW_LEVEL]);
-            }
-            view_set_dim(false);
-            text_clear_area(0, 0, 19, TEXT_ROWS);
-            frame_end();
-            return;
-        }
-        view_draw_match(&match);
-        view_panel(&match, "");
-        frame_end();
-    }
-}
 
 int main(void) {
     serval_init();
@@ -173,23 +147,31 @@ int main(void) {
     view_init();
     sound_init();
     board_records_load();
-    match_new(&match, GAME_CHESS, MODE_TWO_PLAYERS, WHITE, LEVEL_CUB);
-    for (int b = SCREEN_BRIGHTNESS_MIN; b < 0; b += 2) {
+    Screen screen = SCREEN_TITLE;
+    for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b += 2) { // the title fades in
         frame_begin();
-        screen_set_brightness(b + 2);
-        view_draw_match(&match);
-        view_panel(&match, "");
+        screen_set_brightness(b);
+        screens_title_frame(&match);
         frame_end();
     }
     for (;;) {
-        choose();
-        play_begin(&match);
-        for (;;) {
-            frame_begin();
-            PlayExit exit = play_frame();
-            frame_end();
-            if (exit == PLAY_QUIT_TO_TITLE)
-                break;
+        frame_begin();
+        Screen next = screen;
+        switch (screen) {
+        case SCREEN_TITLE:
+            next = screens_title_frame(&match);
+            break;
+        case SCREEN_SETUP:
+            next = screens_setup_frame(&match);
+            break;
+        case SCREEN_PLAY:
+            if (play_frame() == PLAY_QUIT_TO_TITLE)
+                next = SCREEN_TITLE;
+            break;
         }
+        frame_end();
+        if (next == SCREEN_PLAY && screen != SCREEN_PLAY)
+            play_begin(&match);
+        screen = next;
     }
 }

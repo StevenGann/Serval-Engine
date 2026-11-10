@@ -86,6 +86,10 @@ void view_set_chooser(int sq, int color);
 // The chooser's i-th square (0..3), for the cursor and the tint.
 int view_chooser_square(int i);
 
+// Whether view_draw_match() draws the position's pieces (the title shows
+// the board without them). True until changed.
+void view_set_pieces_shown(bool on);
+
 // Dims everything but the text (behind a menu or a result), or not.
 void view_set_dim(bool on);
 
@@ -99,6 +103,10 @@ void view_set_dim(bool on);
 // can write because the notation of a past move is found by taking moves
 // back and playing them again (match_notation()); m is as it was after.
 void view_panel(Match* m, const char* status);
+
+// Clears the panel's text (another screen writes its own there) and forgets
+// what it showed, so the next view_panel() draws it all again.
+void view_panel_clear(void);
 
 // A line at the panel's foot (the CPU readout), NULL or "" for none. Kept
 // until changed; printed only when it changes.

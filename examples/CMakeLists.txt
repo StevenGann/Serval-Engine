@@ -136,7 +136,7 @@ serval_add_rom(boardgames SOURCES boardgames/main.c boardgames/chess_board.c
                boardgames/chess_rules.c boardgames/chess_eval.c boardgames/checkers.c
                boardgames/checkers_eval.c boardgames/search.c boardgames/match.c
                boardgames/records.c boardgames/art.c boardgames/view.c
-               boardgames/play.c boardgames/sound.c
+               boardgames/play.c boardgames/screens.c boardgames/sound.c
                TITLE "PAWS & KINGS" GAME_CODE "SVPK")
 target_link_libraries(boardgames PRIVATE serval_warnings)
 

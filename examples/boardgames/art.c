@@ -965,8 +965,9 @@ static void build_sprites(void) {
         sprite_table[i] = &sprites[i];
 }
 
-// The table and the sprites dimmed (art_set_dim): every colour mixed most of
-// the way toward a dark brown, at boot, so that dimming is only a copy.
+// The table and the sprites dimmed (art_set_dim): every colour but the
+// logo's mixed most of the way toward a dark brown, at boot, so that
+// dimming is only a copy.
 #define DIM_TINT COLOR_RGB(16, 10, 8)
 #define DIM_AMOUNT 150
 static Color dim_bg[BG_BANKS * 16] SERVAL_EWRAM_BSS;
@@ -975,8 +976,10 @@ static Color dim_obj[OBJ_PALETTES * 16] SERVAL_EWRAM_BSS;
 static void build_dim(void) {
     for (int i = 0; i < BG_BANKS * 16; i++)
         dim_bg[i] = color_mix(bg_palettes[i], DIM_TINT, DIM_AMOUNT);
+    // The logo stays bright over the dimmed table on the title.
     for (int i = 0; i < OBJ_PALETTES * 16; i++)
-        dim_obj[i] = color_mix((&obj_palettes[0][0])[i], DIM_TINT, DIM_AMOUNT);
+        dim_obj[i] = i / 16 == PAL_LOGO ? (&obj_palettes[0][0])[i]
+                                        : color_mix((&obj_palettes[0][0])[i], DIM_TINT, DIM_AMOUNT);
 }
 
 void art_set_dim(bool on) {
