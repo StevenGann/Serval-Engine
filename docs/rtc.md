@@ -35,7 +35,7 @@ Only `rtc_present()`, `rtc_read()`, `rtc_seconds()` and `rtc_was_reset()` link t
 
 ## What a read costs
 
-Each transaction with the chip (a status read or write, a reset, the date-time read) masks interrupts (`REG_IME` off, restored after) for its whole length, so that a handler cannot stretch a bit of the serial protocol. One `rtc_read()` with a clock costs 4,653 CPU cycles in the `gba-ci` build and 3,619 in `gba-release`, almost all of it with interrupts off: about two scanlines. The first call also probes, and without a clock the probe alone costs 7,171 cycles (`gba-ci`) or 5,928 (`gba-release`). `rtc_seconds()` is one read.
+Each transaction with the chip (a status read or write, a reset, the date-time read) masks interrupts (`REG_IME` off, restored after) for its whole length, so that a handler cannot stretch a bit of the serial protocol. One `rtc_read()` with a clock costs 4,653 CPU cycles in the `gba-ci` build and 3,619 in `gba-release`, almost all of it with interrupts off: about 3 to 4 scanlines (3.8 in `gba-ci`, 2.9 in `gba-release`). The first call also probes, and without a clock the probe alone costs 7,171 cycles (`gba-ci`) or 5,928 (`gba-release`). `rtc_seconds()` is one read.
 
 Read the clock occasionally: once a second at most is plenty for anything a game does with it, and once at boot and once when a screen opens is usually enough. Do not read it in raster-timed code (a scanline effect, a VCount interrupt, `raster_*()` timing) or at a moment when a missed interrupt matters. The VBlank handler waits for a read to end, as it does for the engine's other critical sections.
 
@@ -50,6 +50,26 @@ After each transaction the control register is left at 0, so reads at those addr
 The clock is the player's, and the player can change it. Games should use it for elapsed time (`rtc_seconds()` now minus the value saved last time), and put limits on what elapsed time can do (a creature that cannot starve in a single absence). The date is not proof of anything. Time zones and daylight saving time are the game's problem: the chip knows neither, and tells the local time its owner set.
 
 There is no setter on purpose: games that set the clock are games that can be cheated with it, a clock set by a game is wrong for every other game on the cartridge, and the engine would have to promise behaviour that flash carts and emulators do not keep.
+
+## Measuring elapsed time
+
+A pattern that survives resets, a dead battery and a player who sets the clock back:
+
+```c
+// once at boot (and then every second or so, not every frame)
+if (rtc_present()) {
+    u32 now = rtc_seconds();
+    u32 elapsed = now > saved.last ? now - saved.last : 0; // backwards: no time passed
+    credit(elapsed);
+    saved.last = now; // rebase, also when the clock went backwards or was reset
+}
+```
+
+- Store the last `rtc_seconds()` with the save. Elapsed time is `now > stored ? now - stored : 0`.
+- Rebase: after the clock went backwards, or after `rtc_was_reset()`, credit nothing and store `now` as the new reference. A game that stores `now` only when it credits time would see "no time" for years after a battery reset put the clock back at 2000.
+- `rtc_was_reset()` is true on that one run only (the chip's power bit clears when it is read). If the player switches off before the game saves, the next run sees only a clock gone backwards, which the rule above handles.
+- 0 is a real time (2000-01-01 00:00:00, which a just-reset chip shows), so it cannot mean "never saved" or "no clock": keep a flag, and check `rtc_present()`.
+- `rtc_seconds()` cannot report a failed read (it returns the last good time); `rtc_read()` is the call that returns false.
 
 ## When the clock goes backwards
 
@@ -68,6 +88,8 @@ The player can set the clock back, a battery swap can reset it, and daylight sav
 ## The web
 
 A web build has a clock that always works: `rtc_present()` is true and the time is the browser's local time. `rtc_was_reset()` is false. A test page takes the clock from its address, for deterministic runs: `#frames=N&rtc=SECONDS` starts it at SECONDS since 2000-01-01 00:00:00 (762525296 is 2024-02-29 12:34:56) and advances it one second per 60 frames, `&rtcstep=FRAME:SECONDS` (repeatable) adds SECONDS (negative to go back) from that frame on, and `&rtc=none` gives the game no clock, in any mode. `tools/web-shots.py` passes them on as `rtc=SECONDS`, `rtcstep=FRAME:SECONDS` and `rtc=none`. The web test page (`serval_web_tests`) must run with `rtc=762525296`, as CI does: its suite checks that time.
+
+The web page accepts an mGBA `.sav` of a game that has a clock: mGBA appends a 16-byte clock trailer to the save, and a file of exactly the save size plus 16 is read with the trailer ignored. A malformed `rtc=` (not a number) means the browser's local time, and a malformed `rtcstep=` is ignored.
 
 ## Testing with a fake clock
 

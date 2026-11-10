@@ -8,16 +8,16 @@
 
 const RtcDevice* serval_rtc_device = &serval_platform_rtc_device;
 
-static bool probed;
-static bool present;
-static bool was_reset;
-static RtcTime last_good;
-static bool have_last;
-static u32 last_seconds;
+SERVAL_EWRAM_BSS static bool probed;
+SERVAL_EWRAM_BSS static bool present;
+SERVAL_EWRAM_BSS static bool was_reset;
+SERVAL_EWRAM_BSS static RtcTime last_good;
+SERVAL_EWRAM_BSS static bool have_last;
+SERVAL_EWRAM_BSS static u32 last_seconds;
 
-static bool warned_invalid;
-static bool warned_backwards;
-static bool warned_null_read;
+SERVAL_EWRAM_BSS static bool warned_invalid;
+SERVAL_EWRAM_BSS static bool warned_backwards;
+SERVAL_EWRAM_BSS static bool warned_null_read;
 
 void serval_rtc_forget(void) {
     probed = present = was_reset = have_last = false;

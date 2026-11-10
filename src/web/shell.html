@@ -38,7 +38,10 @@
   one second per 60 frames; "&rtcstep=FRAME:SECONDS" (repeatable) adds SECONDS
   (negative to go back) from that frame on. "&rtc=none" gives the game no clock,
   in any mode (tools/web-shots.py rtc=SECONDS, rtcstep=FRAME:SECONDS and
-  rtc=none do the same). Test mode without "rtc=" uses the local time.
+  rtc=none do the same). Test mode without "rtc=" uses the local time, and so
+  does an "rtc=" that is not a number; a malformed "rtcstep=" is ignored. A
+  .sav of exactly the save size + 16 bytes (mGBA's clock trailer) is accepted
+  and the trailer ignored.
 
   The title and game code (serval_add_rom()'s TITLE and GAME_CODE) are filled
   in by cmake/ServalWeb.cmake, escaped: the title in <title>, and both as JSON
@@ -125,8 +128,10 @@
   const RTC_MAX = 3155759999;
   const rtc = {
     none: params.get("rtc") === "none",
-    start: test && params.has("rtc") && params.get("rtc") !== "none" ? Number(params.get("rtc")) : null,
-    steps: params.getAll("rtcstep").map(s => { const [f, n] = s.split(":"); return { frame: Number(f), seconds: Number(n) }; }),
+    // A value that is not a number is no value: rtc= then means the local time, and a bad rtcstep= is left out.
+    start: test && params.has("rtc") && Number.isFinite(parseFloat(params.get("rtc"))) && params.get("rtc").trim() !== "" ? Number(params.get("rtc")) : null,
+    steps: params.getAll("rtcstep").map(s => { const [f, n] = s.split(":"); return { frame: Number(f), seconds: Number(n), ok: s.includes(":") && f.trim() !== "" && n.trim() !== "" }; })
+      .filter(st => st.ok && Number.isFinite(st.frame) && Number.isFinite(st.seconds)),
   };
 
   // Scale to the largest whole multiple that fits (any size if none does).
@@ -359,6 +364,7 @@
         const d = new Date();
         s = (Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) - Date.UTC(2000, 0, 1)) / 1000;
       }
+      if (!Number.isFinite(s)) return -1;
       return Math.min(Math.max(Math.floor(s), 0), RTC_MAX);
     },
     servalSaveLoad(dst, size) {
@@ -377,6 +383,9 @@
       }
       // Shorter is fine (the rest stays 0xFF, as in mGBA): an mGBA .sav of an
       // 8 KiB EEPROM is 512 bytes until the game writes past them.
+      // mGBA appends a 16-byte clock trailer to the .sav of a game that has a
+      // clock; a file of exactly the save size + 16 is read without it.
+      if (data && data.length === size + 16) data = data.subarray(0, size);
       if (data && data.length > size) {
         saveWarn("the stored saves are " + data.length + " bytes, more than this game's " + size +
                  " (another save type?); starting without them");

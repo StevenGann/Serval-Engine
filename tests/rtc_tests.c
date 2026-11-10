@@ -47,6 +47,9 @@ static void fake_reset(void) {
     fake.resets++;
     if (!fake.open_bus) {
         fake.status &= 0x80;
+        // As the chip does: 2000-01-01 00:00:00 (the weekday is a wildcard here).
+        static const u8 reset_time[7] = {0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00};
+        memcpy(fake.raw, reset_time, 7);
     }
 }
 
@@ -223,6 +226,10 @@ static void rtc_power_lost_resets_and_sets_24h(void) {
     CHECK(fake.resets == 1);
     CHECK(fake.status_writes == 1 && fake.last_status_write == RTC_STATUS_24H);
     CHECK(rtc_was_reset());
+    RtcTime t;
+    CHECK(rtc_read(&t) && t.year == 2000 && t.month == 1 && t.day == 1 && t.hour == 0 &&
+          t.minute == 0 && t.second == 0);
+    CHECK(rtc_seconds() == 0);
     end();
 }
 

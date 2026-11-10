@@ -61,8 +61,9 @@
 RTC_SECTION __attribute__((aligned(4))) static const char rtc_id[12] = "SIIRTC_V001";
 
 // One transaction's state: interrupts as it found them, and pin 3's direction
-// bit and, if the GBA drives it, its level. On the stack: the clock keeps
-// nothing in IWRAM.
+// bit and, if the GBA drives it, its level. On the stack; the clock's
+// other state is a few bytes of EWRAM (src/core/rtc.c), plus
+// the 4-byte device pointer in .data.
 typedef struct Port {
     u16 ime;
     u16 other_dir;

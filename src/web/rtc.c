@@ -15,7 +15,7 @@
 EM_JS(double, web_rtc_seconds, (void), { return Module.servalRtcSeconds(); });
 
 static u8 web_read_status(void) {
-    return web_rtc_seconds() < 0 ? 0 : RTC_STATUS_24H;
+    return !(web_rtc_seconds() >= 0) ? 0 : RTC_STATUS_24H;
 }
 
 static void web_write_status(u8 status) {
@@ -31,7 +31,7 @@ static u8 to_bcd(u32 v) {
 static void web_read_datetime(u8 raw[7]) {
     double seconds = web_rtc_seconds();
     RtcTime t = {0};
-    if (seconds >= 0) {
+    if (seconds >= 0) { // not NaN either
         rtc_time_from_seconds((u32)seconds, &t);
     }
     raw[0] = to_bcd((u32)(t.year >= 2000 ? t.year - 2000 : 0));

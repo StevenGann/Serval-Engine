@@ -9,10 +9,10 @@
 
 #define RTC_MAX_SECONDS 3155759999u
 
-static bool warned_fields;
-static bool warned_limit;
-static bool warned_null_from;
-static bool warned_null_to;
+SERVAL_EWRAM_BSS static bool warned_fields;
+SERVAL_EWRAM_BSS static bool warned_limit;
+SERVAL_EWRAM_BSS static bool warned_null_from;
+SERVAL_EWRAM_BSS static bool warned_null_to;
 
 void serval_rtc_convert_forget(void) {
     warned_fields = warned_limit = warned_null_from = warned_null_to = false;
