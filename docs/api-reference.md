@@ -1,6 +1,6 @@
 # API reference
 
-**Status:** every public name in `include/serval/` as of 1.0.0-rc.1, grouped by header: the implemented API. No name is *planned* in this version ([releases.md](releases.md#planned-api)): the 37 declared planned at the freeze are all implemented, and so is `debug_break()` ([debug.h](#debugh)), declared planned after it. One header has been added since: [surface.h](#surfaceh), the pixel surface. Behaviour described here is what the code does today.
+**Status:** every public name in `include/serval/` as of 1.0.0-rc.1, grouped by header: the implemented API. No name is *planned* in this version ([releases.md](releases.md#planned-api)): the 37 declared planned at the freeze are all implemented, and so is `debug_break()` ([debug.h](#debugh)), declared planned after it. Two headers have been added since: [surface.h](#surfaceh), the pixel surface, and [rtc.h](#rtch), the real-time clock. Behaviour described here is what the code does today.
 
 Include `serval/serval.h` for everything except `gba.h`, which must be included explicitly. For a guided introduction, see [getting-started.md](getting-started.md); for the design behind the API, the hardware the engine uses and the data-format bits it reserves, [core-api.md](core-api.md).
 
@@ -488,6 +488,20 @@ if (save_read(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION) != SAVE_OK)
 ...
 save_write(SCORES_SLOT, &scores, sizeof scores, SCORES_VERSION); // after a game over
 ```
+
+## rtc.h
+
+The cartridge's real-time clock, for games that need to know how much time passed between two runs ([rtc.md](rtc.md)). GBA: the Seiko S-3511A some cartridges carry, found by the ID string `SIIRTC_V001` that linking the driver puts in the ROM. Web: the browser's local time. Host, and a cartridge or emulator without a clock: none. Only `rtc_present()`, `rtc_read()`, `rtc_seconds()` and `rtc_was_reset()` link the clock; the two conversions alone do not. No SYS call or builtin: scripts do not read the clock. A read masks interrupts for about 2 scanlines ([rtc.md](rtc.md#what-a-read-costs)): call it occasionally, not in raster-timed code. The clock is the player's local time and the player can change it: use it for elapsed time.
+
+| Name | Description |
+| --- | --- |
+| `RtcTime` | `u16 year` (2000 to 2099), `u8 month` (1 to 12), `day` (1 to 31), `hour` (0 to 23), `minute`, `second` (0 to 59). No weekday and no time zone. |
+| `bool rtc_present(void)` | Whether a working clock was found. The first call of `rtc_present()`, `rtc_read()`, `rtc_seconds()` or `rtc_was_reset()` looks for it (about 6,000 to 7,000 cycles on the GBA without one, with interrupts off in each transaction); the result is kept for the run. |
+| `bool rtc_read(RtcTime* out)` | Reads the date and time into `*out` and returns true. Without a clock zeroes `*out` and returns false. If the chip returns nonsense twice running, `*out` is the last good time and the result is false (*warns* once). A NULL `out` returns false (*warns* once). About 4,650 cycles with a clock (`gba-ci`). |
+| `u32 rtc_seconds(void)` | The same time as seconds since 2000-01-01 00:00:00: 0 to 3155759999 (2099-12-31 23:59:59); 0 without a clock. Two counts subtract. A count lower than the previous call's (the clock changed, or daylight saving time) is returned as it is and *warns* once: treat a negative difference as no time passing. |
+| `bool rtc_was_reset(void)` | True when the clock had lost its power before this run (a dead battery, a cartridge never powered): its time is not the real date. Always false without a clock. |
+| `u32 rtc_seconds_from_time(const RtcTime* t)` | The seconds for a date and time. A field out of range (a month 13, February 30) or a NULL `t` gives 0 (*warns* once). Needs no clock; works on every platform. 2000-03-01 00:00:00 is 5184000, 2024-02-29 12:34:56 is 762525296. |
+| `void rtc_time_from_seconds(u32 s, RtcTime* out)` | The date and time for a count. Above 3155759999 gives 2099-12-31 23:59:59 (*warns* once). A NULL `out` writes nothing (*warns* once). |
 
 ## vm.h
 
