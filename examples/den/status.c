@@ -50,11 +50,18 @@ static void print_text(const Pet* p, u32 now) {
     text_set_style(TEXT_HIGHLIGHT);
     text_print(2, 1, p->name);
     text_set_style(TEXT_NORMAL);
-    const char* head = text_format("%s GEN %u", stages[stage], (u32)p->generation);
+    // The stage and the generation on two rows, so that a long name never
+    // touches them.
+    const char* head = stages[stage];
     int n = 0;
     while (head[n])
         n++;
     text_print(28 - n, 1, head);
+    const char* gen = text_format("GEN %u", (u32)p->generation);
+    n = 0;
+    while (gen[n])
+        n++;
+    text_print(28 - n, 2, gen);
 
     static const char* const labels[4] = {"FULL", "FUN", "ENERGY", "HEALTH"};
     const u16 values[4] = {p->full, p->fun, p->energy, p->health};

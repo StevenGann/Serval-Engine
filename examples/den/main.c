@@ -123,6 +123,7 @@
 #include "menu.h"
 #include "naming.h"
 #include "sound.h"
+#include "status.h"
 #include "yarn.h"
 
 #include <serval/serval.h>
@@ -220,7 +221,7 @@ int main(void) {
         pet_new(&save.pet, "SPOTS", coat, 1, now);
         pet_advance(&save.pet, now, clock_hour);
     }
-    random_seed(now ^ 0x5E5A1u);
+    random_seed(now ^ 0x5E5A1u ^ random_entropy()); // the naming page's suggestion varies
     while (frame_count() - title_shown < TITLE_FRAMES) {
         frame_begin();
         frame_end();
@@ -277,21 +278,28 @@ int main(void) {
         now = clock_now();
         Life before = life_of(pet);
         bool cared = menu_update(pet, now);
+        now = clock_now(); // a game or a page may have taken a while
 #ifdef SERVAL_DEBUG
         if (clock_debug_warp()) {
             warp_timer = 90;
             text_print_centered(2, "TIME WARP +1H");
             now = clock_now();
         }
-        if (warp_timer > 0 && --warp_timer == 0)
+        if (warp_timer > 0 && --warp_timer == 0) {
             text_clear_area(0, 2, 30, 1);
+            if (menu_covers_den())
+                status_reset(); // the page's text shares the row
+        }
 #endif
         den_update(pet, now);
         frames_since_save++;
         if (cared || life_changed(before, life_of(pet)) || frames_since_save >= AUTOSAVE_FRAMES)
             store(now);
-        if (save_failed_timer > 0 && --save_failed_timer == 0)
+        if (save_failed_timer > 0 && --save_failed_timer == 0) {
             text_clear_area(0, 17, 30, 1);
+            if (menu_covers_den())
+                status_reset(); // the page's warning shares the row
+        }
         sound_ambient(art_time_of_day(clock_hour(now)));
         menu_draw(pet, now);
         if (!menu_covers_den())

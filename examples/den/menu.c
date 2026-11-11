@@ -38,6 +38,7 @@ static struct {
     int press_timer, press_icon;
     u16 lock;
     bool list_dirty; // the list's text needs drawing
+    int list_stage;  // the pet's stage when it was drawn (greyed games)
     int strip_len;   // the label row's text, in characters (0: none)
 } m;
 
@@ -161,6 +162,7 @@ static bool game_open(const Pet* p, int i) {
 }
 
 static void draw_list(const Pet* p) {
+    m.list_stage = (int)pet_stage(p, p->last_tick);
     int n = list_count();
     int row0 = LIST_BOTTOM_ROW - n + 1;
     for (int i = 0; i < n; i++) {
@@ -259,6 +261,14 @@ static bool care(Pet* p, CareAction a, u32 now, int icon) {
 }
 
 static bool play_game(Pet* p, int i, u32 now) {
+    // The list may have stayed open while the pet fell asleep, got too tired
+    // or died: ask again, with the clock as it is now.
+    now = clock_now();
+    if (!pet_can_play(p, now)) {
+        close_list();
+        refuse(p->dead ? "GONE" : p->asleep ? "SHH, ASLEEP" : "TOO TIRED");
+        return false;
+    }
     if (!game_open(p, i)) {
         refuse("NOT YET");
         return false;
@@ -272,7 +282,7 @@ static bool play_game(Pet* p, int i, u32 now) {
     text_clear_area(0, LABEL_ROW, TEXT_COLS, 1);
     menu_fade_out(p, true);
     text_clear();
-    bool changed = games[i](p, now);
+    bool changed = games[i](p, clock_now()); // after the fade
     den_resume();
     set_styles();
     m.shown_label = -1;
@@ -349,6 +359,8 @@ bool menu_update(Pet* p, u32 now) {
                 changed = play_game(p, i, now);
             }
         }
+        if (m.mode == M_LIST && (int)pet_stage(p, p->last_tick) != m.list_stage)
+            m.list_dirty = true; // grew up: more games open
         if (m.mode == M_LIST && m.list_dirty) {
             m.list_dirty = false;
             draw_list(p);

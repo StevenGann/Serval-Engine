@@ -124,6 +124,7 @@ void naming_run(char out[9]) {
         }
         if (done) {
             sound_mew();
+            text_clear(); // inside the frame
             frame_end();
             break;
         }
@@ -132,5 +133,4 @@ void naming_run(char out[9]) {
     for (int i = 0; i <= len; i++)
         out[i] = name[i];
     out[len] = 0;
-    text_clear();
 }
