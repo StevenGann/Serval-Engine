@@ -1,8 +1,9 @@
 #ifndef DEN_ART_H
 #define DEN_ART_H
 
-// Serval Den's pictures, all drawn at boot by art_build() (no image files):
-// the den (a rock shelter with a sandy floor, a grass nest and an arched
+// Serval Den's pictures, drawn ahead of time (art_draw.c, by art_gen on the
+// host, into art_data.c; no image files; art.c says how to change them): the
+// den (a rock shelter with a sandy floor, a grass nest and an arched
 // mouth onto the savanna) on background 2, the sky behind it on background 3,
 // and the sprites: the serval at three sizes, the sun and the moon, the
 // firefly lamp, the droppings, the bowl and the small effects.
@@ -104,10 +105,7 @@ void art_pet_colors(Coat coat, Color tint, u32 amount, Color out[16]);
 // lights off as for the den (palette writes, in VBlank).
 void art_set_pet(Coat coat, int sick, int tod, bool lights_off);
 
-// --- Building and loading ------------------------------------------------------------------
-
-// Builds every picture into EWRAM. Call once at boot.
-void art_build(void);
+// --- Loading ------------------------------------------------------------------
 
 // Loads the tiles, palettes and sprites into VRAM and shows the den and the
 // sky. Call with the screen black.

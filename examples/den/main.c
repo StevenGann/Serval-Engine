@@ -16,7 +16,9 @@
 //     droppings, health, neglect (sad at 12 h, sick at 18 h, sicker at 24 h,
 //     dead at 36 h without care), growing up (adolescent at 24 h, adult at
 //     72 h)
-//   - Art drawn at boot (art.c): a sandstone den with a grass nest and roots
+//   - Art drawn by rule in C and run ahead of time (art_draw.c, by the host
+//     program art_gen into art_data.c, const data in ROM, as servle's word
+//     tables are generated): a sandstone den with a grass nest and roots
 //     on background 2, the savanna through its arched mouth in a palette bank
 //     of its own, the sky on background 3 drifting by map_set_scroll(); the
 //     serval at three sizes drawn by rule from a skeleton and a pose per
@@ -39,9 +41,8 @@
 //     override, a cartridge without the chip) the game stops on a dark
 //     screen saying SERVAL DEN NEEDS A CARTRIDGE CLOCK and, under it, IN MGBA:
 //     TOOLS > GAME OVERRIDES > REALTIME CLOCK, and nothing else, for good.
-//   - With a clock, SERVAL DEN in gold on black for two seconds or so (the
-//     pictures being drawn, and the time away lived; longer in debug
-//     builds), then the den fades in:
+//   - With a clock, SERVAL DEN in gold on black for a second (longer when
+//     the time away is long: it is lived then), then the den fades in:
 //     warm sandstone walls in layers, roots hanging from the roof (one holds
 //     a jar of glowing fireflies at the left), a sandy floor with pebbles
 //     and loose grass, a woven grass nest at the left, and through the
@@ -76,9 +77,9 @@
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
 // into the portable core (pet.c, litter.c, album.c, den_save.c), clock.c
-// (the game's use of the clock), art.c (the pictures, drawn at boot), den.c
-// (the den on screen) and sound.c. main.c boots and runs the den a frame at
-// a time.
+// (the game's use of the clock), art.c (the colours, and the pictures'
+// loading; art_draw.c draws them, on the host), den.c (the den on screen) and sound.c. main.c boots
+// and runs the den a frame at a time.
 
 #include "album.h"
 #include "art.h"
@@ -90,6 +91,7 @@
 #include <serval/serval.h>
 
 #define AUTOSAVE_FRAMES (5 * 60 * 60) // every 5 minutes of play
+#define TITLE_FRAMES 60               // the title's least time on screen
 #define STYLE_ALERT 2                 // text.h's third style: light red
 
 static DenSave save SERVAL_EWRAM_BSS;
@@ -157,13 +159,13 @@ int main(void) {
     serval_splash();
     if (!rtc_present())
         no_clock();
-    // The title while the pictures are drawn and the time away is lived
-    // (about two seconds in a release build, more after a long absence).
+    // The title, for a second at least, and while the time away is lived
+    // (longer after a long absence).
     text_set_color(COLOR_RGB(232, 176, 72), COLOR_RGB(0, 0, 0));
     text_print_centered(9, "SERVAL DEN");
     frame_begin();
     frame_end();
-    art_build();
+    u32 title_shown = frame_count();
     sound_init();
 
     u32 now;
@@ -190,6 +192,10 @@ int main(void) {
         pet_advance(&save.pet, now, clock_hour);
     }
     random_seed(now ^ 0x5E5A1u);
+    while (frame_count() - title_shown < TITLE_FRAMES) {
+        frame_begin();
+        frame_end();
+    }
 
     // Black first (the brightness takes effect at the frame's end), then
     // VRAM is written.

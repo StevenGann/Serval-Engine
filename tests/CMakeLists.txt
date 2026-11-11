@@ -514,6 +514,21 @@ else()
     # the golden bytes, every operand layout, the round trip, the errors.
     add_test(NAME svm_tool
         COMMAND "${SERVAL_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/svm_test.py")
+    # Serval Den's art, drawn ahead of time: art_gen (examples/den/art_gen.c)
+    # runs the drawing code (art_draw.c) and writes art_data.c and .h. The
+    # test regenerates them into the build directory and fails if the
+    # committed ones differ; den_art_data_refresh rewrites the committed ones.
+    add_executable(den_art_gen ../examples/den/art_gen.c ../examples/den/art_draw.c)
+    target_include_directories(den_art_gen PRIVATE "${PROJECT_SOURCE_DIR}/include")
+    target_link_libraries(den_art_gen PRIVATE serval_warnings)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/den_art")
+    add_test(NAME den_art_data
+        COMMAND den_art_gen "${CMAKE_CURRENT_BINARY_DIR}/den_art" --check
+                "${PROJECT_SOURCE_DIR}/examples/den")
+    add_custom_target(den_art_data_refresh
+        COMMAND den_art_gen "${PROJECT_SOURCE_DIR}/examples/den"
+        COMMENT "Drawing Serval Den's art into examples/den/art_data.c and art_data.h"
+        VERBATIM)
     # servle's word lists (tools/servle_words.py): the pack format, the lookups
     # as the script does them, the lists' sizes, and the generated block.
     add_test(NAME servle_words_tool
