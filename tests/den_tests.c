@@ -640,6 +640,19 @@ static void test_save_round_trip(void) {
     save_erase(0);
 }
 
+// A name buffer with leftovers after its NUL (naming once left "SPOTS"'s tail)
+// is stored clean, so the loader accepts it.
+static void test_save_clean_name(void) {
+    save_erase(0);
+    DenSave s = sample_save();
+    memcpy(s.pet.name, "AB\0DEF\0\0\0", 9);
+    CHECK(den_save_store(&s));
+    DenSave out;
+    CHECK(den_save_load(&out));
+    CHECK(strcmp(out.pet.name, "AB") == 0 && memcmp(out.pet.name, "AB\0\0\0\0\0\0\0", 9) == 0);
+    save_erase(0);
+}
+
 static void test_save_refuses_other_version(void) {
     save_erase(0);
     DenSave s = sample_save();
@@ -703,6 +716,37 @@ static void test_save_refuses_garbage(void) {
     CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
     CHECK(den_save_load(&out));
     save_erase(0);
+}
+
+// Reset, then the player sets the clock (a jump answered NO), then another
+// reset: the offset stays bounded and the hour is the real one again.
+static void test_clock_forgive_jump(void) {
+    u32 now, off;
+    const u32 age = 3 * 86400;
+    u32 real = T0 + 8 * 86400 + 5000; // the real time, set again after a reset
+    u32 seen = T0 + 5000;             // the game time when the first reset happened
+    u32 offset = 0;
+    for (int cycle = 0; cycle < 6; cycle++) {
+        // The battery died: the clock restarts near 2000-01-01.
+        CHECK(clock_resolve(true, true, 100, seen, age, offset, &now, &off) == CLOCK_WAS_RESET);
+        CHECK(now == seen);
+        offset = off;
+        // The clock is set to the real time: far ahead of the den. NO.
+        CHECK(clock_resolve(true, false, real, seen, age, offset, &now, &off) == CLOCK_JUMPED);
+        u32 no = clock_forgive_jump(real, seen, offset, &off);
+        CHECK(off <= offset);
+        offset = off;
+        CHECK(no == real + offset);
+        CHECK(offset == 0 || no >= seen); // never gone back
+        CHECK(offset < 2 * real);         // bounded, whatever the number of cycles
+        seen = no + 3600;
+        real += 3600;
+    }
+    CHECK(offset == 0);
+    // Offset smaller than the jump: all of it goes, the rest is real time.
+    CHECK(clock_forgive_jump(1000, 500, 100, &off) == 1000 && off == 0);
+    // No offset: nothing to take out.
+    CHECK(clock_forgive_jump(1000, 500, 0, &off) == 1000 && off == 0);
 }
 
 static void test_pet_rebase(void) {
@@ -1771,7 +1815,8 @@ TEST_SUITE(
     {"litter_size_and_names", test_litter_size_and_names},
     {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
     {"den_save_round_trip", test_save_round_trip}, {"den_clock_resolve", test_clock_resolve},
-    {"den_pet_rebase", test_pet_rebase},
+    {"den_pet_rebase", test_pet_rebase}, {"den_save_clean_name", test_save_clean_name},
+    {"den_clock_forgive_jump", test_clock_forgive_jump},
     {"den_save_refuses_other_version", test_save_refuses_other_version},
     {"den_save_refuses_garbage", test_save_refuses_garbage}, {"pet_litter_due", test_litter_due},
     {"pet_care_refusals", test_care_refusals}, {"pet_play", test_play},

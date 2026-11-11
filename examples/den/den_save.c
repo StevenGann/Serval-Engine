@@ -38,8 +38,13 @@ static void limit(Cursor* c, bool w, u32 v, u32 max) {
 }
 
 static void name(Cursor* c, bool w, char* s) {
-    for (int i = 0; i < 9; i++)
-        s[i] = (char)field(c, w, (u8)s[i], 1);
+    bool ended = false; // writing: nothing after the first NUL is stored
+    for (int i = 0; i < 9; i++) {
+        u8 v = w && ended ? 0 : (u8)s[i];
+        if (w && !v)
+            ended = true;
+        s[i] = (char)field(c, w, v, 1);
+    }
     int n = 0;
     while (n < 9 && s[n])
         n++;

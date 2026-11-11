@@ -37,8 +37,9 @@
 //     after every life event
 //   - A mini-game inside the den (yarn.c, rules in yarn_rules.c, host-tested):
 //     YARN BAT, the kitten's. The den's own pictures are the court: its rock
-//     at the right is the far wall, the pet at the left the paw, and the
-//     yarn ball and its wavering thread are sprites
+//     at both sides are the walls, the roof the ceiling, and the pet runs the
+//     floor as the paw, batting the yarn ball up (breakout-style); the ball and
+//     its wavering thread are sprites
 //   - A second game with a scrolling world (climb.c, rules in climb_rules.c,
 //     host-tested): ACACIA CLIMB, the adolescent's. The trunk is a wrapping
 //     background layer and the sky another, both scrolled by the camera with
@@ -115,7 +116,7 @@
 //     grey while the pet is asleep, tired or gone); PET gives hearts and a
 //     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime (and, for a sick pet, health
 //     lifted to at least a fifth of the bar); LIGHTS puts the lights out or on (a click; the den
-//     goes dark but the world outside the mouth doesn't; START does the same from anywhere); STATUS
+//     goes dark but the world outside the mouth doesn't; START does the same from the bar); STATUS
 //     is a page of bars (FULL, FUN, ENERGY, HEALTH), age, time to growing up or to the litter, time
 //     since last care, mood and a warning once it is sad (12 h without care) or sick; ALBUM is the
 //     serval raised, newest first, one a page (LEFT and RIGHT turn them; ALBUM 1 OF N): a portrait
@@ -374,6 +375,7 @@ int main(void) {
             lived = true;
         } else {
             pet_advance(&save.pet, save.last_seen, clock_hour);
+            now = clock_decline_jump(save.last_seen); // the clock was set: not time passed
             pet_rebase(&save.pet, now);
         }
     }

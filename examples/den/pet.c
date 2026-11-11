@@ -5,7 +5,6 @@
 #include <string.h>
 
 #define NEED_MAX 10000
-#define MAX_STEPPED 2880 // minutes stepped one by one (48 h); the rest only ages the pet
 #define KITTEN_MINUTES 1440
 #define ADOLESCENT_MINUTES 4320
 #define LITTER_AGE PET_LITTER_MINUTES

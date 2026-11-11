@@ -22,6 +22,10 @@ ClockCheck clock_boot(u32 last_seen, u32 age, u32 saved_offset, u32* now) {
                          now, &game_offset);
 }
 
+u32 clock_decline_jump(u32 last_seen) {
+    return clock_forgive_jump(reading, last_seen, game_offset, &game_offset);
+}
+
 u32 clock_start(void) {
     read_clock();
     game_offset = 0;

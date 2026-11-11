@@ -131,7 +131,6 @@ void naming_run(char out[9], const char* title, const char* suggestion) {
         }
         frame_end();
     }
-    for (int i = 0; i <= len; i++)
-        out[i] = name[i];
-    out[len] = 0;
+    for (int i = 0; i < 9; i++) // all of it: nothing of an earlier name stays after the NUL
+        out[i] = i < len ? name[i] : 0;
 }

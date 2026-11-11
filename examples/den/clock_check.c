@@ -2,6 +2,12 @@
 
 #include "clock.h"
 
+u32 clock_forgive_jump(u32 raw, u32 last_seen, u32 offset, u32* new_offset) {
+    u32 jump = raw + offset - last_seen;
+    *new_offset = offset - (jump < offset ? jump : offset);
+    return raw + *new_offset;
+}
+
 ClockCheck clock_resolve(bool present, bool was_reset, u32 raw, u32 last_seen, u32 age, u32 offset,
                          u32* now, u32* new_offset) {
     if (!present) {

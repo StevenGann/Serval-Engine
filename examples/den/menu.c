@@ -233,7 +233,10 @@ static void draw_album(void) {
     text_set_style(TEXT_NORMAL);
     char age[16];
     events_duration(e->age_minutes, age); // as the boot's summary writes it
-    text_print_centered(14, text_format("GEN %u   AGE %s", (u32)e->generation, age));
+    if (e->age_minutes == 0)              // a visitor: nothing is known of its age
+        text_print_centered(14, text_format("GEN %u   VISITOR", (u32)e->generation));
+    else
+        text_print_centered(14, text_format("GEN %u   AGE %s", (u32)e->generation, age));
     text_print_centered(15, e->end == END_TOMBSTONE ? "AT REST" : "RAISED A LITTER");
     if (e->best[0] == 0 && e->best[1] == 0 && e->best[2] == 0) {
         text_print_centered(17, "NO GAMES PLAYED");
@@ -249,7 +252,8 @@ static void draw_album_sprites(void) {
     const AlbumEntry* e = album_get((u8)m.album_page);
     if (!e)
         return;
-    int stage = e->age_minutes < 1440   ? STAGE_KITTEN
+    int stage = e->age_minutes == 0     ? STAGE_ADULT // a visitor, grown
+                : e->age_minutes < 1440 ? STAGE_KITTEN
                 : e->age_minutes < 4320 ? STAGE_ADOLESCENT
                                         : STAGE_ADULT;
     int size = stage == STAGE_KITTEN ? 16 : 32;

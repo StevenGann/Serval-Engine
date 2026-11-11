@@ -7,7 +7,7 @@
 // the pet's stage unlocks (greyed while it can't play); STATUS and ALBUM are
 // full-screen pages (the album one serval a page, its portrait in its coat,
 // LEFT and RIGHT turning the pages). A refusal shows its reason on the line above the bar.
-// START puts the lights out or on, as a shortcut.
+// START puts the lights out or on from the bar, as a shortcut.
 //
 // Input: a button held when a screen opens does nothing until it is released
 // (a press after that is a new one), so the A that chose an icon is not also

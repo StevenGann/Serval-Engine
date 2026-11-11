@@ -37,6 +37,15 @@ typedef enum { CLOCK_OK, CLOCK_MISSING, CLOCK_WAS_RESET, CLOCK_WENT_BACK, CLOCK_
 ClockCheck clock_resolve(bool present, bool was_reset, u32 raw, u32 last_seen, u32 age, u32 offset,
                          u32* now, u32* new_offset);
 
+// The player said NO to a jump (CLOCK_JUMPED): the clock was set, not time
+// that passed. Takes the jump out of the offset (as far as the offset goes,
+// so repeated resets don't make it grow without limit) and returns the new
+// game time, which the pet is rebased to. `raw` is the clock's seconds.
+u32 clock_forgive_jump(u32 raw, u32 last_seen, u32 offset, u32* new_offset);
+
+// The same on the running clock: `last_seen` is the game time before the jump.
+u32 clock_decline_jump(u32 last_seen);
+
 // Reads the clock once at boot and checks it (clock_resolve()) against the
 // saved den; keeps the resulting offset for clock_now() and clock_offset().
 ClockCheck clock_boot(u32 last_seen, u32 age, u32 offset, u32* now);

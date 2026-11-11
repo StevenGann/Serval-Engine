@@ -183,7 +183,7 @@ thumbnail = { frame = 1655, keys = [
 
 [examples.den]
 title = "SERVAL DEN"
-summary = "A virtual serval that lives in real time by the cartridge clock (`rtc.h`): it grows from a kitten to an adult over days, gets hungry, sad or sick while the game is off (its life stepped minute by minute, host-tested), sleeps in its nest at night; a sandstone den drawn at boot with the sky through its mouth following the hour, coats by palette, saves"
+summary = "A virtual serval that lives in real time by the cartridge clock (`rtc.h`): it grows from a kitten to an adult over days, gets hungry, sad or sick while the game is off (its life stepped minute by minute, host-tested), sleeps in its nest at night; three mini-games that unlock as it grows (Yarn Bat, Acacia Climb, High Pounce), a litter of kittens in coats of their own, a tombstone and an album, a sandstone den whose sky follows the hour by palette writes, art drawn by C ahead of time, saves"
 tags = ["sprites", "animation", "effects", "save"]
 level = 3
 # The den with the new kitten named (START accepts the suggestion) and petted

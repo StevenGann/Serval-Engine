@@ -273,7 +273,7 @@ bool scenes_jump_in_play(DenSave* s, u32 now) {
         if (n > 0)
             card(ptrs, n);
     } else {
-        pet_rebase(p, now);
+        pet_rebase(p, clock_decline_jump(p->last_tick));
     }
     fade(0, SCREEN_BRIGHTNESS_MIN, 0, 0);
     back_to_den(p, false);
@@ -596,7 +596,7 @@ bool scenes_litter(DenSave* s) {
     naming_run(name, "NAME YOUR KITTEN", chosen);
     frame_begin();
     u32 age = pet_age_minutes(p, p->last_tick);
-    album_add_pet(vname, L.visitor, p->generation, END_LITTER, age, 0);
+    album_add_pet(vname, L.visitor, p->generation, END_LITTER, 0, 0); // age 0: a visitor
     album_add_pet(p->name, p->coat, p->generation, END_LITTER, age, s->best);
     pet_new(p, name, L.l.coats[L.sel], next_generation(p->generation), clock_now());
     s->stage_seen = STAGE_KITTEN;
