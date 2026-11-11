@@ -86,5 +86,7 @@ extern const TestSuite checkers_tests;
 extern const TestSuite boardgames_tests;
 // den: Serval Den's pet (examples/den/pet.c)
 extern const TestSuite den_tests;
+// life: the Game of Life example's rules and save (examples/life/life_rules.c)
+extern const TestSuite life_tests;
 
 #endif // SERVAL_TEST_H

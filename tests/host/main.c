@@ -46,6 +46,7 @@ int main(void) {
         &checkers_tests,      // boardgames: checkers moves, perft
         &boardgames_tests,    // boardgames: search, evaluations, match
         &den_tests,           // den: the pet's life
+        &life_tests,          // life: the rules, the step, the save
     };
     return test_run(suites, sizeof(suites) / sizeof(suites[0])) ? 1 : 0;
 }

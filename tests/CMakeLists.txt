@@ -439,6 +439,9 @@ else()
                    ../examples/den/clock_check.c ../examples/den/yarn_rules.c
                    ../examples/den/climb_rules.c ../examples/den/pounce_rules.c
                    ../examples/den/events.c)
+    # life: the Game of Life's rules, step and save, portable C tested here
+    target_sources(serval_host_tests PRIVATE life_tests.c ../examples/life/life_rules.c
+                   ../examples/life/life_save.c)
     serval_add_lz77(serval_host_tests lz77_tiles lz77/padded.inc
                     ../examples/platformer/castle_tiles.inc ../examples/platformer/dragon_tiles.inc)
     # debug link: the agent against a fake endpoint (link_tests.c), with a
