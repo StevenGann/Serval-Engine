@@ -13,12 +13,14 @@ void life_save_pack(u8* out, const LifeSettings* settings, const u32* grid) {
     out[7] = 0;
     for (int i = 0; i < 4; i++)
         out[8 + i] = (u8)(settings->generation >> (8 * i));
-    const u8* cells = (const u8*)grid;
+    // A word of four cells at a time: their alive bits (bit 5 of each byte)
+    // gathered into four bits, cell 0 the lowest.
     for (int i = 0; i < LIFE_CELLS / 8; i++) {
-        u32 bits = 0;
-        for (int b = 0; b < 8; b++)
-            bits |= (u32)life_alive(cells[i * 8 + b]) << b;
-        out[12 + i] = (u8)bits;
+        u32 a = grid[i * 2] >> 5 & 0x01010101u;
+        u32 b = grid[i * 2 + 1] >> 5 & 0x01010101u;
+        a = (a | a >> 7 | a >> 14 | a >> 21) & 0xFu;
+        b = (b | b >> 7 | b >> 14 | b >> 21) & 0xFu;
+        out[12 + i] = (u8)(a | b << 4);
     }
 }
 

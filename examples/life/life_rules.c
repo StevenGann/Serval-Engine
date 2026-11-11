@@ -18,21 +18,21 @@ const LifeRule life_rules[LIFE_RULE_COUNT] = {
 };
 
 void life_table_build(u8* table, const LifeRule* rule) {
-    for (u32 v = 0; v < LIFE_STATES; v++) {
-        for (u32 count = 0; count < 16; count++) {
+    for (u32 count = 0; count < LIFE_COUNTS; count++) {
+        for (u32 v = 0; v < LIFE_STATES; v++) {
             u8 next;
             if (life_alive(v)) {
-                u32 n = count - 1; // the count includes the cell itself
-                if (count >= 1 && count <= 9 && (rule->survive >> n & 1))
+                // The count includes the cell itself.
+                if (count >= 1 && (rule->survive >> (count - 1) & 1))
                     next = (u8)(v < LIFE_OLDEST ? v + 1 : v);
                 else
                     next = LIFE_TRAIL;
-            } else if (count <= 8 && (rule->birth >> count & 1)) {
+            } else if (rule->birth >> count & 1) {
                 next = LIFE_BORN;
             } else {
                 next = (u8)(v ? v - 1 : 0);
             }
-            table[v * 16 + count] = next;
+            table[count * LIFE_STATES + v] = next;
         }
     }
 }
@@ -43,13 +43,17 @@ static inline u32 alive4(u32 word) {
     return word >> 5 & 0x01010101u;
 }
 
-// The number of 1 bytes in a word of 0/1 bytes.
-static inline u32 ones4(u32 bytes) {
+// The sum of a word's four bytes, if it is below 256.
+static inline u32 bytes_sum(u32 bytes) {
     return bytes * 0x01010101u >> 24;
 }
 
+// The hash: (h + a) * 33 for each word's alive bytes a in turn, so where a
+// cell is counts as much as whether it is alive (an add and a shifted add a
+// word).
 static inline u32 hash_mix(u32 hash, u32 alive) {
-    return (hash ^ alive) * 16777619u;
+    hash += alive;
+    return hash + (hash << 5);
 }
 
 // The step, a row at a time. For each word of four cells: the live cells of
@@ -57,62 +61,123 @@ static inline u32 hash_mix(u32 hash, u32 alive) {
 // column, at most 3), then each column summed with its left and right
 // neighbours (at most 9, so no byte carries into the next), which is each
 // cell's 3 x 3 count with itself included; the table then gives each cell's
-// next value from its own and that count.
-SERVAL_IWRAM_CODE LifeStats life_step(const u32* from, u32* to, u32* page, const u8* table) {
-    u32 rows[3][LIFE_ROW_WORDS]; // the alive bytes of the rows above, on and below
-    u32 sums[LIFE_ROW_WORDS];
-    u32* above = rows[0];
-    u32* here = rows[1];
-    u32* below = rows[2];
-    const u32* last = from + (LIFE_H - 1) * LIFE_ROW_WORDS;
+// next value from its own and that count, two cells' table indices built at
+// once in a word's two halves.
+//
+// Each row of the grid is read once, into a ring of three rows on the stack
+// (IWRAM), with the row's column sums. A column's sum is taken
+// from the cells as they are: bit 5 (alive) masked out of each of the three
+// words, added (at most 0x60 a byte) and shifted down. The population and
+// births are summed a byte per column and added up once a row.
+#define ALIVE_BITS 0x20202020u
+static inline u32 column_sums(u32 a, u32 b, u32 c) {
+    return ((a & ALIVE_BITS) + (b & ALIVE_BITS) + (c & ALIVE_BITS)) >> 5;
+}
+
+// (h + 0) * 33, thirty times: an empty row's words.
+#define HASH_EMPTY_ROW 0xCCC4CFC1u
+
+SERVAL_IWRAM_CODE void life_step_rows(const u32* from, const u8* from_rows, u32* to, u8* to_rows,
+                                      u32* page, const u8* table, int y0, int y1, LifeStats* st) {
+    u32 ring[3][LIFE_ROW_WORDS];
+    u32 sums[LIFE_ROW_WORDS + 1]; // and the first again, after the last
+    u32* above = ring[0];
+    u32* here = ring[1];
+    u32* below = ring[2];
+    const u32* first = from + y0 * LIFE_ROW_WORDS;
+    const u32* before = from + (y0 ? y0 - 1 : LIFE_H - 1) * LIFE_ROW_WORDS;
     for (int w = 0; w < LIFE_ROW_WORDS; w++) {
-        above[w] = alive4(last[w]);
-        here[w] = alive4(from[w]);
+        above[w] = before[w];
+        here[w] = first[w];
     }
-    LifeStats st = {0, 0, 2166136261u};
-    for (int y = 0; y < LIFE_H; y++) {
-        const u32* cur = from + y * LIFE_ROW_WORDS;
-        const u32* next = from + (y + 1 < LIFE_H ? y + 1 : 0) * LIFE_ROW_WORDS;
-        for (int w = 0; w < LIFE_ROW_WORDS; w++) {
-            below[w] = alive4(next[w]);
-            sums[w] = above[w] + here[w] + below[w];
-        }
+    u32 hash = st->hash;
+    for (int y = y0; y < y1; y++) {
+        int next_y = y + 1 < LIFE_H ? y + 1 : 0;
         u32* out_row = to + y * LIFE_ROW_WORDS;
-        u32* page_row = page ? page + y * (LIFE_PAGE_STRIDE / 4) : 0;
-        u32 left_sum = sums[LIFE_ROW_WORDS - 1];
-        for (int w = 0; w < LIFE_ROW_WORDS; w++) {
-            u32 s = sums[w];
-            u32 right_sum = sums[w + 1 < LIFE_ROW_WORDS ? w + 1 : 0];
-            // The column to the left of each byte, and to the right (a
-            // little-endian word: byte 0 is the leftmost cell).
-            u32 count = s + (s << 8 | left_sum >> 24) + (s >> 8 | right_sum << 24);
-            u32 old = cur[w];
-            u32 out;
-            if ((old | count) == 0) {
-                out = 0;
-            } else {
-                out = table[(old & 63) << 4 | (count & 15)];
-                out |= (u32)table[(old >> 8 & 63) << 4 | (count >> 8 & 15)] << 8;
-                out |= (u32)table[(old >> 16 & 63) << 4 | (count >> 16 & 15)] << 16;
-                out |= (u32)table[(old >> 24 & 63) << 4 | (count >> 24 & 15)] << 24;
-                u32 now = alive4(out);
-                if (now) {
-                    st.population += ones4(now);
-                    st.births += ones4(now & ~here[w]);
-                }
+        u32* page_row = page ? page + y * (LIFE_PAGE_STRIDE / 4) : out_row;
+        if (from_rows && !from_rows[y ? y - 1 : LIFE_H - 1] && !from_rows[y] &&
+            !from_rows[next_y]) {
+            // Nothing in this row or beside it: it stays empty. The ring's
+            // next two rows are empty too.
+            if (to_rows[y]) {
+                for (int w = 0; w < LIFE_ROW_WORDS; w++)
+                    out_row[w] = 0;
+                to_rows[y] = 0;
             }
-            st.hash = hash_mix(st.hash, alive4(out));
-            out_row[w] = out;
-            if (page_row)
+            for (int w = 0; w < LIFE_ROW_WORDS; w++) {
+                page_row[w] = 0;
+                here[w] = 0;
+                below[w] = 0;
+            }
+            hash *= HASH_EMPTY_ROW;
+        } else {
+            const u32* src = from + next_y * LIFE_ROW_WORDS;
+            for (int w = 0; w < LIFE_ROW_WORDS; w++) {
+                u32 cells = src[w];
+                below[w] = cells;
+                sums[w] = column_sums(above[w], here[w], cells);
+            }
+            sums[LIFE_ROW_WORDS] = sums[0];
+            // The row's left and right neighbours wrap around.
+            u32 left_sum = sums[LIFE_ROW_WORDS - 1];
+            u32 sum = sums[0];
+            u32 born = 0, living = 0, busy = 0;
+            for (int w = 0; w < LIFE_ROW_WORDS; w++) {
+                u32 right_sum = sums[w + 1];
+                // The column to the left of each byte, and to the right (a
+                // little-endian word: byte 0 is the leftmost cell).
+                u32 count = sum + (sum << 8 | left_sum >> 24) + (sum >> 8 | right_sum << 24);
+                u32 old = here[w];
+                u32 out = 0;
+                if (old | count) {
+                    // Cells 0 and 2 in one word, 1 and 3 in the other:
+                    // count * 64 + value, at most 639 (values are below 64
+                    // and counts below 10, so one mask does for both).
+                    u32 even = (old & 0x00FF00FFu) | (count & 0x00FF00FFu) << 6;
+                    u32 odd = (old >> 8 & 0x00FF00FFu) | (count >> 8 & 0x00FF00FFu) << 6;
+                    out = (u32)table[even & 0xFFFF] | (u32)table[odd & 0xFFFF] << 8 |
+                          (u32)table[even >> 16] << 16 | (u32)table[odd >> 16] << 24;
+                    u32 now = alive4(out);
+                    living += now;
+                    born += now & ~alive4(old);
+                    hash += now;
+                    busy++;
+                }
+                hash = hash_mix(hash, 0);
+                out_row[w] = out;
                 page_row[w] = out;
-            left_sum = s;
+                left_sum = sum;
+                sum = right_sum;
+            }
+            st->population += bytes_sum(living); // each byte at most 30
+            st->births += bytes_sum(born);
+            st->busy += busy;
+            // Busy words that came out empty (trails gone) leave the row
+            // marked: a row marked but empty costs only the time.
+            if (to_rows)
+                to_rows[y] = busy != 0;
         }
         u32* t = above;
         above = here;
         here = below;
         below = t;
     }
+    st->hash = hash;
+}
+
+LifeStats life_step(const u32* from, u32* to, u32* page, const u8* table) {
+    LifeStats st = LIFE_STATS_START;
+    life_step_rows(from, NULL, to, NULL, page, table, 0, LIFE_H, &st);
     return st;
+}
+
+void life_rows_scan(const u32* grid, u8* rows) {
+    for (int y = 0; y < LIFE_H; y++) {
+        u32 any = 0;
+        for (int w = 0; w < LIFE_ROW_WORDS; w++)
+            any |= grid[y * LIFE_ROW_WORDS + w];
+        rows[y] = any != 0;
+    }
 }
 
 void life_draw(const u32* grid, u32* page) {
@@ -124,12 +189,17 @@ void life_draw(const u32* grid, u32* page) {
     }
 }
 
-LifeStats life_count(const u32* grid) {
-    LifeStats st = {0, 0, 2166136261u};
-    for (int i = 0; i < LIFE_WORDS; i++) {
-        u32 a = alive4(grid[i]);
-        st.population += ones4(a);
-        st.hash = hash_mix(st.hash, a);
+// In IWRAM too: every stamp, clear and soup counts the world.
+SERVAL_IWRAM_CODE LifeStats life_count(const u32* grid) {
+    LifeStats st = LIFE_STATS_START;
+    for (int y = 0; y < LIFE_H; y++) {
+        u32 living = 0;
+        for (int w = 0; w < LIFE_ROW_WORDS; w++) {
+            u32 a = alive4(*grid++);
+            living += a;
+            st.hash = hash_mix(st.hash, a);
+        }
+        st.population += bytes_sum(living);
     }
     return st;
 }
@@ -139,11 +209,18 @@ void life_clear(u32* grid) {
         grid[i] = 0;
 }
 
-void life_soup(u32* grid, u32 percent) {
-    u8* cells = (u8*)grid;
-    u32 threshold = percent * 65536u / 100u;
-    for (int i = 0; i < LIFE_CELLS; i++)
-        cells[i] = (random_u32() >> 16) < threshold ? LIFE_BORN : LIFE_EMPTY;
+void life_soup(u32* grid) {
+    // random.h's generator costs too much for 9,600 cells: it seeds a
+    // xorshift, whose every number makes four cells, each alive if two of
+    // its byte's bits are both set or four others are (1/4 + 3/4 * 1/16).
+    u32 x = random_u32() | 1u;
+    for (int i = 0; i < LIFE_WORDS; i++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        u32 alive = (x & x >> 1) | (x >> 2 & x >> 3 & x >> 4 & x >> 5);
+        grid[i] = (alive & 0x01010101u) * LIFE_BORN;
+    }
 }
 
 // --- Stamps ----------------------------------------------------------------
@@ -212,7 +289,7 @@ void life_stamp_make(LifeStamp* out, u32 pattern, u32 turns) {
     for (int y = 0; y < out->h; y++)
         for (int x = 0; x < out->w; x++)
             out->cells[y][x] = rows[y][x] == '#';
-    static LifeStamp spare;
+    static LifeStamp spare SERVAL_EWRAM_BSS;
     for (u32 t = 0; t < (turns & 3); t++) {
         life_stamp_rotate(out, &spare);
         *out = spare;

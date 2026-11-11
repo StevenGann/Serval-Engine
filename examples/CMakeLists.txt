@@ -152,6 +152,14 @@ serval_add_rom(den SOURCES den/main.c den/pet.c den/litter.c den/album.c den/den
                TITLE "SERVAL DEN" GAME_CODE "SVDN")
 target_link_libraries(den PRIVATE serval_warnings)
 
+# LIFE, Conway's Game of Life on the pixel surface: a portable core (the
+# rules, the step, the stamps, the save; tested on the host in tests/) and
+# the GBA side (the world on screen, the menus, the art, the sound).
+serval_add_rom(life SOURCES life/main.c life/life_rules.c life/life_save.c life/game.c
+               life/title.c life/menu.c life/label.c life/art.c life/sound.c
+               TITLE "LIFE" GAME_CODE "SVLF")
+target_link_libraries(life PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -168,4 +176,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(rhythm)
     serval_add_rom_checks(boardgames)
     serval_add_rom_checks(den)
+    serval_add_rom_checks(life)
 endif()

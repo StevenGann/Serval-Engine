@@ -28,7 +28,7 @@ static void put(u32* grid, int x, int y, const char* const* rows, int count) {
 
 // `n` generations from grid_a; the result is left in grid_a.
 static LifeStats run(int n) {
-    LifeStats st = {0, 0, 0};
+    LifeStats st = LIFE_STATS_START;
     for (int i = 0; i < n; i++) {
         st = life_step(grid_a, grid_b, NULL, table);
         memcpy(grid_a, grid_b, sizeof grid_a);
@@ -169,7 +169,7 @@ static void test_step_matches_reference(void) {
     for (u32 rule = 0; rule < LIFE_RULE_COUNT; rule++) {
         use_rule(rule);
         const LifeRule* r = &life_rules[rule];
-        life_soup(grid_a, 35);
+        life_soup(grid_a);
         for (int gen = 0; gen < 6; gen++) {
             u32 pop = 0, births = 0;
             for (int y = 0; y < LIFE_H; y++) {
@@ -209,10 +209,73 @@ static void test_step_matches_reference(void) {
     }
 }
 
+static void test_step_in_parts(void) {
+    static LifeGrid whole;
+    random_seed(31);
+    use_rule(LIFE_RULE_CONWAY);
+    life_soup(grid_a);
+    LifeStats a = life_step(grid_a, whole, NULL, table);
+    LifeStats b = LIFE_STATS_START;
+    life_step_rows(grid_a, NULL, grid_b, NULL, NULL, table, 0, 37, &b);
+    life_step_rows(grid_a, NULL, grid_b, NULL, NULL, table, 37, LIFE_H, &b);
+    CHECK(memcmp(whole, grid_b, sizeof whole) == 0);
+    CHECK(a.population == b.population && a.births == b.births && a.hash == b.hash);
+    CHECK(a.busy == b.busy && a.busy > 0 && a.busy <= LIFE_WORDS);
+    // An empty world: nothing to work out.
+    life_clear(grid_a);
+    CHECK(life_step(grid_a, grid_b, NULL, table).busy == 0);
+}
+
+// Skipping the rows with nothing near: the same generations, the same
+// stats, for a world with empty bands (and the rows marks kept right).
+static void test_step_skips_empty_rows(void) {
+    static LifeGrid plain_a, plain_b, skip_a, skip_b;
+    static u8 rows_a[LIFE_H], rows_b[LIFE_H];
+    static u32 page[LIFE_PAGE_STRIDE / 4 * LIFE_H];
+    use_rule(LIFE_RULE_CONWAY);
+    life_clear(plain_a);
+    static LifeStamp s;
+    life_stamp_make(&s, LIFE_PAT_GOSPER_GUN, 0);
+    life_stamp_put(plain_a, &s, 40, 20);
+    life_stamp_make(&s, LIFE_PAT_ACORN, 0);
+    life_stamp_put(plain_a, &s, 80, 60);
+    life_set(plain_a, 3, 79, LIFE_BORN); // a lone cell on the last row: wraps to the first
+    memcpy(skip_a, plain_a, sizeof plain_a);
+    life_rows_scan(skip_a, rows_a);
+    memset(rows_b, 1, sizeof rows_b);
+    memset(skip_b, 0x21, sizeof skip_b); // garbage the step must clear
+    bool same = true;
+    for (int gen = 0; gen < 120; gen++) {
+        memset(page, 0x55, sizeof page);
+        LifeStats p = life_step(plain_a, plain_b, NULL, table);
+        LifeStats q = LIFE_STATS_START;
+        life_step_rows(skip_a, rows_a, skip_b, rows_b, page, table, 0, 40, &q);
+        life_step_rows(skip_a, rows_a, skip_b, rows_b, page, table, 40, LIFE_H, &q);
+        same = same && memcmp(plain_b, skip_b, sizeof plain_b) == 0;
+        same = same && p.population == q.population && p.births == q.births && p.hash == q.hash;
+        same = same && q.busy <= p.busy;
+        for (int y = 0; y < LIFE_H; y++) {
+            same = same && memcmp((const u8*)page + y * LIFE_PAGE_STRIDE,
+                                  (const u8*)skip_b + y * LIFE_W, LIFE_W) == 0;
+            u32 any = 0;
+            for (int w = 0; w < LIFE_ROW_WORDS; w++)
+                any |= skip_b[y * LIFE_ROW_WORDS + w];
+            same = same && (any == 0 || rows_b[y]); // never marked empty wrongly
+        }
+        memcpy(plain_a, plain_b, sizeof plain_a);
+        memcpy(skip_a, skip_b, sizeof skip_a);
+        u8 t[LIFE_H];
+        memcpy(t, rows_a, sizeof t);
+        memcpy(rows_a, rows_b, sizeof t);
+        memcpy(rows_b, t, sizeof t);
+    }
+    CHECK(same);
+}
+
 static void test_draw_and_hash(void) {
     static u32 page[LIFE_PAGE_STRIDE / 4 * LIFE_H];
     random_seed(5);
-    life_soup(grid_a, 30);
+    life_soup(grid_a);
     life_draw(grid_a, page);
     CHECK(memcmp((const u8*)page + 7 * LIFE_PAGE_STRIDE, (const u8*)grid_a + 7 * LIFE_W, LIFE_W) ==
           0);
@@ -223,8 +286,8 @@ static void test_draw_and_hash(void) {
     life_clear(grid_a);
     life_set(grid_a, 4, 3, LIFE_BORN);
     CHECK(life_count(grid_a).hash != h1);
-    // A soup is about the density asked for.
-    life_soup(grid_a, 30);
+    // A soup is about 30% alive.
+    life_soup(grid_a);
     u32 pop = life_count(grid_a).population;
     CHECK(pop > LIFE_CELLS * 25 / 100 && pop < LIFE_CELLS * 35 / 100);
 }
@@ -293,7 +356,7 @@ static void test_save_round_trip(void) {
     static u8 bytes[LIFE_SAVE_BYTES];
     static LifeGrid back;
     random_seed(9);
-    life_soup(grid_a, 30);
+    life_soup(grid_a);
     life_set(grid_a, 1, 1, 5); // a trail: saved as empty
     LifeSettings s = {LIFE_RULE_MAZE, 3, 6, 1, LIFE_PAT_ACORN, 2, 123456};
     life_save_pack(bytes, &s, grid_a);
@@ -345,6 +408,8 @@ TEST_SUITE(life_tests, "life", {"life_blinker_period_2", test_blinker_period_2},
            {"life_highlife_b6", test_highlife_b6}, {"life_seeds", test_seeds},
            {"life_ages_cap", test_ages_cap}, {"life_trails_fade", test_trails_fade},
            {"life_step_matches_reference", test_step_matches_reference},
+           {"life_step_in_parts", test_step_in_parts},
+           {"life_step_skips_empty_rows", test_step_skips_empty_rows},
            {"life_draw_and_hash", test_draw_and_hash}, {"life_stamp_rotation", test_stamp_rotation},
            {"life_stamp_put", test_stamp_put}, {"life_save_round_trip", test_save_round_trip},
            {"life_save_refuses", test_save_refuses});
