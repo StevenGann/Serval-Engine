@@ -221,6 +221,105 @@ static const PsgSound sounds[SND_COUNT] = {
                      .priority = 2},
 };
 
+// --- Tunes (PsgSong, once each) ---------------------------------------------------------------
+
+// Growing up: a rising call and its answer.
+static const PsgNote grow_lead[] = {
+    {PSG_C5, 2},   {PSG_E5, 2}, {PSG_G5, 2}, {PSG_C6, 4},
+    {PSG_REST, 2}, {PSG_G5, 2}, {PSG_C6, 2}, {PSG_E6, 8},
+};
+static const PsgNote grow_bass[] = {
+    {PSG_C4, 6}, {PSG_G4, 4}, {PSG_REST, 2}, {PSG_E4, 4}, {PSG_C5, 8},
+};
+static const PsgTrack grow_tracks[] = {
+    {.channel = PSG_SQUARE1,
+     .duty = PSG_DUTY_25,
+     .volume = 11,
+     .fade = -1,
+     .notes = grow_lead,
+     .note_count = 8,
+     .loop = PSG_NO_LOOP},
+    {.channel = PSG_SQUARE2,
+     .duty = PSG_DUTY_50,
+     .volume = 7,
+     .fade = -1,
+     .notes = grow_bass,
+     .note_count = 5,
+     .loop = PSG_NO_LOOP},
+};
+static const PsgSong grow_song = {.tempo = 150, .tracks = grow_tracks, .track_count = 2};
+
+// The litter: a bouncing tune that settles home.
+static const PsgNote litter_lead[] = {
+    {PSG_E5, 2}, {PSG_G5, 2}, {PSG_A5, 4}, {PSG_G5, 2}, {PSG_E5, 2}, {PSG_D5, 4},
+    {PSG_E5, 2}, {PSG_G5, 2}, {PSG_A5, 2}, {PSG_B5, 2}, {PSG_C6, 8},
+};
+static const PsgNote litter_bass[] = {
+    {PSG_C4, 4}, {PSG_G4, 4}, {PSG_A3, 4}, {PSG_G3, 4}, {PSG_F4, 4}, {PSG_G4, 4}, {PSG_C4, 8},
+};
+static const PsgTrack litter_tracks[] = {
+    {.channel = PSG_SQUARE1,
+     .duty = PSG_DUTY_12,
+     .volume = 11,
+     .fade = -1,
+     .notes = litter_lead,
+     .note_count = 11,
+     .loop = PSG_NO_LOOP},
+    {.channel = PSG_SQUARE2,
+     .duty = PSG_DUTY_50,
+     .volume = 7,
+     .fade = -1,
+     .notes = litter_bass,
+     .note_count = 7,
+     .loop = PSG_NO_LOOP},
+};
+static const PsgSong litter_song = {.tempo = 132, .tracks = litter_tracks, .track_count = 2};
+
+// The tombstone: slow and quiet, in A minor, ending on the low A.
+static const PsgNote tomb_lead[] = {
+    {PSG_A4, 4}, {PSG_C5, 4}, {PSG_E5, 8}, {PSG_D5, 4},  {PSG_C5, 4},
+    {PSG_B4, 8}, {PSG_C5, 4}, {PSG_B4, 4}, {PSG_A4, 16},
+};
+static const PsgNote tomb_bass[] = {
+    {PSG_A3, 16},
+    {PSG_F3, 8},
+    {PSG_G3, 8},
+    {PSG_A3, 16},
+};
+static const PsgTrack tomb_tracks[] = {
+    {.channel = PSG_SQUARE2,
+     .duty = PSG_DUTY_12,
+     .volume = 8,
+     .fade = -1,
+     .notes = tomb_lead,
+     .note_count = 9,
+     .loop = PSG_NO_LOOP},
+    {.channel = PSG_SQUARE1,
+     .duty = PSG_DUTY_50,
+     .volume = 5,
+     .fade = -1,
+     .notes = tomb_bass,
+     .note_count = 4,
+     .loop = PSG_NO_LOOP},
+};
+static const PsgSong tomb_song = {.tempo = 72, .tracks = tomb_tracks, .track_count = 2};
+
+void sound_fanfare_grow(void) {
+    psg_music_play(&grow_song);
+}
+
+void sound_fanfare_litter(void) {
+    psg_music_play(&litter_song);
+}
+
+void sound_tune_tomb(void) {
+    psg_music_play(&tomb_song);
+}
+
+void sound_tune_stop(void) {
+    psg_music_stop();
+}
+
 static const PsgSound* sound_table[SND_COUNT];
 
 void sound_init(void) {

@@ -1448,7 +1448,7 @@ static void draw_pet(int stage, int frame) {
 // --- Small sprites ------------------------------------------------------------------------------
 
 // PAL_ITEMS's colours.
-static const char item_keys[] = " Kdbhcmpwrqgsty";
+static const char item_keys[] = " Kdbhcmpwrqgstyv"; // v: the stems' green (index 15)
 static const char* const drop_art[DROP_FRAMES][8] = {
     {"........", "........", "........", "...KK...", "..KhbK..", ".KhbbdK.", "KbbdbddK",
      ".KKKKKK."},
@@ -1495,6 +1495,14 @@ static const char* const tomb_art[16] = {
     "...KtsKsKssgK...", "...KtsKsKssgK...", "...KtsssssggK...", "...KtsKKKsggK...",
     "...KtssssgggK...", "...KtsKKKgggK...", "...KtssssgggK...", "...KssggggggK...",
     ".y.KKKKKKKKKKy..", "yKy.y.....y.yKy.", ".y..Ky...yK..y..", "KKKKKKKKKKKKKKKK",
+};
+
+// Flowers laid by the tombstone: a gold one and a pink one.
+static const char* const flower_art[FLOWER_FRAMES][8] = {
+    {"........", "..y.y...", ".yywyy..", "..yyy...", "...v....", ".v.v....", "..vv.v..",
+     "...vv..."},
+    {"........", "...q....", "..qrq...", ".qrwrq..", "..qrq...", "...v.v..", "..vvv...",
+     "...v...."},
 };
 
 // The lamp: a jar of fireflies on a cord, lit (two flickers) or dark.
@@ -1617,6 +1625,14 @@ static u32* build_small(u32* out) {
     tiles = out;
     out = pack(16, 16, out);
     sprite(SPR_TOMB, SPRITE_16x16, 1, PAL_ITEMS, tiles);
+
+    tiles = out;
+    for (int f = 0; f < FLOWER_FRAMES; f++) {
+        canvas_clear();
+        paint(flower_art[f], 8, item_keys, 0, 0);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_FLOWER, SPRITE_8x8, FLOWER_FRAMES, PAL_ITEMS, tiles);
     return out;
 }
 

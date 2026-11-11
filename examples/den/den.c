@@ -230,25 +230,56 @@ static void draw_hud(const Pet* p, u32 now) {
     text_print(24, 0, text_format("%02u:%02u", (u32)t.hour, (u32)t.minute));
 }
 
+// The palettes for the hour, the lights and the serval's health, when they
+// change.
+static void set_colors(const Pet* p, bool lights_off, int tod) {
+    int sick = p->dead ? 0 : p->sickness;
+    if (tod != shown_tod || (int)lights_off != shown_lights) {
+        art_set_scene(tod, lights_off);
+        shown_sick = -1;
+    }
+    if (tod != shown_tod || (int)lights_off != shown_lights || sick != shown_sick) {
+        art_set_pet(p->coat, sick, tod, lights_off);
+        shown_tod = tod;
+        shown_lights = lights_off;
+        shown_sick = sick;
+    }
+}
+
+// The lamp, the sun and the moon, behind everything a scene draws.
+static void draw_scenery(bool lights_off, u32 now) {
+    u32 f = frame_count();
+    map_set_scroll(SKY_BG, (int)(f / 12), 0); // the clouds drift
+    sprite_draw(SPR_LAMP, lights_off ? 2 : (u8)((f / 14) & 1), LAMP_X, LAMP_Y, 0);
+    u32 day = now % 86400;
+    int sx, sy;
+    if (sky_arc(day, 5 * 3600, 16 * 3600, &sx, &sy))
+        sprite_draw(SPR_SUN, 0, sx, sy, SPRITE_BEHIND_PLAYFIELD);
+    if (sky_arc(day, 20 * 3600, 10 * 3600, &sx, &sy))
+        sprite_draw(SPR_MOON, 0, sx, sy, SPRITE_BEHIND_PLAYFIELD);
+}
+
+void den_draw_scene(const Pet* p, u32 now, bool lights_off) {
+    set_colors(p, lights_off, art_time_of_day(clock_hour(now)));
+    draw_scenery(lights_off, now);
+}
+
+void den_pet_spot(int* x, int* y) {
+    *x = cat.x / 16;
+    *y = cat.y / 16;
+}
+
+bool den_pet_left(void) {
+    return cat.left;
+}
+
 void den_draw(const Pet* p, u32 now) {
     u32 f = frame_count();
     u32 t = p->last_tick;
     int stage = (int)pet_stage(p, t);
     PetMood mood = pet_mood(p, t);
-    int tod = art_time_of_day(clock_hour(now));
-    int sick = p->dead ? 0 : p->sickness;
-    if (tod != shown_tod || (int)p->lights_off != shown_lights) {
-        art_set_scene(tod, p->lights_off);
-        shown_sick = -1;
-    }
-    if (tod != shown_tod || (int)p->lights_off != shown_lights || sick != shown_sick) {
-        art_set_pet(p->coat, sick, tod, p->lights_off);
-        shown_tod = tod;
-        shown_lights = p->lights_off;
-        shown_sick = sick;
-    }
+    set_colors(p, p->lights_off, art_time_of_day(clock_hour(now)));
     draw_hud(p, now);
-    map_set_scroll(SKY_BG, (int)(f / 12), 0); // the clouds drift
 
     // Front to back: effects, the serval and the things on the floor by
     // depth, the lamp; the sun and the moon behind the den.
@@ -324,12 +355,5 @@ void den_draw(const Pet* p, u32 now) {
         if ((f / 20 + (u32)i * 7) % 6 == 0)
             sprite_draw(SPR_DROP, 2, drop_spot[i][0] - 3, drop_spot[i][1] - 16, 0);
 
-    sprite_draw(SPR_LAMP, p->lights_off ? 2 : (u8)((f / 14) & 1), LAMP_X, LAMP_Y, 0);
-
-    u32 day = now % 86400;
-    int sx, sy;
-    if (sky_arc(day, 5 * 3600, 16 * 3600, &sx, &sy))
-        sprite_draw(SPR_SUN, 0, sx, sy, SPRITE_BEHIND_PLAYFIELD);
-    if (sky_arc(day, 20 * 3600, 10 * 3600, &sx, &sy))
-        sprite_draw(SPR_MOON, 0, sx, sy, SPRITE_BEHIND_PLAYFIELD);
+    draw_scenery(p->lights_off, now);
 }

@@ -9,9 +9,10 @@
 #include <serval/core.h>
 
 // Runs the page until the player accepts a name (END, or START; at least one
-// letter), and writes it to `out` (8 letters and a NUL). Clears the text on
-// the way out. Call with the screen visible and the buttons held at entry
-// ignored until released.
-void naming_run(char out[9]);
+// letter), and writes it to `out` (8 letters and a NUL). `title` heads the
+// page; `suggestion` is the name filled in to start with (NULL: a random one
+// from litter_names). Clears the text on the way out. Call with the screen
+// visible; buttons held at entry are ignored until released.
+void naming_run(char out[9], const char* title, const char* suggestion);
 
 #endif // DEN_NAMING_H

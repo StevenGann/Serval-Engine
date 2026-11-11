@@ -40,6 +40,7 @@ static struct {
     bool list_dirty; // the list's text needs drawing
     int list_stage;  // the pet's stage when it was drawn (greyed games)
     int strip_len;   // the label row's text, in characters (0: none)
+    int album_page;  // the album's entry shown (0: the newest)
 } m;
 
 void menu_set_game(int game, MenuGameFn fn) {
@@ -83,6 +84,16 @@ void menu_init(void) {
     lock_input();
 }
 
+void menu_resume(void) {
+    set_styles();
+    m.mode = M_BAR;
+    m.shown_label = -1;
+    m.message_timer = 0;
+    m.press_timer = 0;
+    m.strip_len = 0;
+    lock_input();
+}
+
 bool menu_covers_den(void) {
     return m.mode == M_STATUS || m.mode == M_ALBUM;
 }
@@ -94,9 +105,13 @@ static void tick(void) {
     frame_begin();
 }
 
+static void draw_album_sprites(void);
+
 static void page_sprites(const Pet* p) {
     if (m.mode == M_STATUS)
         status_draw(p, clock_now());
+    else if (m.mode == M_ALBUM)
+        draw_album_sprites();
 }
 
 static void fade(const Pet* p, int from, int to, bool draw) {
@@ -194,21 +209,57 @@ static void page_dark(void) {
     status_reset();
 }
 
+// The album: one serval a page, newest first. The portrait (menu_draw()) is
+// the serval at the stage it reached, in its coat (PAL_COAT1), twice its size.
 static void draw_album(void) {
     text_clear();
-    text_set_style(TEXT_HIGHLIGHT);
-    text_print_centered(1, "ALBUM");
-    text_set_style(TEXT_NORMAL);
     u8 n = album_count();
-    if (n == 0)
-        text_print_centered(9, "NO ONE YET");
-    for (u8 i = 0; i < n && i < 14; i++) {
-        const AlbumEntry* e = album_get(i);
-        text_print(3, 3 + i,
-                   text_format("%-8s GEN %-2u %s", e->name, (u32)e->generation,
-                               e->end == END_TOMBSTONE ? "TOMBSTONE" : "LITTER"));
+    text_set_style(TEXT_HIGHLIGHT);
+    text_print_centered(1, n > 1 ? text_format("ALBUM  %u OF %u", (u32)m.album_page + 1, (u32)n)
+                                 : "ALBUM");
+    text_set_style(TEXT_NORMAL);
+    text_print_centered(19, n > 1 ? "LEFT RIGHT PAGE   B BACK" : "B BACK");
+    const AlbumEntry* e = album_get((u8)m.album_page);
+    if (!e) {
+        text_print_centered(8, "NO ONE YET");
+        text_print_centered(10, "THE SERVAL YOU RAISE");
+        text_print_centered(11, "ARE KEPT HERE");
+        return;
     }
-    text_print_centered(19, "B BACK");
+    art_set_coat(PAL_COAT1, e->coat, 0, TOD_DAY, false);
+    text_set_style(TEXT_HIGHLIGHT);
+    text_print_centered(13, e->name);
+    text_set_style(TEXT_NORMAL);
+    text_print_centered(
+        14, text_format("GEN %u   AGE %s", (u32)e->generation, status_duration(e->age_minutes)));
+    text_print_centered(15, e->end == END_TOMBSTONE ? "AT REST" : "RAISED A LITTER");
+    if (e->best[0] == 0 && e->best[1] == 0 && e->best[2] == 0) {
+        text_print_centered(17, "NO GAMES PLAYED");
+    } else {
+        text_print_centered(16, "DEN RECORDS THEN");
+        text_print_centered(17, text_format("BAT %u  CLIMB %uM  POUNCE %u", (u32)e->best[0],
+                                            (u32)e->best[1], (u32)e->best[2]));
+    }
+}
+
+// The album page's sprites: the portrait in a frame, a stone or a heart by it.
+static void draw_album_sprites(void) {
+    const AlbumEntry* e = album_get((u8)m.album_page);
+    if (!e)
+        return;
+    int stage = e->age_minutes < 1440   ? STAGE_KITTEN
+                : e->age_minutes < 4320 ? STAGE_ADOLESCENT
+                                        : STAGE_ADULT;
+    int size = stage == STAGE_KITTEN ? 16 : 32;
+    // Twice its size round its middle, its feet at y 92.
+    int cy = 92 - size;
+    sprite_draw_ex((u16)(SPR_KITTEN + stage), PF_STAND, 120 - size / 2, cy - size / 2, 0, FX(2),
+                   FX(2), SPRITE_PALETTE(PAL_COAT1));
+    if (e->end == END_TOMBSTONE)
+        sprite_draw(SPR_TOMB, 0, 134, 77, 0);
+    else
+        sprite_draw(SPR_HEART, (u8)((frame_count() / 30) & 1), 140, 40, 0);
+    art_draw_panel(80, 20, 5, 5);
 }
 
 static void open_page(Pet* p, Mode mode) {
@@ -216,8 +267,10 @@ static void open_page(Pet* p, Mode mode) {
     m.mode = mode;
     art_hide();
     page_dark();
-    if (mode == M_ALBUM)
+    if (mode == M_ALBUM) {
+        m.album_page = 0;
         draw_album();
+    }
     menu_fade_in(p, false);
     lock_input();
 }
@@ -366,8 +419,21 @@ bool menu_update(Pet* p, u32 now) {
             draw_list(p);
         }
         break;
-    case M_STATUS:
     case M_ALBUM:
+        if (album_count() > 1) {
+            int n = album_count(), turn = repeated(BUTTON_RIGHT)  ? 1
+                                          : repeated(BUTTON_LEFT) ? -1
+                                                                  : 0;
+            if (turn) {
+                m.album_page = (m.album_page + n + turn) % n;
+                draw_album();
+                break;
+            }
+        }
+        if (pressed(BUTTON_B) || pressed(BUTTON_A))
+            close_page(p);
+        break;
+    case M_STATUS:
         if (pressed(BUTTON_B) || pressed(BUTTON_A))
             close_page(p);
         break;
@@ -386,8 +452,10 @@ void menu_draw(const Pet* p, u32 now) {
         status_draw(p, now);
         return;
     }
-    if (m.mode == M_ALBUM)
+    if (m.mode == M_ALBUM) {
+        draw_album_sprites();
         return;
+    }
     if (m.press_timer > 0)
         m.press_timer--;
     int x = BAR_X0 + m.sel * BAR_PITCH;

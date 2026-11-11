@@ -30,6 +30,13 @@ void sound_knock(void);
 // a catch sound_mew(), a swat sound_bat(), a miss sound_miss().)
 void sound_rustle(int loudness);
 void sound_flutter(void);
+// Life events (scenes.c): short tunes on the PSG's squares, played once: a
+// fanfare when the serval grows up, a brighter one for the litter, and a
+// soft, slow tune at the tombstone. sound_tune_stop() ends one early.
+void sound_fanfare_grow(void);
+void sound_fanfare_litter(void);
+void sound_tune_tomb(void);
+void sound_tune_stop(void);
 // Now and then, through the mouth: birds by day, crickets at night. Call once
 // a frame with the time of day (art.h's TOD_*).
 void sound_ambient(int tod);

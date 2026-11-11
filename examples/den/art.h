@@ -75,6 +75,7 @@ enum {
     SPR_FEATHER, // 8x8: FEATHER_FRAMES, a feather falling (PAL_FIELD)
     SPR_CUE,     // 8x8: CUE_FRAMES, the ears' arrow: left, right (PAL_FIELD)
     SPR_SEED,    // 8x8: SEED_FRAMES, a seed head of the grass, thrown up by a miss (PAL_FIELD)
+    SPR_FLOWER,  // 8x8: FLOWER_FRAMES, a flower laid by the tombstone (PAL_ITEMS)
     SPRITE_COUNT,
 };
 
@@ -118,6 +119,7 @@ enum {
 #define FEATHER_FRAMES 3
 #define CUE_FRAMES 2
 #define SEED_FRAMES 2
+#define FLOWER_FRAMES 2
 
 // SPR_BRANCH's pieces (drawn pointing right, root at the left; flipped for a
 // bough on the left; the crown's top, where the serval's feet are, is row 4): the root at the
@@ -152,6 +154,11 @@ enum {
     PAL_TREE_DRY,  // the same in dry wood, for a bough that will snap
     PAL_FIELD, // High Pounce's grass, mouse, bird, feathers and arrow: art_set_scene follows the
                // hour
+    PAL_COAT1, // five more coats (art_set_coat), for the visitor, the litter and the album's
+    PAL_COAT2, // portraits: the serval's sprites drawn with SPRITE_PALETTE(PAL_COATn), so
+    PAL_COAT3, // that six coats can be on the screen at once
+    PAL_COAT4,
+    PAL_COAT5,
     OBJ_PALETTES,
 };
 
@@ -163,6 +170,12 @@ void art_pet_colors(Coat coat, Color tint, u32 amount, Color out[16]);
 // `sick` 0 (well), 1 or 2 tints it blue, then the hour's light and the
 // lights off as for the den (palette writes, in VBlank).
 void art_set_pet(Coat coat, int sick, int tod, bool lights_off);
+
+// The same into another palette (PAL_PET or PAL_COAT1-5).
+void art_set_coat(int palette, Coat coat, int sick, int tod, bool lights_off);
+
+// Every colour of a palette white (a flash; art_set_coat() puts it back).
+void art_flash_coat(int palette);
 
 // --- Loading ------------------------------------------------------------------
 

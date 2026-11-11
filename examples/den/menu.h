@@ -5,7 +5,8 @@
 // CLEAN, MEDICINE, LIGHTS, STATUS, ALBUM). Left and right choose, A acts, B
 // backs out of a list or page. FEED asks meal or treat; PLAY lists the games
 // the pet's stage unlocks (greyed while it can't play); STATUS and ALBUM are
-// full-screen pages. A refusal shows its reason on the line above the bar.
+// full-screen pages (the album one serval a page, its portrait in its coat,
+// LEFT and RIGHT turning the pages). A refusal shows its reason on the line above the bar.
 // START puts the lights out or on, as a shortcut.
 //
 // Input: a button held when a screen opens does nothing until it is released
@@ -37,6 +38,11 @@ bool menu_update(Pet* p, u32 now);
 // Draws the bar, a page's sprites. Call before den_draw() (the first sprite
 // drawn is in front).
 void menu_draw(const Pet* p, u32 now);
+
+// Back to the bar after a scene (scenes.c) took the screen: no list or page
+// open, the label redrawn, the buttons held ignored until released. The
+// chosen icon is kept.
+void menu_resume(void);
 
 // True while a full-screen page hides the den: skip den_draw().
 bool menu_covers_den(void);

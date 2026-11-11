@@ -30,9 +30,11 @@
 //     off; the sun and the moon as sprites behind the den
 //     (SPRITE_BEHIND_PLAYFIELD) following the hour across the mouth, setting
 //     behind the far hills
-//   - Saves (den_save.c, save.h): the pet, the album and the time last seen,
-//     written every 5 minutes of play, after every care action and at every
-//     change of stage or mood
+//   - Saves (den_save.c, save.h): the pet, the album, the games' best scores
+//     (the den's records, kept from one generation to the next), the stage
+//     last shown growing up and the time last seen, written every 5 minutes
+//     of play, after every care action, at every change of stage or mood and
+//     after every life event
 //   - A mini-game inside the den (yarn.c, rules in yarn_rules.c, host-tested):
 //     YARN BAT, the kitten's. The den's own pictures are the court: its rock
 //     at the right is the far wall, the pet at the left the paw, and the
@@ -50,7 +52,18 @@
 //     over the serval's head points to the rustle it last heard), a leap whose
 //     arc and reach are constants of the rules
 //   - PSG sounds (sound.c): a purr, crunches, the serval's chirp, birds by
-//     day and crickets at night
+//     day and crickets at night; short songs played once (PsgSong,
+//     psg_music_play()) for growing up, the litter and the tombstone
+//   - Life events (events.c, host-tested; scenes.c on screen): the time away
+//     lived minute by minute at boot and summed up, growing up shown once per
+//     stage (the stage last shown is saved), the litter, the tombstone, the
+//     album; a clock that jumps more than 30 days (at boot, or on a web page
+//     while it runs) is asked about
+//   - Several coats on the screen at once: the serval's pictures drawn with
+//     five more sprite palettes (SPRITE_PALETTE()), one per coat, for the
+//     visitor and up to four kittens beside the pet; enlarged sprites
+//     (sprite_draw_ex()) for the growing serval, the stone and the album's
+//     portraits
 //
 // What to expect when booting the ROM:
 //   - The Serval Engine splash. Without a cartridge clock (mGBA without its
@@ -58,7 +71,16 @@
 //     screen saying SERVAL DEN NEEDS A CARTRIDGE CLOCK and, under it, IN MGBA:
 //     TOOLS > GAME OVERRIDES > REALTIME CLOCK, and nothing else, for good.
 //   - With a clock, SERVAL DEN in gold on black for a second (longer when
-//     the time away is long: it is lived then), then the den fades in:
+//     the time away is long: it is lived then). Then, on the dark screen, a
+//     card if there is news (PRESS A goes on): THE CARTRIDGE CLOCK WAS RESET.
+//     TIME AWAY WAS NOT COUNTED. if the clock started over; THE CLOCK JUMPED
+//     AHEAD BY N DAYS. COUNT IT? if it is more than 30 days on (LEFT/RIGHT
+//     choose YES or NO, NO first; A answers; YES lives the days, which a pet
+//     doesn't survive, NO counts none); after an hour or more away, the
+//     summary: AWAY 9H 30M in gold, then what happened (SPOTS GREW UP!,
+//     SPOTS SLEPT 8H, A VISITOR IS AT THE DEN, SPOTS DIED) and how it is now
+//     (SPOTS IS HUNGRY, IS SAD, IS SICK, IS FINE...). A clock gone back is
+//     silent. Then the den fades in:
 //     warm sandstone walls in layers, roots hanging from the roof (one holds
 //     a jar of glowing fireflies at the left), a sandy floor with pebbles
 //     and loose grass, a woven grass nest at the left, and through the
@@ -75,10 +97,9 @@
 //     own. It wanders the floor, stops, blinks, flicks its tail. It sleeps in
 //     the nest at night (21-7), curled, with rising Zs. It sits with its ears
 //     down when sad (12 h without care), lies shivering and tinted blue when
-//     sick (18 h), more blue when sicker (24 h); a dead pet is a little stone
-//     with flowers. Droppings appear on the floor every few hours awake, with
-//     a whiff above them. It grows to a lanky adolescent at 24 h and a
-//     long-legged adult at 72 h (both 32x32).
+//     sick (18 h), more blue when sicker (24 h). Droppings appear on the floor every few hours
+//     awake, with a whiff above them. It grows to a lanky adolescent at 24 h and a long-legged
+//     adult at 72 h (both 32x32).
 //   - The care bar at the foot of the screen: eight 16x16 buttons (a bowl,
 //     a ball of yarn, a paw, a broom, a medicine bottle, a lamp, a chart, a
 //     book) with a gold frame on the chosen one and its name above. LEFT and
@@ -92,8 +113,12 @@
 //     world outside the mouth doesn't; START does the same from anywhere);
 //     STATUS is a page of bars (FULL, FUN, ENERGY, HEALTH), age, time to
 //     growing up or to the litter, time since last care, mood and a warning
-//     once it is sad (12 h without care) or sick; ALBUM is a page that lists
-//     the serval raised (a placeholder for now). Caring for a sleeping
+//     once it is sad (12 h without care) or sick; ALBUM is the serval raised,
+//     newest first, one a page (LEFT and RIGHT turn them; ALBUM 1 OF N): a
+//     portrait in its coat, twice its size, in a frame, with a stone beside
+//     it (AT REST) or a heart (RAISED A LITTER), its name, generation and
+//     age, and the den's records when it left (BAT, CLIMB, POUNCE; NO GAMES
+//     PLAYED for none); NO ONE YET while empty. Caring for a sleeping
 //     serval wakes it for an hour. A refusal sounds a low "no" and says why
 //     above the bar in red: NOT HUNGRY, NOT SICK, ALREADY CLEAN, SHH,
 //     ASLEEP, TOO TIRED, NOT YET, GONE. A button held when a screen opens
@@ -152,16 +177,38 @@
 //     when the serval can. At 0 the TIME UP! card shows SCORE, BEST (NEW! for a
 //     record, saved), MICE and BIRDS and FUN +N (10 plus the score, at most
 //     40). START pauses (RESUME or QUIT).
+//   - Growing up (adolescent at 24 h, adult at 72 h; during play or after
+//     the boot's summary, once per stage): the care bar goes, sparkles circle
+//     the serval, it grows, flashing white, to a rising fanfare, and stands
+//     at its new size, happy; a box says SPOTS GREW UP!, NOW AN ADOLESCENT (or
+//     AN ADULT) and NEW GAME: ACACIA CLIMB (or HIGH POUNCE); PRESS A.
+//   - The litter (an adult 144 h old, well): A VISITOR! A serval in a coat of
+//     its own walks in from the right and the pet goes to meet it; SPOTS
+//     MEETS ZURI, both purr with hearts rising between them. The screen fades
+//     to N KITTENS!: the parents at the back and 2-4 kittens in a row in front,
+//     each in its own coat (from its parents'), its name under it; LEFT and
+//     RIGHT choose (the chosen hops under a heart, its name in gold), A takes
+//     it. The parents and the other kittens walk off to the right (SPOTS AND
+//     ZURI LEAVE FOR THE SAVANNA); NAME YOUR KITTEN with the chosen kitten's
+//     name filled in; the den with the new kitten, a generation on. Both
+//     parents go into the album. A bright tune when the kittens appear.
+//   - Death (36 h without care): the den fades to a grey stone, twice the
+//     size, with flowers round its foot and fireflies drifting up, a box with
+//     the name, LIVED N DAYS and GENERATION N, a slow quiet tune; PRESS A:
+//     A NEW KITTEN ARRIVES on the dark screen, a kitten in a new coat
+//     trotting in; PRESS A: NAME YOUR KITTEN; the den with the new kitten, a
+//     generation on. The album keeps the one lost.
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //
 // Uses only Serval Engine's API; no third-party headers. The game is split
-// into the portable core (pet.c, litter.c, album.c, den_save.c), clock.c
-// (the game's use of the clock), art.c (the colours, and the pictures'
-// loading; art_draw.c draws them, on the host), den.c (the den on screen),
-// menu.c (the care bar), status.c and naming.c (their pages) and sound.c.
+// into the portable core (pet.c, litter.c, album.c, den_save.c, events.c),
+// clock.c (the game's use of the clock), art.c (the colours, and the
+// pictures' loading; art_draw.c draws them, on the host), den.c (the den on
+// screen), menu.c (the care bar and the album), status.c and naming.c (their
+// pages), scenes.c (the life events) and sound.c.
 // main.c boots and runs the den a frame at a time.
 
 #include "album.h"
@@ -170,9 +217,11 @@
 #include "clock.h"
 #include "den.h"
 #include "den_save.h"
+#include "events.h"
 #include "menu.h"
 #include "naming.h"
 #include "pounce.h"
+#include "scenes.h"
 #include "sound.h"
 #include "status.h"
 #include "yarn.h"
@@ -249,19 +298,24 @@ int main(void) {
 
     u32 now;
     bool first_boot = false;
+    ClockCheck check = CLOCK_OK;
+    Away away = {0};
+    bool lived = false;
     if (den_save_load(&save)) {
         album_set(save.album, save.album_count);
         const Pet* p = &save.pet;
         u32 age = p->last_tick > p->born ? p->last_tick - p->born : 0;
-        ClockCheck check = clock_boot(save.last_seen, age, save.offset, &now);
-        if (check == CLOCK_OK || check == CLOCK_WAS_RESET)
-            pet_advance(&save.pet, now, clock_hour); // the time away, minute by minute
-        else {
-            // Backwards or a jump: the time the save says passed is lived, the
-            // rest is not.
+        check = clock_boot(save.last_seen, age, save.offset, &now);
+        if (check == CLOCK_OK || check == CLOCK_WAS_RESET) {
+            events_live(&save.pet, now, clock_hour, &away); // the time away, minute by minute
+            lived = true;
+        } else if (check == CLOCK_WENT_BACK) {
+            // Backwards: the time the save says passed is lived, the rest is
+            // not (silently).
             pet_advance(&save.pet, save.last_seen, clock_hour);
             pet_rebase(&save.pet, now);
         }
+        // CLOCK_JUMPED: the player is asked, once the title has been seen.
     } else {
         // A new den: the first kitten, to be named once the title is gone.
         first_boot = true;
@@ -277,6 +331,23 @@ int main(void) {
         frame_begin();
         frame_end();
     }
+
+    // The clock's news and the time away, as cards over the dark title.
+    if (check == CLOCK_WAS_RESET) {
+        static const char* const reset[2] = {"THE CARTRIDGE CLOCK WAS RESET.",
+                                             "TIME AWAY WAS NOT COUNTED."};
+        scenes_card(reset, 2);
+    } else if (check == CLOCK_JUMPED) {
+        if (scenes_ask_jump((now - save.last_seen) / 86400)) {
+            events_live(&save.pet, now, clock_hour, &away);
+            lived = true;
+        } else {
+            pet_advance(&save.pet, save.last_seen, clock_hour);
+            pet_rebase(&save.pet, now);
+        }
+    }
+    if (lived)
+        scenes_summary(&save.pet, &away);
 
     if (first_boot) {
         // Naming the first kitten, on a page of its own.
@@ -298,7 +369,7 @@ int main(void) {
             screen_set_brightness(b);
             frame_end();
         }
-        naming_run(save.pet.name);
+        naming_run(save.pet.name, "NAME YOUR KITTEN", 0);
     }
 
     // Black first (the brightness takes effect at the frame's end), then
@@ -334,6 +405,12 @@ int main(void) {
         Life before = life_of(pet);
         bool cared = menu_update(pet, now);
         now = clock_now(); // a game or a page may have taken a while
+        if (now > pet->last_tick && now - pet->last_tick > CLOCK_JUMP_LIMIT) {
+            // The clock jumped while the game was on (a web page's can).
+            scenes_jump_in_play(&save, now);
+            now = clock_now();
+            store(now);
+        }
 #ifdef SERVAL_DEBUG
         if (clock_debug_warp()) {
             warp_timer = 90;
@@ -354,6 +431,18 @@ int main(void) {
             text_clear_area(0, 17, 30, 1);
             if (menu_covers_den())
                 status_reset(); // the page's warning shares the row
+        }
+        // Life events: growing up, the litter, the tombstone; not over a page.
+        if (!menu_covers_den()) {
+            LifeEvent ev = events_next(pet, save.stage_seen);
+            bool changed = ev == EVENT_TOMBSTONE ? scenes_tombstone(&save, now)
+                           : ev == EVENT_GROW_UP ? scenes_grow_up(&save, now)
+                           : ev == EVENT_LITTER  ? scenes_litter(&save, now)
+                                                 : false;
+            if (changed) {
+                now = clock_now();
+                store(now);
+            }
         }
         sound_ambient(art_time_of_day(clock_hour(now)));
         menu_draw(pet, now);

@@ -257,12 +257,23 @@ void art_set_scene(int tod, bool lights_off) {
 
 #define SICK_TINT COLOR_RGB(70, 110, 220)
 
-void art_set_pet(Coat coat, int sick, int tod, bool lights_off) {
+void art_set_coat(int palette, Coat coat, int sick, int tod, bool lights_off) {
     Color c[16];
     art_pet_colors(coat, SICK_TINT, sick == 0 ? 0 : sick == 1 ? 64 : 104, c);
     for (int i = 1; i < 16; i++)
         c[i] = den_light(c[i], tod, lights_off, true);
-    sprite_set_colors(SPR_KITTEN, PAL_PET * 16, c, 16);
+    sprite_set_colors(SPR_KITTEN, (u32)palette * 16, c, 16);
+}
+
+void art_set_pet(Coat coat, int sick, int tod, bool lights_off) {
+    art_set_coat(PAL_PET, coat, sick, tod, lights_off);
+}
+
+void art_flash_coat(int palette) {
+    Color c[16];
+    for (int i = 0; i < 16; i++)
+        c[i] = COLOR_RGB(255, 255, 240);
+    sprite_set_colors(SPR_KITTEN, (u32)palette * 16 + 1, c + 1, 15);
 }
 
 // --- Sprite colours -----------------------------------------------------------------------------
@@ -341,7 +352,7 @@ static const Color item_colors[15] = {
     COLOR_RGB(156, 154, 158), // s stone
     COLOR_RGB(200, 198, 196), // t stone light
     COLOR_RGB(250, 214, 70),  // y gold, flowers
-    COLOR_RGB(120, 170, 70),  // stem green (key ' ' is unused; index 15)
+    COLOR_RGB(120, 170, 70),  // v stem green
 };
 
 // PAL_LAMP's colours, by art_draw.c's lamp_keys.
@@ -404,6 +415,8 @@ static void build_palettes(void) {
     }
     for (int i = 0; i < FIELD_COLORS; i++)
         obj_palettes[PAL_FIELD][1 + i] = field_colors[i];
+    for (int i = PAL_COAT1; i <= PAL_COAT5; i++)
+        art_pet_colors(c, 0, 0, obj_palettes[i]);
 }
 
 static const Color sun_day[4] = {COLOR_RGB(255, 252, 226), COLOR_RGB(255, 236, 150),

@@ -148,7 +148,7 @@ target_link_libraries(boardgames PRIVATE serval_warnings)
 serval_add_rom(den SOURCES den/main.c den/pet.c den/litter.c den/album.c den/den_save.c
                den/clock.c den/clock_check.c den/art.c den/art_data.c den/den.c den/sound.c den/menu.c
                den/status.c den/naming.c den/yarn.c den/yarn_rules.c den/climb.c den/climb_rules.c
-               den/pounce.c den/pounce_rules.c
+               den/pounce.c den/pounce_rules.c den/events.c den/scenes.c
                TITLE "SERVAL DEN" GAME_CODE "SVDN")
 target_link_libraries(den PRIVATE serval_warnings)
 

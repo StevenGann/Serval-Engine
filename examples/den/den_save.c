@@ -124,6 +124,8 @@ static void walk(Cursor* c, bool w, DenSave* s) {
         entry(c, w, &s->album[i]);
     F32(s->last_seen);
     F32(s->offset);
+    F8(s->stage_seen);
+    limit(c, w, s->stage_seen, STAGE_ADULT);
 }
 
 bool den_save_load(DenSave* out) {

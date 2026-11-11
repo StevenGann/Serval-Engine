@@ -52,9 +52,10 @@ static void draw_grid(int sel) {
     text_set_style(TEXT_NORMAL);
 }
 
-void naming_run(char out[9]) {
+void naming_run(char out[9], const char* title, const char* suggestion) {
     char name[NAME_MAX + 1] = {0};
-    const char* suggestion = litter_names[random_range(0, LITTER_NAME_COUNT - 1)];
+    if (!suggestion)
+        suggestion = litter_names[random_range(0, LITTER_NAME_COUNT - 1)];
     int len = 0;
     while (suggestion[len] && len < NAME_MAX) {
         name[len] = suggestion[len];
@@ -66,7 +67,7 @@ void naming_run(char out[9]) {
 
     text_clear();
     text_set_style(TEXT_NORMAL);
-    text_print_centered(2, "NAME YOUR KITTEN");
+    text_print_centered(2, title);
     text_print_centered(18, "A PICK  B DELETE  START DONE");
     draw_name(name, len);
     draw_grid(sel);

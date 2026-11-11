@@ -19,8 +19,8 @@
 //    was last seen and the pet is unchanged. The hour of day then follows the
 //    shifted time, not the real one; after a reset the real hour is lost
 //    anyway (until the player sets the clock, which this game doesn't do).
-//  - Until the game asks the player about a jump past 30 days (the life
-//    events' task), a jump is rebased: no time passes.
+//  - A jump past 30 days is the player's to judge (scenes.c asks, at boot
+//    and, for a web page's clock, during play): YES lives it, NO rebases.
 
 #include "pet.h"
 

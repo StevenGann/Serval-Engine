@@ -15,6 +15,7 @@
 #include "../examples/den/climb_rules.h"
 #include "../examples/den/clock.h"
 #include "../examples/den/den_save.h"
+#include "../examples/den/events.h"
 #include "../examples/den/litter.h"
 #include "../examples/den/pet.h"
 #include "../examples/den/pounce_rules.h"
@@ -611,6 +612,7 @@ static DenSave sample_save(void) {
         s.album[i] = entry_n(i + 1);
     s.last_seen = T0 + 12345;
     s.offset = 0xFFFF0000u;
+    s.stage_seen = 2;
     return s;
 }
 
@@ -627,7 +629,7 @@ static void test_save_round_trip(void) {
     CHECK(out.pet.awake_until == T0 + 99 && out.pet.energy == 1234 && out.pet.asleep);
     CHECK(out.pet.born == s.pet.born && out.pet.last_tick == s.pet.last_tick);
     CHECK(out.best[2] == 65535 && out.album_count == 3 && out.last_seen == s.last_seen);
-    CHECK(out.offset == 0xFFFF0000u);
+    CHECK(out.offset == 0xFFFF0000u && out.stage_seen == 2);
     CHECK(out.album[2].generation == 3 && out.album[1].age_minutes == 2000);
     CHECK(save_slot_size(0) == DEN_SAVE_BYTES);
     // A second round trip is byte-stable.
@@ -691,6 +693,10 @@ static void test_save_refuses_garbage(void) {
     memcpy(raw, good, sizeof raw);
     raw[25] = 0xFF; // full
     raw[26] = 0xFF;
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(!den_save_load(&out));
+    memcpy(raw, good, sizeof raw);
+    raw[DEN_SAVE_BYTES - 1] = 3; // stage_seen past the adult
     CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
     CHECK(!den_save_load(&out));
     memcpy(raw, good, sizeof raw);
@@ -762,6 +768,114 @@ static void test_clock_resolve(void) {
     CHECK(clock_resolve(true, false, seen + 500 + 3600, seen, age, (u32)-500, &now, &off) ==
           CLOCK_OK);
     CHECK(now == seen + 3600 && off == (u32)-500);
+}
+
+// --- Life events ------------------------------------------------------------------------------
+
+static void test_events_next(void) {
+    Pet p = fresh();
+    CHECK(events_next(&p, STAGE_KITTEN) == EVENT_NONE);
+    // Grown to an adolescent: shown once, then not again.
+    p.born = T0 - 1440 * MIN;
+    CHECK(events_next(&p, STAGE_KITTEN) == EVENT_GROW_UP);
+    CHECK(events_next(&p, STAGE_ADOLESCENT) == EVENT_NONE);
+    // Kitten to adult while away: one scene, from the stage last shown.
+    p.born = T0 - 4320 * MIN;
+    CHECK(events_next(&p, STAGE_KITTEN) == EVENT_GROW_UP);
+    CHECK(events_next(&p, STAGE_ADULT) == EVENT_NONE);
+    // The litter after growing up; growing up first.
+    p.litter_due = true;
+    CHECK(events_next(&p, STAGE_ADOLESCENT) == EVENT_GROW_UP);
+    CHECK(events_next(&p, STAGE_ADULT) == EVENT_LITTER);
+    // Death before anything.
+    p.dead = true;
+    CHECK(events_next(&p, STAGE_KITTEN) == EVENT_TOMBSTONE);
+    CHECK(events_next(&p, STAGE_ADULT) == EVENT_TOMBSTONE);
+}
+
+static void test_events_live_equals_advance(void) {
+    // 30 h away from 08:00 (a night's sleep inside), 40 h (dead), and the
+    // litter's last hours: each the pet pet_advance() makes.
+    const u32 spans[3] = {30 * 60, 40 * 60, 6 * 60};
+    for (int i = 0; i < 3; i++) {
+        Pet a = fresh(), b;
+        if (i == 2) {
+            a.born = T0 - (8640 - 120) * MIN; // an adult two hours from its litter
+            a.full = a.fun = a.energy = 9000;
+        }
+        b = a;
+        u32 now = T0 + spans[i] * MIN + 29; // and 29 seconds
+        Away w;
+        events_live(&a, now, hour_of, &w);
+        pet_advance(&b, now, hour_of);
+        CHECK(memcmp(&a, &b, sizeof a) == 0);
+        CHECK(w.minutes == spans[i]);
+        if (i == 0) {
+            CHECK(!w.died && w.stage_before == STAGE_KITTEN && w.stage_after == STAGE_ADOLESCENT);
+            CHECK(w.slept_minutes == 10 * 60); // 21:00 to 07:00
+        }
+        if (i == 1)
+            CHECK(w.died && a.dead && w.slept_minutes < 40 * 60);
+        if (i == 2)
+            CHECK(w.litter && !w.died && w.stage_before == STAGE_ADULT);
+    }
+    // A clock gone back: nothing lived.
+    Pet c = fresh();
+    pet_advance(&c, T0 + 90 * MIN, hour_of);
+    Away w;
+    events_live(&c, T0 + 30 * MIN, hour_of, &w);
+    CHECK(w.minutes == 0 && !w.died && c.last_tick == T0 + 30 * MIN);
+}
+
+static void test_events_summary(void) {
+    char lines[EVENT_LINES][EVENT_LINE_MAX];
+    char d[16];
+    CHECK(events_duration(45, d) == 3 && strcmp(d, "45M") == 0);
+    CHECK(events_duration(480, d) == 2 && strcmp(d, "8H") == 0);
+    CHECK(events_duration(510, d) == 6 && strcmp(d, "8H 30M") == 0);
+    CHECK(events_duration(3 * 1440 + 4 * 60 + 5, d) == 5 && strcmp(d, "3D 4H") == 0);
+    CHECK(events_duration(2 * 1440, d) == 2 && strcmp(d, "2D") == 0);
+    CHECK(events_duration(0xFFFFFFFFu, d) <= 12);
+
+    // Half an hour away, nothing happened: no card.
+    Pet p = fresh();
+    Away w;
+    events_live(&p, T0 + 30 * MIN, hour_of, &w);
+    CHECK(events_summary(&p, &w, lines) == 0);
+
+    // Overnight: slept, grew up, then the mood.
+    Pet q = fresh();
+    q.born = T0 - 20 * 60 * MIN; // 20 h old at 08:00
+    events_live(&q, T0 + 24 * 60 * MIN, hour_of, &w);
+    int n = events_summary(&q, &w, lines);
+    CHECK(n == 4);
+    CHECK(strcmp(lines[0], "AWAY 1D") == 0);
+    CHECK(strcmp(lines[1], "MIMI GREW UP!") == 0);
+    CHECK(strcmp(lines[2], "MIMI SLEPT 10H") == 0);
+    CHECK(strcmp(lines[3], "MIMI IS VERY SICK") == 0); // 24 h without care
+
+    // Gone: two lines, the stone says the rest.
+    Pet r = fresh();
+    events_live(&r, T0 + 40 * 60 * MIN, hour_of, &w);
+    CHECK(events_summary(&r, &w, lines) == 2 && strcmp(lines[1], "MIMI DIED") == 0);
+    CHECK(strcmp(lines[0], "AWAY 1D 16H") == 0);
+
+    // Under an hour but the litter came due: a card all the same.
+    Pet s = fresh();
+    s.born = T0 - (8640 - 10) * MIN;
+    s.full = s.fun = s.energy = 9000;
+    events_live(&s, T0 + 20 * MIN, hour_of, &w);
+    n = events_summary(&s, &w, lines);
+    CHECK(n == 2 && strcmp(lines[1], "A VISITOR IS AT THE DEN") == 0);
+
+    // Every line fits the screen with the longest name.
+    Pet t = fresh();
+    strcpy(t.name, "ABCDEFGH");
+    t.born = T0 - 20 * 60 * MIN;
+    events_live(&t, T0 + 30u * 1440 * MIN, hour_of, &w);
+    n = events_summary(&t, &w, lines);
+    for (int i = 0; i < n; i++)
+        CHECK(strlen(lines[i]) <= 30);
 }
 
 // --- Yarn Bat -----------------------------------------------------------------------------------
@@ -1663,4 +1777,7 @@ TEST_SUITE(
     {"pounce_swat", test_pounce_swat}, {"pounce_round_timer", test_pounce_round_timer},
     {"pounce_hearing_and_fun", test_pounce_hearing_and_fun},
     {"pounce_buffered_press", test_pounce_buffered_press},
-    {"pounce_crouch_hears_better", test_pounce_crouch_hears_better});
+    {"pounce_crouch_hears_better", test_pounce_crouch_hears_better},
+    {"events_next", test_events_next},
+    {"events_live_equals_advance", test_events_live_equals_advance},
+    {"events_summary", test_events_summary});
