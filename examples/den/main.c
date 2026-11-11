@@ -110,23 +110,21 @@
 //     RIGHT choose, A acts, B backs out. FEED asks MEAL or TREAT (a bowl that
 //     empties as it eats, crunching); PLAY lists YARN BAT, ACACIA CLIMB and
 //     HIGH POUNCE in a box (the ones the pet's stage doesn't allow yet are
-//     grey; the PLAY button is
+//     grey, and the ones it has grown into stay: the adult still plays all
+//     three; the PLAY button is
 //     grey while the pet is asleep, tired or gone); PET gives hearts and a
-//     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime;
-//     LIGHTS puts the lights out or on (a click; the den goes dark but the
-//     world outside the mouth doesn't; START does the same from anywhere);
-//     STATUS is a page of bars (FULL, FUN, ENERGY, HEALTH), age, time to
-//     growing up or to the litter, time since last care, mood and a warning
-//     once it is sad (12 h without care) or sick; ALBUM is the serval raised,
-//     newest first, one a page (LEFT and RIGHT turn them; ALBUM 1 OF N): a
-//     portrait in its coat, twice its size, in a frame, with a stone beside
-//     it (AT REST) or a heart (RAISED A LITTER), its name, generation and
-//     age, and the den's records when it left (BAT, CLIMB, POUNCE; NO GAMES
-//     PLAYED for none); NO ONE YET while empty. Caring for a sleeping
-//     serval wakes it for an hour. A refusal sounds a low "no" and says why
-//     above the bar in red: NOT HUNGRY, NOT SICK, ALREADY CLEAN, SHH,
-//     ASLEEP, TOO TIRED, NOT YET, GONE. A button held when a screen opens
-//     does nothing until it is released.
+//     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime (and, for a sick pet, health
+//     lifted to at least a fifth of the bar); LIGHTS puts the lights out or on (a click; the den
+//     goes dark but the world outside the mouth doesn't; START does the same from anywhere); STATUS
+//     is a page of bars (FULL, FUN, ENERGY, HEALTH), age, time to growing up or to the litter, time
+//     since last care, mood and a warning once it is sad (12 h without care) or sick; ALBUM is the
+//     serval raised, newest first, one a page (LEFT and RIGHT turn them; ALBUM 1 OF N): a portrait
+//     in its coat, twice its size, in a frame, with a stone beside it (AT REST) or a heart (RAISED
+//     A LITTER), its name, generation and age, and the den's records when it left (BAT, CLIMB,
+//     POUNCE; NO GAMES PLAYED for none); NO ONE YET while empty. Caring for a sleeping serval wakes
+//     it for an hour. A refusal sounds a low "no" and says why above the bar in red: NOT HUNGRY,
+//     NOT SICK, ALREADY CLEAN, SHH, ASLEEP, TOO TIRED, NOT YET, GONE. A button held when a screen
+//     opens does nothing until it is released.
 //   - The first time the game starts (no save) a NAME YOUR KITTEN page: a
 //     letter grid (A-Z, DEL, END) with a random suggestion filled in; D-pad
 //     moves, A picks a letter, B deletes one, END or START accepts (up to 8
@@ -205,6 +203,10 @@
 //     generation on. The album keeps the one lost.
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
+//   - To see the clock at work: in mGBA, a day later means setting the clock
+//     (or leaving the game off for a day); on the web page the clock is the
+//     browser's. A test page or a capture run can set it, with `rtc=` and
+//     `rtcstep=` (docs/rtc.md).
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
 //   L = A, R = S, START = Enter, SELECT = Backspace.)
 //

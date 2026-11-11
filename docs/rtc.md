@@ -91,6 +91,10 @@ A web build has a clock that always works: `rtc_present()` is true and the time 
 
 The web page accepts an mGBA `.sav` of a game that has a clock: mGBA appends a 16-byte clock trailer to the save, and a file of exactly the save size plus 16 is read with the trailer ignored. A malformed `rtc=` (not a number) means the browser's local time, and a malformed `rtcstep=` is ignored.
 
+## An example
+
+[`den`](../examples/den/main.c) ("Serval Den", [what it showed](examples-roadmap.md#what-den-showed)) is the clock's showcase: a virtual pet that lives by it. It checks `rtc_present()` once and stops without a clock, reads the time at boot and then about once a second, lives the time away minute by minute in a portable core that is given the time and never reads it, treats a clock gone backwards as no time passed, answers `rtc_was_reset()` with an offset kept in its save, asks about a jump of more than 30 days, and takes the hour of day from `rtc_time_from_seconds()`. Run it in mGBA with *Tools > Game Overrides > Realtime clock*, or on its web page, and move the clock with the capture tools' `rtc=` and `rtcstep=`.
+
 ## Testing with a fake clock
 
 The tests swap in their own chip, as the save tests do their own memory: `serval_rtc_device` (`src/core/rtc_internal.h`) points to a `RtcDevice` of four functions (read and write the status byte, reset, read the seven BCD bytes) and `serval_rtc_forget()` makes the next call probe again. `tests/rtc_tests.c` has a fake chip that behaves like the real one, with the power bit that clears on read. Game code written against `rtc.h` tests its time handling by taking the seconds as a parameter.
