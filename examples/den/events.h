@@ -16,6 +16,12 @@
 //    is shown only its stone), then growing up, then the litter.
 //  - A pet that grew two stages while away (kitten to adult) gets one scene,
 //    from the stage last shown to the stage now.
+//  - A dead pet's summary says it died, whether it died while away or was
+//    saved dead (switched off on its stone): never a mood.
+//  - More than 60 whole game-minutes to catch up during play (a web page's
+//    clock moved) is a boot's catch-up: lived at once on a dark screen, then
+//    one summary (scenes_catch_up_in_play()). Up to 60, the den catches up 15
+//    minutes a frame, as before (an hour's debug warp stays in the den).
 
 #include "pet.h"
 

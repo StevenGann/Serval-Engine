@@ -5,6 +5,7 @@
 #include "album.h"
 #include "art.h"
 #include "clock.h"
+#include "events.h"
 #include "sound.h"
 #include "status.h"
 
@@ -230,8 +231,9 @@ static void draw_album(void) {
     text_set_style(TEXT_HIGHLIGHT);
     text_print_centered(13, e->name);
     text_set_style(TEXT_NORMAL);
-    text_print_centered(
-        14, text_format("GEN %u   AGE %s", (u32)e->generation, status_duration(e->age_minutes)));
+    char age[16];
+    events_duration(e->age_minutes, age); // as the boot's summary writes it
+    text_print_centered(14, text_format("GEN %u   AGE %s", (u32)e->generation, age));
     text_print_centered(15, e->end == END_TOMBSTONE ? "AT REST" : "RAISED A LITTER");
     if (e->best[0] == 0 && e->best[1] == 0 && e->best[2] == 0) {
         text_print_centered(17, "NO GAMES PLAYED");

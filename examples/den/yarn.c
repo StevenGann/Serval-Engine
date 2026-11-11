@@ -116,8 +116,11 @@ static void draw_court(const YarnState* s, bool paw_visible) {
                         YARN_PAW_X + 2, s->paw_y - 8, 0);
         }
         int frame = v.hit ? PF_HAPPY : v.moving ? PF_WALK0 + (int)(f / 5 % 4) : PF_STAND;
-        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, YARN_PAW_X - body + 2,
-                    s->paw_y - body / 2 + 2, 0);
+        // The arm swings at the paw's line: the kitten's head is there, a
+        // bigger serval's chest, its head above the arm (not behind it).
+        int lift = v.stage == STAGE_KITTEN ? body / 2 - 2 : body / 2 + 6;
+        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, YARN_PAW_X - body + 2, s->paw_y - lift,
+                    0);
     }
     int shown = trail_wanted(s);
     if (shown > v.count)

@@ -79,8 +79,12 @@
 //     doesn't survive, NO counts none); after an hour or more away, the
 //     summary: AWAY 9H 30M in gold, then what happened (SPOTS GREW UP!,
 //     SPOTS SLEPT 8H, A VISITOR IS AT THE DEN, SPOTS DIED) and how it is now
-//     (SPOTS IS HUNGRY, IS SAD, IS SICK, IS FINE...). A clock gone back is
-//     silent. Then the den fades in:
+//     (SPOTS IS HUNGRY, IS SAD, IS SICK, IS FINE...; SPOTS DIED for a pet
+//     gone, then its stone). A clock gone back is silent. The same happens
+//     during play when the clock moves on by more than an hour (a web page's
+//     clock can): the screen goes dark, the time is lived, the summary card,
+//     then the den; up to an hour (the debug warp) the den just catches up.
+//     Then the den fades in:
 //     warm sandstone walls in layers, roots hanging from the roof (one holds
 //     a jar of glowing fireflies at the left), a sandy floor with pebbles
 //     and loose grass, a woven grass nest at the left, and through the
@@ -282,6 +286,30 @@ static bool life_changed(Life a, Life b) {
     return a.stage != b.stage || a.mood != b.mood || a.dead != b.dead || a.litter != b.litter;
 }
 
+// Whole minutes of the pet's life not yet stepped (0 for a clock gone back).
+static u32 gap_minutes(const Pet* p, u32 now) {
+    return now > p->last_tick ? (now - p->last_tick) / 60 : 0;
+}
+
+// The most the den catches up by itself, 15 minutes a frame (den_update());
+// more is lived at once behind a black screen, as at boot (events.h).
+#define CATCH_UP_IN_DEN 60
+
+// The clock moved on while the game was on (a web page's can): past 30 days,
+// the question; past an hour, lived at once with a summary. The scene
+// returns with the den behind a black screen: stored, then faded in.
+static bool time_jumped(Pet* pet, u32 now) {
+    if (gap_minutes(pet, now) > CLOCK_JUMP_LIMIT / 60)
+        scenes_jump_in_play(&save, now);
+    else if (gap_minutes(pet, now) > CATCH_UP_IN_DEN)
+        scenes_catch_up_in_play(&save, now);
+    else
+        return false;
+    store(clock_now());
+    menu_fade_in(pet, true);
+    return true;
+}
+
 int main(void) {
     serval_init();
     serval_splash();
@@ -402,15 +430,13 @@ int main(void) {
     for (;;) {
         frame_begin();
         now = clock_now();
+        // Time to catch up comes first, before any input, so that no care
+        // can land inside it (and rescue a pet that should not have lived).
+        if (time_jumped(pet, now))
+            now = clock_now();
         Life before = life_of(pet);
         bool cared = menu_update(pet, now);
         now = clock_now(); // a game or a page may have taken a while
-        if (now > pet->last_tick && now - pet->last_tick > CLOCK_JUMP_LIMIT) {
-            // The clock jumped while the game was on (a web page's can).
-            scenes_jump_in_play(&save, now);
-            now = clock_now();
-            store(now);
-        }
 #ifdef SERVAL_DEBUG
         if (clock_debug_warp()) {
             warp_timer = 90;
@@ -423,25 +449,33 @@ int main(void) {
                 status_reset(); // the page's text shares the row
         }
 #endif
-        den_update(pet, now);
+        if (gap_minutes(pet, now) <= CATCH_UP_IN_DEN)
+            den_update(pet, now); // a longer gap waits for the next frame's time_jumped()
         frames_since_save++;
-        if (cared || life_changed(before, life_of(pet)) || frames_since_save >= AUTOSAVE_FRAMES)
+        bool stored = false;
+        if (cared || life_changed(before, life_of(pet)) || frames_since_save >= AUTOSAVE_FRAMES) {
             store(now);
+            stored = true;
+        }
         if (save_failed_timer > 0 && --save_failed_timer == 0) {
             text_clear_area(0, 17, 30, 1);
             if (menu_covers_den())
                 status_reset(); // the page's warning shares the row
         }
-        // Life events: growing up, the litter, the tombstone; not over a page.
-        if (!menu_covers_den()) {
+        // Life events: growing up, the litter, the tombstone; not over a page,
+        // and not in a frame that stored (the event lasts: it starts on the
+        // next, so the save and the scene's setup don't share a frame).
+        if (!stored && !menu_covers_den()) {
             LifeEvent ev = events_next(pet, save.stage_seen);
-            bool changed = ev == EVENT_TOMBSTONE ? scenes_tombstone(&save, now)
-                           : ev == EVENT_GROW_UP ? scenes_grow_up(&save, now)
-                           : ev == EVENT_LITTER  ? scenes_litter(&save, now)
+            bool changed = ev == EVENT_TOMBSTONE ? scenes_tombstone(&save)
+                           : ev == EVENT_GROW_UP ? scenes_grow_up(&save)
+                           : ev == EVENT_LITTER  ? scenes_litter(&save)
                                                  : false;
             if (changed) {
+                // Written while the screen is still black, then the den.
                 now = clock_now();
                 store(now);
+                menu_fade_in(pet, true);
             }
         }
         sound_ambient(art_time_of_day(clock_hour(now)));

@@ -93,9 +93,11 @@ int events_summary(const Pet* p, const Away* a, char lines[EVENT_LINES][EVENT_LI
     events_duration(a->minutes, d);
     put(lines[n], put(lines[n], 0, "AWAY "), d);
     n++;
-    if (a->died) {
+    if (p->dead) {
+        // Died while away, or before (saved on the stone): the stone says
+        // the rest.
         name_says(lines[n++], p->name, " DIED");
-        return n; // the stone says the rest
+        return n;
     }
     if (grew)
         name_says(lines[n++], p->name, " GREW UP!");

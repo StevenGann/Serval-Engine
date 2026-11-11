@@ -860,6 +860,13 @@ static void test_events_summary(void) {
     CHECK(events_summary(&r, &w, lines) == 2 && strcmp(lines[1], "MIMI DIED") == 0);
     CHECK(strcmp(lines[0], "AWAY 1D 16H") == 0);
 
+    // Saved dead (switched off on the stone) and booted 5 h later: still
+    // DIED, never a mood.
+    events_live(&r, r.last_tick + 5 * 60 * MIN, hour_of, &w);
+    CHECK(!w.died && w.minutes == 5 * 60);
+    CHECK(events_summary(&r, &w, lines) == 2 && strcmp(lines[1], "MIMI DIED") == 0);
+    CHECK(strcmp(lines[0], "AWAY 5H") == 0);
+
     // Under an hour but the litter came due: a card all the same.
     Pet s = fresh();
     s.born = T0 - (8640 - 10) * MIN;

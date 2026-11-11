@@ -80,8 +80,9 @@ static void dark_text(void) {
     text_clear();
 }
 
-// The den again, the screen black: its pictures, the serval placed (anew for
-// a new pet) and the bar, faded in.
+// The den again behind the black screen: its pictures, the serval placed
+// (anew for a new pet), the bar ready. The caller stores the save, then fades
+// in (menu_fade_in()).
 static void back_to_den(Pet* p, bool new_pet) {
     sound_tune_stop();
     if (new_pet)
@@ -90,7 +91,6 @@ static void back_to_den(Pet* p, bool new_pet) {
         den_resume();
     den_update(p, p->last_tick); // places the serval; no time passes
     menu_resume();
-    menu_fade_in(p, true);
 }
 
 // A blinking prompt.
@@ -240,6 +240,24 @@ void scenes_summary(const Pet* p, const Away* a) {
         scenes_card(ptrs, n);
 }
 
+bool scenes_catch_up_in_play(DenSave* s, u32 now) {
+    Pet* p = &s->pet;
+    menu_fade_out(p, !menu_covers_den());
+    art_hide();
+    dark_text();
+    Away a;
+    events_live(p, now, clock_hour, &a); // up to about a second, behind the black screen
+    const char* ptrs[EVENT_LINES];
+    int n = summary_lines(p, &a, ptrs);
+    if (n > 0) {
+        fade(SCREEN_BRIGHTNESS_MIN, 0, 0, 0);
+        card(ptrs, n);
+        fade(0, SCREEN_BRIGHTNESS_MIN, 0, 0);
+    }
+    back_to_den(p, false);
+    return true;
+}
+
 bool scenes_jump_in_play(DenSave* s, u32 now) {
     Pet* p = &s->pet;
     u32 days = (now - p->last_tick) / 86400;
@@ -316,9 +334,8 @@ static void grow_draw(int k) {
     den_draw_scene(g.p, clock_now(), false);
 }
 
-bool scenes_grow_up(DenSave* s, u32 now) {
+bool scenes_grow_up(DenSave* s) {
     Pet* p = &s->pet;
-    (void)now;
     g.p = p;
     g.from = s->stage_seen;
     g.to = (int)pet_stage(p, p->last_tick);
@@ -444,10 +461,12 @@ static void litter_draw(int k) {
     den_draw_scene(L.p, clock_now(), false);
 }
 
-bool scenes_litter(DenSave* s, u32 now) {
+bool scenes_litter(DenSave* s) {
     Pet* p = &s->pet;
-    (void)now;
     L.p = p;
+    // The same visitor and litter for this pet every time, so that switching
+    // off before the choice is stored replays them rather than re-rolling.
+    random_seed(p->born ^ 0x117E5u);
     L.visitor = litter_visitor_coat();
     u8 avoid = 255;
     for (int i = 0; i < LITTER_NAME_COUNT; i++) {
@@ -469,6 +488,7 @@ bool scenes_litter(DenSave* s, u32 now) {
             break;
         }
     }
+    random_seed(clock_now() ^ random_entropy()); // the den's chance again
     int tod = art_time_of_day(clock_hour(clock_now()));
     art_set_coat(PAL_COAT1, L.visitor, 0, tod, false);
     for (int i = 0; i < L.l.count; i++)
@@ -624,9 +644,8 @@ static void arrival_draw(int k) {
                 x, NEW_KITTEN_Y, false, PAL_COAT1);
 }
 
-bool scenes_tombstone(DenSave* s, u32 now) {
+bool scenes_tombstone(DenSave* s) {
     Pet* p = &s->pet;
-    (void)now;
     t.p = p;
     menu_fade_out(p, true);
     text_clear();
@@ -635,8 +654,8 @@ bool scenes_tombstone(DenSave* s, u32 now) {
     text_print_centered(3, p->name);
     text_set_style(TEXT_NORMAL);
     u32 days = lived / 1440;
-    text_print_centered(5, days >= 1 ? text_format("LIVED %u DAY%s", days, days == 1 ? "" : "S")
-                                     : text_format("LIVED %u HOURS", lived / 60));
+    // At least a day: death comes 36 h after the last care.
+    text_print_centered(5, text_format("LIVED %u DAY%s", days, days == 1 ? "" : "S"));
     text_print_centered(7, text_format("GENERATION %u", (u32)p->generation));
     sound_tune_tomb();
     fade(SCREEN_BRIGHTNESS_MIN, 0, tomb_draw, 0);
@@ -650,6 +669,7 @@ bool scenes_tombstone(DenSave* s, u32 now) {
         tomb_draw(k);
         tick();
     }
+    sound_tune_stop();
     fade(0, SCREEN_BRIGHTNESS_MIN, tomb_draw, k);
 
     // A new kitten arrives.
