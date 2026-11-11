@@ -140,6 +140,14 @@ serval_add_rom(boardgames SOURCES boardgames/main.c boardgames/chess_board.c
                TITLE "PAWS & KINGS" GAME_CODE "SVPK")
 target_link_libraries(boardgames PRIVATE serval_warnings)
 
+# SERVAL DEN, a virtual serval living by the cartridge clock: a portable
+# core (the pet's life, the litter, the album, the save; tested on the host in
+# tests/) and the GBA side (the clock, the art drawn at boot, the den).
+serval_add_rom(den SOURCES den/main.c den/pet.c den/litter.c den/album.c den/den_save.c
+               den/clock.c den/art.c den/den.c den/sound.c
+               TITLE "SERVAL DEN" GAME_CODE "SVDN")
+target_link_libraries(den PRIVATE serval_warnings)
+
 # Headless benchmark: the same game run by bench.c instead of main.c.
 serval_add_rom(bunnymark_bench SOURCES bunnymark/bench.c bunnymark/bunnymark.c
                TITLE "BUNNYBENCH" GAME_CODE "SVBB")
@@ -155,4 +163,5 @@ if(COMMAND serval_add_rom_checks)
     serval_add_rom_checks(racer)
     serval_add_rom_checks(rhythm)
     serval_add_rom_checks(boardgames)
+    serval_add_rom_checks(den)
 endif()

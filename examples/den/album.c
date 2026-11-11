@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-static AlbumEntry entries[ALBUM_MAX];
+static AlbumEntry entries[ALBUM_MAX] SERVAL_EWRAM_BSS; // 448 bytes: not in IWRAM
 static u8 count;
 
 void album_add(const AlbumEntry* e) {
