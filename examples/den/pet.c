@@ -151,28 +151,41 @@ static void step(Pet* p, u32 t, bool prev_night, bool night) {
         p->litter_due = true;
 }
 
+static u32 back(u32 v, u32 d) {
+    return v > d ? v - d : 0;
+}
+
 void pet_advance(Pet* p, u32 now, int (*hour_of)(u32 seconds)) {
     if (now < p->last_tick) {
+        // The clock went back by d: no time passes, so every stored time goes
+        // back with it and age, neglect and the wake window stay as they were.
+        u32 d = p->last_tick - now;
         p->last_tick = now;
+        p->born = back(p->born, d);
+        p->last_interaction = back(p->last_interaction, d);
+        if (p->awake_until)
+            p->awake_until = back(p->awake_until, d);
+        if (p->died_at)
+            p->died_at = back(p->died_at, d);
         return;
     }
     u32 minutes = (now - p->last_tick) / 60;
-    u32 stepped = minutes > MAX_STEPPED ? MAX_STEPPED : minutes;
-    bool prev_night = !p->dead && stepped > 0 && is_night(hour_of(p->last_tick));
-    while (stepped > 0 && !p->dead) {
+    bool prev_night = !p->dead && minutes > 0 && is_night(hour_of(p->last_tick));
+    while (minutes > 0 && !p->dead) {
         u32 t = p->last_tick + 60;
         bool night = is_night(hour_of(t));
         p->last_tick = t;
         step(p, t, prev_night, night);
         prev_night = night;
-        stepped--;
         minutes--;
     }
-    // A dead pet, or minutes beyond the 48 h stepped, only move the clock.
+    // A dead pet doesn't change: the rest only moves the clock.
     p->last_tick += minutes * 60;
 }
 
 CareResult pet_care(Pet* p, CareAction a, u32 now) {
+    if (now < p->last_tick)
+        now = p->last_tick; // never ahead of the stepped life
     if (p->dead)
         return CARE_REFUSED_DEAD;
     if (a == CARE_LIGHTS) {
@@ -230,6 +243,10 @@ bool pet_can_play(const Pet* p, u32 now) {
 }
 
 void pet_played(Pet* p, u32 now, u8 fun_points) {
+    if (p->dead || p->asleep)
+        return;
+    if (now < p->last_tick)
+        now = p->last_tick;
     p->fun = add(p->fun, fun_points * 100);
     p->energy = add(p->energy, -1500);
     p->last_interaction = now;

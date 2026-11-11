@@ -16,9 +16,22 @@
 //    because the rules need a counter and the struct had none.
 //  - A dead pet changes nothing but `last_tick`, which still follows the
 //    clock (it keeps a pet advanced at once equal to one advanced live).
-//  - A clock gone backwards sets last_tick = now and nothing else.
-//  - Beyond 48 h of minutes, the rest is skipped (age only). A living pet
-//    can't reach that point (neglect kills it at 36 h), so this is exact.
+//  - A clock gone backwards by d seconds is no time passed: last_tick = now
+//    and born, last_interaction, awake_until and died_at (when nonzero) all
+//    move back by d (saturating at 0), so age, neglect and the wake window
+//    stay as they were. A reset to 2000 can't be followed by a pet older than
+//    the clock reading, so the game should keep a monotonic den time (the
+//    clock plus a saved offset) and never hand such a jump to the core.
+//  - Catch-up is exact: minutes are stepped one by one while the pet lives,
+//    and the rest is added to last_tick at once once it is dead. pet_care()
+//    and pet_played() treat now < last_tick as last_tick, so
+//    last_interaction <= last_tick always, and a living pet is dead within
+//    2160 minutes of its last interaction: at most 2160 minutes are stepped.
+//  - Cost: about 1000 cycles a stepped minute with hour_of =
+//    (s % 86400) / 3600 (three divisions by 60 and the clamps), about 3-4k
+//    with an hour_of built on rtc_time_from_seconds; 2160 minutes is 8 to 30
+//    frames. Catch up at boot or behind a loading screen, not inside a
+//    60 fps frame. The game's hour_of should be (s % 86400u) / 3600u.
 //  - Order within a minute: sleep and wake, needs, droppings, health,
 //    sickness, neglect, growing up.
 //  - CARE_REFUSED_ASLEEP is never returned by pet_care(): a sleeping pet is
@@ -27,7 +40,7 @@
 //  - A pet born in the night falls asleep at its first minute.
 //  - MEDICINE also lifts health to at least 2000, or a pet at health 0 would
 //    be made sick again the next minute and never recover.
-//  - pet_played() clamps; it needs the pet awake and alive (pet_can_play()).
+//  - pet_played() does nothing to a dead or sleeping pet.
 //  - Mood depends only on sickness and the neglect clock, not on the needs.
 
 #include <serval/core.h>
@@ -50,7 +63,7 @@ typedef struct Pet {
     u8 droppings;                  // 0-4
     u8 sickness;                   // 0 well, 1 sick, 2 sicker
     bool asleep, lights_off, dead, litter_due;
-    u8 treats_recent;   // treats in the last 6 h (decays one per 2 h)
+    u8 treats_recent;   // treats not yet worn off (one wears off per 2 h)
     u32 died_at;        // clock seconds (0 while alive)
     u32 awake_until;    // clock seconds: a pet woken at night stays awake until then (0: none)
     u16 dropping_clock; // awake minutes since the last dropping

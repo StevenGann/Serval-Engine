@@ -54,6 +54,8 @@ static void test_neglect_thresholds(void) {
     for (u32 m = 1; m <= 2160; m++) {
         pet_advance(&p, T0 + m * MIN, hour_of);
         PetMood mood = pet_mood(&p, T0 + m * MIN);
+        if (m >= 720 && m < 2160)
+            CHECK(p.fun <= 3000);
         if (m == 719)
             CHECK(mood == MOOD_HAPPY);
         if (m == 720)
@@ -71,7 +73,6 @@ static void test_neglect_thresholds(void) {
         if (m == 2160)
             CHECK(p.dead && mood == MOOD_DEAD && p.died_at == T0 + 2160 * MIN);
     }
-    CHECK(p.fun <= 3000 || p.dead);
 }
 
 static void test_care_resets_neglect(void) {
@@ -122,14 +123,31 @@ static void test_sleep_cycle(void) {
     CHECK(!a.asleep && !a.lights_off);
 }
 
+// The litter test's care, as a function of the minute since birth: every 6 h
+// (14:00, 20:00, 02:00 and 08:00, so the night is woken), and the lights off
+// at 20:00 each day.
+static void care_at(Pet* p, u32 m) {
+    u32 now = T0 + m * MIN;
+    if (m % 360)
+        return;
+    pet_care(p, CARE_MEAL, now);
+    for (int i = 0; i < 3; i++)
+        pet_care(p, CARE_PET, now);
+    pet_care(p, CARE_TREAT, now);
+    pet_care(p, CARE_CLEAN, now);
+    pet_care(p, CARE_MEDICINE, now);
+    if (m % 1440 == 720)
+        pet_care(p, CARE_LIGHTS, now);
+}
+
 static void test_catch_up_equals_live(void) {
+    // A dead pet: once, every minute, and at random points.
     Pet a = fresh(), b = fresh(), c = fresh();
     pet_advance(&a, T0 + 5000 * MIN, hour_of);
     for (u32 m = 1; m <= 5000; m++)
         pet_advance(&b, T0 + m * MIN, hour_of);
     CHECK(memcmp(&a, &b, sizeof a) == 0);
     CHECK(a.dead);
-
     u32 seed = 12345, m = 0;
     while (m < 5000) {
         seed = seed * 1103515245u + 12345u;
@@ -139,34 +157,229 @@ static void test_catch_up_equals_live(void) {
     }
     CHECK(memcmp(&c, &b, sizeof c) == 0);
 
-    // Alive too: cared for early on, then left, split and not.
-    Pet d = fresh(), e = fresh();
-    pet_advance(&d, T0 + 600 * MIN, hour_of);
-    pet_advance(&e, T0 + 600 * MIN, hour_of);
-    pet_care(&d, CARE_MEAL, T0 + 600 * MIN);
-    pet_care(&e, CARE_MEAL, T0 + 600 * MIN);
-    pet_advance(&d, T0 + 1500 * MIN, hour_of);
-    for (u32 k = 601; k <= 1500; k++)
-        pet_advance(&e, T0 + k * MIN, hour_of);
-    CHECK(memcmp(&d, &e, sizeof d) == 0 && !d.dead);
+    // A living pet over six days, cared for, woken at night, lights toggled:
+    // live against random splits that stop at each care.
+    Pet live = fresh();
+    for (u32 k = 1; k <= 8640; k++) {
+        pet_advance(&live, T0 + k * MIN, hour_of);
+        care_at(&live, k);
+    }
+    CHECK(!live.dead);
+    for (u32 trial = 0; trial < 4; trial++) {
+        Pet s = fresh();
+        u32 at = 0;
+        while (at < 8640) {
+            seed = seed * 1103515245u + 12345u;
+            u32 to = at + 1 + (seed >> 16) % 900;
+            u32 next_care = (at / 360 + 1) * 360;
+            if (to > next_care)
+                to = next_care;
+            pet_advance(&s, T0 + to * MIN, hour_of);
+            care_at(&s, to);
+            at = to;
+        }
+        CHECK(memcmp(&s, &live, sizeof s) == 0);
+    }
+
+    // Care, the clock back a day, then 3000 minutes at once or in halves.
+    Pet x = fresh(), y = fresh();
+    pet_advance(&x, T0 + 600 * MIN, hour_of);
+    pet_care(&x, CARE_PET, T0 + 600 * MIN);
+    y = x;
+    pet_advance(&x, T0 + 600 * MIN - 86400, hour_of);
+    pet_advance(&y, T0 + 600 * MIN - 86400, hour_of);
+    pet_advance(&x, T0 + 600 * MIN - 86400 + 3000 * MIN, hour_of);
+    pet_advance(&y, T0 + 600 * MIN - 86400 + 1500 * MIN, hour_of);
+    pet_advance(&y, T0 + 600 * MIN - 86400 + 3000 * MIN, hour_of);
+    CHECK(memcmp(&x, &y, sizeof x) == 0);
+    CHECK(x.dead && x.died_at == T0 + 600 * MIN - 86400 + 2160 * MIN);
+
+    // Care ahead of the stepped life counts as at last_tick.
+    Pet z = fresh();
+    pet_advance(&z, T0 + 100 * MIN, hour_of);
+    pet_care(&z, CARE_PET, T0 + 50 * MIN);
+    CHECK(z.last_interaction == T0 + 100 * MIN);
 }
 
 static void test_backwards_is_no_time(void) {
     Pet p = fresh();
     pet_advance(&p, T0 + 600 * MIN, hour_of);
+    pet_care(&p, CARE_PET, T0 + 600 * MIN);
+    pet_advance(&p, T0 + 700 * MIN, hour_of);
     Pet before = p;
-    pet_advance(&p, T0 + 600 * MIN - 3600, hour_of);
-    CHECK(p.last_tick == T0 + 600 * MIN - 3600);
-    before.last_tick = p.last_tick;
-    CHECK(memcmp(&p, &before, sizeof p) == 0);
-    pet_advance(&p, T0 + 600 * MIN, hour_of);
-    CHECK(p.last_tick == T0 + 600 * MIN);
-    CHECK(p.full < before.full); // an hour's worth of minutes was stepped
+    u32 d = 3600, old = T0 + 700 * MIN, now = old - d;
+    pet_advance(&p, now, hour_of);
+    CHECK(p.last_tick == now);
+    CHECK(p.full == before.full && p.fun == before.fun && p.energy == before.energy &&
+          p.health == before.health);
+    CHECK(pet_age_minutes(&p, now) == pet_age_minutes(&before, old));
+    CHECK(pet_neglect_minutes(&p, now) == pet_neglect_minutes(&before, old));
+    CHECK(pet_mood(&p, now) == pet_mood(&before, old));
+    CHECK(p.born == before.born - d && p.last_interaction == before.last_interaction - d);
+
+    // Stepping on from there is the same life as before the jump.
     Pet q = before;
-    q.last_tick = T0 + 600 * MIN - 3600;
-    for (u32 k = 1; k <= 60; k++)
-        pet_advance(&q, q.last_tick + MIN, hour_of);
-    CHECK(memcmp(&p, &q, sizeof p) == 0);
+    pet_advance(&p, now + 60 * MIN, hour_of);
+    pet_advance(&q, old + 60 * MIN, hour_of);
+    CHECK(p.full == q.full && p.fun == q.fun && p.energy == q.energy && p.health == q.health);
+    CHECK(p.asleep == q.asleep && p.droppings == q.droppings);
+
+    // The wake window moves too: woken at 22:00, back a day, asleep at 23:00.
+    Pet w = fresh();
+    pet_advance(&w, MIDNIGHT + 22 * 3600, hour_of);
+    pet_care(&w, CARE_PET, MIDNIGHT + 22 * 3600);
+    CHECK(!w.asleep);
+    pet_advance(&w, MIDNIGHT + 22 * 3600 - 86400, hour_of);
+    CHECK(w.awake_until == MIDNIGHT + 23 * 3600 - 86400);
+    pet_advance(&w, MIDNIGHT + 23 * 3600 - 86400, hour_of);
+    CHECK(w.asleep);
+
+    // A reset to near the origin saturates at 0 and doesn't crash.
+    Pet r = fresh();
+    pet_advance(&r, T0 + 100 * MIN, hour_of);
+    pet_advance(&r, 1000, hour_of);
+    CHECK(r.last_tick == 1000 && r.born == 0 && r.last_interaction == 0);
+}
+
+// Rates are checked against exact numbers: a clean awake pet at 08:00.
+static void test_needs_rates(void) {
+    Pet k = fresh(); // kitten
+    pet_advance(&k, T0 + 60 * MIN, hour_of);
+    CHECK(k.full == 8000 - 60 * 13 && k.fun == 8000 - 60 * 8 && k.energy == 8000 - 60 * 10);
+
+    Pet a = fresh(); // adolescent
+    a.born = T0 - 2000 * MIN;
+    pet_advance(&a, T0 + 60 * MIN, hour_of);
+    CHECK(a.full == 8000 - 60 * 10 && a.fun == 8000 - 60 * 8 && a.energy == 8000 - 60 * 10);
+
+    Pet s = fresh(); // sick: x3/2, truncated
+    s.sickness = 1;
+    pet_advance(&s, T0 + 60 * MIN, hour_of);
+    CHECK(s.full == 8000 - 60 * 19 && s.fun == 8000 - 60 * 12 && s.energy == 8000 - 60 * 10);
+    Pet sa = fresh();
+    sa.born = T0 - 2000 * MIN;
+    sa.sickness = 1;
+    pet_advance(&sa, T0 + 60 * MIN, hour_of);
+    CHECK(sa.full == 8000 - 60 * 15 && sa.fun == 8000 - 60 * 12);
+
+    // At neglect 720 fun is capped at 3000.
+    Pet n = fresh();
+    n.last_interaction = T0 - 1000 * MIN;
+    pet_advance(&n, T0 + MIN, hour_of);
+    CHECK(n.fun == 3000);
+    Pet n2 = fresh();
+    n2.last_interaction = T0 - 600 * MIN;
+    pet_advance(&n2, T0 + MIN, hour_of);
+    CHECK(n2.fun == 8000 - 8);
+
+    // Needs clamp at 0.
+    Pet z = fresh();
+    z.full = 5;
+    pet_advance(&z, T0 + MIN, hour_of);
+    CHECK(z.full == 0);
+}
+
+static void test_droppings(void) {
+    Pet k = fresh(); // a kitten: one every 180 awake minutes
+    pet_advance(&k, T0 + 179 * MIN, hour_of);
+    CHECK(k.droppings == 0);
+    pet_advance(&k, T0 + 180 * MIN, hour_of);
+    CHECK(k.droppings == 1);
+
+    Pet a = fresh(); // adolescent: every 240
+    a.born = T0 - 2000 * MIN;
+    pet_advance(&a, T0 + 239 * MIN, hour_of);
+    CHECK(a.droppings == 0);
+    pet_advance(&a, T0 + 240 * MIN, hour_of);
+    CHECK(a.droppings == 1);
+    // Asleep minutes don't count: 21:00 is minute 780 (3 so far, 60 on the clock).
+    pet_advance(&a, MIDNIGHT + 24 * 3600 + 6 * 3600 + 59 * 60, hour_of);
+    CHECK(a.asleep && a.droppings == 3);
+    // Awake again at 07:00: the 4th comes 180 minutes later, not before.
+    pet_advance(&a, MIDNIGHT + 24 * 3600 + 7 * 3600 + 179 * MIN, hour_of);
+    CHECK(a.droppings == 3);
+    pet_advance(&a, MIDNIGHT + 24 * 3600 + 7 * 3600 + 180 * MIN, hour_of);
+    CHECK(a.droppings == 4);
+
+    // At most 4.
+    Pet c = fresh();
+    c.born = T0 - 2000 * MIN;
+    c.droppings = 4;
+    pet_advance(&c, T0 + 240 * MIN, hour_of);
+    CHECK(c.droppings == 4);
+}
+
+static void test_health(void) {
+    Pet p = fresh();
+    p.full = p.fun = p.energy = 0;
+    p.health = 5000; // three needs at 0: -6
+    pet_advance(&p, T0 + MIN, hour_of);
+    CHECK(p.health == 5000 - 6);
+
+    Pet f = fresh();
+    f.full = 0;
+    pet_advance(&f, T0 + MIN, hour_of);
+    CHECK(f.health == 10000 - 2);
+
+    Pet d = fresh(); // dropping penalty: -2 for each beyond 2
+    d.health = 5000;
+    d.droppings = 2;
+    pet_advance(&d, T0 + MIN, hour_of);
+    CHECK(d.health == 5000 - 0 && d.sickness == 0);
+    d.droppings = 4;
+    pet_advance(&d, T0 + 2 * MIN, hour_of);
+    CHECK(d.health == 5000 - 4);
+
+    Pet w = fresh(); // all well: +1; not with a dropping, or when sick
+    w.health = 5000;
+    pet_advance(&w, T0 + MIN, hour_of);
+    CHECK(w.health == 5001);
+    Pet w2 = fresh();
+    w2.health = 5000;
+    w2.droppings = 1;
+    pet_advance(&w2, T0 + MIN, hour_of);
+    CHECK(w2.health == 5000);
+    Pet w3 = fresh();
+    w3.health = 5000;
+    w3.sickness = 1;
+    pet_advance(&w3, T0 + MIN, hour_of);
+    CHECK(w3.health == 5000);
+
+    Pet z = fresh(); // health 0 makes it sick
+    z.full = 0;
+    z.health = 2;
+    pet_advance(&z, T0 + MIN, hour_of);
+    CHECK(z.health == 0 && z.sickness == 1);
+}
+
+static void test_meal_and_litter_gate(void) {
+    Pet p = fresh();
+    p.full = 5000;
+    CHECK(pet_care(&p, CARE_MEAL, T0) == CARE_DONE && p.full == 9000);
+    p.full = 100;
+    pet_care(&p, CARE_TREAT, T0);
+    CHECK(p.full == 1600 && p.fun == 9500);
+
+    // Sick at age 8640: no litter until medicine.
+    Pet s = fresh();
+    s.born = T0 - 8639 * MIN;
+    s.sickness = 1;
+    pet_advance(&s, T0 + MIN, hour_of);
+    CHECK(pet_age_minutes(&s, T0 + MIN) == 8640 && !s.litter_due);
+    CHECK(pet_care(&s, CARE_MEDICINE, T0 + MIN) == CARE_DONE);
+    pet_advance(&s, T0 + 2 * MIN, hour_of);
+    CHECK(s.litter_due);
+}
+
+static void test_played_needs_awake_alive(void) {
+    Pet d = fresh();
+    d.dead = true;
+    pet_played(&d, T0 + MIN, 20);
+    CHECK(d.fun == 8000 && d.energy == 8000 && d.last_interaction == T0);
+    Pet s = fresh();
+    s.asleep = true;
+    pet_played(&s, T0 + MIN, 20);
+    CHECK(s.fun == 8000 && s.energy == 8000 && s.last_interaction == T0);
 }
 
 static void test_long_absence(void) {
@@ -279,6 +492,9 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"pet_sleep_cycle", test_sleep_cycle},
            {"pet_catch_up_equals_live", test_catch_up_equals_live},
            {"pet_backwards_is_no_time", test_backwards_is_no_time},
-           {"pet_long_absence", test_long_absence}, {"pet_litter_due", test_litter_due},
-           {"pet_care_refusals", test_care_refusals}, {"pet_play", test_play},
-           {"pet_treats_hurt", test_treats_hurt});
+           {"pet_long_absence", test_long_absence}, {"pet_needs_rates", test_needs_rates},
+           {"pet_droppings", test_droppings}, {"pet_health", test_health},
+           {"pet_meal_and_litter_gate", test_meal_and_litter_gate},
+           {"pet_played_needs_awake_alive", test_played_needs_awake_alive},
+           {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},
+           {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt});
