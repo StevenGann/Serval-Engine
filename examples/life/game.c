@@ -81,8 +81,12 @@ static void window_follow(bool jump) {
         view_x = window_x * 256;
         view_y = window_y * 256;
     } else {
-        view_x += (window_x * 256 - view_x) / 4;
-        view_y += (window_y * 256 - view_y) / 4;
+        // A quarter of the way a frame, then the last few 256ths at once:
+        // division toward zero alone would stop short when moving right or
+        // down, the cells a pixel off the ring.
+        s32 dx = window_x * 256 - view_x, dy = window_y * 256 - view_y;
+        view_x += dx > -4 && dx < 4 ? dx : dx / 4;
+        view_y += dy > -4 && dy < 4 ? dy : dy / 4;
     }
 }
 
@@ -96,7 +100,8 @@ static void zoom_update(void) {
     ppc = 512 + (s32)(2 * e);
     ox = view_x * (s32)e / 256;
     oy = view_y * (s32)e / 256;
-    FIXED scale = 65536 / ppc;
+    FIXED scale = (65536 + ppc / 2) / ppc; // rounded: the ring stays on its cell
+
     surface_set_transform(ox, oy, scale, 0, 0, scale);
 }
 
@@ -176,8 +181,13 @@ static void history_reset(void) {
     period = 0;
 }
 
+// After an edit the busy words are unknown until a generation is stepped
+// (life_count() doesn't count them): whole_fits() assumes the worst.
+static bool busy_unknown;
+
 static void edited(void) {
     stats = life_count(grids[now]);
+    busy_unknown = true;
     life_rows_scan(grids[now], rows[now]);
     history_reset();
     page_dirty = true;
@@ -188,6 +198,7 @@ static void edited(void) {
 static void generation_done(u8* page) {
     u32 before = stats.population;
     stats = partial;
+    busy_unknown = false;
     now ^= 1;
     settings.generation++;
     u32 deaths = before + stats.births - stats.population;
@@ -235,17 +246,19 @@ static bool step_continue(void) {
     return true;
 }
 
-// Steps at `speed` generations a second: a generation is due every 60 /
-// speed frames, and none starts in a frame that finished one.
 // Whether a whole generation will fit in this frame.
 static bool whole_fits(void) {
     const u8* r = rows[now];
     u32 worked = 0;
     for (int y = 0; y < LIFE_H; y++)
         worked += (r[y ? y - 1 : LIFE_H - 1] | r[y] | r[y + 1 < LIFE_H ? y + 1 : 0]) != 0;
-    return worked * ROW_CYCLES + stats.busy * WORD_CYCLES <= WHOLE_CYCLES;
+    // Unknown, every word of the rows worked may be busy.
+    u32 busy = busy_unknown ? worked * LIFE_ROW_WORDS : stats.busy;
+    return worked * ROW_CYCLES + busy * WORD_CYCLES <= WHOLE_CYCLES;
 }
 
+// Steps at `speed` generations a second: a generation is due every 60 /
+// speed frames, and none starts in a frame that finished one.
 static void run(u32 speed, bool finished) {
     ticks += speed;
     if (ticks < 60)
@@ -432,6 +445,7 @@ void game_init(void) {
     life_stamp_make(&stamp, settings.stamp, settings.turns);
     game_apply_rule();
     stats = life_count(grids[now]);
+    busy_unknown = true;
     life_rows_scan(grids[now], rows[now]);
     life_rows_scan(grids[now ^ 1], rows[now ^ 1]);
     cx = LIFE_W / 2;
@@ -448,12 +462,20 @@ void game_title_frame(void) {
     zoom_update();
 }
 
+// The D-pad's directions: frames each has been held.
+static int held[4];
+static void moves_reset(void) {
+    for (int i = 0; i < 4; i++)
+        held[i] = 0;
+}
+
 void game_start(void) {
     running = false;
     cx = LIFE_W / 2;
     cy = LIFE_H / 2;
     ticks = 0;
     button_repeat_reset();
+    moves_reset();
 }
 
 bool game_wants_menu(void) {
@@ -464,6 +486,7 @@ void game_resume(void) {
     wants_menu = false;
     life_stamp_make(&stamp, settings.stamp, settings.turns);
     button_repeat_reset();
+    moves_reset();
     page_dirty = true;
 }
 
@@ -471,12 +494,15 @@ void game_resume(void) {
 
 // The D-pad: a step at the press, then, held, again after 14 frames, every 4
 // frames, then every 2 and at last every frame.
-static int held[4];
 static bool move_due(u16 button, int i) {
     if (!button_down(button)) {
         held[i] = 0;
         return false;
     }
+    // A move starts with a press: a button already held when play resumes
+    // (closing the menu with a direction held) waits for the next one.
+    if (held[i] == 0 && !button_pressed(button))
+        return false;
     int h = held[i]++;
     if (h == 0)
         return true;
