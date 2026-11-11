@@ -138,15 +138,18 @@
 //     louder the nearer the serval is (soft far off, sharp close by), and an
 //     arrow over the serval's head points left or right to the one it heard,
 //     blinking out after a second. LEFT and RIGHT creep; B held crouches
-//     (low, head forward: slower, and quiet: birds aren't startled); A is a
+//     (low, head forward: slower, birds aren't startled, and the rustles sound a step
+//     louder); A is a
 //     high leap 48 pixels ahead in the direction it faces (a rising arc, a
 //     chirp). Landing within 12 pixels of a mouse's rustle catches it: a
 //     mouse squirms under its paw (+1, a chirp). Some rustles hide a bird,
 //     indistinguishable; walking (not crouched) within 24 pixels startles it
 //     (a flutter): it flies up and away, and A while it is within 48 pixels
-//     swats it in a puff of feathers (+3). A leap that finds nothing scares
-//     the rustles near the landing silent for 2 seconds (the grass ripples,
-//     a falling tone). At 0 the TIME UP! card shows SCORE, BEST (NEW! for a
+//     swats it in a puff of feathers (+3); the bird is a small brown one that
+//     flaps. A leap that finds nothing scares the rustles near the landing
+//     silent for 2 seconds (the grass hops, scared rustles whip theirs, seed
+//     heads fly, a falling tone). An A pressed up to 8 frames early leaps
+//     when the serval can. At 0 the TIME UP! card shows SCORE, BEST (NEW! for a
 //     record, saved), MICE and BIRDS and FUN +N (10 plus the score, at most
 //     40). START pauses (RESUME or QUIT).
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME

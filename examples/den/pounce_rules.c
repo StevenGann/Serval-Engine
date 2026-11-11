@@ -49,6 +49,11 @@ int pounce_loudness(int d) {
     return d >= POUNCE_HEAR_R ? 0 : d >= 96 ? 1 : d >= 56 ? 2 : d >= 28 ? 3 : 4;
 }
 
+int pounce_hear(const PounceState* s, int distance) {
+    int l = pounce_loudness(distance);
+    return l && s->crouch && !s->leap ? l + 1 : l;
+}
+
 int pounce_heard(const PounceState* s, int* dx) {
     if (!s->heard_t)
         return 0;
@@ -288,6 +293,8 @@ PounceResult pounce_step(PounceState* s, u16 keys) {
     s->frame++;
     u16 pressed = (u16)(keys & ~s->prev_keys);
     s->prev_keys = keys;
+    if (pressed & BUTTON_A)
+        s->a_at = s->frame;
     if (s->leap) {
         s->leap++;
         s->x = s->leap_x0 + s->leap_dir * pounce_leap_dx(s->leap);
@@ -314,8 +321,10 @@ PounceResult pounce_step(PounceState* s, u16 keys) {
             s->x = POUNCE_X_MIN * Q;
         if (s->x > POUNCE_X_MAX * Q)
             s->x = POUNCE_X_MAX * Q;
-        if (pressed & BUTTON_A)
+        if (s->a_at && s->frame - s->a_at <= POUNCE_BUFFER) {
+            s->a_at = 0;
             start_leap(s);
+        }
     }
     rustles(s);
     if (s->heard_t)

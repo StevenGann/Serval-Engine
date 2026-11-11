@@ -27,8 +27,8 @@ enum {
     SND_JUMP,
     SND_SNAP,
     SND_KNOCK,
-    SND_RUSTLE, // four loudnesses in a row
-    SND_RUSTLE_END = SND_RUSTLE + 3,
+    SND_RUSTLE, // five loudnesses in a row
+    SND_RUSTLE_END = SND_RUSTLE + 4,
     SND_FLUTTER,
     SND_COUNT,
 };
@@ -205,6 +205,13 @@ static const PsgSound sounds[SND_COUNT] = {
                         .volume = 13,
                         .fade = -1,
                         .priority = 1},
+    [SND_RUSTLE + 4] = {.channel = PSG_NOISE,
+                        .notes = rustle_notes,
+                        .note_count = 4,
+                        .frames = 3,
+                        .volume = 15,
+                        .fade = -1,
+                        .priority = 1},
     [SND_FLUTTER] = {.channel = PSG_SQUARE2,
                      .duty = PSG_DUTY_12,
                      .notes = flutter_notes,
@@ -286,7 +293,7 @@ void sound_knock(void) {
 }
 
 void sound_rustle(int loudness) {
-    if (loudness >= 1 && loudness <= 4)
+    if (loudness >= 1 && loudness <= 5)
         psg_play((u16)(SND_RUSTLE + loudness - 1));
 }
 

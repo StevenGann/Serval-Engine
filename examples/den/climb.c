@@ -212,21 +212,6 @@ static void draw_scene(const ClimbState* s, bool serval) {
     draw_falling(s);
 }
 
-// A box of 16 x 16 pieces behind text: columns and rows of them from (x, y).
-static void draw_panel(int x, int y, int cols, int rows) {
-    for (int j = 0; j < rows; j++)
-        for (int i = 0; i < cols; i++)
-            sprite_draw(SPR_PANEL,
-                        (u8)((j == 0          ? 0
-                              : j == rows - 1 ? 2
-                                              : 1) *
-                                 3 +
-                             (i == 0          ? 0
-                              : i == cols - 1 ? 2
-                                              : 1)),
-                        x + i * 16, y + j * 16, 0);
-}
-
 // --- Screens ---------------------------------------------------------------------------------
 
 static void fade(const ClimbState* s, int from, int to, bool serval) {
@@ -275,7 +260,7 @@ static bool pause_menu(const ClimbState* s) {
             text_set_style(TEXT_NORMAL);
             redraw = false;
         }
-        draw_panel(64, 40, 7, 4); // first drawn is in front
+        art_draw_panel(64, 40, 7, 4); // first drawn is in front
         draw_scene(s, true);
         frame_end();
     }
@@ -307,7 +292,7 @@ static void results_card(const ClimbState* s, bool top, int best, bool new_best,
         frame_begin();
         refresh_lock();
         falling_step(s);
-        draw_panel(48, 28, 9, 7);
+        art_draw_panel(48, 28, 9, 7);
         draw_scene(s, false);
         frame_end();
         if (pressed(BUTTON_A) || pressed(BUTTON_START))

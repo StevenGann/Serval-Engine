@@ -40,6 +40,16 @@
 //    shaking grass every POUNCE_PULSE_MIN to POUNCE_PULSE_MAX frames
 //    (POUNCE_BURST_FRAMES long); mice also wander slowly. Silent between
 //    bursts: there is nothing to see or hear then.
+//  - A press of A during a leap or the recovery is kept, and leaps as soon as
+//    the serval can if it was pressed at most POUNCE_BUFFER (8) frames before.
+//  - The round ends when frame POUNCE_ROUND_FRAMES has been stepped. A leap
+//    that lands on that frame counts (a catch, a miss); one still in the air
+//    does not (no catch, no scare). A swat is scored when A is pressed, so it
+//    counts even if the leap's landing never comes.
+//  - Crouching helps the ears: while crouched on the ground the rustles sound
+//    one step louder (pounce_hear(), a fifth level above pounce_loudness()'s
+//    four), so a serval that creeps hears better as well as startling no
+//    birds. There are no footsteps: crouched is not "quieter" in any other way.
 //  - The serval's ears turn to a burst it hears (within POUNCE_HEAR_R, the
 //    nearest one if several): pounce_heard() gives the direction for
 //    POUNCE_HEARD_FRAMES frames, following the serval as it moves.
@@ -56,6 +66,7 @@
 #define POUNCE_REACH 48
 #define POUNCE_PEAK 40
 #define POUNCE_RECOVER 10
+#define POUNCE_BUFFER 8 // an A pressed this many frames before the serval can leap, leaps then
 #define POUNCE_CATCH_R 12
 #define POUNCE_FLUSH_R 24
 #define POUNCE_SCARE_R 48
@@ -123,6 +134,7 @@ typedef struct {
     u8 recover;
     bool hit; // the leap swatted a bird
     u16 prev_keys;
+    u32 a_at; // the frame an A press was kept at (0: none), see pounce_rules.h
     u16 points, mice, birds;
     u8 events;
     s16 ev_x, ev_h; // pixels
@@ -158,6 +170,10 @@ int pounce_height(const PounceState* s);
 
 // A rustle's loudness at a distance in pixels: 0 (not heard) to 4.
 int pounce_loudness(int distance);
+
+// What the serval hears of a rustle at `distance`: pounce_loudness(), one
+// step louder (up to 5) while it is crouched on the ground, if heard at all.
+int pounce_hear(const PounceState* s, int distance);
 
 // The last burst heard, if any is still in mind: the frames left (0: none)
 // and the signed pixels from the serval to it (negative: to the left).

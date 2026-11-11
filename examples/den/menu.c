@@ -414,16 +414,6 @@ void menu_draw(const Pet* p, u32 now) {
         int wu = m.list == LIST_FEED ? 4 : 8, hu = n == 2 ? 2 : 3;
         int x0 = list_col() * 8 - 12;
         int y0 = (LIST_BOTTOM_ROW - n + 1) * 8 - (hu * 16 - n * 8) / 2;
-        for (int j = 0; j < hu; j++)
-            for (int i = 0; i < wu; i++)
-                sprite_draw(SPR_PANEL,
-                            (u8)((j == 0        ? 0
-                                  : j == hu - 1 ? 2
-                                                : 1) *
-                                     3 +
-                                 (i == 0        ? 0
-                                  : i == wu - 1 ? 2
-                                                : 1)),
-                            x0 + i * 16, y0 + j * 16, 0);
+        art_draw_panel(x0, y0, wu, hu);
     }
 }

@@ -1593,6 +1593,41 @@ static void test_pounce_hearing_and_fun(void) {
     CHECK((int)(s.x - 100 * 256) * 2 == walked);
 }
 
+static void test_pounce_buffered_press(void) {
+    // A pressed in the last frames of the recovery leaps as soon as it can.
+    PounceState s = pounce_ready(60);
+    pounce_leap(&s);
+    CHECK(s.leap == 0 && s.recover > 0);
+    int left = s.recover;
+    for (int i = 0; i < left - POUNCE_BUFFER + 1 && s.recover > POUNCE_BUFFER - 1; i++)
+        pounce_step(&s, 0);
+    pounce_step(&s, BUTTON_A); // pressed while recovering
+    CHECK(s.leap == 0);
+    int steps = 0;
+    while (s.leap == 0 && steps < 20) {
+        pounce_step(&s, 0);
+        steps++;
+    }
+    CHECK(s.leap == 1 && steps <= POUNCE_BUFFER);
+    // Pressed too early (more than the buffer before it can act): dropped.
+    s = pounce_ready(60);
+    pounce_step(&s, BUTTON_A);
+    pounce_step(&s, 0);
+    pounce_step(&s, BUTTON_A); // in the air, 38 frames before landing
+    for (int i = 0; i < POUNCE_LEAP_FRAMES + POUNCE_RECOVER + 5; i++)
+        pounce_step(&s, 0);
+    CHECK(s.leap == 0 && pounce_x(&s) == 60 + POUNCE_REACH);
+}
+
+static void test_pounce_crouch_hears_better(void) {
+    PounceState s = pounce_ready(100);
+    pounce_step(&s, 0);
+    CHECK(pounce_hear(&s, 20) == 4 && pounce_hear(&s, 100) == 1);
+    pounce_step(&s, BUTTON_B);
+    CHECK(s.crouch && pounce_hear(&s, 20) == 5 && pounce_hear(&s, 100) == 2);
+    CHECK(pounce_hear(&s, POUNCE_HEAR_R) == 0); // too far stays too far
+}
+
 TEST_SUITE(
     den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
     {"pet_neglect_thresholds", test_neglect_thresholds},
@@ -1626,4 +1661,6 @@ TEST_SUITE(
     {"pounce_miss_scares", test_pounce_miss_scares},
     {"pounce_bird_flush_distance", test_pounce_bird_flush_distance},
     {"pounce_swat", test_pounce_swat}, {"pounce_round_timer", test_pounce_round_timer},
-    {"pounce_hearing_and_fun", test_pounce_hearing_and_fun});
+    {"pounce_hearing_and_fun", test_pounce_hearing_and_fun},
+    {"pounce_buffered_press", test_pounce_buffered_press},
+    {"pounce_crouch_hears_better", test_pounce_crouch_hears_better});

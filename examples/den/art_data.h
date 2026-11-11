@@ -11,7 +11,7 @@
 #include "art_internal.h"
 
 #define ART_BG_TILES 953  // 30496 bytes
-#define ART_OBJ_TILES 923 // 29536 bytes
+#define ART_OBJ_TILES 925 // 29600 bytes
 
 extern const u32 art_bg_tiles[ART_BG_TILES * 8];
 extern const Metatile art_den_metatiles[DEN_W * MAP_H];

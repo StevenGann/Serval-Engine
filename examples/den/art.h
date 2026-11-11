@@ -74,6 +74,7 @@ enum {
     SPR_BIRD,    // 16x16: BIRD_FRAMES, a bird flying right: wings up, down, gliding (PAL_FIELD)
     SPR_FEATHER, // 8x8: FEATHER_FRAMES, a feather falling (PAL_FIELD)
     SPR_CUE,     // 8x8: CUE_FRAMES, the ears' arrow: left, right (PAL_FIELD)
+    SPR_SEED,    // 8x8: SEED_FRAMES, a seed head of the grass, thrown up by a miss (PAL_FIELD)
     SPRITE_COUNT,
 };
 
@@ -116,6 +117,7 @@ enum {
 #define BIRD_FRAMES 3
 #define FEATHER_FRAMES 3
 #define CUE_FRAMES 2
+#define SEED_FRAMES 2
 
 // SPR_BRANCH's pieces (drawn pointing right, root at the left; flipped for a
 // bough on the left; the crown's top, where the serval's feet are, is row 4): the root at the
@@ -185,6 +187,10 @@ void art_load_climb(void);
 // pixels being a lap); everything else as art_load(). Call with the screen
 // black. den_resume() puts the den back.
 void art_load_pounce(void);
+
+// A box of 16 x 16 pieces (SPR_PANEL) behind text: `cols` by `rows` of them
+// from (x, y). Sprites: call before what is to be in front of it.
+void art_draw_panel(int x, int y, int cols, int rows);
 
 // The den's colours for a time of day, with the lights on or off, the sky's,
 // the savanna's, the sun's and the things on the floor (palette writes, in

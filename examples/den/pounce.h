@@ -5,8 +5,8 @@
 // serval hunts by ear in tall grass for 60 seconds. Patches of grass shake
 // and rustle (the louder, the nearer; the engine's sound is mono, so an
 // arrow over the serval's head points to the last rustle it heard); some hide
-// a mouse, some a bird. LEFT and RIGHT creep, B held crouches (slower and
-// quiet: a bird isn't startled), A leaps 48 pixels ahead in a high arc: land
+// a mouse, some a bird. LEFT and RIGHT creep, B held crouches (slower; a bird isn't
+// startled and the rustles sound a step louder), A leaps 48 pixels ahead in a high arc: land
 // on a rustle to catch the mouse; a bird that flies up can be swatted with
 // another A. START pauses (RESUME or QUIT, which ends the round and counts
 // it). A round that ends shows its score, the best and the fun earned; the

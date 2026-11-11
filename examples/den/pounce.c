@@ -22,7 +22,7 @@
 
 #define GROUND_Y 146 // the serval's feet
 #define TUFTS 15     // the row of grass across the screen
-#define FEATHERS 6
+#define FEATHERS 10
 #define FEATHER_FRAMES_LIVE 44
 #define CATCH_FRAMES 36
 #define RIPPLE_FRAMES 16
@@ -34,8 +34,8 @@
 static u16* best_score;
 
 typedef struct {
-    bool active;
-    s32 x, y, vx, vy; // Q8
+    bool active, seed; // a seed head (from a miss) or a feather
+    s32 x, y, vx, vy;  // Q8
     u8 age;
 } Feather;
 
@@ -117,8 +117,7 @@ static int shake_frame(u32 f) {
     return seq[(f / 3) & 3];
 }
 
-static void draw_serval(const PounceState* s, bool air_only_pose) {
-    (void)air_only_pose;
+static void draw_serval(const PounceState* s) {
     int fx = pounce_x(s), fy = GROUND_Y - pounce_height(s);
     int frame;
     if (s->leap)
@@ -168,8 +167,12 @@ static void draw_feathers(void) {
         Feather* f = &v.feather[k];
         if (!f->active)
             continue;
-        sprite_draw(SPR_FEATHER, (u8)((f->age / 6) % FEATHER_FRAMES), (int)(f->x / 256) - 4,
-                    (int)(f->y / 256) - 4, 0);
+        if (f->seed)
+            sprite_draw(SPR_SEED, (u8)((f->age / 5) & 1), (int)(f->x / 256) - 4,
+                        (int)(f->y / 256) - 4, 0);
+        else
+            sprite_draw(SPR_FEATHER, (u8)((f->age / 6) % FEATHER_FRAMES), (int)(f->x / 256) - 4,
+                        (int)(f->y / 256) - 4, 0);
     }
 }
 
@@ -190,7 +193,7 @@ static void feathers_step(void) {
 }
 
 static void feathers_burst(int x, int h) {
-    for (int k = 0; k < FEATHERS; k++) {
+    for (int k = 0; k < 6; k++) {
         v.feather[k] = (Feather){.active = true,
                                  .x = x * 256,
                                  .y = (GROUND_Y - 10 - h) * 256,
@@ -200,12 +203,25 @@ static void feathers_burst(int x, int h) {
     }
 }
 
+// Seed heads thrown up by a miss (they use the pool's last four places).
+static void seeds_burst(int x) {
+    for (int k = 6; k < FEATHERS; k++) {
+        v.feather[k] = (Feather){.active = true,
+                                 .seed = true,
+                                 .x = (x + vrand(41) - 20) * 256,
+                                 .y = (GROUND_Y - 6) * 256,
+                                 .vx = (vrand(9) - 4) * 90,
+                                 .vy = -(vrand(300) + 420),
+                                 .age = (u8)vrand(6)};
+    }
+}
+
 static void draw_birds(const PounceState* s) {
     for (int i = 0; i < POUNCE_SLOTS; i++) {
         const PounceRustle* r = &s->r[i];
         if (r->state != PR_FLY)
             continue;
-        static const u8 beat[4] = {0, 2, 1, 2};
+        static const u8 beat[4] = {0, 1, 2, 1};
         sprite_draw(SPR_BIRD, beat[(s->frame / 4) & 3], (int)(r->x / 256) - 8,
                     GROUND_Y - 22 - (int)(r->h / 256), r->vx < 0 ? SPRITE_FLIP_H : 0);
     }
@@ -220,6 +236,16 @@ static void draw_tufts(const PounceState* s) {
             int jitter = (s->frame & 2) ? 2 : -2, x = (int)(r->x / 256) - 8;
             sprite_draw(SPR_STALK, (u8)shake_frame(s->frame), x + jitter, GROUND_Y - 6, 0);
             sprite_draw(SPR_STALK, (u8)shake_frame(s->frame + 1), x - jitter, GROUND_Y - 18, 0);
+        }
+    }
+    // The rustles a miss scared whip the grass as they flee.
+    for (int i = 0; i < POUNCE_SLOTS; i++) {
+        const PounceRustle* r = &s->r[i];
+        if (r->state == PR_SCARED && r->timer > POUNCE_SCARE_FRAMES - RIPPLE_FRAMES) {
+            int jitter = (s->frame & 1) ? 3 : -3, x = (int)(r->x / 256) - 8;
+            sprite_draw(SPR_STALK, (u8)shake_frame(s->frame), x + jitter, GROUND_Y - 6, 0);
+            sprite_draw(SPR_STALK, (u8)shake_frame(s->frame + 2), x - jitter, GROUND_Y - 18, 0);
+            sprite_draw(SPR_STALK, (u8)shake_frame(s->frame + 1), x + jitter, GROUND_Y - 30, 0);
         }
     }
     for (int i = 0; i < TUFTS; i++) {
@@ -243,22 +269,7 @@ static void draw_scene(const PounceState* s, bool serval) {
     draw_birds(s);
     draw_tufts(s);
     if (serval)
-        draw_serval(s, false);
-}
-
-// A box of 16 x 16 pieces behind text: columns and rows of them from (x, y).
-static void draw_panel(int x, int y, int cols, int rows) {
-    for (int j = 0; j < rows; j++)
-        for (int i = 0; i < cols; i++)
-            sprite_draw(SPR_PANEL,
-                        (u8)((j == 0          ? 0
-                              : j == rows - 1 ? 2
-                                              : 1) *
-                                 3 +
-                             (i == 0          ? 0
-                              : i == cols - 1 ? 2
-                                              : 1)),
-                        x + i * 16, y + j * 16, 0);
+        draw_serval(s);
 }
 
 // --- Screens ---------------------------------------------------------------------------------
@@ -309,7 +320,7 @@ static bool pause_menu(const PounceState* s) {
             text_set_style(TEXT_NORMAL);
             redraw = false;
         }
-        draw_panel(64, 40, 7, 4); // first drawn is in front
+        art_draw_panel(64, 40, 7, 4); // first drawn is in front
         draw_scene(s, true);
         frame_end();
     }
@@ -342,7 +353,7 @@ static void results_card(const PounceState* s, bool timeup, int best, bool new_b
         frame_begin();
         refresh_lock();
         feathers_step();
-        draw_panel(48, 28, 9, 7);
+        art_draw_panel(48, 28, 9, 7);
         draw_scene(s, false);
         frame_end();
         if (pressed(BUTTON_A) || pressed(BUTTON_START))
@@ -359,7 +370,7 @@ static void play_bursts(const PounceState* s) {
     for (int i = 0; i < POUNCE_SLOTS; i++)
         if (s->bursts & (1u << i)) {
             int d = (int)(s->r[i].x / 256) - pounce_x(s);
-            int l = pounce_loudness(d);
+            int l = pounce_hear(s, d);
             if (l > loudest)
                 loudest = l;
         }
@@ -429,6 +440,7 @@ bool pounce_play(Pet* pet, u32 now) {
             sound_miss();
             v.ripple_t = RIPPLE_FRAMES;
             v.ripple_x = s.ev_x;
+            seeds_burst(s.ev_x);
         } else if (v.ripple_t > 0) {
             v.ripple_t--;
         }

@@ -141,21 +141,6 @@ static void draw_court(const YarnState* s, bool paw_visible) {
     sprite_draw(SPR_LAMP, v.lights_off ? 2 : (u8)((f / 14) & 1), LAMP_X, LAMP_Y, 0);
 }
 
-// A box of 16 x 16 pieces behind text: columns and rows of them from (x, y).
-static void draw_panel(int x, int y, int cols, int rows) {
-    for (int j = 0; j < rows; j++)
-        for (int i = 0; i < cols; i++)
-            sprite_draw(SPR_PANEL,
-                        (u8)((j == 0          ? 0
-                              : j == rows - 1 ? 2
-                                              : 1) *
-                                 3 +
-                             (i == 0          ? 0
-                              : i == cols - 1 ? 2
-                                              : 1)),
-                        x + i * 16, y + j * 16, 0);
-}
-
 // --- Screens ---------------------------------------------------------------------------------
 
 static void fade(const YarnState* s, int from, int to, bool paw) {
@@ -205,7 +190,7 @@ static bool pause_menu(const YarnState* s) {
             redraw = false;
         }
         draw_court(s, true);
-        draw_panel(64, 40, 7, 4);
+        art_draw_panel(64, 40, 7, 4);
         frame_end();
     }
     text_clear_area(6, 6, 18, 7);
@@ -235,7 +220,7 @@ static void results_card(const YarnState* s, int best, bool new_best, u8 fun, u3
         frame_begin();
         refresh_lock();
         draw_court(s, false);
-        draw_panel(48, 28, 9, 7);
+        art_draw_panel(48, 28, 9, 7);
         frame_end();
         if (pressed(BUTTON_A) || pressed(BUTTON_START))
             break;

@@ -455,6 +455,20 @@ void art_load_pounce(void) {
     map_load(&climb_sky_layer);
 }
 
+void art_draw_panel(int x, int y, int cols, int rows) {
+    for (int j = 0; j < rows; j++)
+        for (int i = 0; i < cols; i++)
+            sprite_draw(SPR_PANEL,
+                        (u8)((j == 0          ? 0
+                              : j == rows - 1 ? 2
+                                              : 1) *
+                                 3 +
+                             (i == 0          ? 0
+                              : i == cols - 1 ? 2
+                                              : 1)),
+                        x + i * 16, y + j * 16, 0);
+}
+
 void art_hide(void) {
     map_unload(DEN_BG);
     map_unload(SKY_BG);

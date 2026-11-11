@@ -1955,26 +1955,30 @@ static void stalk_piece(int f) {
 static void mouse_piece(int f) {
     canvas_clear();
     int up = f == 1 ? 1 : 0;
+    // the body, plump, a pale belly along its foot
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 16; x++) {
             int dx = (x - 8) * 2, dy = (y - 5 + up) * 3;
-            int d = dx * dx / 2 + dy * dy;
-            if (d <= 54)
-                put(x, y, dy > 2 ? F_BELLY : F_MOUSE);
+            if (dx * dx / 2 + dy * dy <= 60)
+                put(x, y, dy >= 3 ? F_BELLY : F_MOUSE);
         }
-    // the head and nose to the right, a pink ear, an eye
+    // the head to the right, a pointed nose
     for (int y = 3 + up; y <= 6 + up; y++)
         for (int x = 11; x <= 14 - (y == 6 + up ? 1 : 0); x++)
-            put(x, y, F_MOUSE);
+            put(x, y, y >= 6 + up ? F_BELLY : F_MOUSE);
     put(15, 5 + up, F_PINK);
-    put(12, 4 + up, F_OUT);
-    put(10, 2 + up, F_PINK);
-    put(11, 2 + up, F_PINK);
-    put(10, 3 + up, F_MOUSE);
-    // the tail
-    for (int x = 0; x < 3; x++)
-        put(x, 6 - (f == 2 ? x : (x & 1)), F_PINK);
-    put(1, 5, F_PINK);
+    put(14, 5 + up, F_PINK);
+    put(12, 4 + up, F_OUT); // the eye
+    // a big round ear, pink inside
+    for (int y = 0; y <= 2; y++)
+        for (int x = 9; x <= 11; x++)
+            put(x, y + up, (y == 0 && x != 10) ? 0 : (x == 10 || y == 2) ? F_PINK : F_MOUSE);
+    put(10, 1 + up, F_PINK);
+    // the long tail, curling
+    static const int tx[6] = {0, 1, 2, 3, 3, 4}, ty[6] = {2, 3, 3, 4, 5, 5};
+    for (int i = 0; i < 6; i++)
+        put(tx[i] - (f == 2 ? 0 : 0), ty[i] + (f == 2 ? -1 : 0) + (i >= 3 ? 1 : 0), F_PINK);
+    put(1, 4, F_PINK);
     outline(16, 8, F_OUT);
 }
 
@@ -1993,32 +1997,34 @@ static void bird_piece(int f) {
     canvas_clear();
     // the tail
     fill_tri(1, 8, 5, 8, 5, 11, F_BIRD_DARK);
-    // the body and breast, the head and its beak
+    // the body: a plump chest, pale below; the head with its beak
     for (int y = 0; y < 16; y++)
         for (int x = 0; x < 16; x++) {
-            int dx = (x - 7) * 2, dy = (y - 9) * 3;
-            if (dx * dx * 4 + dy * dy * 3 <= 190)
-                put(x, y, y >= 10 ? F_CREAM : F_BIRD);
-            int hx = (x - 11) * 2, hy = (y - 7) * 2;
+            int dx = (x - 8) * 2, dy = (y - 9) * 3;
+            if (dx * dx * 4 + dy * dy * 3 <= 150)
+                put(x, y, y >= 9 ? F_CREAM : F_BIRD);
+            int hx = (x - 12) * 2, hy = (y - 7) * 2;
             if (hx * hx + hy * hy <= 10)
                 put(x, y, F_BIRD_DARK);
         }
-    put(12, 6, F_OUT);
-    put(13, 7, F_BEAK);
+    put(12, 6, F_WHITE);
+    put(13, 6, F_OUT);
     put(14, 7, F_BEAK);
-    // the wing: up, down, or out behind, with a pale bar
-    if (f == 0)
-        fill_tri(5, 9, 3, 1, 10, 5, F_BIRD_DARK);
-    else if (f == 1)
-        fill_tri(5, 9, 3, 15, 10, 13, F_BIRD_DARK);
-    else
-        fill_tri(6, 9, 1, 6, 9, 8, F_BIRD_DARK);
-    if (f == 0)
-        put(5, 5, F_CREAM), put(6, 4, F_CREAM);
-    else if (f == 1)
-        put(5, 13, F_CREAM), put(6, 12, F_CREAM);
-    else
-        put(4, 7, F_CREAM), put(5, 7, F_CREAM);
+    put(15, 7, F_BEAK);
+    // the wing, big: flapping up, level, then down
+    if (f == 0) {
+        fill_tri(6, 9, 1, 0, 12, 3, F_BIRD_DARK);
+        fill_tri(6, 9, 4, 3, 10, 5, F_BIRD);
+        put(6, 4, F_CREAM), put(7, 3, F_CREAM), put(8, 3, F_CREAM);
+    } else if (f == 1) {
+        fill_tri(5, 8, 0, 9, 11, 7, F_BIRD_DARK);
+        fill_tri(5, 8, 2, 9, 11, 8, F_BIRD);
+        put(6, 8, F_CREAM), put(7, 8, F_CREAM), put(8, 8, F_CREAM);
+    } else {
+        fill_tri(6, 9, 1, 15, 12, 13, F_BIRD_DARK);
+        fill_tri(6, 10, 4, 13, 10, 12, F_BIRD);
+        put(6, 12, F_CREAM), put(7, 12, F_CREAM), put(8, 12, F_CREAM);
+    }
     outline(16, 16, F_OUT);
 }
 
@@ -2039,6 +2045,22 @@ static void cue_piece(int right) {
     canvas_clear();
     paint(rows, 8, keys, 0, 0);
     if (right)
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 4; x++) {
+                int t = canvas[y][x];
+                canvas[y][x] = canvas[y][7 - x];
+                canvas[y][7 - x] = (u8)t;
+            }
+}
+
+static void seed_piece(int f) {
+    static const char* const rows[8] = {"...cc...", "..ccbc..", "..cbbc..", "..cccc..",
+                                        "...bb...", "...ab...", "...a....", "...a...."};
+    static const char keys[] = " Kabgmnpbdcywoo";
+    canvas_clear();
+    paint(rows, 8, keys, 0, 0);
+    outline(8, 8, F_OUT);
+    if (f)
         for (int y = 0; y < 8; y++)
             for (int x = 0; x < 4; x++) {
                 int t = canvas[y][x];
@@ -2078,6 +2100,12 @@ static u32* build_pounce(u32* out) {
         out = pack(8, 8, out);
     }
     sprite(SPR_CUE, SPRITE_8x8, CUE_FRAMES, PAL_FIELD, tiles);
+    tiles = out;
+    for (int f = 0; f < SEED_FRAMES; f++) {
+        seed_piece(f);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_SEED, SPRITE_8x8, SEED_FRAMES, PAL_FIELD, tiles);
     return out;
 }
 
@@ -2106,7 +2134,8 @@ _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAME
                        2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
                        3 + BAR_COLORS * 9 + YARN_SIZES * YARN_TURNS + THREAD_FRAMES +
                        2 * PAW_FRAMES + 4 * BRANCH_FRAMES + 4 * NEST_FRAMES + 4 * STALK_FRAMES +
-                       2 * MOUSE_FRAMES + 4 * BIRD_FRAMES + FEATHER_FRAMES + CUE_FRAMES <=
+                       2 * MOUSE_FRAMES + 4 * BIRD_FRAMES + FEATHER_FRAMES + CUE_FRAMES +
+                       SEED_FRAMES <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 
