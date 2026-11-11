@@ -36,23 +36,27 @@ u8 yarn_fun(u32 bats) {
     return (u8)(YARN_FUN_BASE + (bats > YARN_FUN_BATS_MAX ? YARN_FUN_BATS_MAX : bats));
 }
 
-void yarn_set_reach(YarnState* s, int h) {
-    s->paw_h = (s16)(h < 8 ? 8 : h > 48 ? 48 : h);
+void yarn_set_reach(YarnState* s, int w, int line_y) {
+    s->paw_w = (s16)(w < 8 ? 8 : w > 48 ? 48 : w);
+    s->paw_y = (s16)(line_y < YARN_CEIL_Y + 40    ? YARN_CEIL_Y + 40
+                     : line_y > YARN_FLOOR_Y - 16 ? YARN_FLOOR_Y - 16
+                                                  : line_y);
 }
 
 void yarn_start(YarnState* s, u32 seed) {
     *s = (YarnState){0};
     s->rng = seed ^ 0x9E3779B9u;
-    s->paw_h = YARN_PADDLE_H;
-    s->paw_y = (s16)((YARN_CEIL_Y + YARN_FLOOR_Y) / 2);
-    s->x = 120 * Q;
-    s->y = (YARN_CEIL_Y + 24 + (s32)(next_random(s) % 80)) * Q;
+    s->paw_w = YARN_PADDLE_W;
+    s->paw_y = YARN_PAW_Y;
+    s->paw_x = (s16)((YARN_LEFT_X + YARN_WALL_X) / 2);
+    s->x = (YARN_LEFT_X + 40 + (s32)(next_random(s) % 130)) * Q;
+    s->y = (YARN_CEIL_Y + 12) * Q;
     s32 speed = yarn_speed(0);
-    s32 vy = (s32)(next_random(s) % 96) + 32; // a slant of 0.1 to 0.5 px/frame
+    s32 vx = (s32)(next_random(s) % 96) + 32; // a slant of 0.1 to 0.5 px/frame
     if (next_random(s) & 1)
-        vy = -vy;
-    s->vy = vy;
-    s->vx = (s32)isqrt((u32)(speed * speed - vy * vy)); // toward the far wall
+        vx = -vx;
+    s->vx = vx;
+    s->vy = (s32)isqrt((u32)(speed * speed - vx * vx)); // down toward the pet
     s->wait = YARN_SERVE_WAIT;
 }
 
@@ -60,28 +64,28 @@ void yarn_start(YarnState* s, u32 seed) {
 // it met the paw.
 static void bat(YarnState* s) {
     s32 speed = yarn_speed(s->bats);
-    s32 off = (s->y >> 8) - s->paw_y; // -(H/2 + R) .. H/2 + R
-    s32 lim = s->paw_h / 2 + 1;
+    s32 off = (s->x >> 8) - s->paw_x; // -(W/2 + R) .. W/2 + R
+    s32 lim = s->paw_w / 2 + 1;
     if (off > lim)
         off = lim;
     if (off < -lim)
         off = -lim;
-    s32 vy = speed * off * 205 / (lim * 256); // up to 0.8 of the speed: 53 degrees
-    s->vy = vy;
-    s->vx = (s32)isqrt((u32)(speed * speed - vy * vy));
+    s32 vx = speed * off * 205 / (lim * 256); // up to 0.8 of the speed: 53 degrees
+    s->vx = vx;
+    s->vy = -(s32)isqrt((u32)(speed * speed - vx * vx));
 }
 
 YarnResult yarn_step(YarnState* s, u16 keys) {
     s->events = 0;
-    if (keys & BUTTON_UP)
-        s->paw_y = (s16)(s->paw_y - YARN_PADDLE_SPEED);
-    if (keys & BUTTON_DOWN)
-        s->paw_y = (s16)(s->paw_y + YARN_PADDLE_SPEED);
-    s16 paw_min = (s16)(YARN_CEIL_Y + s->paw_h / 2), paw_max = (s16)(YARN_FLOOR_Y - s->paw_h / 2);
-    if (s->paw_y < paw_min)
-        s->paw_y = paw_min;
-    if (s->paw_y > paw_max)
-        s->paw_y = paw_max;
+    if (keys & BUTTON_LEFT)
+        s->paw_x = (s16)(s->paw_x - YARN_PADDLE_SPEED);
+    if (keys & BUTTON_RIGHT)
+        s->paw_x = (s16)(s->paw_x + YARN_PADDLE_SPEED);
+    s16 paw_min = (s16)(YARN_LEFT_X + YARN_PET_HALF), paw_max = (s16)(YARN_WALL_X - YARN_PET_HALF);
+    if (s->paw_x < paw_min)
+        s->paw_x = paw_min;
+    if (s->paw_x > paw_max)
+        s->paw_x = paw_max;
     if (s->wait) {
         s->wait--;
         return YARN_PLAYING;
@@ -89,32 +93,32 @@ YarnResult yarn_step(YarnState* s, u16 keys) {
     s->x += s->vx;
     s->y += s->vy;
 
-    // The far wall, the ceiling and the floor.
-    s32 right = (YARN_WALL_X - YARN_BALL_R) * Q;
+    // The two walls and the ceiling.
+    s32 left = (YARN_LEFT_X + YARN_BALL_R) * Q, right = (YARN_WALL_X - YARN_BALL_R) * Q;
     if (s->x > right) {
         s->x = 2 * right - s->x;
         s->vx = -s->vx;
         s->events |= YARN_EV_WALL;
     }
-    s32 top = (YARN_CEIL_Y + YARN_BALL_R) * Q, bottom = (YARN_FLOOR_Y - YARN_BALL_R) * Q;
+    if (s->x < left) {
+        s->x = 2 * left - s->x;
+        s->vx = -s->vx;
+        s->events |= YARN_EV_WALL;
+    }
+    s32 top = (YARN_CEIL_Y + YARN_BALL_R) * Q;
     if (s->y < top) {
         s->y = 2 * top - s->y;
         s->vy = -s->vy;
         s->events |= YARN_EV_WALL;
     }
-    if (s->y > bottom) {
-        s->y = 2 * bottom - s->y;
-        s->vy = -s->vy;
-        s->events |= YARN_EV_WALL;
-    }
 
-    // The paw.
-    if (!s->missed && s->vx < 0 && s->x - YARN_BALL_R * Q <= YARN_PAW_X * Q) {
-        s32 off = (s->y >> 8) - s->paw_y;
+    // The paw's line.
+    if (!s->missed && s->vy > 0 && s->y + YARN_BALL_R * Q >= s->paw_y * Q) {
+        s32 off = (s->x >> 8) - s->paw_x;
         if (off < 0)
             off = -off;
-        if (off <= s->paw_h / 2 + YARN_BALL_R / 2) {
-            s->x = (YARN_PAW_X + YARN_BALL_R) * Q;
+        if (off <= s->paw_w / 2 + YARN_BALL_R / 2) {
+            s->y = (s->paw_y - YARN_BALL_R) * Q;
             s->bats++;
             bat(s);
             s->events |= YARN_EV_BAT;
@@ -123,5 +127,11 @@ YarnResult yarn_step(YarnState* s, u16 keys) {
             s->events |= YARN_EV_MISS;
         }
     }
-    return s->missed && s->x < -YARN_BALL_R * Q ? YARN_OVER : YARN_PLAYING;
+    // A missed ball lands on the floor and stays: the round is over.
+    if (s->missed && s->y >= (YARN_FLOOR_Y - YARN_BALL_R) * Q) {
+        s->y = (YARN_FLOOR_Y - YARN_BALL_R) * Q;
+        s->vx = s->vy = 0;
+        return YARN_OVER;
+    }
+    return YARN_PLAYING;
 }

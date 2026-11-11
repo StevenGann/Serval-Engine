@@ -899,42 +899,44 @@ static YarnState yarn_ready(s32 x, s32 y, s32 vx, s32 vy) {
 }
 
 static void test_yarn_ball_bounces(void) {
-    // The far wall reflects the ball and says so.
+    // The two side walls reflect the ball and say so.
     YarnState s = yarn_ready(YARN_WALL_X - YARN_BALL_R - 1, 80, 512, 0);
     CHECK(yarn_step(&s, 0) == YARN_PLAYING);
     CHECK(s.vx == -512 && (s.events & YARN_EV_WALL));
     CHECK(s.x < (YARN_WALL_X - YARN_BALL_R) * 256); // it is back inside
-    // The floor and the ceiling reflect the vertical speed.
-    s = yarn_ready(120, YARN_FLOOR_Y - YARN_BALL_R - 1, 0, 600);
+    s = yarn_ready(YARN_LEFT_X + YARN_BALL_R + 1, 80, -512, 0);
     yarn_step(&s, 0);
-    CHECK(s.vy == -600 && (s.events & YARN_EV_WALL));
+    CHECK(s.vx == 512 && (s.events & YARN_EV_WALL));
+    CHECK(s.x > (YARN_LEFT_X + YARN_BALL_R) * 256);
+    // The ceiling reflects the vertical speed.
     s = yarn_ready(120, YARN_CEIL_Y + YARN_BALL_R + 1, 0, -600);
     yarn_step(&s, 0);
-    CHECK(s.vy == 600 && s.y > (YARN_CEIL_Y + YARN_BALL_R) * 256);
-    // It waits at the start.
+    CHECK(s.vy == 600 && (s.events & YARN_EV_WALL) && s.y > (YARN_CEIL_Y + YARN_BALL_R) * 256);
+    // It waits at the start, and is served downward toward the pet.
     yarn_start(&s, 3);
     s32 x0 = s.x;
+    CHECK(s.vy > 0);
     yarn_step(&s, 0);
     CHECK(s.x == x0 && s.wait == YARN_SERVE_WAIT - 1);
 }
 
-// A ball that reaches the paw at y offset `off` from its middle.
+// A ball that reaches the paw's line at x offset `off` from the pet's middle.
 static YarnState yarn_bat_at(int off) {
-    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 80 + off, -400, 0);
-    s.paw_y = 80;
+    YarnState s = yarn_ready(100 + off, YARN_PAW_Y - YARN_BALL_R - 1, 0, 400);
+    s.paw_x = 100;
     yarn_step(&s, 0);
     return s;
 }
 
 static void test_yarn_paddle_hit_angle(void) {
-    YarnState mid = yarn_bat_at(0), top = yarn_bat_at(-10), bottom = yarn_bat_at(10);
+    YarnState mid = yarn_bat_at(0), left = yarn_bat_at(-10), right = yarn_bat_at(10);
     CHECK(mid.events & YARN_EV_BAT && mid.bats == 1);
-    CHECK(top.events & YARN_EV_BAT && bottom.events & YARN_EV_BAT);
-    CHECK(mid.vx > 0 && mid.vy == 0);         // straight back
-    CHECK(top.vx > 0 && top.vy < 0);          // the paw's top sends it up
-    CHECK(bottom.vx > 0 && bottom.vy > 0);    // its bottom, down
-    CHECK(top.vy == -bottom.vy);              // symmetric
-    CHECK(-top.vy > 100 && -top.vy > mid.vy); // a real slant
+    CHECK(left.events & YARN_EV_BAT && right.events & YARN_EV_BAT);
+    CHECK(mid.vy < 0 && mid.vx == 0);           // straight up
+    CHECK(left.vy < 0 && left.vx < 0);          // the paw's left sends it up and left
+    CHECK(right.vy < 0 && right.vx > 0);        // its right, up and right
+    CHECK(left.vx == -right.vx);                // symmetric
+    CHECK(right.vx > 100 && right.vx > mid.vx); // a real slant
     // The speed is kept (to a rounding step) whatever the angle.
     for (int off = -10; off <= 10; off += 5) {
         YarnState s = yarn_bat_at(off);
@@ -944,20 +946,27 @@ static void test_yarn_paddle_hit_angle(void) {
 }
 
 static void test_yarn_paw_reach(void) {
-    // The same ball, 12 pixels off the paw's middle: a small paw misses it, a
-    // big one bats it; and the paw stays on the court whatever its reach.
-    YarnState small = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 92, -400, 0);
+    // The same ball, 12 pixels off the pet's middle: a small paw misses it, a
+    // big one bats it; and the pet stays between the walls whatever its reach.
+    YarnState small = yarn_ready(112, YARN_PAW_Y - YARN_BALL_R - 1, 0, 400);
     YarnState big = small;
-    small.paw_y = big.paw_y = 80;
-    yarn_set_reach(&small, 16);
-    yarn_set_reach(&big, 32);
+    small.paw_x = big.paw_x = 100;
+    yarn_set_reach(&small, 16, YARN_PAW_Y);
+    yarn_set_reach(&big, 32, YARN_PAW_Y);
     yarn_step(&small, 0);
     yarn_step(&big, 0);
     CHECK(small.events & YARN_EV_MISS && small.bats == 0);
     CHECK(big.events & YARN_EV_BAT && big.bats == 1);
     for (int i = 0; i < 100; i++)
-        yarn_step(&big, BUTTON_DOWN);
-    CHECK(big.paw_y == YARN_FLOOR_Y - 16);
+        yarn_step(&big, BUTTON_RIGHT);
+    CHECK(big.paw_x == YARN_WALL_X - YARN_PET_HALF);
+    // A bigger pet holds its paw higher: the ball is batted sooner.
+    YarnState tall = yarn_ready(100, 100, 0, 400);
+    tall.paw_x = 100;
+    yarn_set_reach(&tall, 30, 110);
+    for (int i = 0; i < 20 && !(tall.events & YARN_EV_BAT); i++)
+        yarn_step(&tall, 0);
+    CHECK(tall.bats == 1 && tall.y == (110 - YARN_BALL_R) * 256 && tall.vy < 0);
 }
 
 static void test_yarn_speed_cap(void) {
@@ -969,16 +978,16 @@ static void test_yarn_speed_cap(void) {
     // Fun: 10 + the bats, at most 30 of them.
     CHECK(yarn_fun(0) == 10 && yarn_fun(7) == 17 && yarn_fun(30) == 40 && yarn_fun(900) == 40);
     // A bat at the cap keeps the cap.
-    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 80, -1024, 0);
-    s.paw_y = 80;
+    YarnState s = yarn_ready(100, YARN_PAW_Y - YARN_BALL_R - 1, 0, 1024);
+    s.paw_x = 100;
     s.bats = 999;
     yarn_step(&s, 0);
-    CHECK(s.vx == 1024 && s.bats == 1000);
+    CHECK(s.vy == -1024 && s.bats == 1000);
 }
 
 static void test_yarn_miss_ends(void) {
-    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 130, -400, 0);
-    s.paw_y = 40; // far from the ball
+    YarnState s = yarn_ready(160, YARN_PAW_Y - YARN_BALL_R - 1, 0, 400);
+    s.paw_x = 40; // far from the ball
     int steps = 0;
     bool missed = false;
     while (yarn_step(&s, 0) == YARN_PLAYING && steps < 500) {
@@ -987,22 +996,22 @@ static void test_yarn_miss_ends(void) {
     }
     missed |= (s.events & YARN_EV_MISS) != 0;
     CHECK(missed && s.missed && s.bats == 0 && steps < 500);
-    CHECK(s.x < 0);
-    // A whole round with no input ends: the kitten stands still and the ball
-    // returns to a paw that happens to be in the way, or not.
+    CHECK(s.y == (YARN_FLOOR_Y - YARN_BALL_R) * 256); // it landed on the floor
+    // A whole round with no input ends: the pet stands still and the ball
+    // comes down on it, or not.
     yarn_start(&s, 99);
     int n = 0;
     while (yarn_step(&s, 0) == YARN_PLAYING && n < 5000)
         n++;
     CHECK(n < 5000);
-    // Moving the paw: held up and down it stays on the court.
+    // Moving the pet: held left and right it stays between the walls.
     for (int i = 0; i < 100; i++)
-        yarn_step(&s, BUTTON_UP);
-    CHECK(s.paw_y == YARN_CEIL_Y + YARN_PADDLE_H / 2);
+        yarn_step(&s, BUTTON_LEFT);
+    CHECK(s.paw_x == YARN_LEFT_X + YARN_PET_HALF);
     yarn_start(&s, 1);
     for (int i = 0; i < 100; i++)
-        yarn_step(&s, BUTTON_DOWN);
-    CHECK(s.paw_y == YARN_FLOOR_Y - YARN_PADDLE_H / 2);
+        yarn_step(&s, BUTTON_RIGHT);
+    CHECK(s.paw_x == YARN_WALL_X - YARN_PET_HALF);
 }
 
 // --- Acacia Climb -------------------------------------------------------------------------------

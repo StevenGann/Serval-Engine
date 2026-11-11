@@ -1,9 +1,10 @@
 // Yarn Bat on screen: see yarn.h.
 //
 // The game is played in the den itself: its pictures stay on, the rock at
-// the right is the far wall, the floor is where the paws stand, the roof holds
-// the score; only the care bar is gone. The pet at the left is the paw (its
-// own size sets its reach, and it swings its arm when it bats), and the yarn
+// the sides are the walls, the roof is the ceiling and holds the score, the
+// floor is where the pet runs; only the care bar is gone. The pet is the paw
+// (it walks the floor with its own stage's frames, its own size sets its
+// reach, and it swipes its arm up when it bats), and the yarn
 // ball and its thread are sprites. The thread is the ball's last positions, one
 // a frame, a dot each, waving more the older it is; it grows with the bats,
 // so the yarn is seen to unravel, and the ball shrinks a little as it goes.
@@ -22,6 +23,8 @@
 #define TRAIL_BASE 10   // dots of thread from the start
 #define TRAIL_PER_BAT 3 // and three more for each bat
 #define HIT_FRAMES 12   // the paw's swing, and the spark
+#define FEET_Y 138      // where the pet's feet are on the den's floor
+#define SHOULDER_Y 131  // where its raised arm starts (the kitten's; 4 higher for the others)
 #define FADE_STEP 2
 #define HUD_ROW 0
 #define HINT_ROW 19
@@ -37,7 +40,7 @@ typedef struct {
     u16 lock; // buttons held since before they were wanted
     int shown_bats, shown_best;
     int stage;
-    bool moving, lights_off;
+    bool moving, left, lights_off;
 } View;
 
 static View v;
@@ -60,10 +63,10 @@ static bool pressed(u16 b) {
 
 static u16 held(void) {
     u16 keys = 0;
-    if (button_down(BUTTON_UP) && !(v.lock & BUTTON_UP))
-        keys |= BUTTON_UP;
-    if (button_down(BUTTON_DOWN) && !(v.lock & BUTTON_DOWN))
-        keys |= BUTTON_DOWN;
+    if (button_down(BUTTON_LEFT) && !(v.lock & BUTTON_LEFT))
+        keys |= BUTTON_LEFT;
+    if (button_down(BUTTON_RIGHT) && !(v.lock & BUTTON_RIGHT))
+        keys |= BUTTON_RIGHT;
     return keys;
 }
 
@@ -109,18 +112,22 @@ static void draw_court(const YarnState* s, bool paw_visible) {
     sprite_draw(SPR_YARN, (u8)(size * YARN_TURNS + (((bx + by) >> 2) & 3)), bx - 4, by - 4, 0);
     if (paw_visible) {
         int body = v.stage == STAGE_KITTEN ? 16 : 32;
+        // The pet stands as in the den: feet on the floor, flipped to face
+        // left. The paw is its raised front paw, at paw_x: the pet is drawn
+        // back from it, so that the ball meets the paw, not the pet's middle.
+        int px = s->paw_x, top = FEET_Y - body + 2;
+        int dir = v.left ? -1 : 1, back = v.stage == STAGE_KITTEN ? 4 : 8;
+        int shoulder = SHOULDER_Y - (v.stage == STAGE_KITTEN ? 0 : 4);
         if (v.hit) {
-            sprite_draw(SPR_PAW, (u8)arm_frame(), YARN_PAW_X - 10,
-                        s->paw_y - (v.stage == STAGE_KITTEN ? 1 : 3), 0);
-            sprite_draw(SPR_SPARK, (u8)((HIT_FRAMES - v.hit) * SPARK_FRAMES / HIT_FRAMES),
-                        YARN_PAW_X + 2, s->paw_y - 8, 0);
+            // The arm swings up from the chest (drawn pointing right, turned
+            // a quarter turn up: its root at the shoulder, its tip up).
+            sprite_draw_rotated(SPR_PAW, (u8)arm_frame(), px - 8, shoulder - 12, ANGLE_DEG(270), 0);
+            sprite_draw(SPR_SPARK, (u8)((HIT_FRAMES - v.hit) * SPARK_FRAMES / HIT_FRAMES), px - 4,
+                        s->paw_y - 12, 0);
         }
-        int frame = v.hit ? PF_HAPPY : v.moving ? PF_WALK0 + (int)(f / 5 % 4) : PF_STAND;
-        // The arm swings at the paw's line: the kitten's head is there, a
-        // bigger serval's chest, its head above the arm (not behind it).
-        int lift = v.stage == STAGE_KITTEN ? body / 2 - 2 : body / 2 + 6;
-        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, YARN_PAW_X - body + 2, s->paw_y - lift,
-                    0);
+        int frame = v.hit ? PF_HAPPY : v.moving ? PF_WALK0 + (int)(f / 6 % 4) : PF_STAND;
+        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, px - dir * back - body / 2, top,
+                    v.left ? SPRITE_FLIP_H : 0);
     }
     int shown = trail_wanted(s);
     if (shown > v.count)
@@ -242,14 +249,18 @@ bool yarn_play(Pet* pet, u32 now) {
     art_set_scene(tod, pet->lights_off);
     art_set_pet(pet->coat, pet->sickness, tod, pet->lights_off);
     map_set_scroll(SKY_BG, 0, 0);
-    text_print_centered(HINT_ROW, "UP DOWN MOVE   START PAUSE");
+    text_print_centered(HINT_ROW, "LEFT RIGHT MOVE   START PAUSE");
 
     YarnState s;
     yarn_start(&s, now ^ frame_count() * 2654435761u);
     v = (View){0};
     v.stage = (int)pet_stage(pet, pet->last_tick);
     v.lights_off = pet->lights_off;
-    yarn_set_reach(&s, v.stage == STAGE_KITTEN ? 16 : v.stage == STAGE_ADOLESCENT ? 26 : 30);
+    yarn_set_reach(&s,
+                   v.stage == STAGE_KITTEN       ? 16
+                   : v.stage == STAGE_ADOLESCENT ? 26
+                                                 : 30,
+                   v.stage == STAGE_KITTEN ? YARN_PAW_Y : YARN_PAW_Y - 12);
     v.lock = BUTTON_ANY;
     v.shown_bats = v.shown_best = -1;
     button_repeat_reset();
@@ -270,7 +281,11 @@ bool yarn_play(Pet* pet, u32 now) {
             continue;
         }
         u16 keys = held();
-        v.moving = (keys & (BUTTON_UP | BUTTON_DOWN)) != 0;
+        v.moving = (keys & (BUTTON_LEFT | BUTTON_RIGHT)) != 0;
+        if (keys & BUTTON_LEFT)
+            v.left = true;
+        else if (keys & BUTTON_RIGHT)
+            v.left = false;
         r = yarn_step(&s, keys);
         if (s.events & YARN_EV_BAT) {
             v.hit = HIT_FRAMES;

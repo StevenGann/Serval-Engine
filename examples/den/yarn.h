@@ -2,10 +2,10 @@
 #define DEN_YARN_H
 
 // Yarn Bat on screen, the kitten's game (rules in yarn_rules.h): the pet
-// bats a ball of yarn against the den's far wall and the thread unravels
-// behind it. UP and DOWN move the paw, START pauses (RESUME or QUIT, which
-// ends the round and counts it). A round that ends shows its bats, the best
-// and the fun earned; the pet is played with and the best kept.
+// runs along the den's floor and bats a ball of yarn up against the roof and
+// the walls, and the thread unravels behind it. LEFT and RIGHT move the pet, START pauses (RESUME
+// or QUIT, which ends the round and counts it). A round that ends shows its bats, the best and the
+// fun earned; the pet is played with and the best kept.
 
 #include "menu.h"
 

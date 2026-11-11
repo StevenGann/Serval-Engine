@@ -133,18 +133,19 @@
 //     letters, at least 1).
 //   - PLAY > YARN BAT (kitten and up): the den fades out and in again with the
 //     care bar gone; BATS and BEST in the roof. After a moment the yarn ball
-//     rolls toward the rock wall at the right, bounces off it, the roof and the
-//     floor, and trails a red thread that waves and grows with each bat; the
-//     ball shrinks a little as the yarn unravels. UP and DOWN move the paw (the
-//     pet, whose size sets its reach); it swings an arm and shuts its eyes
-//     when it bats. The ball leaves the paw at an angle by where it met it (the
-//     ends slant it, the middle sends it straight) and speeds up a little
-//     every 4 bats. Thump on a bat, tap on a wall, a falling note on a miss. A
-//     ball that gets past ends the round. START pauses (RESUME or QUIT; QUIT
-//     also ends and counts the round). A ROUND OVER card shows BATS, BEST (NEW!
-//     for a record, saved) and FUN +N (10 plus the bats, at most 40): A returns
-//     to the den, whose FUN bar has risen. Buttons held as the game starts or
-//     ends do nothing until released.
+//     comes down from the roof toward the pet, which stands on the den floor;
+//     it bounces off the roof and the rock walls at both sides, and trails a
+//     red thread that waves and grows with each bat; the ball shrinks a little
+//     as the yarn unravels. LEFT and RIGHT make the pet walk along the floor
+//     (its stage's walk frames, facing the way it goes; its size sets its
+//     reach): it swipes an arm up and shuts its eyes when it bats the ball
+//     back up. The ball leaves the paw at an angle by where it met it (the
+//     ends slant it to that side, the middle sends it straight up) and speeds
+//     up a little every 4 bats. Thump on a bat, tap on a wall, a falling note
+//     on a miss. A ball that falls past the paw to the floor ends the round. START pauses (RESUME
+//     or QUIT; QUIT also ends and counts the round). A ROUND OVER card shows BATS, BEST (NEW! for a
+//     record, saved) and FUN +N (10 plus the bats, at most 40): A returns to the den, whose FUN bar
+//     has risen. Buttons held as the game starts or ends do nothing until released.
 //   - PLAY > ACACIA CLIMB (adolescent and up): the den fades out and in as an
 //     acacia's trunk seen from the foot, the sky behind it (its colours follow
 //     the hour, clouds drifting), the serval on a ledge. HEIGHT and BEST in

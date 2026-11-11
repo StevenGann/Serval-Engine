@@ -1,30 +1,35 @@
 #ifndef DEN_YARN_RULES_H
 #define DEN_YARN_RULES_H
 
-// Yarn Bat's rules, portable C (no hardware; tested on the host). The kitten
-// stands at the left and bats a ball of yarn that bounces off the den's far
-// wall at the right, the ceiling and the floor; each bat is a point and
-// unravels more of the yarn. A miss ends the round.
+// Yarn Bat's rules, portable C (no hardware; tested on the host). The pet runs
+// left and right along the den's floor and bats a ball of yarn up with a paw;
+// the yarn bounces off the den's ceiling and its two side walls and comes
+// down again. Each bat is a point and unravels more of the yarn. A miss (the
+// yarn passing the paw's line beside the pet) ends the round when it lands.
 //
 // Rulings where the rules left a choice:
 //  - Positions are in 1/256 pixel (Q8), the court in screen pixels.
 //  - The ball speeds up by 1/16 px/frame every 4 bats from 1.5 px/frame to
 //    at most 4 (160 bats: the 30 bats that earn fun come well before).
-//  - A bat sends the ball off at an angle by where the paw met it: the
-//    paddle's middle straight (the speed is kept, only the angle changes),
-//    its ends at most 53 degrees up or down.
-//  - A missed ball is not stopped: it rolls on past the paddle and off the
-//    screen, and the round is over then (YARN_OVER), not before.
+//  - A bat sends the ball off at an angle by where it met the paw: the
+//    paw's middle straight up (the speed is kept, only the angle changes),
+//    its ends at most 53 degrees to the left or right of up.
+//  - A missed ball is not stopped: it falls on past the paw's line to the
+//    floor, and the round is over then (YARN_OVER), not before.
 //  - The ball waits YARN_SERVE_WAIT frames at the start.
 
 #include <serval/core.h>
 
+#define YARN_LEFT_X 16   // the near wall's face
 #define YARN_WALL_X 224  // the far wall's face
 #define YARN_CEIL_Y 16   // the ceiling, the court's top
-#define YARN_FLOOR_Y 144 // the floor, its bottom
-#define YARN_PAW_X 30    // the paw's face: the ball is batted when its left edge reaches it
+#define YARN_FLOOR_Y 144 // the floor, where a missed ball lands
+#define YARN_PAW_Y                                                                                 \
+    124                  // the paw's line (the kitten's; yarn_set_reach() moves it): the ball
+                         // is batted when its bottom edge reaches it
 #define YARN_BALL_R 4    // the ball's radius
-#define YARN_PADDLE_H 24 // the paw's reach (a ball touching its end counts)
+#define YARN_PADDLE_W 24 // the paw's reach, across (a ball touching its end counts)
+#define YARN_PET_HALF 22 // the paw's middle stays this far from each wall
 #define YARN_PADDLE_SPEED 3
 #define YARN_SERVE_WAIT 45
 
@@ -44,8 +49,9 @@ typedef enum { YARN_PLAYING, YARN_OVER } YarnResult;
 typedef struct {
     s32 x, y;   // the ball's middle, Q8
     s32 vx, vy; // Q8 per frame
-    s16 paw_y;  // the paddle's middle, pixels
-    s16 paw_h;  // its reach (YARN_PADDLE_H unless yarn_set_reach())
+    s16 paw_x;  // the pet's middle, pixels
+    s16 paw_w;  // the paw's reach across (YARN_PADDLE_W unless yarn_set_reach())
+    s16 paw_y;  // the paw's line, pixels (YARN_PAW_Y unless yarn_set_reach())
     u16 bats;
     u16 wait; // frames before the ball moves
     bool missed;
@@ -54,10 +60,11 @@ typedef struct {
 } YarnState;
 
 void yarn_start(YarnState* s, u32 seed);
-// The paw's reach in pixels (the pet's size: a bigger pet covers more).
-void yarn_set_reach(YarnState* s, int h);
-// One frame; `keys` are the buttons held (BUTTON_UP and BUTTON_DOWN move the
-// paw).
+// The paw's reach across in pixels, and its line's height (the pet's size: a
+// bigger pet covers more, and holds its paw higher).
+void yarn_set_reach(YarnState* s, int w, int line_y);
+// One frame; `keys` are the buttons held (BUTTON_LEFT and BUTTON_RIGHT move
+// the pet).
 YarnResult yarn_step(YarnState* s, u16 keys);
 
 // The ball's speed after `bats` bats, Q8.
