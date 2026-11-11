@@ -252,14 +252,20 @@ static u8 pil_left[PIC_H];
 static u8 pil_right[PIC_H];
 static u8 foot[DEN_PIC_W];
 static s8 bend[DEN_PIC_W]; // how far the beds dip at each column
-#define BED_H 13
-#define BEDS 16
+#define BEDS 24
+static u8 bed_h[BEDS]; // each bed's thickness, 9-17 rows
 static u8 bed_lip[BEDS];
+static s8 bed_lean[BEDS]; // which way its joints slant (-1, 0 or 1 column in 4 rows)
 #define BED_ROWS (PIC_H + 16)
 static u8 bed_of[BED_ROWS]; // the bed and the row in it of each row (with its bend)
 static u8 bed_pos[BED_ROWS];
-static u8 joint[BEDS][DEN_PIC_W]; // 0: a joint, 1: its lit edge, 2: its shadowed
-                                  // edge, 3: none
+static u8 joint[BEDS][DEN_PIC_W];       // 0: a joint, 1: its lit edge, 2: its shadowed
+                                        // edge, 3: none
+static u8 joint_len[BEDS][DEN_PIC_W];   // how far down the bed its joint cuts (rows)
+static s8 block_off[BEDS][DEN_PIC_W];   // each block sits a little higher or lower than its
+                                        // neighbours: the bed's edge steps at the joints
+static u8 bed_gap[BEDS][DEN_PIC_W / 8]; // stretches where a bed's top edge is not a crack
+                                        // (the layers run together)
 
 // Grit: a 32x32 tile of noise, -8 to 7, made once (cheaper than a hash a
 // pixel); and the squares of each column's and row's distance from the
@@ -312,25 +318,41 @@ static void make_shapes(void) {
         light_dx2[x] = (x - 160) * (x - 160);
     for (int y = 0; y < PIC_H; y++)
         light_dy2[y] = (y - 64) * (y - 64) * 4;
+    for (int b = 0; b < BEDS; b++)
+        bed_h[b] = (u8)(9 + (int)(hash((u32)b, 41) % 9));
     for (int y = 0, b = 0, pos = 0; y < BED_ROWS; y++) {
         bed_of[y] = (u8)b;
         bed_pos[y] = (u8)pos;
-        if (++pos == BED_H) {
+        if (++pos >= bed_h[b]) {
             pos = 0;
-            b++;
+            if (b < BEDS - 1)
+                b++;
         }
     }
     for (int b = 0; b < BEDS; b++) {
         // each bed sticks out a little more or less: its lip is deeper
-        bed_lip[b] = (u8)(BED_H - 3 - (int)(hash((u32)b, 21) % 3));
-        // joints: a vertical crack every 30-69 pixels, staggered by bed
-        int off = (int)(hash((u32)b, 31) % 40), span = 30 + (int)(hash((u32)b, 33) % 40);
-        int j = off % span;
-        for (int x = 0; x < DEN_PIC_W; x++) {
-            joint[b][x] = (u8)(j == 0 ? 0 : j == 1 ? 1 : j == span - 1 ? 2 : 3);
-            if (++j == span)
-                j = 0;
+        bed_lip[b] = (u8)(bed_h[b] - 3 - (int)(hash((u32)b, 21) % 3));
+        bed_lean[b] = (s8)((int)(hash((u32)b, 51) % 3) - 1);
+        // Blocks of every size: 10 to 69 pixels, small ones among the big, each
+        // with its own height, joint depth and sit.
+        int x = (int)(hash((u32)b, 31) % 24) - 12;
+        for (int k = 0; x < DEN_PIC_W; k++) {
+            u32 h = hash((u32)(b * 64 + k), 61);
+            int w = (h & 1) ? 10 + (int)((h >> 4) % 18) : 24 + (int)((h >> 4) % 46);
+            int off = (int)((h >> 12) % 5) - 2;
+            int len = 4 + (int)((h >> 16) % (u32)(bed_lip[b] - 3));
+            for (int i = 0; i < w && x + i < DEN_PIC_W; i++) {
+                int xx = x + i;
+                if (xx < 0)
+                    continue;
+                joint[b][xx] = (u8)(i == 0 ? 0 : i == 1 ? 1 : i == w - 1 ? 2 : 3);
+                joint_len[b][xx] = (u8)(len);
+                block_off[b][xx] = (s8)off;
+            }
+            x += w;
         }
+        for (int i = 0; i < DEN_PIC_W / 8; i++)
+            bed_gap[b][i] = hash((u32)(b * 64 + i), 71) % 5 == 0;
     }
 }
 
@@ -351,9 +373,17 @@ static int light_at(int x, int y) {
 // The rock: layered sandstone. Beds of uneven thickness run across, each
 // lit on its upper face and shadowed under its lip, split by joints.
 static int rock_pixel(int x, int y, int bed, int pos) {
-    int lip = bed_lip[bed], j = joint[bed][x];
-    if (pos == 0 || (j == 0 && pos < lip))
+    int lip = bed_lip[bed];
+    // a joint slants with the bed's lean as it goes down
+    int jx = x + bed_lean[bed] * (pos >> 2);
+    jx = jx < 0 ? 0 : jx >= DEN_PIC_W ? DEN_PIC_W - 1 : jx;
+    int j = joint[bed][jx];
+    if (pos == 0 && !bed_gap[bed][x >> 3])
         return D_CRACK;
+    if (j == 0 && pos < joint_len[bed][jx])
+        return D_CRACK;
+    if (j != 0 && pos >= joint_len[bed][jx] + 2)
+        j = 3; // a joint that has died out leaves no edge
     int v = light_at(x, y) - 22;
     if (pos == 1)
         v += 34; // the bed's top edge catches the light
@@ -561,6 +591,9 @@ static void paint_den(void) {
                 continue;
             if (is_rock(x, y)) {
                 int yy = y + bend[x] + 8; // 8: keeps it positive
+                // the block this column is in sits higher or lower than its neighbours
+                yy += block_off[bed_of[yy]][x];
+                yy = yy < 0 ? 0 : yy >= BED_ROWS ? BED_ROWS - 1 : yy;
                 put_den(x, y, rock_pixel(x, y, bed_of[yy], bed_pos[yy]));
             } else {
                 put_den(x, y, floor_pixel(x, y));
