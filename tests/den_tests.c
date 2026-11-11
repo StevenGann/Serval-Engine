@@ -696,6 +696,36 @@ static void test_save_refuses_garbage(void) {
     save_erase(0);
 }
 
+static void test_pet_rebase(void) {
+    Pet p = fresh();
+    p.awake_until = T0 + 600;
+    p.died_at = 0;
+    p.last_interaction = T0 - 120;
+    // Forward an hour: every set time moves with it; died_at 0 stays unset.
+    pet_rebase(&p, T0 + 3600);
+    CHECK(p.last_tick == T0 + 3600 && p.born == T0 + 3600);
+    CHECK(p.last_interaction == T0 + 3600 - 120 && p.awake_until == T0 + 4200 && p.died_at == 0);
+    CHECK(pet_age_minutes(&p, T0 + 3600) == 0 && pet_neglect_minutes(&p, T0 + 3600) == 2);
+    // Back two hours, past its start: the same, and nothing below 0.
+    pet_rebase(&p, T0 - 3600);
+    CHECK(p.last_tick == T0 - 3600 && p.born == T0 - 3600 && p.awake_until == T0 - 3000);
+    CHECK(p.last_interaction == T0 - 3600 - 120 && p.died_at == 0);
+    // A dead pet's died_at moves; a time earlier than the step stops at 0.
+    p.dead = true;
+    p.died_at = T0 - 3600;
+    p.awake_until = 0;
+    p.born = 100;
+    pet_rebase(&p, 600);
+    CHECK(p.last_tick == 600 && p.died_at == 600 && p.born == 0 && p.awake_until == 0);
+    // pet_advance's backward path is the same rebase.
+    Pet a = fresh(), b;
+    pet_advance(&a, T0 + 90 * MIN, hour_of);
+    b = a;
+    pet_advance(&a, T0 + 30 * MIN, hour_of);
+    pet_rebase(&b, T0 + 30 * MIN);
+    CHECK(memcmp(&a, &b, sizeof a) == 0);
+}
+
 static void test_clock_resolve(void) {
     u32 now, off;
     const u32 seen = T0 + 5000, age = 3 * 86400;
@@ -744,6 +774,7 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"litter_size_and_names", test_litter_size_and_names},
            {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
            {"den_save_round_trip", test_save_round_trip}, {"den_clock_resolve", test_clock_resolve},
+           {"den_pet_rebase", test_pet_rebase},
            {"den_save_refuses_other_version", test_save_refuses_other_version},
            {"den_save_refuses_garbage", test_save_refuses_garbage},
            {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},

@@ -74,8 +74,15 @@ typedef struct Pet {
 void pet_new(Pet* p, const char* name, Coat coat, u8 generation, u32 now);
 
 // Steps whole minutes from last_tick to now. `hour_of` maps clock seconds to
-// the hour of day (0-23).
+// the hour of day (0-23). A `now` before last_tick is a clock gone back:
+// pet_rebase(p, now).
 void pet_advance(Pet* p, u32 now, int (*hour_of)(u32 seconds));
+
+// No time passes: moves every time the pet keeps (born, last_interaction,
+// awake_until and died_at when set) by now - last_tick, either way, so that
+// it was last stepped at `now` and its age, neglect and wake window stay as
+// they were. Times moved back stop at 0.
+void pet_rebase(Pet* p, u32 now);
 
 PetStage pet_stage(const Pet* p, u32 now);
 PetMood pet_mood(const Pet* p, u32 now);

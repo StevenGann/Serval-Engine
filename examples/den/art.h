@@ -49,7 +49,7 @@ enum {
     SPR_ADULT,  // 32x32, PET_FRAMES: bigger, longer-legged
     SPR_SUN,    // 16x16: the sun, drawn behind the den (its colours follow the hour)
     SPR_MOON,   // 16x16
-    SPR_LAMP,   // 16x32: LAMP_FRAMES, the firefly jar hanging from a root
+    SPR_LAMP,   // 16x16: LAMP_FRAMES, the firefly jar hanging from a root
     SPR_DROP,   // 8x8: DROP_FRAMES droppings (two shapes, then a steam wisp)
     SPR_BOWL,   // 16x8: BOWL_FRAMES (full, half, empty)
     SPR_ZZZ,    // 8x8: a big Z and a small one

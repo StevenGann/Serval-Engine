@@ -151,22 +151,28 @@ static void step(Pet* p, u32 t, bool prev_night, bool night) {
         p->litter_due = true;
 }
 
-static u32 back(u32 v, u32 d) {
-    return v > d ? v - d : 0;
+// t moved by now - from, either way, never below 0.
+static u32 moved(u32 t, u32 from, u32 now) {
+    if (now >= from)
+        return t + (now - from);
+    u32 d = from - now;
+    return t > d ? t - d : 0;
+}
+
+void pet_rebase(Pet* p, u32 now) {
+    u32 from = p->last_tick;
+    p->born = moved(p->born, from, now);
+    p->last_interaction = moved(p->last_interaction, from, now);
+    if (p->awake_until)
+        p->awake_until = moved(p->awake_until, from, now);
+    if (p->died_at)
+        p->died_at = moved(p->died_at, from, now);
+    p->last_tick = now;
 }
 
 void pet_advance(Pet* p, u32 now, int (*hour_of)(u32 seconds)) {
     if (now < p->last_tick) {
-        // The clock went back by d: no time passes, so every stored time goes
-        // back with it and age, neglect and the wake window stay as they were.
-        u32 d = p->last_tick - now;
-        p->last_tick = now;
-        p->born = back(p->born, d);
-        p->last_interaction = back(p->last_interaction, d);
-        if (p->awake_until)
-            p->awake_until = back(p->awake_until, d);
-        if (p->died_at)
-            p->died_at = back(p->died_at, d);
+        pet_rebase(p, now); // the clock went back: no time passes
         return;
     }
     u32 minutes = (now - p->last_tick) / 60;

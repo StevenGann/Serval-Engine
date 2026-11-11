@@ -40,7 +40,8 @@
 //     screen saying SERVAL DEN NEEDS A CARTRIDGE CLOCK and, under it, IN MGBA:
 //     TOOLS > GAME OVERRIDES > REALTIME CLOCK, and nothing else, for good.
 //   - With a clock, SERVAL DEN in gold on black for two seconds or so (the
-//     pictures being drawn, and the time away lived), then the den fades in:
+//     pictures being drawn, and the time away lived; longer in debug
+//     builds), then the den fades in:
 //     warm sandstone walls in layers, roots hanging from the roof (one holds
 //     a jar of glowing fireflies at the left), a sandy floor with pebbles
 //     and loose grass, a woven grass nest at the left, and through the
@@ -89,6 +90,7 @@
 #include <serval/serval.h>
 
 #define AUTOSAVE_FRAMES (5 * 60 * 60) // every 5 minutes of play
+#define STYLE_ALERT 2                 // text.h's third style: light red
 
 static DenSave save SERVAL_EWRAM_BSS;
 static u32 frames_since_save;
@@ -117,7 +119,7 @@ static void store(u32 now) {
     save.album_count = album_export(save.album);
     if (!den_save_store(&save)) {
         save_failed_timer = 180;
-        text_set_style(2);
+        text_set_style(STYLE_ALERT);
         text_print_centered(17, "SAVE FAILED");
         text_set_style(TEXT_NORMAL);
     }
@@ -172,8 +174,12 @@ int main(void) {
         ClockCheck check = clock_boot(save.last_seen, age, save.offset, &now);
         if (check == CLOCK_OK || check == CLOCK_WAS_RESET)
             pet_advance(&save.pet, now, clock_hour); // the time away, minute by minute
-        else
-            clock_rebase(&save.pet, now); // backwards or a jump: no time passed
+        else {
+            // Backwards or a jump: the time the save says passed is lived, the
+            // rest is not.
+            pet_advance(&save.pet, save.last_seen, clock_hour);
+            pet_rebase(&save.pet, now);
+        }
     } else {
         // A new den: the first kitten (naming comes with the care menu).
         now = clock_start();
@@ -184,10 +190,14 @@ int main(void) {
         pet_advance(&save.pet, now, clock_hour);
     }
     random_seed(now ^ 0x5E5A1u);
-    store(now);
 
-    screen_set_brightness(SCREEN_BRIGHTNESS_MIN); // black while VRAM is written
+    // Black first (the brightness takes effect at the frame's end), then
+    // VRAM is written.
+    screen_set_brightness(SCREEN_BRIGHTNESS_MIN);
+    frame_begin();
+    frame_end();
     den_enter();
+    store(now); // after den_enter(), whose text_clear() would hide SAVE FAILED
     Pet* pet = &save.pet;
     for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b++) {
         frame_begin();

@@ -10,7 +10,7 @@
 //
 // Rulings:
 //  - A clock gone back (a daylight-saving step, a changed clock) is no time
-//    passed: clock_rebase() moves the pet's stored times by the difference,
+//    passed: pet_rebase() moves the pet's stored times by the difference,
 //    so its age and neglect stay as they were, and the offset is left alone,
 //    so the hour of day stays the real one.
 //  - A reset clock (rtc_was_reset(), or a reading earlier than 2000-01-01
@@ -53,10 +53,6 @@ u32 clock_offset(void);
 
 // The hour (0-23) of a time, through rtc_time_from_seconds().
 int clock_hour(u32 seconds);
-
-// No time passes: moves every time the pet keeps so that it was last stepped
-// at `now` (either way).
-void clock_rebase(Pet* p, u32 now);
 
 // Debug builds: holding L + R and pressing SELECT adds an hour to the offset
 // (it is saved, so the warp lasts); returns true on that frame. Release
