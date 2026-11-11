@@ -45,6 +45,9 @@
 
 #include <serval/core.h>
 
+// Age in minutes at which an adult leaves a litter (144 h).
+#define PET_LITTER_MINUTES 8640
+
 typedef enum { STAGE_KITTEN, STAGE_ADOLESCENT, STAGE_ADULT } PetStage;
 typedef enum { MOOD_HAPPY, MOOD_SAD, MOOD_SICK, MOOD_SICKER, MOOD_DEAD } PetMood;
 

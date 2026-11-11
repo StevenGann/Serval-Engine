@@ -34,19 +34,24 @@ static int shown_tod = -1, shown_sick = -1, shown_lights = -1;
 static u32 shown_minute = 0xFFFFFFFF;
 
 // Where droppings lie (screen pixels, the dropping's middle bottom).
-static const u8 drop_spot[4][2] = {{150, 140}, {196, 130}, {108, 146}, {178, 148}};
+static const u8 drop_spot[4][2] = {{150, 134}, {196, 130}, {108, 138}, {178, 140}};
 
 #define BOWL_FRAMES_LONG 150
+#define WANDER_BOTTOM 140 // the care bar covers the screen below 142
 
-void den_enter(void) {
+void den_resume(void) {
     art_load();
     shown_tod = shown_sick = shown_lights = -1;
     shown_minute = 0xFFFFFFFF;
-    cat.placed = false;
-    cat.cue = CUE_NONE;
     text_set_shadow(true);
     text_set_color(COLOR_RGB(248, 236, 208), COLOR_RGB(30, 20, 16));
     text_clear();
+}
+
+void den_enter(void) {
+    cat.placed = false;
+    cat.cue = CUE_NONE;
+    den_resume();
 }
 
 static int speed(int stage) {
@@ -124,7 +129,7 @@ void den_update(Pet* p, u32 now) {
             cat.wait = random_range(90, 300);
     } else if (cat.cue == CUE_NONE && --cat.wait <= 0) {
         cat.tx = random_range(30, 210) * 16;
-        cat.ty = random_range(FLOOR_TOP + 6, FLOOR_BOTTOM) * 16;
+        cat.ty = random_range(FLOOR_TOP + 6, WANDER_BOTTOM) * 16;
         // out of the nest when awake
         int ndx = cat.tx / 16 - NEST_X, ndy = (cat.ty / 16 - NEST_Y) * 3;
         if (ndx * ndx + ndy * ndy < 34 * 34)

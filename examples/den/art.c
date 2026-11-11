@@ -271,7 +271,33 @@ static const Color lamp_colors[10] = {
     COLOR_RGB(96, 140, 60),   // d dim glow
 };
 
+// PAL_ICONS's colours, by art_draw.c's icon_keys.
+static const Color icon_colors[15] = {
+    COLOR_RGB(30, 20, 16),    // K outline
+    COLOR_RGB(74, 54, 48),    // B button
+    COLOR_RGB(222, 184, 120), // E button's edge, the cursor
+    COLOR_RGB(250, 246, 236), // w white
+    COLOR_RGB(214, 64, 60),   // r red
+    COLOR_RGB(204, 120, 64),  // o clay
+    COLOR_RGB(250, 214, 70),  // y gold
+    COLOR_RGB(96, 160, 80),   // g green
+    COLOR_RGB(80, 140, 220),  // b blue
+    COLOR_RGB(170, 210, 240), // l light blue
+    COLOR_RGB(240, 150, 170), // p pink
+    COLOR_RGB(170, 170, 176), // s grey
+    COLOR_RGB(190, 140, 84),  // t tan
+    COLOR_RGB(120, 84, 52),   // n brown
+    COLOR_RGB(255, 240, 170), // h pale gold
+};
+
 static void build_palettes(void) {
+    for (int i = 0; i < 15; i++) {
+        Color c = icon_colors[i];
+        u32 r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+        u32 grey = (r * 3 + g * 5 + b * 2) / 10 * 2 / 3 + 5; // dimmer than the original
+        obj_palettes[PAL_ICONS][1 + i] = c;
+        obj_palettes[PAL_ICONS_OFF][1 + i] = i < 2 ? c : (Color)(grey | grey << 5 | grey << 10);
+    }
     for (int i = 0; i < 15; i++)
         bg_palettes[BANK_DEN * 16 + 1 + i] = den_colors[i];
     for (int i = 0; i < LAND_COLORS; i++)
@@ -313,4 +339,10 @@ void art_load(void) {
     camera_set(0, 0);
     map_load(&den_layer);
     map_load(&sky_layer);
+}
+
+void art_hide(void) {
+    map_unload(DEN_BG);
+    map_unload(SKY_BG);
+    screen_set_backdrop(COLOR_RGB(24, 16, 14));
 }

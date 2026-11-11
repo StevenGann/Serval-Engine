@@ -48,8 +48,8 @@
 //     and loose grass, a woven grass nest at the left, and through the
 //     arched mouth at the right the savanna:
 //     far hills, a flat-topped acacia, tall grass and the sky, its clouds
-//     drifting. At the top, the serval's name (SPOTS) and the clock's time.
-//     At the foot, the keys, two lines by turns.
+//     drifting. At the top, the serval's name and the clock's time. At the
+//     foot, the care bar.
 //   - The sky follows the clock: dawn 5-7 (violet to peach, the sun rising
 //     orange at the left), day 8-17 (blue, the sun crossing high), dusk
 //     18-20 (blue to orange, the sun setting at the right behind the hills),
@@ -63,13 +63,29 @@
 //     with flowers. Droppings appear on the floor every few hours awake, with
 //     a whiff above them. It grows to a lanky adolescent at 24 h and a
 //     long-legged adult at 72 h (both 32x32).
-//   - Keys (until the care menu): A pets it (hearts, a purr); B feeds it a
-//     meal (a bowl that empties as it eats, crunching; refused with a low
-//     "no" when it's full); R gives medicine (a sparkle and a chime; "no"
-//     when it isn't sick); SELECT cleans the droppings (a sweep and
-//     sparkles); START puts the lights out or on (a click; the den goes dark
-//     but the world outside the mouth doesn't, the jar goes dark). Caring
-//     for a sleeping serval wakes it for an hour.
+//   - The care bar at the foot of the screen: eight 16x16 buttons (a bowl,
+//     a ball of yarn, a paw, a broom, a medicine bottle, a lamp, a chart, a
+//     book) with a gold frame on the chosen one and its name above. LEFT and
+//     RIGHT choose, A acts, B backs out. FEED asks MEAL or TREAT (a bowl that
+//     empties as it eats, crunching); PLAY lists YARN BAT, ACACIA CLIMB and
+//     HIGH POUNCE in a box (the ones the pet's stage doesn't allow yet are
+//     grey; each says COMING SOON until its game exists; the PLAY button is
+//     grey while the pet is asleep, tired or gone); PET gives hearts and a
+//     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime;
+//     LIGHTS puts the lights out or on (a click; the den goes dark but the
+//     world outside the mouth doesn't; START does the same from anywhere);
+//     STATUS is a page of bars (FULL, FUN, ENERGY, HEALTH), age, time to
+//     growing up or to the litter, time since last care, mood and a warning
+//     once it is sad (12 h without care) or sick; ALBUM is a page that lists
+//     the serval raised (a placeholder for now). Caring for a sleeping
+//     serval wakes it for an hour. A refusal sounds a low "no" and says why
+//     above the bar in red: NOT HUNGRY, NOT SICK, ALREADY CLEAN, SHH,
+//     ASLEEP, TOO TIRED, NOT YET, GONE. A button held when a screen opens
+//     does nothing until it is released.
+//   - The first time the game starts (no save) a NAME YOUR KITTEN page: a
+//     letter grid (A-Z, DEL, END) with a random suggestion filled in; D-pad
+//     moves, A picks a letter, B deletes one, END or START accepts (up to 8
+//     letters, at least 1).
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -78,14 +94,17 @@
 // Uses only Serval Engine's API; no third-party headers. The game is split
 // into the portable core (pet.c, litter.c, album.c, den_save.c), clock.c
 // (the game's use of the clock), art.c (the colours, and the pictures'
-// loading; art_draw.c draws them, on the host), den.c (the den on screen) and sound.c. main.c boots
-// and runs the den a frame at a time.
+// loading; art_draw.c draws them, on the host), den.c (the den on screen),
+// menu.c (the care bar), status.c and naming.c (their pages) and sound.c.
+// main.c boots and runs the den a frame at a time.
 
 #include "album.h"
 #include "art.h"
 #include "clock.h"
 #include "den.h"
 #include "den_save.h"
+#include "menu.h"
+#include "naming.h"
 #include "sound.h"
 
 #include <serval/serval.h>
@@ -144,16 +163,6 @@ static bool life_changed(Life a, Life b) {
     return a.stage != b.stage || a.mood != b.mood || a.dead != b.dead || a.litter != b.litter;
 }
 
-// The keys at the foot, two lines by turns (the care menu replaces them).
-static void draw_keys(void) {
-    static int shown = -1;
-    int line = (int)(frame_count() / 240 % 2);
-    if (line == shown)
-        return;
-    shown = line;
-    text_print_centered(19, line ? "SELECT CLEAN   START LIGHTS" : "A PET   B FEED   R MEDICINE");
-}
-
 int main(void) {
     serval_init();
     serval_splash();
@@ -169,6 +178,7 @@ int main(void) {
     sound_init();
 
     u32 now;
+    bool first_boot = false;
     if (den_save_load(&save)) {
         album_set(save.album, save.album_count);
         const Pet* p = &save.pet;
@@ -183,7 +193,8 @@ int main(void) {
             pet_rebase(&save.pet, now);
         }
     } else {
-        // A new den: the first kitten (naming comes with the care menu).
+        // A new den: the first kitten, to be named once the title is gone.
+        first_boot = true;
         now = clock_start();
         random_seed(now ^ random_entropy());
         Coat coat = litter_visitor_coat();
@@ -197,6 +208,29 @@ int main(void) {
         frame_end();
     }
 
+    if (first_boot) {
+        // Naming the first kitten, on a page of its own.
+        for (int b = 0; b >= SCREEN_BRIGHTNESS_MIN; b -= 2) {
+            frame_begin();
+            screen_set_brightness(b);
+            frame_end();
+        }
+        frame_begin();
+        frame_end();
+        text_set_color(COLOR_RGB(248, 236, 208), COLOR_RGB(30, 20, 16));
+        text_set_shadow(true);
+        screen_set_backdrop(COLOR_RGB(24, 16, 14));
+        frame_begin();
+        text_clear();
+        frame_end();
+        for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b += 2) {
+            frame_begin();
+            screen_set_brightness(b);
+            frame_end();
+        }
+        naming_run(save.pet.name);
+    }
+
     // Black first (the brightness takes effect at the frame's end), then
     // VRAM is written.
     screen_set_brightness(SCREEN_BRIGHTNESS_MIN);
@@ -205,10 +239,12 @@ int main(void) {
     den_enter();
     store(now); // after den_enter(), whose text_clear() would hide SAVE FAILED
     Pet* pet = &save.pet;
+    menu_init();
     for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b++) {
         frame_begin();
         screen_set_brightness(b);
         den_update(pet, clock_now());
+        menu_draw(pet, clock_now());
         den_draw(pet, clock_now());
         frame_end();
     }
@@ -220,17 +256,7 @@ int main(void) {
         frame_begin();
         now = clock_now();
         Life before = life_of(pet);
-        bool cared = false;
-        if (button_pressed(BUTTON_A))
-            cared = den_care(pet, CARE_PET, now) == CARE_DONE;
-        else if (button_pressed(BUTTON_B))
-            cared = den_care(pet, CARE_MEAL, now) == CARE_DONE;
-        else if (button_pressed(BUTTON_R) && !button_down(BUTTON_L))
-            cared = den_care(pet, CARE_MEDICINE, now) == CARE_DONE;
-        else if (button_pressed(BUTTON_SELECT) && !button_down(BUTTON_L | BUTTON_R))
-            cared = den_care(pet, CARE_CLEAN, now) == CARE_DONE;
-        else if (button_pressed(BUTTON_START))
-            cared = den_care(pet, CARE_LIGHTS, now) == CARE_DONE;
+        bool cared = menu_update(pet, now);
 #ifdef SERVAL_DEBUG
         if (clock_debug_warp()) {
             warp_timer = 90;
@@ -247,8 +273,9 @@ int main(void) {
         if (save_failed_timer > 0 && --save_failed_timer == 0)
             text_clear_area(0, 17, 30, 1);
         sound_ambient(art_time_of_day(clock_hour(now)));
-        draw_keys();
-        den_draw(pet, now);
+        menu_draw(pet, now);
+        if (!menu_covers_den())
+            den_draw(pet, now);
         frame_end();
     }
 }

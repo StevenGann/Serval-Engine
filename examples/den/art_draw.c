@@ -593,7 +593,7 @@ static void paint_den(void) {
 
 // --- Sprite drawing -----------------------------------------------------------------------------
 
-#define OBJ_TILE_MAX 720
+#define OBJ_TILE_MAX 760
 static u32 obj_tiles[OBJ_TILE_MAX * 8];
 static SpriteAsset sprites[SPRITE_COUNT];
 
@@ -1454,6 +1454,136 @@ static u32* build_small(u32* out) {
     return out;
 }
 
+// --- The care bar --------------------------------------------------------------------------------
+
+// PAL_ICONS's colours (art.c's icon_colors).
+static const char icon_keys[] = " KBEwroygblpstnh";
+
+// Twelve by twelve, inside a button of sixteen.
+static const char* const icon_art[ICON_COUNT][12] = {
+    [ICON_FEED] = {"............", "............", "...nt..tn...", "..tn.nt.nt..", ".hhhhhhhhhh.",
+                   ".oooooooooo.", "..oooooooon.", "..nooooooon.", "...nnnnnnn..", "............",
+                   "............", "............"},
+    [ICON_PLAY] = {"............", "....rrrr....", "..rrhhrrrr..", ".rrhhrrrprr.", ".rhrrrrrpprr",
+                   ".rrrrrppprrr", ".rrrpppprrrr", ".rrpprrrrrr.", "..rrrrrrrr..", "...rrrrrp...",
+                   ".......pppp.", "............"},
+    [ICON_PET] = {"............", "...pp..pp...", "...pp..pp...", "...pp..pp...", "pp........pp",
+                  "pp........pp", "pp..pppp..pp", "...pppppp...", "..pppppppp..", "..pppppppp..",
+                  "...pppppp...", "............"},
+    [ICON_CLEAN] = {"..........nn", ".........nn.", "........nn..", ".......nn...", "......nn....",
+                    "....tttt....", "...tttttt...", "..tyytyytt..", ".tyytyytytt.", ".ty.ty.ty.t.",
+                    ".t..t..t....", "............"},
+    [ICON_MEDICINE] = {"............", "....nnnn....", "....lhll....", "....llll....",
+                       "...llllll...", "..llwwwwll..", "..llwrrwll..", "..lwrrrrwl..",
+                       "..llwrrwll..", "..llwwwwll..", "..llllllll..", "...llllll..."},
+    [ICON_LIGHTS] = {"..h.......h.", "....yyyy....", "...yyhhyy...", "h.yyhhyyyy.h", "..yyhyyyyy..",
+                     "..yyyyyyyy..", "...yyyyyy...", "....yyyy....", "....ssss....", "....KsKs....",
+                     "....ssss....", ".....ss....."},
+    [ICON_STATUS] = {"............", "..........gg", "..........gg", "..........gg", ".......yy.gg",
+                     ".......yy.gg", "....rr.yy.gg", "....rr.yy.gg", ".bb.rr.yy.gg", ".bb.rr.yy.gg",
+                     ".bb.rr.yy.gg", "wwwwwwwwwwww"},
+    [ICON_ALBUM] = {"............", "..bbbbbbbbb.", ".bbbbbbbbbbw", ".bbbyybbbbbw", ".bbyyyybbbbw",
+                    ".bbbyybbbbbw", ".bbbbbbbbbbw", ".bbhhhhhbbbw", ".bbbbbbbbbbw", ".bbbbbbbbbbw",
+                    "..nnnnnnnnnn", "............"},
+};
+
+// The button behind an icon: a rounded square with a light edge.
+static void draw_button(void) {
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++) {
+            bool corner = (x == 0 || x == 15) && (y == 0 || y == 15);
+            if (corner)
+                continue;
+            bool edge = x == 0 || x == 15 || y == 0 || y == 15;
+            put(x, y, edge ? 3 : 2);
+        }
+}
+
+static u32* build_bar(u32* out) {
+    const u32* tiles = out;
+    for (int f = 0; f < ICON_COUNT; f++) {
+        canvas_clear();
+        draw_button();
+        paint(icon_art[f], 12, icon_keys, 2, 2);
+        out = pack(16, 16, out);
+    }
+    sprite(SPR_ICON, SPRITE_16x16, ICON_COUNT, PAL_ICONS, tiles);
+
+    canvas_clear();
+    for (int i = 0; i < 16; i++) {
+        put(i, 0, 7);
+        put(i, 15, 7);
+        put(0, i, 7);
+        put(15, i, 7);
+    }
+    put(1, 1, 15);
+    put(14, 1, 15);
+    put(1, 14, 15);
+    put(14, 14, 15);
+    for (int i = 1; i < 15; i++) { // a second line inside, so that the frame reads on any floor
+        put(i, 1, i % 4 < 2 ? 7 : 0);
+        put(i, 14, i % 4 < 2 ? 7 : 0);
+        put(1, i, i % 4 < 2 ? 7 : 0);
+        put(14, i, i % 4 < 2 ? 7 : 0);
+    }
+    tiles = out;
+    out = pack(16, 16, out);
+    sprite(SPR_CURSOR, SPRITE_16x16, 1, PAL_ICONS, tiles);
+
+    // The panel behind a list (nine pieces of a box: a dark fill, a light
+    // edge, rounded corners) and the strip behind a line of text.
+    tiles = out;
+    for (int fy = 0; fy < 3; fy++)
+        for (int fx = 0; fx < 3; fx++) {
+            canvas_clear();
+            for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 16; x++) {
+                    bool l = fx == 0 && x == 0, r = fx == 2 && x == 15;
+                    bool t = fy == 0 && y == 0, b = fy == 2 && y == 15;
+                    if ((l || r) && (t || b))
+                        continue; // rounded corner
+                    put(x, y, l || r || t || b ? 3 : 2);
+                }
+            out = pack(16, 16, out);
+        }
+    sprite(SPR_PANEL, SPRITE_16x16, 9, PAL_ICONS, tiles);
+    tiles = out;
+    for (int f = 0; f < 3; f++) {
+        canvas_clear();
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++) {
+                bool l = f == 0 && x == 0, r = f == 2 && x == 7;
+                bool edge = l || r;
+                if ((l || r) && (y == 0 || y == 7))
+                    continue;
+                put(x, y, edge ? 3 : 2);
+            }
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_STRIP, SPRITE_8x8, 3, PAL_ICONS, tiles);
+
+    // Status bars: 4 rows tall in an outline, 8 columns a cell, filled from
+    // the left in the need's colour.
+    static const u8 bar_fill[BAR_COLORS] = {6, 11, 9, 8}; // clay, pink, blue, green
+    tiles = out;
+    for (int c = 0; c < BAR_COLORS; c++)
+        for (int k = 0; k <= 8; k++) {
+            canvas_clear();
+            for (int x = 0; x < 8; x++) {
+                put(x, 1, 1);
+                put(x, 6, 1);
+                for (int y = 2; y < 6; y++)
+                    put(x, y, x < k ? bar_fill[c] : 2);
+                if (x < k) {
+                    put(x, 2, 15); // a lit top row
+                }
+            }
+            out = pack(8, 8, out);
+        }
+    sprite(SPR_BAR, SPRITE_8x8, BAR_COLORS * 9, PAL_ICONS, tiles);
+    return out;
+}
+
 static u32* build_sprites(void) {
     u32* out = obj_tiles;
     make_spot_field();
@@ -1471,11 +1601,13 @@ static u32* build_sprites(void) {
         sprite(pet_ids[stage], size == 16 ? SPRITE_16x16 : SPRITE_32x32, PET_FRAMES, PAL_PET,
                tiles);
     }
-    return build_small(out);
+    out = build_small(out);
+    return build_bar(out);
 }
 
 _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAMES +
-                       2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 <=
+                       2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
+                       3 + BAR_COLORS * 9 <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 

@@ -57,6 +57,11 @@ enum {
     SPR_HEART,  // 8x8: a heart, then a small one
     SPR_SPARK,  // 8x8: SPARK_FRAMES of a sparkle
     SPR_TOMB,   // 16x16: a stone with flowers
+    SPR_ICON,   // 16x16: ICON_COUNT frames, the care bar's buttons (PAL_ICONS)
+    SPR_CURSOR, // 16x16: the bar's selection, a gold frame
+    SPR_PANEL,  // 16x16: 9 frames, a box cut in nine (row by row: corners, edges, middle)
+    SPR_STRIP,  // 8x8: 3 frames (left end, middle, right end), a one-line box for the bar's label
+    SPR_BAR,    // 8x8: BAR_COLORS x 9 frames, a status bar's cell: colour * 9 + columns filled
     SPRITE_COUNT,
 };
 
@@ -87,12 +92,30 @@ enum {
 #define BOWL_FRAMES 3
 #define SPARK_FRAMES 3
 
+// The care bar's icons (SPR_ICON's frames), left to right.
+enum {
+    ICON_FEED,
+    ICON_PLAY,
+    ICON_PET,
+    ICON_CLEAN,
+    ICON_MEDICINE,
+    ICON_LIGHTS,
+    ICON_STATUS,
+    ICON_ALBUM,
+    ICON_COUNT,
+};
+
+// SPR_BAR's colours: a status bar per need.
+enum { BAR_FULL, BAR_FUN, BAR_ENERGY, BAR_HEALTH, BAR_COLORS };
+
 // Sprite palettes.
 enum {
     PAL_PET,   // the coat: art_pet_colors()
     PAL_ITEMS, // droppings, bowl, Z, hearts, sparkle, the stone
     PAL_LAMP,
-    PAL_SKY_OBJ, // sun and moon: their colours follow the hour (art_set_scene)
+    PAL_SKY_OBJ,   // sun and moon: their colours follow the hour (art_set_scene)
+    PAL_ICONS,     // the care bar's icons, its cursor and the status bars
+    PAL_ICONS_OFF, // the same in grey, for what can't be chosen now
     OBJ_PALETTES,
 };
 
@@ -110,6 +133,10 @@ void art_set_pet(Coat coat, int sick, int tod, bool lights_off);
 // Loads the tiles, palettes and sprites into VRAM and shows the den and the
 // sky. Call with the screen black.
 void art_load(void);
+
+// Takes the den and the sky off the screen (a full-screen page over a plain
+// backdrop); den_resume() brings them back. The screen must be black.
+void art_hide(void);
 
 // The den's colours for a time of day, with the lights on or off, the sky's,
 // the savanna's, the sun's and the things on the floor (palette writes, in

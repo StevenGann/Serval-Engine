@@ -7,6 +7,11 @@
 
 #include "pet.h"
 
+// Shows the den again after a screen that hid it (art_hide(), a game): the
+// pictures, palettes and text layer anew, the serval where it was. The
+// screen must be black.
+void den_resume(void);
+
 // Loads the den's pictures and shows the scene (the screen black; fade in
 // after). The next den_update() places the serval: in its nest if asleep.
 void den_enter(void);
