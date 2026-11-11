@@ -13,8 +13,8 @@
 #include "climb.h"
 
 #include "art.h"
-#include "clock.h"
 #include "climb_rules.h"
+#include "clock.h"
 #include "den.h"
 #include "sound.h"
 
@@ -26,15 +26,14 @@
 #define HUD_ROW 0
 #define HINT_ROW 19
 #define HINT_FRAMES 360
-#define SCROLL_BASE (CLIMB_PERIOD * 4096) // keeps the scroll offset positive
 
 static u16* best_score;
 
 typedef struct {
     bool active, left, dry;
-    s16 x0;     // the bough's left end
-    u8 len;     // in pixels
-    s32 y, vy;  // the top, world pixels, and Q8 per frame
+    s16 x0;    // the bough's left end
+    u8 len;    // in pixels
+    s32 y, vy; // the top, world pixels, and Q8 per frame
     u8 age;
 } Falling;
 
@@ -76,7 +75,6 @@ static u16 held(void) {
             keys |= wanted[i];
     return keys;
 }
-
 
 // --- Drawing ---------------------------------------------------------------------------------
 
@@ -126,8 +124,8 @@ static void draw_rows(const ClimbState* s) {
             int off = b->flags & CLIMB_SWAYS ? climb_sway(r, i, f) : 0;
             int left = climb_snap_left(s, r, i);
             int crack = left == 0 ? 0 : left > 14 ? 1 : 2;
-            draw_bough(b->x0 + off, b->x1 - b->x0, top, b->inner_right, (b->flags & CLIMB_SNAPS) != 0,
-                       crack, left && left <= 14 ? (int)(f & 1) : 0);
+            draw_bough(b->x0 + off, b->x1 - b->x0, top, b->inner_right,
+                       (b->flags & CLIMB_SNAPS) != 0, crack, left && left <= 14 ? (int)(f & 1) : 0);
         }
     }
     // The nests hang behind their boughs (drawn after them).
@@ -148,7 +146,8 @@ static void draw_falling(const ClimbState* s) {
             continue;
         int top = (int)(fl->y / 256) - (int)s->cam;
         int n = fl->len / 16;
-        u16 flags = (u16)((fl->left ? SPRITE_FLIP_H : 0) | (fl->dry ? SPRITE_PALETTE(PAL_TREE_DRY) : 0));
+        u16 flags =
+            (u16)((fl->left ? SPRITE_FLIP_H : 0) | (fl->dry ? SPRITE_PALETTE(PAL_TREE_DRY) : 0));
         for (int i = 0; i < n; i++) {
             // The pieces part as they fall.
             int root_end = fl->left ? n - 1 : 0, tip_end = fl->left ? 0 : n - 1;
@@ -205,7 +204,7 @@ static void draw_serval(const ClimbState* s) {
 }
 
 static void draw_scene(const ClimbState* s, bool serval) {
-    map_set_scroll(DEN_BG, 0, SCROLL_BASE + (int)s->cam);
+    map_set_scroll(DEN_BG, 0, (int)s->cam);
     map_set_scroll(SKY_BG, (int)(frame_count() / 12), 0);
     if (serval)
         draw_serval(s);
@@ -286,10 +285,11 @@ static bool pause_menu(const ClimbState* s) {
     return quit;
 }
 
-static void results_card(const ClimbState* s, int best, bool new_best, u8 fun, u32 worst) {
+static void results_card(const ClimbState* s, bool top, int best, bool new_best, u8 fun,
+                         u32 worst) {
     text_clear_area(0, HINT_ROW, TEXT_COLS, 1);
     text_set_style(TEXT_HIGHLIGHT);
-    text_print_centered(5, "ROUND OVER");
+    text_print_centered(5, top ? "TOP OF THE TREE!" : "ROUND OVER");
     text_set_style(TEXT_NORMAL);
     text_print_centered(7, text_format("HEIGHT %u M", (u32)s->rows));
     text_print_centered(9, text_format(new_best ? "BEST %d M  NEW!" : "BEST %d M", best));
@@ -391,7 +391,7 @@ bool climb_play(Pet* pet, u32 now) {
     if (new_best)
         *best_score = s.rows;
     pet_played(pet, now, fun);
-    results_card(&s, *best_score, new_best, fun, worst);
+    results_card(&s, r == CLIMB_TOP, *best_score, new_best, fun, worst);
 
     fade(&s, 0, SCREEN_BRIGHTNESS_MIN, false);
     text_clear();

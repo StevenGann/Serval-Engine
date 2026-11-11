@@ -15,9 +15,41 @@ static u32 hash3(u32 seed, u32 row, u32 k) {
     return h;
 }
 
+int climb_ramp(int row) {
+    if (row <= CLIMB_WARMUP_ROWS)
+        return 0;
+    if (row >= CLIMB_HARD_ROW)
+        return 256;
+    return (row - CLIMB_WARMUP_ROWS) * 256 / (CLIMB_HARD_ROW - CLIMB_WARMUP_ROWS);
+}
+
+// `a` at the warm-up's end, `b` at the hardest, by the ramp.
+static u32 lerp(u32 a, u32 b, int ramp) {
+    return a + (b - a) * (u32)ramp / 256u;
+}
+
 static void make_branch(ClimbBranch* b, int row, bool left, int io, int len, u32 r, bool main) {
     *b = (ClimbBranch){0};
     b->inner_right = left; // a bough on the left has the trunk at its right end
+    // What the bough does, in percent of the rolls: rare at the warm-up's
+    // end, three times as likely (a little less for the other boughs, which
+    // are the safety net) from CLIMB_HARD_ROW on. A main bough has a nest only
+    // on every third row (never on two rows running: the way up has to stay
+    // within the jump's reach).
+    int ramp = climb_ramp(row);
+    u32 nest = main ? (row % 3 == 2 ? lerp(12, 36, ramp) : 0) : lerp(8, 22, ramp);
+    u32 snap = nest + (main ? lerp(15, 45, ramp) : lerp(17, 45, ramp));
+    u32 sway = snap + (main ? lerp(8, 24, ramp) : lerp(10, 30, ramp));
+    if (row >= 8 && r < nest)
+        b->flags = CLIMB_NESTS;
+    else if (row >= 5 && r < snap)
+        b->flags = CLIMB_SNAPS;
+    else if (row >= 3 && r >= snap && r < sway)
+        b->flags = CLIMB_SWAYS;
+    // A nest's bough sits nearer the trunk: the nest-free part has to stay
+    // within reach.
+    if ((b->flags & CLIMB_NESTS) && io > CLIMB_NEST_IO_MAX)
+        io = CLIMB_NEST_IO_MAX;
     if (left) {
         b->x1 = (s16)(CLIMB_TRUNK_X - io);
         b->x0 = (s16)(b->x1 - len);
@@ -25,19 +57,8 @@ static void make_branch(ClimbBranch* b, int row, bool left, int io, int len, u32
         b->x0 = (s16)(CLIMB_TRUNK_X + io);
         b->x1 = (s16)(b->x0 + len);
     }
-    // What the bough does: its share of the percentages differs between the
-    // main bough (mostly still, so that the way up is steady) and the others.
-    // A main bough has a nest only on every third row (never on two rows
-    // running: the way up has to stay within the jump's reach).
-    u32 nest = main ? (row % 3 == 2 ? 36 : 0) : 25, snap = main ? 44 : 50, sway = main ? 66 : 80;
-    if (row >= 8 && r < nest) {
-        b->flags = CLIMB_NESTS;
+    if (b->flags & CLIMB_NESTS)
         b->nest_x = (s16)(left ? b->x1 - 4 : b->x0 + 4);
-    } else if (row >= 5 && r < snap) {
-        b->flags = CLIMB_SNAPS;
-    } else if (row >= 3 && r >= snap && r < sway) {
-        b->flags = CLIMB_SWAYS;
-    }
 }
 
 void climb_row(u32 seed, int row, ClimbRow* out) {
@@ -49,9 +70,11 @@ void climb_row(u32 seed, int row, ClimbRow* out) {
     }
     u32 h = hash3(seed, (u32)row, 0);
     bool left = (row & 1) == 0;
-    int io_max = 10 + (row / 4 < 6 ? row / 4 : 6);
+    int ramp = climb_ramp(row);
+    int io_max = 10 + (row / 4 < 6 ? row / 4 : 6) + ramp * (CLIMB_IO_HARD - 16) / 256;
     int io = 6 + (int)((h & 0xFF) * (u32)(io_max - 5) >> 8);
-    int len = 32 + 16 * (int)(((h >> 8) & 0xFF) * 3u >> 8);
+    // Shorter boughs more often, higher up.
+    int len = 32 + 16 * (int)((((h >> 8) & 0xFF) * (u32)(256 - ramp / 2) >> 8) * 3u >> 8);
     make_branch(&out->b[0], row, left, io, len, (h >> 16) % 100u, true);
     if (row >= 2 && (hash3(seed, (u32)row, 1) & 1)) {
         u32 g = hash3(seed, (u32)row, 2);
@@ -61,10 +84,16 @@ void climb_row(u32 seed, int row, ClimbRow* out) {
     }
 }
 
+int climb_sway_period(int row) {
+    return CLIMB_SWAY_PERIOD - (CLIMB_SWAY_PERIOD - CLIMB_SWAY_PERIOD_HARD) * climb_ramp(row) / 256;
+}
+
 int climb_sway(int row, int idx, u32 frame) {
-    u32 phase = (frame + (u32)row * 29u + (u32)idx * 53u) % CLIMB_SWAY_PERIOD;
-    int t = (int)(phase < CLIMB_SWAY_PERIOD / 2 ? phase : CLIMB_SWAY_PERIOD - phase);
-    return (t - CLIMB_SWAY_PERIOD / 4) * CLIMB_SWAY / (CLIMB_SWAY_PERIOD / 4);
+    u32 period = (u32)climb_sway_period(row);
+    u32 phase = (frame + (u32)row * 29u + (u32)idx * 53u) % period;
+    int t = (int)(phase < period / 2 ? phase : period - phase);
+    int q = (int)(period / 4);
+    return (t - q) * CLIMB_SWAY / q;
 }
 
 void climb_branch_free(const ClimbBranch* b, bool swing, int* lo, int* hi) {
@@ -158,8 +187,7 @@ u8 climb_fun(u32 rows) {
 
 // --- A frame -----------------------------------------------------------------------------------
 
-static int sway_of(const ClimbState* s, int row, int idx, const ClimbBranch* b, u32 frame) {
-    (void)s;
+static int sway_of(int row, int idx, const ClimbBranch* b, u32 frame) {
     return b->flags & CLIMB_SWAYS ? climb_sway(row, idx, frame) : 0;
 }
 
@@ -170,6 +198,8 @@ static bool try_land(ClimbState* s, s32 prev_y) {
     if (hp < 0)
         return false;
     int r_hi = (int)(hp / UNIT);
+    if (r_hi > CLIMB_ROWS_MAX)
+        r_hi = CLIMB_ROWS_MAX; // no boughs above the top
     int r_lo = hq <= 0 ? 0 : (int)((hq + UNIT - 1) / UNIT);
     int px = (int)(s->x / Q);
     for (int r = r_hi; r >= r_lo; r--) {
@@ -180,7 +210,7 @@ static bool try_land(ClimbState* s, s32 prev_y) {
             const ClimbBranch* b = &row.b[i];
             if (s->broken[k] >> i & 1)
                 continue;
-            int off = sway_of(s, r, i, b, s->frame);
+            int off = sway_of(r, i, b, s->frame);
             if (px < b->x0 + off || px > b->x1 + off)
                 continue;
             s->y = -r * UNIT;
@@ -192,6 +222,8 @@ static bool try_land(ClimbState* s, s32 prev_y) {
             if (r > s->rows)
                 s->rows = (u16)r;
             s->events |= CLIMB_EV_LAND;
+            if (r == CLIMB_ROWS_MAX)
+                s->events |= CLIMB_EV_TOP;
             if ((b->flags & CLIMB_SNAPS) && s->snap[k][i] == 0) {
                 s->snap[k][i] = CLIMB_SNAP_FRAMES;
                 s->events |= CLIMB_EV_CRACK;
@@ -225,7 +257,8 @@ static void check_nests(ClimbState* s) {
                 continue;
             if (px + 4 < b->nest_x - 5 || px - 4 > b->nest_x + 5)
                 continue;
-            s->vy = CLIMB_KNOCK_V;
+            if (s->vy < CLIMB_KNOCK_V)
+                s->vy = CLIMB_KNOCK_V; // down at least this fast
             s->push = px < b->nest_x ? -CLIMB_KNOCK_PUSH : CLIMB_KNOCK_PUSH;
             s->knock = 40;
             s->events |= CLIMB_EV_NEST;
@@ -267,8 +300,8 @@ ClimbResult climb_step(ClimbState* s, u16 keys) {
         ClimbRow row;
         climb_row(s->seed, s->row, &row);
         const ClimbBranch* b = &row.b[s->idx];
-        int off = sway_of(s, s->row, s->idx, b, s->frame);
-        int was = sway_of(s, s->row, s->idx, b, s->frame - 1);
+        int off = sway_of(s->row, s->idx, b, s->frame);
+        int was = sway_of(s->row, s->idx, b, s->frame - 1);
         s->x += (off - was) * Q + dir * CLIMB_WALK;
         if (s->x < CLIMB_X_MIN * Q)
             s->x = CLIMB_X_MIN * Q;
@@ -302,6 +335,8 @@ ClimbResult climb_step(ClimbState* s, u16 keys) {
     if (!s->standing && !s->knock)
         check_nests(s);
 
+    if (s->events & CLIMB_EV_TOP)
+        return CLIMB_TOP;
     // The camera follows upward only, easing.
     s32 target = s->y / Q - CLIMB_CAM_FEET;
     if (target < s->cam)

@@ -948,10 +948,18 @@ static void test_climb_rows_reachable(void) {
         }
     CHECK(rows == 10200);
     CHECK(bad == 0);
-    CHECK(worst <= reach - 8); // room for a human
+    CHECK(worst <= reach - 6); // room for a human
     CHECK(sways > 500 && snaps > 500 && nests > 300);
     CHECK(early == 0);
     CHECK(alternate == 2 * rows);
+    // The top of the tree, and the rows just under it, are as reachable.
+    for (unsigned k = 0; k < sizeof seeds / sizeof seeds[0]; k++)
+        for (int r = CLIMB_ROWS_MAX - 200; r <= CLIMB_ROWS_MAX; r++) {
+            ClimbRow below, row;
+            climb_row(seeds[k], r - 1, &below);
+            climb_row(seeds[k], r, &row);
+            CHECK(row_gap(&below, &row) <= reach - 6);
+        }
     // The tree is a function of the seed.
     ClimbRow a, b;
     climb_row(5, 40, &a);
@@ -1159,6 +1167,175 @@ static void test_climb_early_jump_is_buffered(void) {
     CHECK(s.events & CLIMB_EV_JUMP);
 }
 
+// The ramp: the warm-up is gentle, the hardest from row 60, and the tree up
+// there has more hazards, wider gaps and a quicker sway than the warm-up's.
+static int inner_of(const ClimbBranch* b) {
+    return b->inner_right ? CLIMB_TRUNK_X - b->x1 : b->x0 - CLIMB_TRUNK_X;
+}
+
+static void test_climb_ramp(void) {
+    CHECK(climb_ramp(0) == 0 && climb_ramp(CLIMB_WARMUP_ROWS) == 0);
+    CHECK(climb_ramp(34) > 100 && climb_ramp(34) < 156);
+    CHECK(climb_ramp(CLIMB_HARD_ROW) == 256 && climb_ramp(5000) == 256);
+    CHECK(climb_sway_period(5) == CLIMB_SWAY_PERIOD);
+    CHECK(climb_sway_period(CLIMB_HARD_ROW) == CLIMB_SWAY_PERIOD_HARD);
+    int warm_hazards = 0, warm_rows = 0, hard_hazards = 0, hard_rows = 0;
+    int warm_gap = 0, hard_gap = 0;
+    for (u32 seed = 1; seed <= 6; seed++) {
+        for (int r = 9; r <= 16; r++) {
+            ClimbRow row;
+            climb_row(seed, r, &row);
+            warm_rows++;
+            warm_hazards += row.b[0].flags != 0;
+            if (inner_of(&row.b[0]) > warm_gap)
+                warm_gap = inner_of(&row.b[0]);
+        }
+        for (int r = 60; r <= 400; r++) {
+            ClimbRow row;
+            climb_row(seed, r, &row);
+            hard_rows++;
+            hard_hazards += row.b[0].flags != 0;
+            if (inner_of(&row.b[0]) > hard_gap)
+                hard_gap = inner_of(&row.b[0]);
+        }
+    }
+    // Hazard shares in percent: at least twice as many up there.
+    CHECK(hard_hazards * 100 / hard_rows >= 2 * (warm_hazards * 100 / warm_rows));
+    CHECK(warm_gap <= 16 && hard_gap >= 20 && hard_gap <= CLIMB_IO_HARD);
+    // A swaying bough up there is back where it was after the hard period,
+    // not the easy one.
+    ClimbRow row;
+    int found = -1;
+    for (int r = 100; found < 0; r++) {
+        climb_row(3, r, &row);
+        if (row.b[0].flags & CLIMB_SWAYS)
+            found = r;
+    }
+    CHECK(climb_sway(found, 0, 7) == climb_sway(found, 0, 7 + CLIMB_SWAY_PERIOD_HARD));
+    CHECK(climb_sway(found, 0, 7) != climb_sway(found, 0, 7 + CLIMB_SWAY_PERIOD));
+}
+
+// The top: landing on row CLIMB_ROWS_MAX ends the round, and nothing is
+// above it.
+static void test_climb_top_of_the_tree(void) {
+    ClimbRow r;
+    int seed = 9;
+    // A seed whose top bough is still.
+    for (;; seed++) {
+        climb_row((u32)seed, CLIMB_ROWS_MAX, &r);
+        if (!(r.b[0].flags & CLIMB_SWAYS))
+            break;
+    }
+    ClimbState s;
+    climb_start(&s, (u32)seed);
+    s.standing = false;
+    s.rows = CLIMB_ROWS_MAX - 1;
+    s.x = ((r.b[0].x0 + r.b[0].x1) / 2) * 256;
+    s.y = -CLIMB_ROWS_MAX * UNIT - 3 * 256;
+    s.cam = s.y / 256 - 100;
+    s.vy = 256;
+    ClimbResult res = CLIMB_PLAYING;
+    for (int i = 0; i < 20 && res == CLIMB_PLAYING; i++)
+        res = climb_step(&s, 0);
+    CHECK(res == CLIMB_TOP && (s.events & CLIMB_EV_TOP));
+    CHECK(s.rows == CLIMB_ROWS_MAX && s.row == CLIMB_ROWS_MAX && s.standing);
+    // Past the top's height there is nothing to land on.
+    climb_start(&s, (u32)seed);
+    s.standing = false;
+    s.x = (r.b[0].x0 + 4) * 256;
+    s.y = -(CLIMB_ROWS_MAX + 1) * UNIT - 3 * 256;
+    s.cam = s.y / 256 - 100;
+    s.vy = 256;
+    for (int i = 0; i < 40 && s.y < -CLIMB_ROWS_MAX * UNIT - 2 * 256; i++)
+        climb_step(&s, 0);
+    CHECK(s.y > -CLIMB_ROWS_MAX * UNIT - 2 * 256 || !s.standing);
+    CHECK(s.rows == 0 || s.rows == CLIMB_ROWS_MAX);
+}
+
+// A simple bot plays the real physics: it jumps toward the next row's nearest
+// bough (counted where that bough will be when it lands) and steers under it.
+// It must keep climbing (the tree can't be unwinnable), and at no time may
+// every bough of the next row be out of reach of the bough it stands on for
+// longer than a sway can take to bring one in.
+typedef struct {
+    int rows, blocked_run, blocked_max;
+    bool over;
+} BotRun;
+
+static const ClimbBranch* bot_cur(const ClimbRow* cur, int idx) {
+    return &cur->b[idx < cur->count ? idx : 0];
+}
+
+static BotRun bot_climb(u32 seed, int target_rows, int max_frames) {
+    ClimbState s;
+    climb_start(&s, seed);
+    BotRun out = {0};
+    int reach = climb_jump_reach();
+    for (int f = 0; f < max_frames && s.rows < target_rows; f++) {
+        int tr = s.row + 1; // the next row above the bough it last stood on
+        ClimbRow nxt, cur;
+        climb_row(seed, tr, &nxt);
+        climb_row(seed, s.row, &cur);
+        int px = (int)(s.x / 256);
+        const ClimbBranch* cb = bot_cur(&cur, s.idx);
+        int cur_lo, cur_hi;
+        climb_branch_free(cb, false, &cur_lo, &cur_hi);
+        int cur_off = (cb->flags & CLIMB_SWAYS) ? climb_sway(s.row, s.idx, s.frame) : 0;
+        int best_gap = 1000, best_lo = 0, best_hi = 0, best_off = 0;
+        bool any_reach = false;
+        for (int j = 0; j < nxt.count; j++) {
+            int lo, hi;
+            climb_branch_free(&nxt.b[j], false, &lo, &hi);
+            bool sways = (nxt.b[j].flags & CLIMB_SWAYS) != 0;
+            int off = sways ? climb_sway(tr, j, s.frame + 28) : 0; // where it will be on landing
+            int now = sways ? climb_sway(tr, j, s.frame) : 0;
+            if (span_gap(cur_lo + cur_off, cur_hi + cur_off, lo + now, hi + now) <= reach)
+                any_reach = true;
+            int g = px < lo + off ? lo + off - px : px > hi + off ? px - hi - off : 0;
+            if (g < best_gap) {
+                best_gap = g;
+                best_lo = lo;
+                best_hi = hi;
+                best_off = off;
+            }
+        }
+        if (any_reach)
+            out.blocked_run = 0;
+        else if (++out.blocked_run > out.blocked_max)
+            out.blocked_max = out.blocked_run;
+        int cx = px < best_lo + best_off + 6   ? best_lo + best_off + 6
+                 : px > best_hi + best_off - 6 ? best_hi + best_off - 6
+                                               : px;
+        u16 keys = 0;
+        if (s.standing) {
+            if (best_gap > 36)
+                keys = px < cx ? BUTTON_RIGHT : BUTTON_LEFT;
+            else
+                keys = BUTTON_A | (px < cx - 3 ? BUTTON_RIGHT : px > cx + 3 ? BUTTON_LEFT : 0);
+        } else {
+            int h = (int)(-s.y / 256);
+            if (s.vy < 0 && h < tr * CLIMB_ROW_H + 6)
+                keys |= BUTTON_A;
+            keys |= px < cx - 2 ? BUTTON_RIGHT : px > cx + 2 ? BUTTON_LEFT : 0;
+        }
+        if (climb_step(&s, keys) == CLIMB_OVER) {
+            out.over = true;
+            break;
+        }
+    }
+    out.rows = s.rows;
+    return out;
+}
+
+static void test_climb_bot_climbs(void) {
+    static const u32 seeds[] = {1234, 12, 20, 77, 4242};
+    for (unsigned k = 0; k < sizeof seeds / sizeof seeds[0]; k++) {
+        BotRun r = bot_climb(seeds[k], 40, 20000);
+        CHECK(r.rows >= 30);
+        CHECK(r.blocked_max <= CLIMB_SWAY_PERIOD); // never stuck longer than a swing
+    }
+}
+
 TEST_SUITE(
     den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
     {"pet_neglect_thresholds", test_neglect_thresholds},
@@ -1184,4 +1361,6 @@ TEST_SUITE(
     {"climb_snap_timer", test_climb_snap_timer}, {"climb_fall_ends", test_climb_fall_ends},
     {"climb_nest_knocks", test_climb_nest_knocks},
     {"climb_score_and_fun", test_climb_score_and_fun},
-    {"climb_early_jump_is_buffered", test_climb_early_jump_is_buffered});
+    {"climb_early_jump_is_buffered", test_climb_early_jump_is_buffered},
+    {"climb_ramp", test_climb_ramp}, {"climb_top_of_the_tree", test_climb_top_of_the_tree},
+    {"climb_bot_climbs", test_climb_bot_climbs});

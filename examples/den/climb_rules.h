@@ -32,14 +32,24 @@
 //  - A jump is A: held, it rises to CLIMB_JUMP_V^2 / 2 / CLIMB_GRAV pixels
 //    (50, a row and a bit); let go, the rise is cut short. A pressed up to
 //    CLIMB_BUFFER frames before landing jumps on landing.
-//  - A nest knocks the serval down at CLIMB_KNOCK_V and sideways away from
-//    it; then it falls as it falls, to the row below if it lands there.
+//  - A nest knocks the serval off and down: at least CLIMB_KNOCK_V downward
+//    and sideways away from it; then it falls as it falls, most often onto
+//    the row below, but it can miss it.
+//  - The tree gets harder with the row, as pure functions of it: rows 0 to
+//    CLIMB_WARMUP_ROWS are the warm-up, and from there to CLIMB_HARD_ROW the
+//    gaps widen (the inner end up to CLIMB_IO_HARD from the trunk, a nest's
+//    bough to CLIMB_NEST_IO_MAX), dry, swaying and nested boughs become
+//    about three times as likely, the boughs shorter and the sway quicker
+//    (CLIMB_SWAY_PERIOD_HARD frames); above that it stays hardest
+//    (climb_ramp(): 0 to 256). The reach test guards every row.
+//  - The tree has a top: row CLIMB_ROWS_MAX. Landing on it ends the round
+//    (CLIMB_TOP), and there is nothing above it.
 
 #include <serval/core.h>
 
 #define CLIMB_ROW_H 40
 #define CLIMB_TRUNK_X 120
-#define CLIMB_GRAV 64    // 1/4 px/frame^2
+#define CLIMB_GRAV 64     // 1/4 px/frame^2
 #define CLIMB_JUMP_V 1280 // 5 px/frame
 #define CLIMB_CUT_V 384
 #define CLIMB_FALL_V 1536 // terminal speed, 6 px/frame
@@ -51,6 +61,12 @@
 #define CLIMB_SNAP_FRAMES 30
 #define CLIMB_SWAY 16
 #define CLIMB_SWAY_PERIOD 160
+#define CLIMB_SWAY_PERIOD_HARD 100
+#define CLIMB_WARMUP_ROWS 8
+#define CLIMB_HARD_ROW 60
+#define CLIMB_IO_HARD 22
+#define CLIMB_NEST_IO_MAX 14
+#define CLIMB_ROWS_MAX 9999
 #define CLIMB_NEST_SAFE 9 // a nest keeps the serval this far off its middle
 #define CLIMB_CAM_FEET 84 // the screen row the feet stay above, climbing
 #define CLIMB_START_FEET 130
@@ -63,8 +79,8 @@
 enum { CLIMB_SWAYS = 1, CLIMB_SNAPS = 2, CLIMB_NESTS = 4 };
 
 typedef struct {
-    s16 x0, x1;   // where the serval can stand, at rest (pixels)
-    s16 nest_x;   // a nest's middle, if CLIMB_NESTS
+    s16 x0, x1;       // where the serval can stand, at rest (pixels)
+    s16 nest_x;       // a nest's middle, if CLIMB_NESTS
     bool inner_right; // the trunk is at the right end (a bough on the left)
     u8 flags;
 } ClimbBranch;
@@ -82,9 +98,10 @@ enum {
     CLIMB_EV_NEST = 8,
     CLIMB_EV_OVER = 16,
     CLIMB_EV_CRACK = 32, // a dry bough was landed on: ev_row, ev_idx
+    CLIMB_EV_TOP = 64,   // landed on the top row
 };
 
-typedef enum { CLIMB_PLAYING, CLIMB_OVER } ClimbResult;
+typedef enum { CLIMB_PLAYING, CLIMB_OVER, CLIMB_TOP } ClimbResult;
 
 #define CLIMB_RING 16
 
@@ -95,23 +112,29 @@ typedef struct {
     s32 cam;    // the world y at the screen's top, pixels
     s32 push;   // sideways knock, Q8 per frame, dying away
     u32 frame;
-    u16 rows;   // the highest row stood on
-    s16 row;    // the bough stood on (when `standing`)
+    u16 rows; // the highest row stood on
+    s16 row;  // the bough stood on (when `standing`)
     u8 idx;
     bool standing;
-    u8 buffer;  // frames left of a jump pressed too early
-    u8 knock;   // frames before another nest can knock
+    u8 buffer; // frames left of a jump pressed too early
+    u8 knock;  // frames before another nest can knock
     u8 events;
     s16 ev_row;
     u8 ev_idx;
     u16 prev_keys;
-    s16 tag[CLIMB_RING];  // the row each ring entry holds (the snapped boughs)
+    s16 tag[CLIMB_RING];    // the row each ring entry holds (the snapped boughs)
     u8 snap[CLIMB_RING][2]; // frames to go before it breaks (0: not landed on)
     u8 broken[CLIMB_RING];  // bit i: bough i is gone
 } ClimbState;
 
 // The row `row` of the tree for `seed`.
 void climb_row(u32 seed, int row, ClimbRow* out);
+
+// How hard the tree is at `row`: 0 (the warm-up) to 256 (CLIMB_HARD_ROW and up).
+int climb_ramp(int row);
+
+// The frames a swaying bough of `row` takes for a swing there and back.
+int climb_sway_period(int row);
 
 // How far the bough is from its rest at `frame` (CLIMB_SWAYS ones only; the
 // phase differs by row and bough).
