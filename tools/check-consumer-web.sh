@@ -21,16 +21,16 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/game"
 python3 -m zipfile -e "$zip" "$work/game"
 mv "$work"/game/serval-engine-* "$work/game/serval-engine"
-cp "$root/examples/pong/main.c" "$work/game/"
+cp "$root"/examples/pong/*.c "$root"/examples/pong/*.h "$work/game/"
 cat >"$work/game/CMakeLists.txt" <<'CMAKE'
 cmake_minimum_required(VERSION 3.25)
 project(web_game LANGUAGES C)
 add_subdirectory(serval-engine)
-serval_add_rom(web_game SOURCES main.c TITLE "WEB GAME")
+serval_add_rom(web_game SOURCES main.c art.c TITLE "WEB GAME")
 # Markup in titles and game codes (in CMake strings, \" is ", \\ is \ and \$ is $).
-serval_add_rom(web_escapes SOURCES main.c TITLE " <&lt;\"'\\`> " GAME_CODE "\${}#")
-serval_add_rom(web_markup SOURCES main.c TITLE "</title>&lt@" GAME_CODE "{{{\"")
-serval_add_rom(web_references SOURCES main.c TITLE "&#60&#x3c&lt" GAME_CODE "&#62")
+serval_add_rom(web_escapes SOURCES main.c art.c TITLE " <&lt;\"'\\`> " GAME_CODE "\${}#")
+serval_add_rom(web_markup SOURCES main.c art.c TITLE "</title>&lt@" GAME_CODE "{{{\"")
+serval_add_rom(web_references SOURCES main.c art.c TITLE "&#60&#x3c&lt" GAME_CODE "&#62")
 CMAKE
 
 cmake -S "$work/game" -B "$work/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
