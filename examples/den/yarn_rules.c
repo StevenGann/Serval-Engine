@@ -2,8 +2,6 @@
 
 #include "yarn_rules.h"
 
-#define PAW_MIN (YARN_CEIL_Y + YARN_PADDLE_H / 2)
-#define PAW_MAX (YARN_FLOOR_Y - YARN_PADDLE_H / 2)
 #define Q 256
 
 static u32 next_random(YarnState* s) {
@@ -38,9 +36,14 @@ u8 yarn_fun(u32 bats) {
     return (u8)(YARN_FUN_BASE + (bats > YARN_FUN_BATS_MAX ? YARN_FUN_BATS_MAX : bats));
 }
 
+void yarn_set_reach(YarnState* s, int h) {
+    s->paw_h = (s16)(h < 8 ? 8 : h > 48 ? 48 : h);
+}
+
 void yarn_start(YarnState* s, u32 seed) {
     *s = (YarnState){0};
     s->rng = seed ^ 0x9E3779B9u;
+    s->paw_h = YARN_PADDLE_H;
     s->paw_y = (s16)((YARN_CEIL_Y + YARN_FLOOR_Y) / 2);
     s->x = 120 * Q;
     s->y = (YARN_CEIL_Y + 24 + (s32)(next_random(s) % 80)) * Q;
@@ -58,7 +61,7 @@ void yarn_start(YarnState* s, u32 seed) {
 static void bat(YarnState* s) {
     s32 speed = yarn_speed(s->bats);
     s32 off = (s->y >> 8) - s->paw_y; // -(H/2 + R) .. H/2 + R
-    s32 lim = YARN_PADDLE_H / 2 + 1;
+    s32 lim = s->paw_h / 2 + 1;
     if (off > lim)
         off = lim;
     if (off < -lim)
@@ -74,10 +77,11 @@ YarnResult yarn_step(YarnState* s, u16 keys) {
         s->paw_y = (s16)(s->paw_y - YARN_PADDLE_SPEED);
     if (keys & BUTTON_DOWN)
         s->paw_y = (s16)(s->paw_y + YARN_PADDLE_SPEED);
-    if (s->paw_y < PAW_MIN)
-        s->paw_y = PAW_MIN;
-    if (s->paw_y > PAW_MAX)
-        s->paw_y = PAW_MAX;
+    s16 paw_min = (s16)(YARN_CEIL_Y + s->paw_h / 2), paw_max = (s16)(YARN_FLOOR_Y - s->paw_h / 2);
+    if (s->paw_y < paw_min)
+        s->paw_y = paw_min;
+    if (s->paw_y > paw_max)
+        s->paw_y = paw_max;
     if (s->wait) {
         s->wait--;
         return YARN_PLAYING;
@@ -109,7 +113,7 @@ YarnResult yarn_step(YarnState* s, u16 keys) {
         s32 off = (s->y >> 8) - s->paw_y;
         if (off < 0)
             off = -off;
-        if (off <= YARN_PADDLE_H / 2 + YARN_BALL_R / 2) {
+        if (off <= s->paw_h / 2 + YARN_BALL_R / 2) {
             s->x = (YARN_PAW_X + YARN_BALL_R) * Q;
             s->bats++;
             bat(s);

@@ -1,11 +1,12 @@
 // Yarn Bat on screen: see yarn.h.
 //
-// The court is the screen without its background maps (art_hide()): a
-// backdrop color per scanline (raster_backdrop(): dark above the ceiling and
-// below the floor, sand between), the wall a column of sprites, the pet at
-// the left as the paw, and the yarn ball, with its thread, as sprites. The
-// thread is the ball's last positions, one every two frames, a dot each; it
-// grows with the bats, so the yarn is seen to unravel.
+// The game is played in the den itself: its pictures stay on, the rock at
+// the right is the far wall, the floor is where the paws stand, the roof holds
+// the score; only the care bar is gone. The pet at the left is the paw (its
+// own size sets its reach, and it swings its arm when it bats), and the yarn
+// ball and its thread are sprites. The thread is the ball's last positions, one
+// a frame, a dot each, waving more the older it is; it grows with the bats,
+// so the yarn is seen to unravel, and the ball shrinks a little as it goes.
 
 #include "yarn.h"
 
@@ -17,51 +18,32 @@
 
 #include <serval/serval.h>
 
-#define TRAIL_MAX 48
-#define TRAIL_BASE 6      // dots of thread from the start
-#define TRAIL_PER_BAT 2   // and two more for each bat
-#define TRAIL_SPACING 2   // frames between dots
-#define HIT_FRAMES 10     // the paw's swing, and the spark
+#define TRAIL_MAX 72
+#define TRAIL_BASE 10   // dots of thread from the start
+#define TRAIL_PER_BAT 3 // and three more for each bat
+#define HIT_FRAMES 12   // the paw's swing, and the spark
 #define FADE_STEP 2
 #define HUD_ROW 0
 #define HINT_ROW 19
 
 static u16* best_score;
 
-static Color court[SCREEN_H] SERVAL_EWRAM_BSS;
+static const s8 wave[12] = {0, 1, 1, 2, 1, 1, 0, -1, -1, -2, -1, -1};
 
 typedef struct {
     s16 x[TRAIL_MAX], y[TRAIL_MAX]; // ring, newest at `head`
-    u8 head, count, tick;
-    u8 hit;                         // frames left of the paw's swing
-    u16 lock;                       // buttons held since before they were wanted
+    u8 head, count;
+    u8 hit;   // frames left of the paw's swing
+    u16 lock; // buttons held since before they were wanted
     int shown_bats, shown_best;
     int stage;
-    bool moving;
+    bool moving, lights_off;
 } View;
 
 static View v;
 
 void yarn_attach(u16* best) {
     best_score = best;
-}
-
-// --- The court -------------------------------------------------------------------------------
-
-static void build_court(void) {
-    for (int y = 0; y < SCREEN_H; y++) {
-        Color c;
-        if (y < YARN_CEIL_Y - 2 || y >= YARN_FLOOR_Y + 2)
-            c = COLOR_RGB(36, 24, 20); // above the ceiling, below the floor
-        else if (y < YARN_CEIL_Y || y >= YARN_FLOOR_Y)
-            c = COLOR_RGB(214, 178, 128); // their edges
-        else {
-            // sand, a little darker toward the foot, in broad bands
-            int band = (y - YARN_CEIL_Y) / 16;
-            c = COLOR_RGB(190 - band * 5, 148 - band * 5, 100 - band * 4);
-        }
-        court[y] = c;
-    }
 }
 
 // --- Input -----------------------------------------------------------------------------------
@@ -107,39 +89,56 @@ static int trail_wanted(const YarnState* s) {
 static void trail_update(const YarnState* s) {
     if (s->wait)
         return;
-    if (v.tick++ % TRAIL_SPACING)
-        return;
-    v.head = (u8)((v.head + 1) % TRAIL_MAX);
+    v.head = v.head == TRAIL_MAX - 1 ? 0 : (u8)(v.head + 1);
     v.x[v.head] = (s16)(s->x >> 8);
     v.y[v.head] = (s16)(s->y >> 8);
     if (v.count < TRAIL_MAX)
         v.count++;
 }
 
+static int arm_frame(void) {
+    int e = HIT_FRAMES - v.hit; // frames since the bat
+    return e < 2 ? 1 : e < 7 ? 2 : e < 10 ? 1 : 0;
+}
+
 static void draw_court(const YarnState* s, bool paw_visible) {
     u32 f = frame_count();
     int bx = (int)(s->x >> 8), by = (int)(s->y >> 8);
-    // Front to back: the ball, the paw and its spark, the thread, the wall.
-    sprite_draw(SPR_YARN, (u8)(((bx + by) >> 2) & 3), bx - 4, by - 4, 0);
+    // Front to back: the ball, the arm and the spark, the pet, the thread, the lamp.
+    int size = s->bats >= 25 ? 2 : s->bats >= 10 ? 1 : 0;
+    sprite_draw(SPR_YARN, (u8)(size * YARN_TURNS + (((bx + by) >> 2) & 3)), bx - 4, by - 4, 0);
     if (paw_visible) {
-        int size = v.stage == STAGE_KITTEN ? 16 : 32;
-        int frame = v.hit ? PF_HAPPY : v.moving ? PF_WALK0 + (int)(f / 5 % 4) : PF_STAND;
-        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, YARN_PAW_X - size + 2,
-                    s->paw_y - size / 2 + 2, 0);
-        if (v.hit)
+        int body = v.stage == STAGE_KITTEN ? 16 : 32;
+        if (v.hit) {
+            sprite_draw(SPR_PAW, (u8)arm_frame(), YARN_PAW_X - 10,
+                        s->paw_y - (v.stage == STAGE_KITTEN ? 1 : 3), 0);
             sprite_draw(SPR_SPARK, (u8)((HIT_FRAMES - v.hit) * SPARK_FRAMES / HIT_FRAMES),
-                        YARN_PAW_X - 2, s->paw_y - 4, 0);
+                        YARN_PAW_X + 2, s->paw_y - 8, 0);
+        }
+        int frame = v.hit ? PF_HAPPY : v.moving ? PF_WALK0 + (int)(f / 5 % 4) : PF_STAND;
+        sprite_draw((u16)(SPR_KITTEN + v.stage), (u8)frame, YARN_PAW_X - body + 2,
+                    s->paw_y - body / 2 + 2, 0);
     }
     int shown = trail_wanted(s);
     if (shown > v.count)
         shown = v.count;
+    // No divisions in this loop (Thumb code has none): the ring index, the
+    // wave's phase and the amplitude step along.
+    int k = v.head, phase = (int)(f >> 1) % 12, amp = 1, next_amp = 10;
     for (int i = 1; i < shown; i++) { // 0 is under the ball
-        int k = (v.head + TRAIL_MAX - i) % TRAIL_MAX;
-        int frame = i < 5 ? 0 : i < 14 ? 1 : 2;
-        sprite_draw(SPR_THREAD, (u8)frame, v.x[k] - 4, v.y[k] - 4, 0);
+        k = k == 0 ? TRAIL_MAX - 1 : k - 1;
+        phase = phase == 11 ? 0 : phase + 1;
+        if (i == next_amp) {
+            amp += amp < 3;
+            next_amp += 10;
+        }
+        sprite_draw(SPR_THREAD,
+                    (u8)(i < 5    ? 0
+                         : i < 24 ? 1
+                                  : 2),
+                    v.x[k] - 4, v.y[k] - 4 + wave[phase] * amp / 2, 0);
     }
-    for (int i = 0; i < (YARN_FLOOR_Y - YARN_CEIL_Y) / 16; i++)
-        sprite_draw(SPR_WALL, 0, YARN_WALL_X, YARN_CEIL_Y + i * 16, 0);
+    sprite_draw(SPR_LAMP, v.lights_off ? 2 : (u8)((f / 14) & 1), LAMP_X, LAMP_Y, 0);
 }
 
 // A box of 16 x 16 pieces behind text: columns and rows of them from (x, y).
@@ -147,8 +146,13 @@ static void draw_panel(int x, int y, int cols, int rows) {
     for (int j = 0; j < rows; j++)
         for (int i = 0; i < cols; i++)
             sprite_draw(SPR_PANEL,
-                        (u8)((j == 0 ? 0 : j == rows - 1 ? 2 : 1) * 3 +
-                             (i == 0 ? 0 : i == cols - 1 ? 2 : 1)),
+                        (u8)((j == 0          ? 0
+                              : j == rows - 1 ? 2
+                                              : 1) *
+                                 3 +
+                             (i == 0          ? 0
+                              : i == cols - 1 ? 2
+                                              : 1)),
                         x + i * 16, y + j * 16, 0);
 }
 
@@ -245,18 +249,19 @@ bool yarn_play(Pet* pet, u32 now) {
     static u16 no_best;
     if (!best_score)
         best_score = &no_best;
-    art_hide();
-    art_set_pet(pet->coat, 0, TOD_DAY, false);
-    build_court();
-    raster_backdrop(court);
-    text_clear();
-    text_set_color(COLOR_RGB(248, 236, 208), COLOR_RGB(20, 14, 12));
+    den_resume(); // the den's pictures, the screen black; the care bar stays off
+    int tod = art_time_of_day(clock_hour(now));
+    art_set_scene(tod, pet->lights_off);
+    art_set_pet(pet->coat, pet->sickness, tod, pet->lights_off);
+    map_set_scroll(SKY_BG, 0, 0);
     text_print_centered(HINT_ROW, "UP DOWN MOVE   START PAUSE");
 
     YarnState s;
     yarn_start(&s, now ^ frame_count() * 2654435761u);
     v = (View){0};
     v.stage = (int)pet_stage(pet, pet->last_tick);
+    v.lights_off = pet->lights_off;
+    yarn_set_reach(&s, v.stage == STAGE_KITTEN ? 16 : v.stage == STAGE_ADOLESCENT ? 26 : 30);
     v.lock = BUTTON_ANY;
     v.shown_bats = v.shown_best = -1;
     button_repeat_reset();
@@ -304,9 +309,8 @@ bool yarn_play(Pet* pet, u32 now) {
     results_card(&s, *best_score, new_best, fun, worst);
 
     fade(&s, 0, SCREEN_BRIGHTNESS_MIN, false);
-    raster_clear();
     text_clear();
     frame_begin();
-    frame_end(); // the clear takes effect, behind the black screen
+    frame_end(); // behind the black screen
     return true;
 }

@@ -820,6 +820,23 @@ static void test_yarn_paddle_hit_angle(void) {
     }
 }
 
+static void test_yarn_paw_reach(void) {
+    // The same ball, 12 pixels off the paw's middle: a small paw misses it, a
+    // big one bats it; and the paw stays on the court whatever its reach.
+    YarnState small = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 92, -400, 0);
+    YarnState big = small;
+    small.paw_y = big.paw_y = 80;
+    yarn_set_reach(&small, 16);
+    yarn_set_reach(&big, 32);
+    yarn_step(&small, 0);
+    yarn_step(&big, 0);
+    CHECK(small.events & YARN_EV_MISS && small.bats == 0);
+    CHECK(big.events & YARN_EV_BAT && big.bats == 1);
+    for (int i = 0; i < 100; i++)
+        yarn_step(&big, BUTTON_DOWN);
+    CHECK(big.paw_y == YARN_FLOOR_Y - 16);
+}
+
 static void test_yarn_speed_cap(void) {
     CHECK(yarn_speed(0) == 384 && yarn_speed(3) == 384);
     CHECK(yarn_speed(4) == 400 && yarn_speed(8) == 416);
@@ -885,4 +902,5 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt},
            {"yarn_ball_bounces", test_yarn_ball_bounces},
            {"yarn_paddle_hit_angle", test_yarn_paddle_hit_angle},
-           {"yarn_speed_cap", test_yarn_speed_cap}, {"yarn_miss_ends", test_yarn_miss_ends});
+           {"yarn_paw_reach", test_yarn_paw_reach}, {"yarn_speed_cap", test_yarn_speed_cap},
+           {"yarn_miss_ends", test_yarn_miss_ends});

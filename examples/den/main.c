@@ -33,11 +33,10 @@
 //   - Saves (den_save.c, save.h): the pet, the album and the time last seen,
 //     written every 5 minutes of play, after every care action and at every
 //     change of stage or mood
-//   - A mini-game on the raster backdrop and sprites (yarn.c, rules in
-//     yarn_rules.c, host-tested): YARN BAT, the kitten's. A sand court (a
-//     backdrop color per scanline, raster_backdrop()), a stone wall of
-//     sprites at the right, the pet at the left as the paw, a ball of yarn
-//     leaving a thread of dots behind it
+//   - A mini-game inside the den (yarn.c, rules in yarn_rules.c, host-tested):
+//     YARN BAT, the kitten's. The den's own pictures are the court: its rock
+//     at the right is the far wall, the pet at the left the paw, and the
+//     yarn ball and its wavering thread are sprites
 //   - PSG sounds (sound.c): a purr, crunches, the serval's chirp, birds by
 //     day and crickets at night
 //
@@ -91,18 +90,20 @@
 //     letter grid (A-Z, DEL, END) with a random suggestion filled in; D-pad
 //     moves, A picks a letter, B deletes one, END or START accepts (up to 8
 //     letters, at least 1).
-//   - PLAY > YARN BAT (kitten and up): the den fades out to a sand court with
-//     the pet at the left and a stone wall at the right; BATS and BEST at the
-//     top. After a moment the yarn ball rolls toward the wall, bounces off it,
-//     the ceiling and the floor, and trails a pink thread that grows with each
-//     bat. UP and DOWN move the paw (the pet); the ball leaves the paw at an
-//     angle by where it met it (the ends slant it, the middle sends it
-//     straight) and speeds up a little every 4 bats. Thump on a bat, tap on a
-//     wall, a falling note on a miss. A ball that gets past ends the round.
-//     START pauses (RESUME or QUIT; QUIT also ends and counts the round). A
-//     ROUND OVER card shows BATS, BEST (NEW! for a record, saved) and FUN +N
-//     (10 plus the bats, at most 40): A returns to the den, whose FUN bar has
-//     risen. Buttons held as the game starts or ends do nothing until released.
+//   - PLAY > YARN BAT (kitten and up): the den fades out and in again with the
+//     care bar gone; BATS and BEST in the roof. After a moment the yarn ball
+//     rolls toward the rock wall at the right, bounces off it, the roof and the
+//     floor, and trails a red thread that waves and grows with each bat; the
+//     ball shrinks a little as the yarn unravels. UP and DOWN move the paw (the
+//     pet, whose size sets its reach); it swings an arm and shuts its eyes
+//     when it bats. The ball leaves the paw at an angle by where it met it (the
+//     ends slant it, the middle sends it straight) and speeds up a little
+//     every 4 bats. Thump on a bat, tap on a wall, a falling note on a miss. A
+//     ball that gets past ends the round. START pauses (RESUME or QUIT; QUIT
+//     also ends and counts the round). A ROUND OVER card shows BATS, BEST (NEW!
+//     for a record, saved) and FUN +N (10 plus the bats, at most 40): A returns
+//     to the den, whose FUN bar has risen. Buttons held as the game starts or
+//     ends do nothing until released.
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,

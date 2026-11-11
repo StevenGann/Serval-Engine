@@ -19,12 +19,12 @@
 
 #include <serval/core.h>
 
-#define YARN_WALL_X 224   // the far wall's face
-#define YARN_CEIL_Y 16    // the ceiling, the court's top
-#define YARN_FLOOR_Y 144  // the floor, its bottom
-#define YARN_PAW_X 30     // the paw's face: the ball is batted when its left edge reaches it
-#define YARN_BALL_R 4     // the ball's radius
-#define YARN_PADDLE_H 24  // the paw's reach (a ball touching its end counts)
+#define YARN_WALL_X 224  // the far wall's face
+#define YARN_CEIL_Y 16   // the ceiling, the court's top
+#define YARN_FLOOR_Y 144 // the floor, its bottom
+#define YARN_PAW_X 30    // the paw's face: the ball is batted when its left edge reaches it
+#define YARN_BALL_R 4    // the ball's radius
+#define YARN_PADDLE_H 24 // the paw's reach (a ball touching its end counts)
 #define YARN_PADDLE_SPEED 3
 #define YARN_SERVE_WAIT 45
 
@@ -45,6 +45,7 @@ typedef struct {
     s32 x, y;   // the ball's middle, Q8
     s32 vx, vy; // Q8 per frame
     s16 paw_y;  // the paddle's middle, pixels
+    s16 paw_h;  // its reach (YARN_PADDLE_H unless yarn_set_reach())
     u16 bats;
     u16 wait; // frames before the ball moves
     bool missed;
@@ -53,6 +54,8 @@ typedef struct {
 } YarnState;
 
 void yarn_start(YarnState* s, u32 seed);
+// The paw's reach in pixels (the pet's size: a bigger pet covers more).
+void yarn_set_reach(YarnState* s, int h);
 // One frame; `keys` are the buttons held (BUTTON_UP and BUTTON_DOWN move the
 // paw).
 YarnResult yarn_step(YarnState* s, u16 keys);

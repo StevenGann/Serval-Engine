@@ -1499,28 +1499,36 @@ static void draw_button(void) {
         }
 }
 
-// Yarn Bat's pieces (PAL_ICONS indices: 1 outline, 5 red, 11 pink, 13 tan,
-// 14 brown, 15 highlight): the ball of yarn turning (a pink band across it,
-// turned a step a frame), loose thread (a dot that shrinks with age) and a
-// wall of stone blocks.
+// Yarn Bat's pieces: the ball of yarn turning (PAL_ICONS indices: 1 outline, 5
+// red, 11 pink, 15 highlight; a band across it, turned a step a frame, in
+// three sizes: the ball shrinks as it unravels), loose thread (a dot that
+// shrinks with age, in the yarn's red), and the pet's arm (PAL_PET), reaching
+// right in three lengths.
 static u32* build_yarn(u32* out) {
     u32* tiles = out;
-    for (int f = 0; f < YARN_FRAMES; f++) {
-        canvas_clear();
-        for (int y = 0; y < 8; y++)
-            for (int x = 0; x < 8; x++) {
-                int dx = 2 * x - 7, dy = 2 * y - 7; // twice the offset from the middle
-                int r2 = dx * dx + dy * dy;
-                if (r2 > 52)
-                    continue;
-                static const int stripe_lo[4] = {3, 7, 3, 0}, stripe_hi[4] = {4, 7, 4, 0};
-                int s = f == 0 ? y : f == 1 ? x + y : f == 2 ? x : x - y;
-                put(x, y, r2 > 34 ? 1 : (s >= stripe_lo[f] && s <= stripe_hi[f]) ? 11 : 5);
-            }
-        put(2, 2, 15);
-        out = pack(8, 8, out);
-    }
-    sprite(SPR_YARN, SPRITE_8x8, YARN_FRAMES, PAL_ICONS, tiles);
+    static const int radius2[YARN_SIZES] = {52, 40, 30}; // twice the offsets, squared
+    static const int rim2[YARN_SIZES] = {34, 26, 18};
+    for (int size = 0; size < YARN_SIZES; size++)
+        for (int f = 0; f < YARN_TURNS; f++) {
+            canvas_clear();
+            for (int y = 0; y < 8; y++)
+                for (int x = 0; x < 8; x++) {
+                    int dx = 2 * x - 7, dy = 2 * y - 7;
+                    int r2 = dx * dx + dy * dy;
+                    if (r2 > radius2[size])
+                        continue;
+                    static const int stripe_lo[4] = {3, 7, 3, 0}, stripe_hi[4] = {4, 7, 4, 0};
+                    int s = f == 0 ? y : f == 1 ? x + y : f == 2 ? x : x - y;
+                    put(x, y,
+                        r2 > rim2[size]                            ? 1
+                        : (s >= stripe_lo[f] && s <= stripe_hi[f]) ? 11
+                                                                   : 5);
+                }
+            if (size == 0)
+                put(2, 2, 15);
+            out = pack(8, 8, out);
+        }
+    sprite(SPR_YARN, SPRITE_8x8, YARN_SIZES * YARN_TURNS, PAL_ICONS, tiles);
 
     tiles = out;
     for (int f = 0; f < THREAD_FRAMES; f++) {
@@ -1529,21 +1537,34 @@ static u32* build_yarn(u32* out) {
         int o = n == 1 ? 4 : 3;
         for (int y = 0; y < n; y++)
             for (int x = 0; x < n; x++)
-                put(o + x, o + y, f == 0 ? 11 : 5);
+                put(o + x, o + y, f == 0 && x == 0 && y == 0 ? 11 : 5);
         out = pack(8, 8, out);
     }
     sprite(SPR_THREAD, SPRITE_8x8, THREAD_FRAMES, PAL_ICONS, tiles);
 
+    // The arm: 6 rows tall in a 16 x 8 cell, shaded like the coat, a pink pad
+    // at the end; 6, 11 and 16 pixels long.
     tiles = out;
-    canvas_clear();
-    for (int y = 0; y < 16; y++)
-        for (int x = 0; x < 16; x++) {
-            int bx = (x + (y >= 8 ? 4 : 0)) & 7; // blocks 8 wide, the rows staggered
-            bool mortar = (y & 7) == 7 || bx == 7;
-            put(x, y, mortar ? 14 : ((y & 7) == 0 || bx == 0) ? 15 : 13);
-        }
-    out = pack(16, 16, out);
-    sprite(SPR_WALL, SPRITE_16x16, 1, PAL_ICONS, tiles);
+    static const int arm_len[PAW_FRAMES] = {6, 11, 16};
+    for (int f = 0; f < PAW_FRAMES; f++) {
+        canvas_clear();
+        int len = arm_len[f];
+        for (int x = 0; x < len; x++)
+            for (int y = 1; y <= 6; y++) {
+                bool end = x == len - 1;
+                if (end && (y == 1 || y == 6))
+                    continue; // a rounded tip
+                int c = (y == 1 || y == 6 || end) ? P_OUTLINE
+                        : y == 2                  ? P_HI
+                        : y == 5                  ? P_SHADE
+                                                  : P_MID;
+                if (x == len - 2 && y >= 2 && y <= 5 && len > 6)
+                    c = y == 2 || y == 5 ? P_CREAM : P_PINK; // the pad
+                put(x, y, c);
+            }
+        out = pack(16, 8, out);
+    }
+    sprite(SPR_PAW, SPRITE_16x8, PAW_FRAMES, PAL_PET, tiles);
     return out;
 }
 
@@ -1655,7 +1676,8 @@ static u32* build_sprites(void) {
 
 _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAMES +
                        2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
-                       3 + BAR_COLORS * 9 + YARN_FRAMES + THREAD_FRAMES + 4 <=
+                       3 + BAR_COLORS * 9 + YARN_SIZES * YARN_TURNS + THREAD_FRAMES +
+                       2 * PAW_FRAMES <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 
