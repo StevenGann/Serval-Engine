@@ -190,3 +190,12 @@ level = 3
 # (the bar's PET): hearts over the kitten. The page's clock is the browser's,
 # so the sky follows the hour the site was built at.
 thumbnail = { frame = 700, keys = ["380:S:2", "600:r:2", "630:r:2", "660:A:2"] }
+
+[examples.life]
+title = "LIFE"
+summary = "Conway's Game of Life to watch and to play with, on the pixel surface: a world of 120 x 80 cells whose bytes are the page's pixels, stepped four cells a word from IWRAM (portable C, host-tested), cells glowing white when born and cooling as they age, an eased zoom by the surface's transform, painting and eight famous patterns to stamp with a preview, six rules, four color themes, still lifes and oscillators recognized, text in sprites of its own font, a pluck that follows the population, the world saved"
+tags = ["surface", "effects", "sound", "save"]
+level = 3
+# Out of the title (A) and running (START): the glider gun's stream, the
+# R-pentomino's and the acorn's chaos glowing, the pulsar, the HUD.
+thumbnail = { frame = 1000, keys = ["450:A:2", "500:S:2"] }

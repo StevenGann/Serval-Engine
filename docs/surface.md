@@ -87,6 +87,8 @@ The raycaster draws each picture over two frames (52 of its 120 columns, then 68
 
 For scale, on the GBA (release build, measured with `frame_cpu_permille()`): the raycaster's two frames of a picture each take 55% to 80% of a frame's CPU time for 120 x 160 textured pixels with a few things in view, its drawing loops in IWRAM as ARM code. (An unoptimized Debug build of the same loops takes over 200%: it plays correctly, at about a third of the speed.) A full-screen, full-resolution picture drawn pixel by pixel in C is beyond one frame; the transform (fewer pixels, stretched) and several frames per picture are how a game fits.
 
+The [`life`](../examples/life/main.c) example (Conway's Game of Life) uses the surface the other way round: its picture is its state. Its world of 120 x 80 cells is the page's top-left corner, a byte per cell whose value is at once the cell's state and its color number (empty, a fading trail, alive at an age), so the step reads the old generation and writes the new one into RAM and into the page in the same pass, in words, and the palette does the rest. The transform stretches the corner 2x to fill the screen, or 4x about the cursor with an eased zoom, at no CPU cost; its text is sprites. A generation costs it 160,000 cycles for a sparse world and 330,000 for a fresh random soup (its step in IWRAM as ARM code), so, like the raycaster, it splits a generation over two frames unless the last one says the next will fit in one.
+
 ## Hardware (GBA)
 
 - **`DISPCNT`:** mode 4, background 2 on, backgrounds 0, 1 and 3 off, and bit 4 selecting the page; written at `surface_begin()` and at every `frame_end()` while the surface is on (so the map module's last write for a layer unloaded just before can't hide the surface). The other bits (sprites, their mapping, forced blank, windows, "H-Blank interval free") are kept. `surface_end()` sets mode 0 with every background off.
@@ -114,4 +116,4 @@ Each of these is the game's, on purpose; each could be added later, as new funct
 
 - `tests/rom/surface_tests.c` (the test ROM, last, since it overwrites the other suites' VRAM): the mode switch and the display bits it keeps, the flip and the transform landing in VBlank and not before, clamping, colors through the shadow palette and their refusals, sprite groups loading from tile 512 and from 0 again afterwards, the text layer off and restored, maps and the surface refusing each other, the splash skipped, every call ignored while off; and the costs above.
 - `tests/web_ppu_tests.c` (host): the web renderer's mode 4 under the transforms the header documents.
-- The `raycaster` example, checked on the GBA and the web with the capture tools ([development.md](development.md)).
+- The `raycaster` and `life` examples, checked on the GBA and the web with the capture tools ([development.md](development.md)).

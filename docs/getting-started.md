@@ -16,7 +16,7 @@ cmake --build --preset gba-debug
 # -> build/gba-debug/examples/hello.gba, bunnymark.gba, pong.gba, asteroids.gba,
 #    breakout.gba, platformer.gba, shmup.gba, blackjack.gba, fireflies.gba,
 #    effects.gba, jukebox.gba, raycaster.gba, servle.gba, racer.gba,
-#    rhythm.gba, boardgames.gba, den.gba
+#    rhythm.gba, boardgames.gba, den.gba, life.gba
 #    (and bunnymark_bench.gba, the benchmark)
 ```
 
@@ -40,6 +40,7 @@ Open a `.gba` file in [mGBA](https://mgba.io/) (or any GBA emulator, or a flash 
 | [`rhythm`](../examples/rhythm/main.c) | Keeping time with tracker music ([audio.md](audio.md#position)): every frame starts from `music_position()`, and the charts are in the module's own ticks, so nothing drifts; the input's and the picture's latencies added as times and turned into ticks (`MUSIC_RATE`, `tick_samples`), a player's calibration on top; judging, scoring and the calibration's arithmetic as portable rules tested on the host, PSG blips over Maxmod's music, palette pulses on the beat, art drawn at boot, records in save data |
 | [`boardgames`](../examples/boardgames/main.c) | A game whose work is a search: one alpha-beta search for chess and checkers, driven through a table of functions per game, with its tree on a stack of its own so that it thinks a little each frame (`search_pace()` sizes the work from the last frame's `frame_cpu_cycles()`) while the board stays alive; portable game rules tested on the host, hot code in IWRAM, a board built from metatiles and sprites at boot, a saved game kept as one byte a move (`save.h`), PSG sound |
 | [`den`](../examples/den/main.c) | A game that lives by the cartridge's clock ([rtc.md](rtc.md)): the time away read at boot and lived minute by minute by a host-tested core, a clock gone back or reset handled, a pet that grows, sleeps by the hour and can die, three mini-games, art drawn ahead of time by a host program |
+| [`life`](../examples/life/main.c) | The pixel surface as a game's state ([surface.md](surface.md)): Conway's Game of Life, a byte of the page per cell, stepped in words from IWRAM and split over two frames when it would not fit in one, the transform for an eased zoom, text in sprites of its own font, painting and stamps, a save of the world a bit per cell |
 
 Use the `gba-debug` preset while developing: debug builds report API misuse in mGBA's log (*Tools > View Logs*) as `serval: ...` warnings ([core-api.md](core-api.md#debug-builds-report-misuse)).
 
