@@ -16,6 +16,7 @@
 #include "../examples/den/den_save.h"
 #include "../examples/den/litter.h"
 #include "../examples/den/pet.h"
+#include "../examples/den/yarn_rules.h"
 
 #define MIDNIGHT 762480000u
 #define T0 (MIDNIGHT + 8u * 3600u)
@@ -761,6 +762,109 @@ static void test_clock_resolve(void) {
     CHECK(now == seen + 3600 && off == (u32)-500);
 }
 
+// --- Yarn Bat -----------------------------------------------------------------------------------
+
+static YarnState yarn_ready(s32 x, s32 y, s32 vx, s32 vy) {
+    YarnState s;
+    yarn_start(&s, 7);
+    s.wait = 0;
+    s.x = x * 256;
+    s.y = y * 256;
+    s.vx = vx;
+    s.vy = vy;
+    return s;
+}
+
+static void test_yarn_ball_bounces(void) {
+    // The far wall reflects the ball and says so.
+    YarnState s = yarn_ready(YARN_WALL_X - YARN_BALL_R - 1, 80, 512, 0);
+    CHECK(yarn_step(&s, 0) == YARN_PLAYING);
+    CHECK(s.vx == -512 && (s.events & YARN_EV_WALL));
+    CHECK(s.x < (YARN_WALL_X - YARN_BALL_R) * 256); // it is back inside
+    // The floor and the ceiling reflect the vertical speed.
+    s = yarn_ready(120, YARN_FLOOR_Y - YARN_BALL_R - 1, 0, 600);
+    yarn_step(&s, 0);
+    CHECK(s.vy == -600 && (s.events & YARN_EV_WALL));
+    s = yarn_ready(120, YARN_CEIL_Y + YARN_BALL_R + 1, 0, -600);
+    yarn_step(&s, 0);
+    CHECK(s.vy == 600 && s.y > (YARN_CEIL_Y + YARN_BALL_R) * 256);
+    // It waits at the start.
+    yarn_start(&s, 3);
+    s32 x0 = s.x;
+    yarn_step(&s, 0);
+    CHECK(s.x == x0 && s.wait == YARN_SERVE_WAIT - 1);
+}
+
+// A ball that reaches the paw at y offset `off` from its middle.
+static YarnState yarn_bat_at(int off) {
+    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 80 + off, -400, 0);
+    s.paw_y = 80;
+    yarn_step(&s, 0);
+    return s;
+}
+
+static void test_yarn_paddle_hit_angle(void) {
+    YarnState mid = yarn_bat_at(0), top = yarn_bat_at(-10), bottom = yarn_bat_at(10);
+    CHECK(mid.events & YARN_EV_BAT && mid.bats == 1);
+    CHECK(top.events & YARN_EV_BAT && bottom.events & YARN_EV_BAT);
+    CHECK(mid.vx > 0 && mid.vy == 0);         // straight back
+    CHECK(top.vx > 0 && top.vy < 0);          // the paw's top sends it up
+    CHECK(bottom.vx > 0 && bottom.vy > 0);    // its bottom, down
+    CHECK(top.vy == -bottom.vy);              // symmetric
+    CHECK(-top.vy > 100 && -top.vy > mid.vy); // a real slant
+    // The speed is kept (to a rounding step) whatever the angle.
+    for (int off = -10; off <= 10; off += 5) {
+        YarnState s = yarn_bat_at(off);
+        s32 sp2 = s.vx * s.vx + s.vy * s.vy, want = yarn_speed(1) * yarn_speed(1);
+        CHECK(sp2 <= want && sp2 > want - 2 * yarn_speed(1) * 2);
+    }
+}
+
+static void test_yarn_speed_cap(void) {
+    CHECK(yarn_speed(0) == 384 && yarn_speed(3) == 384);
+    CHECK(yarn_speed(4) == 400 && yarn_speed(8) == 416);
+    CHECK(yarn_speed(159) == 1008 && yarn_speed(160) == 1024);
+    CHECK(yarn_speed(161) == 1024 && yarn_speed(5000) == 1024);
+    CHECK(yarn_speed(4000000) == 1024);
+    // Fun: 10 + the bats, at most 30 of them.
+    CHECK(yarn_fun(0) == 10 && yarn_fun(7) == 17 && yarn_fun(30) == 40 && yarn_fun(900) == 40);
+    // A bat at the cap keeps the cap.
+    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 80, -1024, 0);
+    s.paw_y = 80;
+    s.bats = 999;
+    yarn_step(&s, 0);
+    CHECK(s.vx == 1024 && s.bats == 1000);
+}
+
+static void test_yarn_miss_ends(void) {
+    YarnState s = yarn_ready(YARN_PAW_X + YARN_BALL_R + 1, 130, -400, 0);
+    s.paw_y = 40; // far from the ball
+    int steps = 0;
+    bool missed = false;
+    while (yarn_step(&s, 0) == YARN_PLAYING && steps < 500) {
+        steps++;
+        missed |= (s.events & YARN_EV_MISS) != 0;
+    }
+    missed |= (s.events & YARN_EV_MISS) != 0;
+    CHECK(missed && s.missed && s.bats == 0 && steps < 500);
+    CHECK(s.x < 0);
+    // A whole round with no input ends: the kitten stands still and the ball
+    // returns to a paw that happens to be in the way, or not.
+    yarn_start(&s, 99);
+    int n = 0;
+    while (yarn_step(&s, 0) == YARN_PLAYING && n < 5000)
+        n++;
+    CHECK(n < 5000);
+    // Moving the paw: held up and down it stays on the court.
+    for (int i = 0; i < 100; i++)
+        yarn_step(&s, BUTTON_UP);
+    CHECK(s.paw_y == YARN_CEIL_Y + YARN_PADDLE_H / 2);
+    yarn_start(&s, 1);
+    for (int i = 0; i < 100; i++)
+        yarn_step(&s, BUTTON_DOWN);
+    CHECK(s.paw_y == YARN_FLOOR_Y - YARN_PADDLE_H / 2);
+}
+
 TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
            {"pet_neglect_thresholds", test_neglect_thresholds},
            {"pet_care_resets_neglect", test_care_resets_neglect},
@@ -778,4 +882,7 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"den_save_refuses_other_version", test_save_refuses_other_version},
            {"den_save_refuses_garbage", test_save_refuses_garbage},
            {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},
-           {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt});
+           {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt},
+           {"yarn_ball_bounces", test_yarn_ball_bounces},
+           {"yarn_paddle_hit_angle", test_yarn_paddle_hit_angle},
+           {"yarn_speed_cap", test_yarn_speed_cap}, {"yarn_miss_ends", test_yarn_miss_ends});

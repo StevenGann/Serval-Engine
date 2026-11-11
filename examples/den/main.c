@@ -33,6 +33,11 @@
 //   - Saves (den_save.c, save.h): the pet, the album and the time last seen,
 //     written every 5 minutes of play, after every care action and at every
 //     change of stage or mood
+//   - A mini-game on the raster backdrop and sprites (yarn.c, rules in
+//     yarn_rules.c, host-tested): YARN BAT, the kitten's. A sand court (a
+//     backdrop color per scanline, raster_backdrop()), a stone wall of
+//     sprites at the right, the pet at the left as the paw, a ball of yarn
+//     leaving a thread of dots behind it
 //   - PSG sounds (sound.c): a purr, crunches, the serval's chirp, birds by
 //     day and crickets at night
 //
@@ -69,7 +74,7 @@
 //     RIGHT choose, A acts, B backs out. FEED asks MEAL or TREAT (a bowl that
 //     empties as it eats, crunching); PLAY lists YARN BAT, ACACIA CLIMB and
 //     HIGH POUNCE in a box (the ones the pet's stage doesn't allow yet are
-//     grey; each says COMING SOON until its game exists; the PLAY button is
+//     grey; the other two say COMING SOON until their games exist; the PLAY button is
 //     grey while the pet is asleep, tired or gone); PET gives hearts and a
 //     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime;
 //     LIGHTS puts the lights out or on (a click; the den goes dark but the
@@ -86,6 +91,18 @@
 //     letter grid (A-Z, DEL, END) with a random suggestion filled in; D-pad
 //     moves, A picks a letter, B deletes one, END or START accepts (up to 8
 //     letters, at least 1).
+//   - PLAY > YARN BAT (kitten and up): the den fades out to a sand court with
+//     the pet at the left and a stone wall at the right; BATS and BEST at the
+//     top. After a moment the yarn ball rolls toward the wall, bounces off it,
+//     the ceiling and the floor, and trails a pink thread that grows with each
+//     bat. UP and DOWN move the paw (the pet); the ball leaves the paw at an
+//     angle by where it met it (the ends slant it, the middle sends it
+//     straight) and speeds up a little every 4 bats. Thump on a bat, tap on a
+//     wall, a falling note on a miss. A ball that gets past ends the round.
+//     START pauses (RESUME or QUIT; QUIT also ends and counts the round). A
+//     ROUND OVER card shows BATS, BEST (NEW! for a record, saved) and FUN +N
+//     (10 plus the bats, at most 40): A returns to the den, whose FUN bar has
+//     risen. Buttons held as the game starts or ends do nothing until released.
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -106,6 +123,7 @@
 #include "menu.h"
 #include "naming.h"
 #include "sound.h"
+#include "yarn.h"
 
 #include <serval/serval.h>
 
@@ -240,6 +258,8 @@ int main(void) {
     store(now); // after den_enter(), whose text_clear() would hide SAVE FAILED
     Pet* pet = &save.pet;
     menu_init();
+    yarn_attach(&save.best[0]);
+    menu_set_game(GAME_YARN, yarn_play);
     for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b++) {
         frame_begin();
         screen_set_brightness(b);

@@ -147,7 +147,7 @@ target_link_libraries(boardgames PRIVATE serval_warnings)
 # host preset) from art_draw.c, which the ROM doesn't compile.
 serval_add_rom(den SOURCES den/main.c den/pet.c den/litter.c den/album.c den/den_save.c
                den/clock.c den/clock_check.c den/art.c den/art_data.c den/den.c den/sound.c den/menu.c
-               den/status.c den/naming.c
+               den/status.c den/naming.c den/yarn.c den/yarn_rules.c
                TITLE "SERVAL DEN" GAME_CODE "SVDN")
 target_link_libraries(den PRIVATE serval_warnings)
 

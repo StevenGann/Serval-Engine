@@ -1499,6 +1499,54 @@ static void draw_button(void) {
         }
 }
 
+// Yarn Bat's pieces (PAL_ICONS indices: 1 outline, 5 red, 11 pink, 13 tan,
+// 14 brown, 15 highlight): the ball of yarn turning (a pink band across it,
+// turned a step a frame), loose thread (a dot that shrinks with age) and a
+// wall of stone blocks.
+static u32* build_yarn(u32* out) {
+    u32* tiles = out;
+    for (int f = 0; f < YARN_FRAMES; f++) {
+        canvas_clear();
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++) {
+                int dx = 2 * x - 7, dy = 2 * y - 7; // twice the offset from the middle
+                int r2 = dx * dx + dy * dy;
+                if (r2 > 52)
+                    continue;
+                static const int stripe_lo[4] = {3, 7, 3, 0}, stripe_hi[4] = {4, 7, 4, 0};
+                int s = f == 0 ? y : f == 1 ? x + y : f == 2 ? x : x - y;
+                put(x, y, r2 > 34 ? 1 : (s >= stripe_lo[f] && s <= stripe_hi[f]) ? 11 : 5);
+            }
+        put(2, 2, 15);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_YARN, SPRITE_8x8, YARN_FRAMES, PAL_ICONS, tiles);
+
+    tiles = out;
+    for (int f = 0; f < THREAD_FRAMES; f++) {
+        canvas_clear();
+        int n = f == 0 ? 3 : f == 1 ? 2 : 1; // the dot's size
+        int o = n == 1 ? 4 : 3;
+        for (int y = 0; y < n; y++)
+            for (int x = 0; x < n; x++)
+                put(o + x, o + y, f == 0 ? 11 : 5);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_THREAD, SPRITE_8x8, THREAD_FRAMES, PAL_ICONS, tiles);
+
+    tiles = out;
+    canvas_clear();
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++) {
+            int bx = (x + (y >= 8 ? 4 : 0)) & 7; // blocks 8 wide, the rows staggered
+            bool mortar = (y & 7) == 7 || bx == 7;
+            put(x, y, mortar ? 14 : ((y & 7) == 0 || bx == 0) ? 15 : 13);
+        }
+    out = pack(16, 16, out);
+    sprite(SPR_WALL, SPRITE_16x16, 1, PAL_ICONS, tiles);
+    return out;
+}
+
 static u32* build_bar(u32* out) {
     const u32* tiles = out;
     for (int f = 0; f < ICON_COUNT; f++) {
@@ -1581,7 +1629,7 @@ static u32* build_bar(u32* out) {
             out = pack(8, 8, out);
         }
     sprite(SPR_BAR, SPRITE_8x8, BAR_COLORS * 9, PAL_ICONS, tiles);
-    return out;
+    return build_yarn(out);
 }
 
 static u32* build_sprites(void) {
@@ -1607,7 +1655,7 @@ static u32* build_sprites(void) {
 
 _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAMES +
                        2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
-                       3 + BAR_COLORS * 9 <=
+                       3 + BAR_COLORS * 9 + YARN_FRAMES + THREAD_FRAMES + 4 <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 

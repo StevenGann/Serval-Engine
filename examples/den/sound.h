@@ -16,6 +16,10 @@ void sound_clean(void);    // a sweep
 void sound_medicine(void); // a soft chime
 void sound_lights(bool off);
 void sound_no(void); // refused
+// Yarn Bat: the paw's thump, a tap on the wall, a missed ball.
+void sound_bat(void);
+void sound_tap(void);
+void sound_miss(void);
 // Now and then, through the mouth: birds by day, crickets at night. Call once
 // a frame with the time of day (art.h's TOD_*).
 void sound_ambient(int tod);

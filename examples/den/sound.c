@@ -21,6 +21,9 @@ enum {
     SND_NO,
     SND_BIRD,
     SND_CRICKET,
+    SND_BAT,
+    SND_TAP,
+    SND_MISS,
     SND_COUNT,
 };
 
@@ -38,6 +41,8 @@ static const u16 medicine_notes[] = {E6, G6, C7};
 static const u16 no_notes[] = {AS3, G3};
 static const u16 bird_notes[] = {3100, 3600, 0, 3300, 3900};
 static const u16 cricket_notes[] = {4400, 0, 4400, 0, 4400};
+
+static const u16 miss_notes[] = {523, 440, 349, 262};
 
 static const PsgSound sounds[SND_COUNT] = {
     [SND_PURR] = {.channel = PSG_NOISE,
@@ -113,6 +118,29 @@ static const PsgSound sounds[SND_COUNT] = {
                      .note_count = 5,
                      .frames = 2,
                      .volume = 2},
+    // Yarn Bat: a thump of the paw, a tap on the wall, a falling mew.
+    [SND_BAT] = {.channel = PSG_SQUARE1,
+                 .duty = PSG_DUTY_50,
+                 .frequency = 330,
+                 .slide = -2,
+                 .slide_size = 3,
+                 .frames = 6,
+                 .volume = 12,
+                 .fade = -3,
+                 .priority = 2},
+    [SND_TAP] = {.channel = PSG_SQUARE2,
+                 .duty = PSG_DUTY_12,
+                 .frequency = 1100,
+                 .frames = 2,
+                 .volume = 7,
+                 .priority = 2},
+    [SND_MISS] = {.channel = PSG_SQUARE1,
+                  .duty = PSG_DUTY_25,
+                  .notes = miss_notes,
+                  .note_count = 4,
+                  .frames = 6,
+                  .volume = 9,
+                  .priority = 3},
 };
 
 static const PsgSound* sound_table[SND_COUNT];
@@ -160,4 +188,16 @@ void sound_ambient(int tod) {
     int chance = tod == TOD_NIGHT ? 150 : tod == TOD_DAY ? 400 : 0;
     if (chance && random_range(0, chance - 1) == 0)
         psg_play(tod == TOD_NIGHT ? SND_CRICKET : SND_BIRD);
+}
+
+void sound_bat(void) {
+    psg_play(SND_BAT);
+}
+
+void sound_tap(void) {
+    psg_play(SND_TAP);
+}
+
+void sound_miss(void) {
+    psg_play(SND_MISS);
 }

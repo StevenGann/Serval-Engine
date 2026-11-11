@@ -15,9 +15,9 @@
 #define REFRESH "cmake --build --preset host --target den_art_data_refresh"
 
 static const char* const sprite_names[SPRITE_COUNT] = {
-    "SPR_KITTEN", "SPR_YOUNG",  "SPR_ADULT", "SPR_SUN",   "SPR_MOON",  "SPR_LAMP",
-    "SPR_DROP",   "SPR_BOWL",   "SPR_ZZZ",   "SPR_HEART", "SPR_SPARK", "SPR_TOMB",
-    "SPR_ICON",   "SPR_CURSOR", "SPR_PANEL", "SPR_STRIP", "SPR_BAR",
+    "SPR_KITTEN", "SPR_YOUNG", "SPR_ADULT", "SPR_SUN",   "SPR_MOON",   "SPR_LAMP", "SPR_DROP",
+    "SPR_BOWL",   "SPR_ZZZ",   "SPR_HEART", "SPR_SPARK", "SPR_TOMB",   "SPR_ICON", "SPR_CURSOR",
+    "SPR_PANEL",  "SPR_STRIP", "SPR_BAR",   "SPR_YARN",  "SPR_THREAD", "SPR_WALL",
 };
 
 static const char* size_name(int size) {

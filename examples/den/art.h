@@ -62,6 +62,9 @@ enum {
     SPR_PANEL,  // 16x16: 9 frames, a box cut in nine (row by row: corners, edges, middle)
     SPR_STRIP,  // 8x8: 3 frames (left end, middle, right end), a one-line box for the bar's label
     SPR_BAR,    // 8x8: BAR_COLORS x 9 frames, a status bar's cell: colour * 9 + columns filled
+    SPR_YARN,   // 8x8: YARN_FRAMES, a ball of yarn turning (PAL_ICONS; Yarn Bat)
+    SPR_THREAD, // 8x8: THREAD_FRAMES, a bit of loose thread, newest first
+    SPR_WALL,   // 16x16: a stone wall (PAL_ICONS)
     SPRITE_COUNT,
 };
 
@@ -91,6 +94,8 @@ enum {
 #define DROP_FRAMES 3
 #define BOWL_FRAMES 3
 #define SPARK_FRAMES 3
+#define YARN_FRAMES 4
+#define THREAD_FRAMES 3
 
 // The care bar's icons (SPR_ICON's frames), left to right.
 enum {
