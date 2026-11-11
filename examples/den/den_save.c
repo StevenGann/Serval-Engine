@@ -47,8 +47,7 @@ static void name(Cursor* c, bool w, char* s) {
         c->ok = false; // not terminated
     for (int i = 0; !w && i < n; i++)
         if (s[i] < 'A' || s[i] > 'Z')
-            if (s[i] < 'a' || s[i] > 'z')
-                c->ok = false;
+            c->ok = false; // names are A-Z only
     for (int i = n; !w && i < 9; i++)
         if (s[i])
             c->ok = false;
@@ -64,7 +63,7 @@ static void coat(Cursor* c, bool w, Coat* k) {
 }
 
 static void flag(Cursor* c, bool w, bool* b) {
-    u8 v = *b;
+    u8 v = w ? *b : 0; // reading: *b may hold anything yet
     F8(v);
     limit(c, w, v, 1);
     *b = v != 0;
@@ -74,6 +73,8 @@ static void pet(Cursor* c, bool w, Pet* p) {
     name(c, w, p->name);
     coat(c, w, &p->coat);
     F8(p->generation);
+    if (!w && p->generation == 0)
+        c->ok = false; // the first kitten is generation 1
     F32(p->born);
     F32(p->last_tick);
     F32(p->last_interaction);

@@ -27,7 +27,7 @@ static int hour_of(u32 s) {
 static Pet fresh(void) {
     Pet p;
     Coat c = {1, 2, 0};
-    pet_new(&p, "Mimi", c, 1, T0);
+    pet_new(&p, "MIMI", c, 1, T0);
     return p;
 }
 
@@ -37,7 +37,7 @@ static void test_new_defaults(void) {
     CHECK(p.health == 10000);
     CHECK(pet_stage(&p, T0) == STAGE_KITTEN);
     CHECK(pet_mood(&p, T0) == MOOD_HAPPY);
-    CHECK(strcmp(p.name, "Mimi") == 0);
+    CHECK(strcmp(p.name, "MIMI") == 0);
     CHECK(p.generation == 1 && p.born == T0 && p.last_tick == T0 && p.last_interaction == T0);
     CHECK(!p.asleep && !p.dead && !p.litter_due && p.droppings == 0 && p.sickness == 0);
 }
@@ -617,7 +617,7 @@ static void test_save_round_trip(void) {
     CHECK(den_save_store(&s));
     memset(&out, 0xAA, sizeof out);
     CHECK(den_save_load(&out));
-    CHECK(strcmp(out.pet.name, "Mimi") == 0 && out.pet.coat.shade == 1 && out.pet.coat.spots == 2);
+    CHECK(strcmp(out.pet.name, "MIMI") == 0 && out.pet.coat.shade == 1 && out.pet.coat.spots == 2);
     CHECK(out.pet.dropping_clock == 77 && out.pet.treat_clock == 33);
     CHECK(out.pet.awake_until == T0 + 99 && out.pet.energy == 1234 && out.pet.asleep);
     CHECK(out.pet.born == s.pet.born && out.pet.last_tick == s.pet.last_tick);
@@ -672,6 +672,14 @@ static void test_save_refuses_garbage(void) {
     u8 good[DEN_SAVE_BYTES];
     memcpy(good, raw, sizeof raw);
     raw[9] = 9; // shade
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(!den_save_load(&out));
+    memcpy(raw, good, sizeof raw);
+    raw[0] = 'm'; // names are A-Z only
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(!den_save_load(&out));
+    memcpy(raw, good, sizeof raw);
+    raw[12] = 0; // generation 0
     CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
     CHECK(!den_save_load(&out));
     memcpy(raw, good, sizeof raw);
