@@ -23,8 +23,6 @@
 
 #include "art.h"
 
-#include <stdint.h>
-
 // --- Small helpers ----------------------------------------------------------------------------
 
 static u32 hash(u32 a, u32 b) {
@@ -1072,11 +1070,10 @@ static void capsule(int x0, int y0, int x1, int y1, int r, int kind, int part) {
     for (int y = miny >> 4; y <= maxy >> 4; y++)
         for (int x = minx >> 4; x <= maxx >> 4; x++) {
             int px = x * 16 + 8 - x0, py = y * 16 + 8 - y0;
-            int t = (int)(((int64_t)(px * dx + py * dy) * inv) >> 16); // 0-256 along
-            if (t < 0)
-                t = 0;
-            if (t > 256)
-                t = 256;
+            // 0-256 along; clamped first, so dot * inv < 2^24 (no 64-bit
+            // multiply, a library call in Thumb code)
+            int dot = px * dx + py * dy;
+            int t = dot <= 0 ? 0 : dot >= len2 ? 256 : (dot * inv) >> 16;
             int ex = px - ((dx * t) >> 8), ey = py - ((dy * t) >> 8);
             if (ex * ex + ey * ey > r * r)
                 continue;

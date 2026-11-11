@@ -144,7 +144,7 @@ target_link_libraries(boardgames PRIVATE serval_warnings)
 # core (the pet's life, the litter, the album, the save; tested on the host in
 # tests/) and the GBA side (the clock, the art drawn at boot, the den).
 serval_add_rom(den SOURCES den/main.c den/pet.c den/litter.c den/album.c den/den_save.c
-               den/clock.c den/art.c den/den.c den/sound.c
+               den/clock.c den/clock_check.c den/art.c den/den.c den/sound.c
                TITLE "SERVAL DEN" GAME_CODE "SVDN")
 target_link_libraries(den PRIVATE serval_warnings)
 

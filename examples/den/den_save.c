@@ -123,6 +123,7 @@ static void walk(Cursor* c, bool w, DenSave* s) {
     for (int i = 0; i < ALBUM_MAX; i++)
         entry(c, w, &s->album[i]);
     F32(s->last_seen);
+    F32(s->offset);
 }
 
 bool den_save_load(DenSave* out) {

@@ -8,8 +8,9 @@
 //     the clock read once at boot and then at most once a second, the time
 //     since the last save credited to the pet (the core steps it minute by
 //     minute, so a pet left for a day is the pet that lived that day), a
-//     clock gone backwards or reset treated as no time passing (a rebase),
-//     and the hour of day from rtc_time_from_seconds()
+//     clock gone backwards treated as no time passing (a rebase), a reset
+//     clock answered by a game-clock offset kept in the save, and the hour
+//     of day from rtc_time_from_seconds()
 //   - A virtual pet's life as portable C, host-tested (pet.c, litter.c,
 //     album.c, den_save.c; tests/den_tests.c): needs, sleep by the hour,
 //     droppings, health, neglect (sad at 12 h, sick at 18 h, sicker at 24 h,
@@ -112,6 +113,7 @@ static void no_clock(void) {
 
 static void store(u32 now) {
     save.last_seen = now;
+    save.offset = clock_offset();
     save.album_count = album_export(save.album);
     if (!den_save_store(&save)) {
         save_failed_timer = 180;
@@ -165,14 +167,16 @@ int main(void) {
     u32 now;
     if (den_save_load(&save)) {
         album_set(save.album, save.album_count);
-        ClockCheck check = clock_boot(save.last_seen, &now);
-        if (check == CLOCK_OK)
+        const Pet* p = &save.pet;
+        u32 age = p->last_tick > p->born ? p->last_tick - p->born : 0;
+        ClockCheck check = clock_boot(save.last_seen, age, save.offset, &now);
+        if (check == CLOCK_OK || check == CLOCK_WAS_RESET)
             pet_advance(&save.pet, now, clock_hour); // the time away, minute by minute
         else
-            clock_rebase(&save.pet, now); // reset, backwards or a jump: no time passed
+            clock_rebase(&save.pet, now); // backwards or a jump: no time passed
     } else {
         // A new den: the first kitten (naming comes with the care menu).
-        clock_boot(0, &now);
+        now = clock_start();
         random_seed(now ^ random_entropy());
         Coat coat = litter_visitor_coat();
         save = (DenSave){0};

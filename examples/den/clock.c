@@ -4,35 +4,39 @@
 
 #include <serval/serval.h>
 
-static u32 reading, warp;
+static u32 reading, game_offset;
 static u32 read_frame;
 static bool have_reading;
 
-ClockCheck clock_boot(u32 last_seen, u32* now) {
-    *now = 0;
-    if (!rtc_present())
-        return CLOCK_MISSING;
+static void read_clock(void) {
     reading = rtc_seconds();
     read_frame = frame_count();
     have_reading = true;
-    *now = reading + warp;
-    if (rtc_was_reset())
-        return CLOCK_WAS_RESET;
-    if (*now < last_seen)
-        return CLOCK_WENT_BACK;
-    if (*now - last_seen > CLOCK_JUMP_LIMIT)
-        return CLOCK_JUMPED;
-    return CLOCK_OK;
+}
+
+ClockCheck clock_boot(u32 last_seen, u32 age, u32 saved_offset, u32* now) {
+    bool present = rtc_present();
+    if (present)
+        read_clock();
+    return clock_resolve(present, present && rtc_was_reset(), reading, last_seen, age, saved_offset,
+                         now, &game_offset);
+}
+
+u32 clock_start(void) {
+    read_clock();
+    game_offset = 0;
+    return reading;
 }
 
 u32 clock_now(void) {
     // A read costs about 3,600 cycles with interrupts off: once a second.
-    if (!have_reading || frame_count() - read_frame >= 60) {
-        reading = rtc_seconds();
-        read_frame = frame_count();
-        have_reading = true;
-    }
-    return reading + warp;
+    if (!have_reading || frame_count() - read_frame >= 60)
+        read_clock();
+    return reading + game_offset;
+}
+
+u32 clock_offset(void) {
+    return game_offset;
 }
 
 int clock_hour(u32 seconds) {
@@ -63,7 +67,7 @@ void clock_rebase(Pet* p, u32 now) {
 bool clock_debug_warp(void) {
 #ifdef SERVAL_DEBUG
     if (button_down(BUTTON_L) && button_down(BUTTON_R) && button_pressed(BUTTON_SELECT)) {
-        warp += 3600;
+        game_offset += 3600;
         return true;
     }
 #endif

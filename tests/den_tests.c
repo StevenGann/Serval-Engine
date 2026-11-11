@@ -12,6 +12,7 @@
 #include <serval/save.h>
 
 #include "../examples/den/album.h"
+#include "../examples/den/clock.h"
 #include "../examples/den/den_save.h"
 #include "../examples/den/litter.h"
 #include "../examples/den/pet.h"
@@ -606,6 +607,7 @@ static DenSave sample_save(void) {
     for (int i = 0; i < 3; i++)
         s.album[i] = entry_n(i + 1);
     s.last_seen = T0 + 12345;
+    s.offset = 0xFFFF0000u;
     return s;
 }
 
@@ -622,6 +624,7 @@ static void test_save_round_trip(void) {
     CHECK(out.pet.awake_until == T0 + 99 && out.pet.energy == 1234 && out.pet.asleep);
     CHECK(out.pet.born == s.pet.born && out.pet.last_tick == s.pet.last_tick);
     CHECK(out.best[2] == 65535 && out.album_count == 3 && out.last_seen == s.last_seen);
+    CHECK(out.offset == 0xFFFF0000u);
     CHECK(out.album[2].generation == 3 && out.album[1].age_minutes == 2000);
     CHECK(save_slot_size(0) == DEN_SAVE_BYTES);
     // A second round trip is byte-stable.
@@ -693,6 +696,41 @@ static void test_save_refuses_garbage(void) {
     save_erase(0);
 }
 
+static void test_clock_resolve(void) {
+    u32 now, off;
+    const u32 seen = T0 + 5000, age = 3 * 86400;
+    // No clock.
+    CHECK(clock_resolve(false, false, T0, seen, age, 7, &now, &off) == CLOCK_MISSING);
+    CHECK(now == 0 && off == 0);
+    // An hour on: the offset is kept and added.
+    CHECK(clock_resolve(true, false, seen + 3600 - 100, seen, age, 100, &now, &off) == CLOCK_OK);
+    CHECK(now == seen + 3600 && off == 100);
+    // Exactly 30 days is still OK; a second more is a jump.
+    CHECK(clock_resolve(true, false, seen + CLOCK_JUMP_LIMIT, seen, age, 0, &now, &off) ==
+          CLOCK_OK);
+    CHECK(clock_resolve(true, false, seen + CLOCK_JUMP_LIMIT + 1, seen, age, 0, &now, &off) ==
+          CLOCK_JUMPED);
+    CHECK(now == seen + CLOCK_JUMP_LIMIT + 1 && off == 0);
+    // Back an hour (daylight saving): the offset is left alone, the hour stays real.
+    CHECK(clock_resolve(true, false, seen - 3600, seen, age, 0, &now, &off) == CLOCK_WENT_BACK);
+    CHECK(now == seen - 3600 && off == 0);
+    // Reset by the clock's flag: game time resumes at last seen.
+    CHECK(clock_resolve(true, true, 42, seen, age, 100, &now, &off) == CLOCK_WAS_RESET);
+    CHECK(now == seen && off == 100 + (seen - 142) && 42 + off == seen);
+    // Reset seen only from the reading: earlier than 2000-01-01 plus the pet's age.
+    CHECK(clock_resolve(true, false, age - 1, seen, age, 0, &now, &off) == CLOCK_WAS_RESET);
+    CHECK(now == seen && (u32)(age - 1 + off) == seen);
+    // A reading at the pet's age is a clock gone back, not a reset.
+    CHECK(clock_resolve(true, false, age, seen, age, 0, &now, &off) == CLOCK_WENT_BACK);
+    // The offset wraps as unsigned arithmetic: a game clock behind the cartridge's.
+    CHECK(clock_resolve(true, true, seen + 500, seen, age, 0, &now, &off) == CLOCK_WAS_RESET);
+    CHECK(now == seen && off == (u32)-500 && seen + 500 + off == seen);
+    // A second boot after the reset with the kept offset: OK, an hour on.
+    CHECK(clock_resolve(true, false, seen + 500 + 3600, seen, age, (u32)-500, &now, &off) ==
+          CLOCK_OK);
+    CHECK(now == seen + 3600 && off == (u32)-500);
+}
+
 TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
            {"pet_neglect_thresholds", test_neglect_thresholds},
            {"pet_care_resets_neglect", test_care_resets_neglect},
@@ -705,7 +743,7 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"pet_played_needs_awake_alive", test_played_needs_awake_alive},
            {"litter_size_and_names", test_litter_size_and_names},
            {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
-           {"den_save_round_trip", test_save_round_trip},
+           {"den_save_round_trip", test_save_round_trip}, {"den_clock_resolve", test_clock_resolve},
            {"den_save_refuses_other_version", test_save_refuses_other_version},
            {"den_save_refuses_garbage", test_save_refuses_garbage},
            {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},
