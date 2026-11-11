@@ -37,6 +37,12 @@
 //     YARN BAT, the kitten's. The den's own pictures are the court: its rock
 //     at the right is the far wall, the pet at the left the paw, and the
 //     yarn ball and its wavering thread are sprites
+//   - A second game with a scrolling world (climb.c, rules in climb_rules.c,
+//     host-tested): ACACIA CLIMB, the adolescent's. The trunk is a wrapping
+//     background layer and the sky another, both scrolled by the camera with
+//     map_set_scroll(); the boughs and nests are sprites that sway, crack and
+//     fall; the jump's arc is one function that the rules play and that the
+//     test of the tree's reachability measures
 //   - PSG sounds (sound.c): a purr, crunches, the serval's chirp, birds by
 //     day and crickets at night
 //
@@ -73,7 +79,7 @@
 //     RIGHT choose, A acts, B backs out. FEED asks MEAL or TREAT (a bowl that
 //     empties as it eats, crunching); PLAY lists YARN BAT, ACACIA CLIMB and
 //     HIGH POUNCE in a box (the ones the pet's stage doesn't allow yet are
-//     grey; the other two say COMING SOON until their games exist; the PLAY button is
+//     grey; HIGH POUNCE says COMING SOON until its game exists; the PLAY button is
 //     grey while the pet is asleep, tired or gone); PET gives hearts and a
 //     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime;
 //     LIGHTS puts the lights out or on (a click; the den goes dark but the
@@ -104,6 +110,19 @@
 //     for a record, saved) and FUN +N (10 plus the bats, at most 40): A returns
 //     to the den, whose FUN bar has risen. Buttons held as the game starts or
 //     ends do nothing until released.
+//   - PLAY > ACACIA CLIMB (adolescent and up): the den fades out and in as an
+//     acacia's trunk seen from the foot, the sky behind it (its colours follow
+//     the hour, clouds drifting), the serval on a ledge. HEIGHT and BEST in
+//     metres at the top. LEFT and RIGHT walk and steer in the air, A jumps (hold
+//     it to go higher: a full jump clears a bough a row up, a tap is a hop).
+//     Boughs are one-way (leap up through them, land coming down), flat leafy
+//     crowns on a limb, alternating left and right of the trunk; some sway
+//     16 pixels either way, dry yellow ones crack when landed on and break 30
+//     frames later (the pieces fall), a weaver bird's nest hanging from a bough
+//     knocks the serval down. The camera follows upward only; falling below
+//     the screen ends the round. START pauses (RESUME or QUIT); a ROUND OVER
+//     card shows HEIGHT, BEST (NEW! for a record, saved) and FUN +N (10 plus
+//     half the metres, at most 40). Jump, snap and knock have a sound each.
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -118,6 +137,7 @@
 
 #include "album.h"
 #include "art.h"
+#include "climb.h"
 #include "clock.h"
 #include "den.h"
 #include "den_save.h"
@@ -262,6 +282,8 @@ int main(void) {
     menu_init();
     yarn_attach(&save.best[0]);
     menu_set_game(GAME_YARN, yarn_play);
+    climb_attach(&save.best[1]);
+    menu_set_game(GAME_CLIMB, climb_play);
     for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b++) {
         frame_begin();
         screen_set_brightness(b);

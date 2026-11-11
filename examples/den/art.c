@@ -34,6 +34,26 @@ static const MapLayer den_layer = {
     .flags = MAP_LAYER_FIXED,
 };
 
+static const MapLayer tree_layer = {
+    .width = TREE_W,
+    .height = MAP_H,
+    .cells = art_tree_cells,
+    .metatiles = art_tree_metatiles,
+    .metatile_count = TREE_W * MAP_H,
+    .bg = DEN_BG,
+    .flags = MAP_LAYER_FIXED | MAP_LAYER_WRAP,
+};
+
+static const MapLayer climb_sky_layer = {
+    .width = TREE_W,
+    .height = MAP_H,
+    .cells = art_csky_cells,
+    .metatiles = art_csky_metatiles,
+    .metatile_count = TREE_W * MAP_H,
+    .bg = SKY_BG,
+    .flags = MAP_LAYER_FIXED | MAP_LAYER_WRAP,
+};
+
 static const MapLayer sky_layer = {
     .width = SKY_W,
     .height = MAP_H,
@@ -149,6 +169,28 @@ static Color den_light(Color c, int tod, bool lights_off, bool sprite) {
     return c;
 }
 
+// The acacia, by day (art_internal.h's T_*); the hour tints it as the den's
+// sprites. Dry wood, for boughs that snap, has the same indices.
+static const Color tree_colors[TREE_COLORS] = {
+    COLOR_RGB(28, 30, 18),    // T_OUT
+    COLOR_RGB(78, 52, 34),    // T_BARK_DARK
+    COLOR_RGB(122, 86, 54),   // T_BARK
+    COLOR_RGB(170, 126, 82),  // T_BARK_LIGHT
+    COLOR_RGB(40, 92, 46),    // T_LEAF_DARK
+    COLOR_RGB(74, 142, 62),   // T_LEAF
+    COLOR_RGB(132, 192, 84),  // T_LEAF_LIGHT
+    COLOR_RGB(122, 90, 38),   // T_STRAW_DARK
+    COLOR_RGB(200, 162, 70),  // T_STRAW
+    COLOR_RGB(240, 212, 120), // T_STRAW_LIGHT
+    COLOR_RGB(214, 240, 150), // T_GLINT
+};
+static const Color dry_colors[TREE_COLORS] = {
+    COLOR_RGB(36, 30, 20),    COLOR_RGB(84, 66, 48),    COLOR_RGB(138, 112, 80),
+    COLOR_RGB(186, 160, 118), COLOR_RGB(112, 94, 44),   COLOR_RGB(168, 146, 70),
+    COLOR_RGB(216, 198, 112), COLOR_RGB(122, 90, 38),   COLOR_RGB(200, 162, 70),
+    COLOR_RGB(240, 212, 120), COLOR_RGB(250, 240, 180),
+};
+
 static void sky_obj_colors(int tod, Color* out);
 static const Color item_colors[15];
 
@@ -166,6 +208,14 @@ void art_set_scene(int tod, bool lights_off) {
     c[0] = 0;
     sky_obj_colors(tod, c);
     sprite_set_colors(SPR_SUN, PAL_SKY_OBJ * 16, c, 16);
+    // The acacia, outdoors: the hour's light, never the lights-off dark.
+    for (int i = 0; i < TREE_COLORS; i++)
+        c[i] = den_light(tree_colors[i], tod, false, true);
+    tileset_set_colors(BANK_TREE * 16 + 1, c, TREE_COLORS);
+    sprite_set_colors(SPR_BRANCH, PAL_TREE * 16 + 1, c, TREE_COLORS);
+    for (int i = 0; i < TREE_COLORS; i++)
+        c[i] = den_light(dry_colors[i], tod, false, true);
+    sprite_set_colors(SPR_BRANCH, PAL_TREE_DRY * 16 + 1, c, TREE_COLORS);
 }
 
 #define SICK_TINT COLOR_RGB(70, 110, 220)
@@ -310,6 +360,11 @@ static void build_palettes(void) {
         obj_palettes[PAL_ITEMS][1 + i] = item_colors[i];
     for (int i = 0; i < 10; i++)
         obj_palettes[PAL_LAMP][1 + i] = lamp_colors[i];
+    for (int i = 0; i < TREE_COLORS; i++) {
+        bg_palettes[BANK_TREE * 16 + 1 + i] = tree_colors[i];
+        obj_palettes[PAL_TREE][1 + i] = tree_colors[i];
+        obj_palettes[PAL_TREE_DRY][1 + i] = dry_colors[i];
+    }
 }
 
 static const Color sun_day[4] = {COLOR_RGB(255, 252, 226), COLOR_RGB(255, 236, 150),
@@ -329,7 +384,7 @@ static void sky_obj_colors(int tod, Color* out) {
 
 // --- Loading ------------------------------------------------------------------------------------
 
-void art_load(void) {
+static void load_assets(void) {
     build_palettes();
     for (int i = 0; i < SPRITE_COUNT; i++)
         sprite_table[i] = &art_sprites[i];
@@ -337,8 +392,20 @@ void art_load(void) {
     sprite_table_set(sprite_table, SPRITE_COUNT);
     sprite_group_load(&sprite_group);
     camera_set(0, 0);
+}
+
+void art_load(void) {
+    load_assets();
     map_load(&den_layer);
     map_load(&sky_layer);
+}
+
+void art_load_climb(void) {
+    load_assets();
+    map_set_scroll(DEN_BG, 0, 0);
+    map_set_scroll(SKY_BG, 0, 0);
+    map_load(&tree_layer);
+    map_load(&climb_sky_layer);
 }
 
 void art_hide(void) {

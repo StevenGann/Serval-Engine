@@ -66,6 +66,8 @@ enum {
               // Yarn Bat)
     SPR_THREAD, // 8x8: THREAD_FRAMES, a bit of loose thread, newest first
     SPR_PAW,    // 16x8: PAW_FRAMES, the pet's arm reaching right, in its coat (PAL_PET)
+    SPR_BRANCH, // 16x16: BRANCH_FRAMES, a piece of an acacia's bough (PAL_TREE; Acacia Climb)
+    SPR_NEST,   // 16x16: NEST_FRAMES, a weaver bird's nest hanging by its cord (PAL_TREE)
     SPRITE_COUNT,
 };
 
@@ -88,6 +90,8 @@ enum {
     PF_LIE1, // the same, eyes shut
     PF_SLEEP0,
     PF_SLEEP1, // breathing
+    PF_JUMP,   // legs stretched, in the air (Acacia Climb)
+    PF_LAND,   // crouched, landing
     PET_FRAMES,
 };
 
@@ -99,6 +103,12 @@ enum {
 #define YARN_SIZES 3
 #define PAW_FRAMES 3
 #define THREAD_FRAMES 3
+#define NEST_FRAMES 2
+
+// SPR_BRANCH's pieces (drawn pointing right, root at the left; flipped for a
+// bough on the left; the crown's top, where the serval's feet are, is row 4): the root at the
+// trunk, the middle, the tip, and two cracks to draw over a piece (a hairline, then a gap).
+enum { BR_ROOT, BR_MID, BR_TIP, BR_CRACK0, BR_CRACK1, BRANCH_FRAMES };
 
 // The care bar's icons (SPR_ICON's frames), left to right.
 enum {
@@ -124,6 +134,8 @@ enum {
     PAL_SKY_OBJ,   // sun and moon: their colours follow the hour (art_set_scene)
     PAL_ICONS,     // the care bar's icons, its cursor and the status bars
     PAL_ICONS_OFF, // the same in grey, for what can't be chosen now
+    PAL_TREE,      // the acacia's boughs and the nests: art_set_scene follows the hour
+    PAL_TREE_DRY,  // the same in dry wood, for a bough that will snap
     OBJ_PALETTES,
 };
 
@@ -145,6 +157,13 @@ void art_load(void);
 // Takes the den and the sky off the screen (a full-screen page over a plain
 // backdrop); den_resume() brings them back. The screen must be black.
 void art_hide(void);
+
+// Acacia Climb's scene instead of the den's: the trunk on DEN_BG and a full
+// sky on SKY_BG, scrolled by map_set_scroll() (the trunk repeats every
+// CLIMB_PERIOD pixels, which the caller scrolls by); everything else as
+// art_load(). Call with the screen black. den_resume() puts the den back.
+#define CLIMB_PERIOD 160
+void art_load_climb(void);
 
 // The den's colours for a time of day, with the lights on or off, the sky's,
 // the savanna's, the sun's and the things on the floor (palette writes, in

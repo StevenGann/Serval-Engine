@@ -9,13 +9,14 @@
 #include "art.h"
 
 // Background palette banks.
-enum { BANK_DEN, BANK_LAND, BANK_SKY, BG_BANKS };
+enum { BANK_DEN, BANK_LAND, BANK_SKY, BANK_TREE, BG_BANKS };
 
 // The den's map (15 x 10 metatiles, one per 16x16 cell) and the sky's (16 x
 // 10, so it wraps whole in VRAM and can drift any distance).
 #define DEN_W 15
 #define SKY_W 16
 #define MAP_H 10
+#define TREE_W 16 // Acacia Climb's trunk and its sky: 16 x 10 metatiles, wrapping
 
 // The den (BANK_DEN).
 enum {
@@ -71,6 +72,25 @@ enum {
     SKY_COLORS = 12,
 };
 
+// The acacia (BANK_TREE, and PAL_TREE for the boughs and nests).
+enum {
+    T_OUT = 1,
+    T_BARK_DARK,
+    T_BARK,
+    T_BARK_LIGHT,
+    T_LEAF_DARK,
+    T_LEAF,
+    T_LEAF_LIGHT,
+    T_STRAW_DARK,
+    T_STRAW,
+    T_STRAW_LIGHT,
+    T_GLINT,
+    TREE_COLORS = 11,
+};
+
+// The trunk's middle, in pixels (the trunk is 32 wide there).
+#define TREE_X 120
+
 // The coat's colours (PAL_PET).
 enum {
     P_OUTLINE = 1,
@@ -95,9 +115,11 @@ enum {
 typedef struct {
     const u32* bg_tiles; // 8 words a tile; tile 0 blank
     int bg_tile_count;
-    const Metatile* den_metatiles; // DEN_W * MAP_H, cell i is metatile i
-    const Metatile* sky_metatiles; // SKY_W * MAP_H
-    const u32* obj_tiles;          // every sprite's frames, one after another
+    const Metatile* den_metatiles;  // DEN_W * MAP_H, cell i is metatile i
+    const Metatile* sky_metatiles;  // SKY_W * MAP_H
+    const Metatile* tree_metatiles; // TREE_W * MAP_H: the trunk
+    const Metatile* csky_metatiles; // TREE_W * MAP_H: the climb's sky, full height
+    const u32* obj_tiles;           // every sprite's frames, one after another
     int obj_tile_count;
     const SpriteAsset* sprites; // SPRITE_COUNT, their .tiles in obj_tiles
 } ArtDrawing;

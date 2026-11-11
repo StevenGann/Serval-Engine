@@ -12,6 +12,7 @@
 #include <serval/save.h>
 
 #include "../examples/den/album.h"
+#include "../examples/den/climb_rules.h"
 #include "../examples/den/clock.h"
 #include "../examples/den/den_save.h"
 #include "../examples/den/litter.h"
@@ -882,25 +883,305 @@ static void test_yarn_miss_ends(void) {
     CHECK(s.paw_y == YARN_FLOOR_Y - YARN_PADDLE_H / 2);
 }
 
-TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
-           {"pet_neglect_thresholds", test_neglect_thresholds},
-           {"pet_care_resets_neglect", test_care_resets_neglect},
-           {"pet_sleep_cycle", test_sleep_cycle},
-           {"pet_catch_up_equals_live", test_catch_up_equals_live},
-           {"pet_backwards_is_no_time", test_backwards_is_no_time},
-           {"pet_long_absence", test_long_absence}, {"pet_needs_rates", test_needs_rates},
-           {"pet_droppings", test_droppings}, {"pet_health", test_health},
-           {"pet_meal_and_litter_gate", test_meal_and_litter_gate},
-           {"pet_played_needs_awake_alive", test_played_needs_awake_alive},
-           {"litter_size_and_names", test_litter_size_and_names},
-           {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
-           {"den_save_round_trip", test_save_round_trip}, {"den_clock_resolve", test_clock_resolve},
-           {"den_pet_rebase", test_pet_rebase},
-           {"den_save_refuses_other_version", test_save_refuses_other_version},
-           {"den_save_refuses_garbage", test_save_refuses_garbage},
-           {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},
-           {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt},
-           {"yarn_ball_bounces", test_yarn_ball_bounces},
-           {"yarn_paddle_hit_angle", test_yarn_paddle_hit_angle},
-           {"yarn_paw_reach", test_yarn_paw_reach}, {"yarn_speed_cap", test_yarn_speed_cap},
-           {"yarn_miss_ends", test_yarn_miss_ends});
+// --- Acacia Climb -------------------------------------------------------------------------------
+
+#define UNIT (CLIMB_ROW_H * 256)
+
+static int span_gap(int alo, int ahi, int blo, int bhi) {
+    if (ahi < blo)
+        return blo - ahi;
+    if (bhi < alo)
+        return alo - bhi;
+    return 0;
+}
+
+// The smallest gap between a bough of the row below and one of this row (the
+// part of it a nest leaves, a swaying one at its nearest swing).
+static int row_gap(const ClimbRow* below, const ClimbRow* row) {
+    int best = 1000;
+    for (int i = 0; i < below->count; i++)
+        for (int j = 0; j < row->count; j++) {
+            int alo, ahi, blo, bhi;
+            climb_branch_free(&below->b[i], true, &alo, &ahi);
+            climb_branch_free(&row->b[j], true, &blo, &bhi);
+            int g = span_gap(alo, ahi, blo, bhi);
+            if (g < best)
+                best = g;
+        }
+    return best;
+}
+
+static void test_climb_rows_reachable(void) {
+    static const u32 seeds[] = {1, 7, 12345, 0xDEADBEEFu, 99, 0x1234567u};
+    int reach = climb_jump_reach();
+    CHECK(reach >= 56 && reach <= 64);
+    int bad = 0, rows = 0, worst = 0, sways = 0, snaps = 0, nests = 0, early = 0, alternate = 0;
+    for (unsigned k = 0; k < sizeof seeds / sizeof seeds[0]; k++)
+        for (int r = 1; r <= 1700; r++) {
+            ClimbRow below, row;
+            climb_row(seeds[k], r - 1, &below);
+            climb_row(seeds[k], r, &row);
+            rows++;
+            int g = row_gap(&below, &row);
+            if (g > reach)
+                bad++;
+            if (g > worst)
+                worst = g;
+            for (int i = 0; i < row.count; i++) {
+                sways += (row.b[i].flags & CLIMB_SWAYS) != 0;
+                snaps += (row.b[i].flags & CLIMB_SNAPS) != 0;
+                nests += (row.b[i].flags & CLIMB_NESTS) != 0;
+                if (r < 3 && row.b[i].flags & CLIMB_SWAYS)
+                    early++;
+                if (r < 5 && row.b[i].flags & CLIMB_SNAPS)
+                    early++;
+                if (r < 8 && row.b[i].flags & CLIMB_NESTS)
+                    early++;
+            }
+            // The main bough alternates sides; a second one is on the other.
+            bool left = row.b[0].x1 <= CLIMB_TRUNK_X;
+            alternate += left == ((r & 1) == 0);
+            if (row.count == 2)
+                alternate += (row.b[1].x1 <= CLIMB_TRUNK_X) != left;
+            else
+                alternate++;
+        }
+    CHECK(rows == 10200);
+    CHECK(bad == 0);
+    CHECK(worst <= reach - 8); // room for a human
+    CHECK(sways > 500 && snaps > 500 && nests > 300);
+    CHECK(early == 0);
+    CHECK(alternate == 2 * rows);
+    // The tree is a function of the seed.
+    ClimbRow a, b;
+    climb_row(5, 40, &a);
+    climb_row(5, 40, &b);
+    CHECK(a.count == b.count && a.b[0].x0 == b.b[0].x0 && a.b[0].flags == b.b[0].flags);
+    // The ledge at the foot.
+    climb_row(5, 0, &a);
+    CHECK(a.count == 1 && a.b[0].x0 == 48 && a.b[0].x1 == 192 && a.b[0].flags == 0);
+}
+
+// The arc: how high a held and a tapped jump go, straight up from the ledge.
+static int jump_peak(int hold_frames) {
+    ClimbState s;
+    climb_start(&s, 3);
+    s.cam = -100000; // far above: the round does not end
+    s.x = 100 * 256;
+    int top = 0;
+    for (int i = 0; i < 80; i++) {
+        climb_step(&s, i < hold_frames ? BUTTON_A : 0);
+        int h = (int)(-s.y / 256);
+        if (h > top)
+            top = h;
+    }
+    return top;
+}
+
+static void test_climb_jump_arc(void) {
+    int held = jump_peak(80), tapped = jump_peak(1);
+    CHECK(held >= 45 && held <= 51); // a row (40) and a bit
+    CHECK(tapped >= 8 && tapped <= 20);
+    // Held to a point, the rise is in between.
+    int mid = jump_peak(8);
+    CHECK(mid > tapped && mid < held);
+}
+
+// Lands on row 1 from the ledge, rising through it first (one-way).
+static void test_climb_one_way_and_land(void) {
+    ClimbState s;
+    climb_start(&s, 11);
+    s.cam = -100000;
+    ClimbRow r1;
+    climb_row(11, 1, &r1);
+    s.x = (r1.b[0].x0 + 4) * 256;
+    bool through = false, landed = false;
+    int rows_before = 0;
+    for (int i = 0; i < 90 && !landed; i++) {
+        climb_step(&s, i < 40 ? BUTTON_A : 0);
+        if (!landed && s.y < -UNIT && s.vy < 0)
+            through = true; // above row 1 and still rising
+        if (s.events & CLIMB_EV_LAND) {
+            landed = true;
+            rows_before = s.rows;
+        }
+    }
+    CHECK(through && landed);
+    CHECK(s.standing && s.row == 1 && s.rows == 1 && rows_before == 1);
+    CHECK(s.y == -UNIT);
+}
+
+static void test_climb_snap_timer(void) {
+    // A dry bough (row 5 or higher) that does not sway.
+    int row = 5, idx = 0;
+    ClimbRow r;
+    for (;; row++) {
+        climb_row(21, row, &r);
+        if (r.b[0].flags & CLIMB_SNAPS)
+            break;
+    }
+    ClimbState s;
+    climb_start(&s, 21);
+    s.cam = -row * CLIMB_ROW_H - 100;
+    s.standing = false;
+    s.x = ((r.b[idx].x0 + r.b[idx].x1) / 2) * 256;
+    s.y = -row * UNIT - 3 * 256;
+    s.vy = 256;
+    int n = 0;
+    while (!(s.events & CLIMB_EV_LAND) && n++ < 20)
+        climb_step(&s, 0);
+    CHECK(s.events & CLIMB_EV_LAND);
+    CHECK(s.events & CLIMB_EV_CRACK);
+    CHECK(s.standing && s.row == row);
+    CHECK(climb_snap_left(&s, row, idx) == CLIMB_SNAP_FRAMES);
+    for (int i = 1; i < CLIMB_SNAP_FRAMES; i++) {
+        climb_step(&s, 0);
+        CHECK(!(s.events & CLIMB_EV_SNAP) && s.standing);
+    }
+    CHECK(!climb_broken(&s, row, idx));
+    climb_step(&s, 0); // the 30th frame after landing
+    CHECK(s.events & CLIMB_EV_SNAP);
+    CHECK(s.ev_row == row && s.ev_idx == idx);
+    CHECK(climb_broken(&s, row, idx) && !s.standing);
+    // It is gone: falling onto it lands on nothing.
+    s.y = -row * UNIT - 3 * 256;
+    s.vy = 256;
+    for (int i = 0; i < 6; i++)
+        climb_step(&s, 0);
+    CHECK(!s.standing || s.row != row);
+    // Jumping off before it breaks does not save it.
+    climb_start(&s, 21);
+    s.cam = -row * CLIMB_ROW_H - 100;
+    s.standing = false;
+    s.x = ((r.b[idx].x0 + r.b[idx].x1) / 2) * 256;
+    s.y = -row * UNIT - 3 * 256;
+    s.vy = 256;
+    while (!(s.events & CLIMB_EV_LAND))
+        climb_step(&s, 0);
+    climb_step(&s, BUTTON_A);
+    CHECK(s.events & CLIMB_EV_JUMP && !s.standing);
+    bool snapped = false;
+    for (int i = 0; i < CLIMB_SNAP_FRAMES; i++) {
+        climb_step(&s, 0);
+        snapped |= (s.events & CLIMB_EV_SNAP) != 0;
+        s.cam = -100000;
+    }
+    CHECK(snapped && climb_broken(&s, row, idx));
+}
+
+static void test_climb_fall_ends(void) {
+    ClimbState s;
+    climb_start(&s, 4);
+    // Walk off the ledge's left end.
+    int n = 0;
+    ClimbResult r = CLIMB_PLAYING;
+    s32 cam = s.cam;
+    while (r == CLIMB_PLAYING && n < 400) {
+        r = climb_step(&s, BUTTON_LEFT);
+        CHECK(s.cam >= cam); // the camera never goes down
+        cam = s.cam;
+        n++;
+    }
+    CHECK(r == CLIMB_OVER && (s.events & CLIMB_EV_OVER));
+    CHECK(n > 40 && n < 100);
+    CHECK(s.rows == 0 && !s.standing);
+    CHECK(s.y / 256 - s.cam > CLIMB_FALL_LINE);
+    // Standing still, nothing happens.
+    climb_start(&s, 4);
+    for (int i = 0; i < 1000; i++)
+        CHECK(climb_step(&s, 0) == CLIMB_PLAYING);
+}
+
+static void test_climb_nest_knocks(void) {
+    int row = 8, idx = 0;
+    ClimbRow r;
+    for (;; row++) {
+        climb_row(33, row, &r);
+        for (idx = 0; idx < r.count; idx++)
+            if (r.b[idx].flags & CLIMB_NESTS)
+                break;
+        if (idx < r.count)
+            break;
+    }
+    ClimbState s;
+    climb_start(&s, 33);
+    s.standing = false;
+    s.x = (r.b[idx].nest_x - 3) * 256;
+    s.y = -(row * CLIMB_ROW_H - 26) * 256; // under the bough, rising into the nest
+    s.vy = -768;
+    s.cam = s.y / 256 - 100;
+    climb_step(&s, 0);
+    CHECK(s.events & CLIMB_EV_NEST);
+    CHECK(s.vy > 0 && s.push < 0); // down, away from the nest (it was to its left)
+    CHECK(s.ev_row == row && s.ev_idx == idx);
+    // The next frames do not knock again, and it falls.
+    climb_step(&s, 0);
+    CHECK(!(s.events & CLIMB_EV_NEST) && s.vy > 0);
+    // Standing on the bough, the serval is not touched.
+    climb_start(&s, 33);
+    climb_stand_on(&s, row, idx, r.b[idx].nest_x + 2 * (r.b[idx].inner_right ? -1 : 1) * 6);
+    s.cam = s.y / 256 - 100;
+    for (int i = 0; i < 20; i++) {
+        climb_step(&s, 0);
+        CHECK(!(s.events & CLIMB_EV_NEST));
+    }
+}
+
+static void test_climb_score_and_fun(void) {
+    CHECK(climb_fun(0) == 10 && climb_fun(1) == 10 && climb_fun(2) == 11);
+    CHECK(climb_fun(40) == 30 && climb_fun(60) == 40 && climb_fun(61) == 40);
+    CHECK(climb_fun(100000) == 40);
+    ClimbState s;
+    climb_start(&s, 8);
+    s.cam = -100000;
+    climb_stand_on(&s, 9, 0, 100);
+    CHECK(s.rows == 9);
+    climb_stand_on(&s, 4, 0, 100);
+    CHECK(s.rows == 9); // the score is the highest
+}
+
+static void test_climb_early_jump_is_buffered(void) {
+    ClimbState s;
+    climb_start(&s, 6);
+    s.cam = -100000;
+    // Press A two frames before touching down: it jumps on landing.
+    s.standing = false;
+    s.x = 120 * 256;
+    s.y = -3 * 256;
+    s.vy = 256;
+    climb_step(&s, BUTTON_A);
+    CHECK(!s.standing);
+    int n = 0;
+    while (!(s.events & CLIMB_EV_LAND) && n++ < 10)
+        climb_step(&s, BUTTON_A);
+    CHECK(s.events & CLIMB_EV_LAND);
+    climb_step(&s, BUTTON_A);
+    CHECK(s.events & CLIMB_EV_JUMP);
+}
+
+TEST_SUITE(
+    den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
+    {"pet_neglect_thresholds", test_neglect_thresholds},
+    {"pet_care_resets_neglect", test_care_resets_neglect}, {"pet_sleep_cycle", test_sleep_cycle},
+    {"pet_catch_up_equals_live", test_catch_up_equals_live},
+    {"pet_backwards_is_no_time", test_backwards_is_no_time},
+    {"pet_long_absence", test_long_absence}, {"pet_needs_rates", test_needs_rates},
+    {"pet_droppings", test_droppings}, {"pet_health", test_health},
+    {"pet_meal_and_litter_gate", test_meal_and_litter_gate},
+    {"pet_played_needs_awake_alive", test_played_needs_awake_alive},
+    {"litter_size_and_names", test_litter_size_and_names},
+    {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
+    {"den_save_round_trip", test_save_round_trip}, {"den_clock_resolve", test_clock_resolve},
+    {"den_pet_rebase", test_pet_rebase},
+    {"den_save_refuses_other_version", test_save_refuses_other_version},
+    {"den_save_refuses_garbage", test_save_refuses_garbage}, {"pet_litter_due", test_litter_due},
+    {"pet_care_refusals", test_care_refusals}, {"pet_play", test_play},
+    {"pet_treats_hurt", test_treats_hurt}, {"yarn_ball_bounces", test_yarn_ball_bounces},
+    {"yarn_paddle_hit_angle", test_yarn_paddle_hit_angle}, {"yarn_paw_reach", test_yarn_paw_reach},
+    {"yarn_speed_cap", test_yarn_speed_cap}, {"yarn_miss_ends", test_yarn_miss_ends},
+    {"climb_rows_reachable", test_climb_rows_reachable}, {"climb_jump_arc", test_climb_jump_arc},
+    {"climb_one_way_and_land", test_climb_one_way_and_land},
+    {"climb_snap_timer", test_climb_snap_timer}, {"climb_fall_ends", test_climb_fall_ends},
+    {"climb_nest_knocks", test_climb_nest_knocks},
+    {"climb_score_and_fun", test_climb_score_and_fun},
+    {"climb_early_jump_is_buffered", test_climb_early_jump_is_buffered});

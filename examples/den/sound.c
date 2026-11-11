@@ -24,6 +24,9 @@ enum {
     SND_BAT,
     SND_TAP,
     SND_MISS,
+    SND_JUMP,
+    SND_SNAP,
+    SND_KNOCK,
     SND_COUNT,
 };
 
@@ -43,6 +46,8 @@ static const u16 bird_notes[] = {3100, 3600, 0, 3300, 3900};
 static const u16 cricket_notes[] = {4400, 0, 4400, 0, 4400};
 
 static const u16 miss_notes[] = {523, 440, 349, 262};
+static const u16 snap_notes[] = {1800, 4200, 900};
+static const u16 knock_notes[] = {262, 196, 147};
 
 static const PsgSound sounds[SND_COUNT] = {
     [SND_PURR] = {.channel = PSG_NOISE,
@@ -141,6 +146,30 @@ static const PsgSound sounds[SND_COUNT] = {
                   .frames = 6,
                   .volume = 9,
                   .priority = 3},
+    // Acacia Climb: a springing chirp, a crack of wood, a bonk off a nest.
+    [SND_JUMP] = {.channel = PSG_SQUARE1,
+                  .duty = PSG_DUTY_25,
+                  .frequency = 500,
+                  .slide = 3,
+                  .slide_size = 3,
+                  .frames = 7,
+                  .volume = 8,
+                  .fade = -2,
+                  .priority = 1},
+    [SND_SNAP] = {.channel = PSG_NOISE,
+                  .notes = snap_notes,
+                  .note_count = 3,
+                  .frames = 3,
+                  .volume = 12,
+                  .fade = -2,
+                  .priority = 3},
+    [SND_KNOCK] = {.channel = PSG_SQUARE2,
+                   .duty = PSG_DUTY_50,
+                   .notes = knock_notes,
+                   .note_count = 3,
+                   .frames = 4,
+                   .volume = 9,
+                   .priority = 3},
 };
 
 static const PsgSound* sound_table[SND_COUNT];
@@ -200,4 +229,16 @@ void sound_tap(void) {
 
 void sound_miss(void) {
     psg_play(SND_MISS);
+}
+
+void sound_jump(void) {
+    psg_play(SND_JUMP);
+}
+
+void sound_snap(void) {
+    psg_play(SND_SNAP);
+}
+
+void sound_knock(void) {
+    psg_play(SND_KNOCK);
 }

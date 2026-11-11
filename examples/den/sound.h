@@ -20,6 +20,11 @@ void sound_no(void); // refused
 void sound_bat(void);
 void sound_tap(void);
 void sound_miss(void);
+// Acacia Climb: a jump, a bough snapping, a knock from a nest. (The landing
+// is sound_tap().)
+void sound_jump(void);
+void sound_snap(void);
+void sound_knock(void);
 // Now and then, through the mouth: birds by day, crickets at night. Call once
 // a frame with the time of day (art.h's TOD_*).
 void sound_ambient(int tod);

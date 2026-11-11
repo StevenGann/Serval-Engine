@@ -120,6 +120,10 @@ static Metatile den_metatiles[DEN_W * MAP_H];
 static u16 den_cells[DEN_W * MAP_H];
 static Metatile sky_metatiles[SKY_W * MAP_H];
 static u16 sky_cells[SKY_W * MAP_H];
+static Metatile tree_metatiles[TREE_W * MAP_H];
+static u16 tree_cells[TREE_W * MAP_H];
+static Metatile csky_metatiles[TREE_W * MAP_H];
+static u16 csky_cells[TREE_W * MAP_H];
 
 static void cut_map(Metatile* metatiles, u16* cells, int w) {
     for (int cy = 0; cy < MAP_H; cy++)
@@ -141,12 +145,16 @@ static void cut_map(Metatile* metatiles, u16* cells, int w) {
 
 // The band (0-4) at each row of the sky and each of 4 dither columns, made
 // once: the picture loops call no division (debug builds are unoptimized).
-static u8 band_at[MOUTH_Y1][4];
+static u8 band_at[PIC_H][4];
+
+// The rows the sky's bands fill: the den's mouth, then (for Acacia Climb)
+// the whole screen.
+static int sky_lo = SKY_Y0, sky_hi = MOUTH_Y1;
 
 static void make_bands(void) {
-    for (int y = 0; y < MOUTH_Y1; y++)
+    for (int y = 0; y < sky_hi; y++)
         for (int x = 0; x < 4; x++) {
-            int v = (y - SKY_Y0) * BANDS * 16 / (MOUTH_Y1 - SKY_Y0); // sixteenths of a band
+            int v = (y - sky_lo) * BANDS * 16 / (sky_hi - sky_lo); // sixteenths of a band
             if (v < 0)
                 v = 0;
             int band = v >> 4, frac = v & 15;
@@ -160,8 +168,8 @@ static void make_bands(void) {
 static int sky_band(int x, int y) {
     if (y < 0)
         y = 0;
-    if (y >= MOUTH_Y1)
-        y = MOUTH_Y1 - 1;
+    if (y >= sky_hi)
+        y = sky_hi - 1;
     return band_at[y][x & 3];
 }
 
@@ -173,15 +181,17 @@ typedef struct {
 
 static const Cloud clouds[] = {
     {8, 40, 34}, {70, 30, 22}, {120, 46, 40}, {190, 36, 28}, {232, 52, 20}};
+// The climb's, spread over the taller sky.
+static const Cloud climb_clouds[] = {{14, 36, 34}, {150, 70, 38}, {60, 112, 30}, {206, 132, 26}};
 
 static void put_sky(int x, int y, int c) {
-    if (y >= SKY_Y0 && y < MOUTH_Y1)
+    if (y >= sky_lo && y < sky_hi)
         pic[y][x & (PIC_W - 1)] = (u8)(BANK_SKY * 16 + c);
 }
 
-static void paint_clouds(void) {
-    for (unsigned i = 0; i < sizeof clouds / sizeof clouds[0]; i++) {
-        const Cloud* c = &clouds[i];
+static void paint_clouds(const Cloud* list, unsigned count) {
+    for (unsigned i = 0; i < count; i++) {
+        const Cloud* c = &list[i];
         // the flat base, shaded
         for (int dx = 2; dx < c->w - 1; dx++) {
             put_sky(c->x + dx, c->y, S_CLOUD_SHADE);
@@ -209,13 +219,13 @@ static void paint_clouds(void) {
     }
 }
 
-static void paint_sky(void) {
+static void paint_sky(const Cloud* cl, unsigned cl_count, int star_bands) {
     make_bands();
-    for (int y = SKY_Y0; y < MOUTH_Y1; y++)
+    for (int y = sky_lo; y < sky_hi; y++)
         for (int x = 0; x < PIC_W; x++) {
             int band = sky_band(x, y);
             int c = S_BAND1 + band;
-            if (band < 2 && sky_band(x, y + 1) == band && sky_band(x, y - 1) == band) {
+            if (band < star_bands && sky_band(x, y + 1) == band && sky_band(x, y - 1) == band) {
                 u32 h = hash((u32)x * 7 + 1, (u32)y * 13 + 5) >> 22; // 0-1023
                 if (h < 6)
                     c = band == 0 ? S_STAR1 : S_STAR2;
@@ -224,7 +234,7 @@ static void paint_sky(void) {
             }
             pic[y][x] = (u8)(BANK_SKY * 16 + c);
         }
-    paint_clouds();
+    paint_clouds(cl, cl_count);
 }
 
 // --- The den's picture --------------------------------------------------------------------------
@@ -591,9 +601,78 @@ static void paint_den(void) {
     root(110, 10, 9, 6);
 }
 
+// --- The acacia (Acacia Climb) ----------------------------------------------------------------
+
+// A triangle wave of period `period` and height `amp`: the trunk's edges wobble
+// with two of them, so that it repeats every PIC_H pixels without a seam.
+static int tri(int v, int period, int amp) {
+    v = ((v % period) + period) % period;
+    int h = period / 2;
+    return (v < h ? v : period - v) * amp / h;
+}
+
+static void put_tree(int x, int y, int c) {
+    if (x >= 0 && x < PIC_W && y >= 0 && y < PIC_H)
+        pic[y][x] = (u8)(BANK_TREE * 16 + c);
+}
+
+// The trunk: 30 to 32 pixels wide, lit from the left, with fissures, knots
+// and tufts of leaves at its edges. The picture is 160 pixels tall and Acacia
+// Climb scrolls it round, so everything on it repeats at the seam.
+static void paint_tree(void) {
+    for (int y = 0; y < PIC_H; y++) {
+        int left = TREE_X - 16 + tri(y, 40, 2) + tri(y + 7, 32, 1);
+        int right = TREE_X + 15 - tri(y + 19, 40, 2) - tri(y + 3, 32, 1);
+        int w = right - left;
+        for (int x = left; x <= right; x++) {
+            int u = x - left, v = right - x;
+            int c = T_BARK;
+            if (u < 2 || v < 1)
+                c = T_OUT;
+            else if (u < 5)
+                c = T_BARK_LIGHT;
+            else if (v < 9)
+                c = v < 4 ? T_BARK_DARK : (dither(x, y) < (9 - v) * 2 ? T_BARK_DARK : T_BARK);
+            else if (u < 8 && dither(x, y) < (8 - u) * 3)
+                c = T_BARK_LIGHT;
+            // fissures: short vertical dark runs
+            u32 h = hash((u32)x, (u32)(y >> 3));
+            if (u > 4 && v > 2 && (h % 7) == 0 && ((y + (int)(h >> 8)) & 7) < 6)
+                c = T_BARK_DARK;
+            else if (u > 2 && v > 4 && (h % 29) == 1 && (y & 3) == 0)
+                c = T_BARK_LIGHT;
+            put_tree(x, y, c);
+        }
+        (void)w;
+    }
+    // Knots: a dark ring with a lit lower lip.
+    static const int knots[3][2] = {{112, 34}, {131, 92}, {116, 142}};
+    for (int k = 0; k < 3; k++)
+        for (int dy = -4; dy <= 4; dy++)
+            for (int dx = -3; dx <= 3; dx++) {
+                int d = dx * dx * 2 + dy * dy;
+                if (d > 14)
+                    continue;
+                put_tree(knots[k][0] + dx, knots[k][1] + dy,
+                         d > 9 ? T_BARK_DARK : (dy > 1 ? T_BARK_LIGHT : T_OUT));
+            }
+    // Tufts of leaves clinging to the sides.
+    static const int tufts[6][3] = {{102, 18, 0},  {138, 58, 1},  {101, 76, 0},
+                                    {139, 112, 1}, {103, 128, 0}, {137, 150, 1}};
+    for (int k = 0; k < 6; k++)
+        for (int dy = -6; dy <= 6; dy++)
+            for (int dx = -5; dx <= 5; dx++) {
+                u32 h = hash((u32)(k * 31 + dx + 9), (u32)(dy + 40));
+                if (dx * dx + dy * dy * 2 > 24 + (int)(h % 6))
+                    continue;
+                int c = dy < -2 ? T_LEAF_LIGHT : dy > 2 ? T_LEAF_DARK : T_LEAF;
+                put_tree(tufts[k][0] + dx, (tufts[k][1] + dy + PIC_H) % PIC_H, c);
+            }
+}
+
 // --- Sprite drawing -----------------------------------------------------------------------------
 
-#define OBJ_TILE_MAX 760
+#define OBJ_TILE_MAX 900
 static u32 obj_tiles[OBJ_TILE_MAX * 8];
 static SpriteAsset sprites[SPRITE_COUNT];
 
@@ -928,6 +1007,9 @@ static const Pose poses[PET_FRAMES] = {
     [PF_LIE1] = {POSE_LIE, {0}, {0}, 0, 0, 0, 0, 0, EARS_DOWN, EYES_SHUT, 0},
     [PF_SLEEP0] = {POSE_CURL, {0}, {0}, 0, 0, 0, 0, 0, EARS_UP, EYES_SLEEP, 0},
     [PF_SLEEP1] = {POSE_CURL, {0}, {0}, -1, 0, 0, 0, 0, EARS_UP, EYES_SLEEP, 0},
+    // Acacia Climb: stretched out in the air, crouched on landing.
+    [PF_JUMP] = {POSE_STAND, {5, 3, -4, -2}, {3, 3, 2, 2}, -1, 2, -2, 2, 3, EARS_UP, EYES_OPEN, 0},
+    [PF_LAND] = {POSE_STAND, {1, 0, -1, 0}, {0}, 2, 0, 3, -1, 1, EARS_UP, EYES_OPEN, 0},
 };
 
 // Pose pixels (adult) to Q4 at this size.
@@ -1248,6 +1330,7 @@ static const u8 kit_frames[PET_FRAMES][4] = {
     [PF_SIT] = {KB_SIT, KH_SAD, 5, 3},       [PF_SIT1] = {KB_SIT, KH_SAD, 5, 4},
     [PF_LIE] = {KB_LIE, KH_SAD, 6, 7},       [PF_LIE1] = {KB_LIE, KH_SAD_SHUT, 6, 7},
     [PF_SLEEP0] = {KB_CURL0, KH_SHUT, 6, 7}, [PF_SLEEP1] = {KB_CURL1, KH_SHUT, 6, 7},
+    [PF_JUMP] = {KB_WALK0, KH_OPEN, 6, 0},   [PF_LAND] = {KB_STAND, KH_OPEN, 6, 2},
 };
 
 static void draw_kitten(int frame) {
@@ -1653,6 +1736,118 @@ static u32* build_bar(u32* out) {
     return build_yarn(out);
 }
 
+// Acacia Climb's pieces (PAL_TREE's indices, T_*): a bough in three pieces
+// (root, middle, tip; a flat leafy crown on a limb) and two cracks to draw
+// over it, and a weaver bird's nest hanging by its cord.
+static void bough_piece(int f) {
+    canvas_clear();
+    for (int x = 0; x < 16; x++) {
+        int g = x + (f == BR_MID ? 16 : f == BR_TIP ? 32 : 0); // along the bough
+        u32 h = hash((u32)g, 77);
+        // The limb: thick at the trunk, thin at the tip.
+        int top = 11, bot = 14;
+        if (f == BR_ROOT) {
+            top = 9 - (x < 5) - (x < 2);
+            bot = 15;
+        }
+        if (f == BR_TIP && x > 13)
+            continue;
+        if (f == BR_TIP && x > 9)
+            bot = 13;
+        for (int y = top; y <= bot; y++)
+            put(x, y, y == top ? T_BARK_LIGHT : y >= bot - 1 ? T_BARK_DARK : T_BARK);
+        // The crown: a flat top (the serval's feet are on row 4), a ragged
+        // underside, rounded at the tip, bare near the trunk.
+        int c0 = f == BR_ROOT ? 5 : 0;
+        if (x < c0)
+            continue;
+        int ytop = 4;
+        if (f == BR_TIP && x > 7)
+            ytop += (x - 7) * (x - 7) / 6;
+        if (f == BR_ROOT && x < 9)
+            ytop += (9 - x) * (9 - x) / 7;
+        int hang = 8 + (int)((h >> 8) % 3);
+        if (f == BR_TIP && x > 9)
+            hang -= (x - 9) * (x - 9) / 4;
+        if (f == BR_ROOT && x < 9)
+            hang -= (9 - x) / 2;
+        for (int y = ytop; y <= hang; y++) {
+            u32 q = hash((u32)g * 3 + 1, (u32)y);
+            put(x, y,
+                y == ytop                      ? T_LEAF_LIGHT
+                : y >= hang - 1                ? T_LEAF_DARK
+                : (q % 6 == 0)                 ? T_LEAF_DARK
+                : (q % 7 == 1 && y < hang - 2) ? T_LEAF_LIGHT
+                                               : T_LEAF);
+        }
+        if ((h >> 16) % 8 == 0 && ytop == 4)
+            put(x, ytop, T_GLINT);
+    }
+    outline(16, 16, T_OUT);
+}
+
+static void crack_piece(int wide) {
+    canvas_clear();
+    // A jagged crack across the limb and up through the crown.
+    static const int xs[12] = {7, 8, 7, 8, 9, 8, 9, 8, 7, 8, 7, 8};
+    for (int y = 3; y < 15; y++) {
+        int x = xs[y - 3];
+        put(x, y, T_OUT);
+        if (wide) {
+            put(x - 1, y, T_OUT);
+            put(x + 1, y, T_OUT);
+            if (y > 9 && y < 14)
+                put(x, y, T_BARK_LIGHT);
+        }
+    }
+}
+
+static void nest_piece(int swing) {
+    canvas_clear();
+    int cx = 8 - swing; // the ball's middle
+    for (int y = 0; y < 5; y++)
+        put(8 - (swing && y > 2), y, T_STRAW_DARK);
+    for (int y = 4; y < 16; y++)
+        for (int x = 2; x < 15; x++) {
+            int dx = (x - cx) * 2, dy = (y - 10) * 2 + 1;
+            int d = dx * dx + dy * dy;
+            if (d > 112)
+                continue;
+            int stripe = (x + y * 2 + (y > 9)) % 4;
+            put(x, y,
+                d > 84                   ? T_STRAW_DARK
+                : (x - cx) > 1 && d > 56 ? T_STRAW_DARK
+                : stripe == 0            ? T_STRAW_LIGHT
+                : stripe == 3            ? T_STRAW_DARK
+                                         : T_STRAW);
+        }
+    // the entrance, low and to the side
+    for (int y = 11; y <= 13; y++)
+        for (int x = cx + 1; x <= cx + 3; x++)
+            if ((y - 12) * (y - 12) * 2 + (x - cx - 2) * (x - cx - 2) <= 3)
+                put(x, y, T_OUT);
+    outline(16, 16, T_OUT);
+}
+
+static u32* build_climb(u32* out) {
+    const u32* tiles = out;
+    for (int f = 0; f < BRANCH_FRAMES; f++) {
+        if (f <= BR_TIP)
+            bough_piece(f);
+        else
+            crack_piece(f == BR_CRACK1);
+        out = pack(16, 16, out);
+    }
+    sprite(SPR_BRANCH, SPRITE_16x16, BRANCH_FRAMES, PAL_TREE, tiles);
+    tiles = out;
+    for (int f = 0; f < NEST_FRAMES; f++) {
+        nest_piece(f);
+        out = pack(16, 16, out);
+    }
+    sprite(SPR_NEST, SPRITE_16x16, NEST_FRAMES, PAL_TREE, tiles);
+    return out;
+}
+
 static u32* build_sprites(void) {
     u32* out = obj_tiles;
     make_spot_field();
@@ -1671,13 +1866,13 @@ static u32* build_sprites(void) {
                tiles);
     }
     out = build_small(out);
-    return build_bar(out);
+    return build_climb(build_bar(out));
 }
 
 _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAMES +
                        2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
                        3 + BAR_COLORS * 9 + YARN_SIZES * YARN_TURNS + THREAD_FRAMES +
-                       2 * PAW_FRAMES <=
+                       2 * PAW_FRAMES + 4 * BRANCH_FRAMES + 4 * NEST_FRAMES <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 
@@ -1695,8 +1890,16 @@ void art_draw(ArtDrawing* out) {
     paint_savanna();
     cut_map(den_metatiles, den_cells, DEN_W);
     pic_clear();
-    paint_sky();
+    paint_sky(clouds, sizeof clouds / sizeof clouds[0], 2);
     cut_map(sky_metatiles, sky_cells, SKY_W);
+    pic_clear();
+    sky_lo = 0;
+    sky_hi = PIC_H;
+    paint_sky(climb_clouds, sizeof climb_clouds / sizeof climb_clouds[0], 1);
+    cut_map(csky_metatiles, csky_cells, TREE_W);
+    pic_clear();
+    paint_tree();
+    cut_map(tree_metatiles, tree_cells, TREE_W);
 
     u32* end = build_sprites();
     *out = (ArtDrawing){
@@ -1704,6 +1907,8 @@ void art_draw(ArtDrawing* out) {
         .bg_tile_count = bg_tiles_used,
         .den_metatiles = den_metatiles,
         .sky_metatiles = sky_metatiles,
+        .tree_metatiles = tree_metatiles,
+        .csky_metatiles = csky_metatiles,
         .obj_tiles = obj_tiles,
         .obj_tile_count = (int)(end - obj_tiles) / 8,
         .sprites = sprites,

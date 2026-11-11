@@ -10,14 +10,18 @@
 
 #include "art_internal.h"
 
-#define ART_BG_TILES 615  // 19680 bytes
-#define ART_OBJ_TILES 748 // 23936 bytes
+#define ART_BG_TILES 821  // 26272 bytes
+#define ART_OBJ_TILES 848 // 27136 bytes
 
 extern const u32 art_bg_tiles[ART_BG_TILES * 8];
 extern const Metatile art_den_metatiles[DEN_W * MAP_H];
 extern const u16 art_den_cells[DEN_W * MAP_H];
 extern const Metatile art_sky_metatiles[SKY_W * MAP_H];
 extern const u16 art_sky_cells[SKY_W * MAP_H];
+extern const Metatile art_tree_metatiles[TREE_W * MAP_H];
+extern const u16 art_tree_cells[TREE_W * MAP_H];
+extern const Metatile art_csky_metatiles[TREE_W * MAP_H];
+extern const u16 art_csky_cells[TREE_W * MAP_H];
 extern const u32 art_obj_tiles[ART_OBJ_TILES * 8];
 extern const SpriteAsset art_sprites[SPRITE_COUNT];
 
