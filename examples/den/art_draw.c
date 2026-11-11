@@ -124,6 +124,8 @@ static Metatile tree_metatiles[TREE_W * MAP_H];
 static u16 tree_cells[TREE_W * MAP_H];
 static Metatile csky_metatiles[TREE_W * MAP_H];
 static u16 csky_cells[TREE_W * MAP_H];
+static Metatile field_metatiles[DEN_W * MAP_H];
+static u16 field_cells[DEN_W * MAP_H];
 
 static void cut_map(Metatile* metatiles, u16* cells, int w) {
     for (int cy = 0; cy < MAP_H; cy++)
@@ -670,9 +672,87 @@ static void paint_tree(void) {
             }
 }
 
+// --- High Pounce's savanna ----------------------------------------------------------------------
+
+// Hills, a plain and tall grass in the savanna's palette bank (BANK_LAND, so
+// that the hour colours it), drawn on one screen over the climb's sky. Its
+// grass repeats every 64 pixels, which keeps its tiles few.
+static void put_field(int x, int y, int c) {
+    if (x >= 0 && x < DEN_W * 16 && y >= 0 && y < PIC_H)
+        pic[y][x] = (u8)(BANK_LAND * 16 + c);
+}
+
+#define FIELD_HILLS 70
+#define FIELD_PLAIN 92
+#define FIELD_GRASS 108
+#define FIELD_PERIOD 64
+#define BLADES 70
+
+static void paint_field(void) {
+    // Two ridges of hills, the far ones paler.
+    for (int x = 0; x < DEN_W * 16; x++) {
+        int far_top = FIELD_HILLS + 4 - tri(x + 10, 150, 9) - tri(x, 44, 3);
+        int near_top = FIELD_HILLS + 14 - tri(x + 90, 110, 8) - tri(x + 5, 36, 2);
+        for (int y = far_top; y < FIELD_PLAIN; y++)
+            put_field(x, y, L_HILL_FAR);
+        for (int y = near_top; y < FIELD_PLAIN; y++)
+            put_field(x, y, y == near_top ? L_HILL_FAR : L_HILL);
+    }
+    // Two flat-topped acacias on the skyline.
+    static const int trees[2][3] = {{44, 66, 12}, {186, 62, 15}};
+    for (int t = 0; t < 2; t++) {
+        int tx = trees[t][0], ty = trees[t][1], w = trees[t][2];
+        for (int y = ty; y < ty + 20; y++)
+            put_field(tx, y, L_TRUNK);
+        for (int dy = -3; dy <= 2; dy++)
+            for (int dx = -w; dx <= w; dx++) {
+                int r = w - (dy < 0 ? -dy * 3 : dy * 2) +
+                        (int)(hash((u32)(dx + 50), (u32)(dy + t * 9)) % 3);
+                if (dx * dx > r * r || (dx < 0 ? -dx : dx) > r)
+                    continue;
+                put_field(tx + dx, ty + dy, dy <= -2 ? L_CANOPY_LIGHT : L_CANOPY);
+            }
+    }
+    // The plain, banded toward the grass.
+    for (int y = FIELD_PLAIN; y < PIC_H; y++)
+        for (int x = 0; x < DEN_W * 16; x++) {
+            int v = (y - FIELD_PLAIN) * 16 / (FIELD_GRASS - FIELD_PLAIN) + (dither(x, y) - 8) / 3;
+            put_field(x, y, v < 5 ? L_PLAIN_LIGHT : v < 11 ? L_PLAIN : L_PLAIN_DARK);
+        }
+    // The grass: a dithered dark ground, then blades, back to front.
+    for (int y = FIELD_GRASS; y < PIC_H; y++)
+        for (int x = 0; x < DEN_W * 16; x++) {
+            int back = (PIC_H - y) * 16 / (PIC_H - FIELD_GRASS); // 16 at the back, 0 in front
+            put_field(x, y, dither(x, y) < back ? L_PLAIN_DARK : L_GRASS_DARK);
+        }
+    static int bx[BLADES], by[BLADES], bl[BLADES], bn[BLADES];
+    for (int i = 0; i < BLADES; i++) {
+        u32 h = hash((u32)i, 4711);
+        bx[i] = (int)(h % FIELD_PERIOD);
+        by[i] = FIELD_GRASS + 2 + (int)((h >> 8) % (PIC_H - FIELD_GRASS - 3));
+        bl[i] = 6 + (by[i] - FIELD_GRASS) / 4 + (int)((h >> 16) % 6);
+        bn[i] = (int)((h >> 22) % 3) - 1; // lean
+    }
+    for (int y = FIELD_GRASS + 2; y < PIC_H; y++)
+        for (int i = 0; i < BLADES; i++) {
+            if (by[i] != y)
+                continue;
+            for (int k = 0; k < bl[i]; k++) {
+                int c = k >= bl[i] - 3 ? L_GRASS_LIGHT : k < 3 ? L_GRASS_DARK : L_GRASS;
+                int x = bx[i] + bn[i] * k / 5;
+                for (int rep = 0; rep < DEN_W * 16; rep += FIELD_PERIOD) {
+                    int xx = ((x % FIELD_PERIOD) + FIELD_PERIOD) % FIELD_PERIOD + rep;
+                    put_field(xx, y - k, c);
+                    if (k < bl[i] - 4)
+                        put_field(xx + 1, y - k, k < 3 ? L_GRASS_DARK : L_GRASS);
+                }
+            }
+        }
+}
+
 // --- Sprite drawing -----------------------------------------------------------------------------
 
-#define OBJ_TILE_MAX 900
+#define OBJ_TILE_MAX 1000
 static u32 obj_tiles[OBJ_TILE_MAX * 8];
 static SpriteAsset sprites[SPRITE_COUNT];
 
@@ -1010,6 +1090,8 @@ static const Pose poses[PET_FRAMES] = {
     // Acacia Climb: stretched out in the air, crouched on landing.
     [PF_JUMP] = {POSE_STAND, {5, 3, -4, -2}, {3, 3, 2, 2}, -1, 2, -2, 2, 3, EARS_UP, EYES_OPEN, 0},
     [PF_LAND] = {POSE_STAND, {1, 0, -1, 0}, {0}, 2, 0, 3, -1, 1, EARS_UP, EYES_OPEN, 0},
+    // High Pounce: stalking, low, the head out in front.
+    [PF_CROUCH] = {POSE_STAND, {3, 0, -2, 1}, {0}, 5, 3, 5, -1, 2, EARS_UP, EYES_OPEN, 0},
 };
 
 // Pose pixels (adult) to Q4 at this size.
@@ -1331,6 +1413,7 @@ static const u8 kit_frames[PET_FRAMES][4] = {
     [PF_LIE] = {KB_LIE, KH_SAD, 6, 7},       [PF_LIE1] = {KB_LIE, KH_SAD_SHUT, 6, 7},
     [PF_SLEEP0] = {KB_CURL0, KH_SHUT, 6, 7}, [PF_SLEEP1] = {KB_CURL1, KH_SHUT, 6, 7},
     [PF_JUMP] = {KB_WALK0, KH_OPEN, 6, 0},   [PF_LAND] = {KB_STAND, KH_OPEN, 6, 2},
+    [PF_CROUCH] = {KB_STAND, KH_OPEN, 7, 3},
 };
 
 static void draw_kitten(int frame) {
@@ -1848,6 +1931,156 @@ static u32* build_climb(u32* out) {
     return out;
 }
 
+// High Pounce's pieces (PAL_FIELD's indices, F_*): a tuft of tall grass
+// (upright, leaning, shaken), a mouse under the paw, a bird, a feather and
+// the ears' arrow.
+static void stalk_piece(int f) {
+    static const int bx[9] = {1, 3, 4, 6, 8, 9, 11, 13, 14};
+    static const int hh[9] = {10, 13, 8, 15, 11, 14, 9, 13, 10};
+    static const int lean[STALK_FRAMES] = {0, -3, 3, 0};
+    canvas_clear();
+    for (int i = 0; i < 9; i++) {
+        int h = hh[i];
+        for (int k = 0; k < h; k++) {
+            int sway = f == 3 ? (i - 4) : lean[f] + (i & 1 ? 0 : (f ? 1 : 0));
+            int x = bx[i] + sway * k * k / (h * h);
+            int c = k >= h - 3 ? F_GRASS_LIGHT : k < 4 ? F_GRASS_DARK : F_GRASS;
+            put(x, 15 - k, c);
+            if (k < h - 5)
+                put(x + 1, 15 - k, k < 4 ? F_GRASS_DARK : F_GRASS);
+        }
+    }
+}
+
+static void mouse_piece(int f) {
+    canvas_clear();
+    int up = f == 1 ? 1 : 0;
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 16; x++) {
+            int dx = (x - 8) * 2, dy = (y - 5 + up) * 3;
+            int d = dx * dx / 2 + dy * dy;
+            if (d <= 54)
+                put(x, y, dy > 2 ? F_BELLY : F_MOUSE);
+        }
+    // the head and nose to the right, a pink ear, an eye
+    for (int y = 3 + up; y <= 6 + up; y++)
+        for (int x = 11; x <= 14 - (y == 6 + up ? 1 : 0); x++)
+            put(x, y, F_MOUSE);
+    put(15, 5 + up, F_PINK);
+    put(12, 4 + up, F_OUT);
+    put(10, 2 + up, F_PINK);
+    put(11, 2 + up, F_PINK);
+    put(10, 3 + up, F_MOUSE);
+    // the tail
+    for (int x = 0; x < 3; x++)
+        put(x, 6 - (f == 2 ? x : (x & 1)), F_PINK);
+    put(1, 5, F_PINK);
+    outline(16, 8, F_OUT);
+}
+
+static void fill_tri(int x0, int y0, int x1, int y1, int x2, int y2, int c) {
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++) {
+            int a = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+            int b = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+            int d = (x0 - x2) * (y - y2) - (y0 - y2) * (x - x2);
+            if ((a >= 0 && b >= 0 && d >= 0) || (a <= 0 && b <= 0 && d <= 0))
+                put(x, y, c);
+        }
+}
+
+static void bird_piece(int f) {
+    canvas_clear();
+    // the tail
+    fill_tri(1, 8, 5, 8, 5, 11, F_BIRD_DARK);
+    // the body and breast, the head and its beak
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++) {
+            int dx = (x - 7) * 2, dy = (y - 9) * 3;
+            if (dx * dx * 4 + dy * dy * 3 <= 190)
+                put(x, y, y >= 10 ? F_CREAM : F_BIRD);
+            int hx = (x - 11) * 2, hy = (y - 7) * 2;
+            if (hx * hx + hy * hy <= 10)
+                put(x, y, F_BIRD_DARK);
+        }
+    put(12, 6, F_OUT);
+    put(13, 7, F_BEAK);
+    put(14, 7, F_BEAK);
+    // the wing: up, down, or out behind, with a pale bar
+    if (f == 0)
+        fill_tri(5, 9, 3, 1, 10, 5, F_BIRD_DARK);
+    else if (f == 1)
+        fill_tri(5, 9, 3, 15, 10, 13, F_BIRD_DARK);
+    else
+        fill_tri(6, 9, 1, 6, 9, 8, F_BIRD_DARK);
+    if (f == 0)
+        put(5, 5, F_CREAM), put(6, 4, F_CREAM);
+    else if (f == 1)
+        put(5, 13, F_CREAM), put(6, 12, F_CREAM);
+    else
+        put(4, 7, F_CREAM), put(5, 7, F_CREAM);
+    outline(16, 16, F_OUT);
+}
+
+static void feather_piece(int f) {
+    canvas_clear();
+    for (int i = 0; i < 6; i++) {
+        int x = f == 0 ? 1 + i : f == 1 ? 1 + i : 6 - i, y = f == 1 ? 3 + i / 3 : 1 + i;
+        put(x, y, F_WHITE);
+        put(x + 1, y, i & 1 ? F_CREAM : F_WHITE);
+    }
+    put(f == 2 ? 1 : 6, f == 1 ? 5 : 6, F_BIRD_DARK);
+}
+
+static void cue_piece(int right) {
+    static const char* const rows[8] = {"...D....", "..DoD...", ".DooDDDD", "Dooooooo",
+                                        ".DooDDDD", "..DoD...", "...D....", "........"};
+    static const char keys[] = " KabgmnpBdcywoD";
+    canvas_clear();
+    paint(rows, 8, keys, 0, 0);
+    if (right)
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 4; x++) {
+                int t = canvas[y][x];
+                canvas[y][x] = canvas[y][7 - x];
+                canvas[y][7 - x] = (u8)t;
+            }
+}
+
+static u32* build_pounce(u32* out) {
+    const u32* tiles = out;
+    for (int f = 0; f < STALK_FRAMES; f++) {
+        stalk_piece(f);
+        out = pack(16, 16, out);
+    }
+    sprite(SPR_STALK, SPRITE_16x16, STALK_FRAMES, PAL_FIELD, tiles);
+    tiles = out;
+    for (int f = 0; f < MOUSE_FRAMES; f++) {
+        mouse_piece(f);
+        out = pack(16, 8, out);
+    }
+    sprite(SPR_MOUSE, SPRITE_16x8, MOUSE_FRAMES, PAL_FIELD, tiles);
+    tiles = out;
+    for (int f = 0; f < BIRD_FRAMES; f++) {
+        bird_piece(f);
+        out = pack(16, 16, out);
+    }
+    sprite(SPR_BIRD, SPRITE_16x16, BIRD_FRAMES, PAL_FIELD, tiles);
+    tiles = out;
+    for (int f = 0; f < FEATHER_FRAMES; f++) {
+        feather_piece(f);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_FEATHER, SPRITE_8x8, FEATHER_FRAMES, PAL_FIELD, tiles);
+    tiles = out;
+    for (int f = 0; f < CUE_FRAMES; f++) {
+        cue_piece(f);
+        out = pack(8, 8, out);
+    }
+    sprite(SPR_CUE, SPRITE_8x8, CUE_FRAMES, PAL_FIELD, tiles);
+    return out;
+}
+
 static u32* build_sprites(void) {
     u32* out = obj_tiles;
     make_spot_field();
@@ -1866,13 +2099,14 @@ static u32* build_sprites(void) {
                tiles);
     }
     out = build_small(out);
-    return build_climb(build_bar(out));
+    return build_pounce(build_climb(build_bar(out)));
 }
 
 _Static_assert(PET_FRAMES * (4 + 16 + 16) + 4 * 2 + 4 * LAMP_FRAMES + DROP_FRAMES +
                        2 * BOWL_FRAMES + 2 + 2 + SPARK_FRAMES + 4 + 4 * (ICON_COUNT + 1) + 4 * 9 +
                        3 + BAR_COLORS * 9 + YARN_SIZES * YARN_TURNS + THREAD_FRAMES +
-                       2 * PAW_FRAMES + 4 * BRANCH_FRAMES + 4 * NEST_FRAMES <=
+                       2 * PAW_FRAMES + 4 * BRANCH_FRAMES + 4 * NEST_FRAMES + 4 * STALK_FRAMES +
+                       2 * MOUSE_FRAMES + 4 * BIRD_FRAMES + FEATHER_FRAMES + CUE_FRAMES <=
                    OBJ_TILE_MAX,
                "the sprites outgrow obj_tiles: raise OBJ_TILE_MAX");
 
@@ -1900,6 +2134,9 @@ void art_draw(ArtDrawing* out) {
     pic_clear();
     paint_tree();
     cut_map(tree_metatiles, tree_cells, TREE_W);
+    pic_clear();
+    paint_field();
+    cut_map(field_metatiles, field_cells, DEN_W);
 
     u32* end = build_sprites();
     *out = (ArtDrawing){
@@ -1909,6 +2146,7 @@ void art_draw(ArtDrawing* out) {
         .sky_metatiles = sky_metatiles,
         .tree_metatiles = tree_metatiles,
         .csky_metatiles = csky_metatiles,
+        .field_metatiles = field_metatiles,
         .obj_tiles = obj_tiles,
         .obj_tile_count = (int)(end - obj_tiles) / 8,
         .sprites = sprites,

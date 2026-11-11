@@ -64,10 +64,16 @@ enum {
     SPR_BAR,    // 8x8: BAR_COLORS x 9 frames, a status bar's cell: colour * 9 + columns filled
     SPR_YARN, // 8x8: 3 sizes x YARN_TURNS frames, a ball of yarn turning, then smaller (PAL_ICONS;
               // Yarn Bat)
-    SPR_THREAD, // 8x8: THREAD_FRAMES, a bit of loose thread, newest first
-    SPR_PAW,    // 16x8: PAW_FRAMES, the pet's arm reaching right, in its coat (PAL_PET)
-    SPR_BRANCH, // 16x16: BRANCH_FRAMES, a piece of an acacia's bough (PAL_TREE; Acacia Climb)
-    SPR_NEST,   // 16x16: NEST_FRAMES, a weaver bird's nest hanging by its cord (PAL_TREE)
+    SPR_THREAD,  // 8x8: THREAD_FRAMES, a bit of loose thread, newest first
+    SPR_PAW,     // 16x8: PAW_FRAMES, the pet's arm reaching right, in its coat (PAL_PET)
+    SPR_BRANCH,  // 16x16: BRANCH_FRAMES, a piece of an acacia's bough (PAL_TREE; Acacia Climb)
+    SPR_NEST,    // 16x16: NEST_FRAMES, a weaver bird's nest hanging by its cord (PAL_TREE)
+    SPR_STALK,   // 16x16: STALK_FRAMES, a tuft of tall grass, upright, leaning, shaking (PAL_FIELD;
+                 // High Pounce)
+    SPR_MOUSE,   // 16x8: MOUSE_FRAMES, a mouse under the serval's paw (PAL_FIELD)
+    SPR_BIRD,    // 16x16: BIRD_FRAMES, a bird flying right: wings up, down, gliding (PAL_FIELD)
+    SPR_FEATHER, // 8x8: FEATHER_FRAMES, a feather falling (PAL_FIELD)
+    SPR_CUE,     // 8x8: CUE_FRAMES, the ears' arrow: left, right (PAL_FIELD)
     SPRITE_COUNT,
 };
 
@@ -92,6 +98,7 @@ enum {
     PF_SLEEP1, // breathing
     PF_JUMP,   // legs stretched, in the air (Acacia Climb)
     PF_LAND,   // crouched, landing
+    PF_CROUCH, // creeping low, head forward (High Pounce)
     PET_FRAMES,
 };
 
@@ -104,6 +111,11 @@ enum {
 #define PAW_FRAMES 3
 #define THREAD_FRAMES 3
 #define NEST_FRAMES 2
+#define STALK_FRAMES 4
+#define MOUSE_FRAMES 3
+#define BIRD_FRAMES 3
+#define FEATHER_FRAMES 3
+#define CUE_FRAMES 2
 
 // SPR_BRANCH's pieces (drawn pointing right, root at the left; flipped for a
 // bough on the left; the crown's top, where the serval's feet are, is row 4): the root at the
@@ -136,6 +148,8 @@ enum {
     PAL_ICONS_OFF, // the same in grey, for what can't be chosen now
     PAL_TREE,      // the acacia's boughs and the nests: art_set_scene follows the hour
     PAL_TREE_DRY,  // the same in dry wood, for a bough that will snap
+    PAL_FIELD, // High Pounce's grass, mouse, bird, feathers and arrow: art_set_scene follows the
+               // hour
     OBJ_PALETTES,
 };
 
@@ -164,6 +178,13 @@ void art_hide(void);
 // art_load(). Call with the screen black. den_resume() puts the den back.
 #define CLIMB_PERIOD 160
 void art_load_climb(void);
+
+// High Pounce's scene instead of the den's: the savanna's hills, plain and
+// tall grass on DEN_BG (one screen, no scroll) over the climb's full-height
+// sky on SKY_BG (which the caller scrolls to drift its clouds, CLIMB_PERIOD
+// pixels being a lap); everything else as art_load(). Call with the screen
+// black. den_resume() puts the den back.
+void art_load_pounce(void);
 
 // The den's colours for a time of day, with the lights on or off, the sky's,
 // the savanna's, the sun's and the things on the floor (palette writes, in

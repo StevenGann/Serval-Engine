@@ -25,6 +25,11 @@ void sound_miss(void);
 void sound_jump(void);
 void sound_snap(void);
 void sound_knock(void);
+// High Pounce: the grass rustling at a loudness from 1 (far) to 4 (right
+// there; pounce_loudness()), and a bird taking off. (The leap is sound_jump(),
+// a catch sound_mew(), a swat sound_bat(), a miss sound_miss().)
+void sound_rustle(int loudness);
+void sound_flutter(void);
 // Now and then, through the mouth: birds by day, crickets at night. Call once
 // a frame with the time of day (art.h's TOD_*).
 void sound_ambient(int tod);

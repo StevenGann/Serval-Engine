@@ -88,6 +88,25 @@ enum {
     TREE_COLORS = 11,
 };
 
+// High Pounce's sprites (PAL_FIELD).
+enum {
+    F_OUT = 1,
+    F_GRASS_DARK,
+    F_GRASS,
+    F_GRASS_LIGHT,
+    F_MOUSE,
+    F_BELLY,
+    F_PINK,
+    F_BIRD,
+    F_BIRD_DARK,
+    F_CREAM,
+    F_BEAK,
+    F_WHITE,
+    F_GOLD,
+    F_ARROW_DARK,
+    FIELD_COLORS = 14,
+};
+
 // The trunk's middle, in pixels (the trunk is 32 wide there).
 #define TREE_X 120
 
@@ -115,11 +134,12 @@ enum {
 typedef struct {
     const u32* bg_tiles; // 8 words a tile; tile 0 blank
     int bg_tile_count;
-    const Metatile* den_metatiles;  // DEN_W * MAP_H, cell i is metatile i
-    const Metatile* sky_metatiles;  // SKY_W * MAP_H
-    const Metatile* tree_metatiles; // TREE_W * MAP_H: the trunk
-    const Metatile* csky_metatiles; // TREE_W * MAP_H: the climb's sky, full height
-    const u32* obj_tiles;           // every sprite's frames, one after another
+    const Metatile* den_metatiles;   // DEN_W * MAP_H, cell i is metatile i
+    const Metatile* sky_metatiles;   // SKY_W * MAP_H
+    const Metatile* tree_metatiles;  // TREE_W * MAP_H: the trunk
+    const Metatile* csky_metatiles;  // TREE_W * MAP_H: the climb's sky, full height
+    const Metatile* field_metatiles; // DEN_W * MAP_H: High Pounce's savanna and grass
+    const u32* obj_tiles;            // every sprite's frames, one after another
     int obj_tile_count;
     const SpriteAsset* sprites; // SPRITE_COUNT, their .tiles in obj_tiles
 } ArtDrawing;

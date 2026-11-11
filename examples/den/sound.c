@@ -27,6 +27,9 @@ enum {
     SND_JUMP,
     SND_SNAP,
     SND_KNOCK,
+    SND_RUSTLE, // four loudnesses in a row
+    SND_RUSTLE_END = SND_RUSTLE + 3,
+    SND_FLUTTER,
     SND_COUNT,
 };
 
@@ -48,6 +51,8 @@ static const u16 cricket_notes[] = {4400, 0, 4400, 0, 4400};
 static const u16 miss_notes[] = {523, 440, 349, 262};
 static const u16 snap_notes[] = {1800, 4200, 900};
 static const u16 knock_notes[] = {262, 196, 147};
+static const u16 rustle_notes[] = {7200, 9800, 6400, 10400};
+static const u16 flutter_notes[] = {2400, 3000, 2500, 3300, 2700, 3600};
 
 static const PsgSound sounds[SND_COUNT] = {
     [SND_PURR] = {.channel = PSG_NOISE,
@@ -170,6 +175,43 @@ static const PsgSound sounds[SND_COUNT] = {
                    .frames = 4,
                    .volume = 9,
                    .priority = 3},
+    // High Pounce: the grass rustling, quiet to loud (noise, hissy, low
+    // priority so that the catches and misses win), and a bird's wings.
+    [SND_RUSTLE] = {.channel = PSG_NOISE,
+                    .notes = rustle_notes,
+                    .note_count = 4,
+                    .frames = 3,
+                    .volume = 2,
+                    .fade = -1,
+                    .priority = 1},
+    [SND_RUSTLE + 1] = {.channel = PSG_NOISE,
+                        .notes = rustle_notes,
+                        .note_count = 4,
+                        .frames = 3,
+                        .volume = 4,
+                        .fade = -1,
+                        .priority = 1},
+    [SND_RUSTLE + 2] = {.channel = PSG_NOISE,
+                        .notes = rustle_notes,
+                        .note_count = 4,
+                        .frames = 3,
+                        .volume = 8,
+                        .fade = -1,
+                        .priority = 1},
+    [SND_RUSTLE + 3] = {.channel = PSG_NOISE,
+                        .notes = rustle_notes,
+                        .note_count = 4,
+                        .frames = 3,
+                        .volume = 13,
+                        .fade = -1,
+                        .priority = 1},
+    [SND_FLUTTER] = {.channel = PSG_SQUARE2,
+                     .duty = PSG_DUTY_12,
+                     .notes = flutter_notes,
+                     .note_count = 6,
+                     .frames = 2,
+                     .volume = 6,
+                     .priority = 2},
 };
 
 static const PsgSound* sound_table[SND_COUNT];
@@ -241,4 +283,13 @@ void sound_snap(void) {
 
 void sound_knock(void) {
     psg_play(SND_KNOCK);
+}
+
+void sound_rustle(int loudness) {
+    if (loudness >= 1 && loudness <= 4)
+        psg_play((u16)(SND_RUSTLE + loudness - 1));
+}
+
+void sound_flutter(void) {
+    psg_play(SND_FLUTTER);
 }

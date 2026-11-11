@@ -17,6 +17,7 @@
 #include "../examples/den/den_save.h"
 #include "../examples/den/litter.h"
 #include "../examples/den/pet.h"
+#include "../examples/den/pounce_rules.h"
 #include "../examples/den/yarn_rules.h"
 
 #define MIDNIGHT 762480000u
@@ -1336,6 +1337,262 @@ static void test_climb_bot_climbs(void) {
     }
 }
 
+// --- High Pounce -------------------------------------------------------------------------------
+
+static PounceState pounce_ready(int x) {
+    PounceState s;
+    pounce_start(&s, 5);
+    s.quiet = true;
+    memset(s.r, 0, sizeof s.r);
+    s.x = x * 256;
+    return s;
+}
+
+// A rustle that stays where it is.
+static int pounce_still(PounceState* s, int kind, int x) {
+    int i = pounce_put(s, kind, x);
+    s->r[i].turn = 60000;
+    s->r[i].life = 60000;
+    s->r[i].pulse = 60000;
+    return i;
+}
+
+// Presses A, then lets go until the serval has landed.
+static void pounce_leap(PounceState* s) {
+    pounce_step(s, BUTTON_A);
+    for (int i = 1; i < POUNCE_LEAP_FRAMES; i++)
+        pounce_step(s, 0);
+}
+
+static void test_pounce_leap_lands_at_reach(void) {
+    PounceState s = pounce_ready(100);
+    pounce_step(&s, BUTTON_A);
+    CHECK(s.events & POUNCE_EV_LEAP);
+    CHECK(s.leap == 1);
+    int top = 0;
+    for (int i = 1; i < POUNCE_LEAP_FRAMES; i++) {
+        CHECK(!(s.events & POUNCE_EV_LAND));
+        pounce_step(&s, 0);
+        if (pounce_height(&s) > top)
+            top = pounce_height(&s);
+    }
+    CHECK(s.events & POUNCE_EV_LAND);
+    CHECK(top == POUNCE_PEAK && pounce_height(&s) == 0);
+    CHECK(pounce_x(&s) == 100 + POUNCE_REACH);
+    // To the left, from the same place.
+    s = pounce_ready(100);
+    pounce_step(&s, BUTTON_LEFT);
+    pounce_step(&s, 0);
+    int x0 = pounce_x(&s);
+    pounce_leap(&s);
+    CHECK(s.face == -1 && pounce_x(&s) == x0 - POUNCE_REACH);
+    // Steering in the air does nothing; at the edge the landing is held inside.
+    s = pounce_ready(100);
+    pounce_step(&s, BUTTON_A);
+    for (int i = 1; i < POUNCE_LEAP_FRAMES; i++)
+        pounce_step(&s, BUTTON_LEFT);
+    CHECK(pounce_x(&s) == 100 + POUNCE_REACH);
+    s = pounce_ready(POUNCE_X_MAX - 10);
+    pounce_leap(&s);
+    CHECK(pounce_x(&s) == POUNCE_X_MAX);
+    // A held down is one leap, not many.
+    s = pounce_ready(60);
+    for (int i = 0; i < POUNCE_LEAP_FRAMES + POUNCE_RECOVER + 5; i++)
+        pounce_step(&s, BUTTON_A);
+    CHECK(pounce_x(&s) == 60 + POUNCE_REACH && s.leap == 0);
+}
+
+static void test_pounce_catch_radius(void) {
+    int land = 100 + POUNCE_REACH;
+    // Within the radius: caught, +1, no scare.
+    for (int off = -POUNCE_CATCH_R; off <= POUNCE_CATCH_R; off += POUNCE_CATCH_R) {
+        PounceState s = pounce_ready(100);
+        int m = pounce_still(&s, PK_MOUSE, land + off);
+        int other = pounce_still(&s, PK_MOUSE, land + 30);
+        pounce_leap(&s);
+        CHECK(s.events & POUNCE_EV_CATCH);
+        CHECK(s.points == 1 && s.mice == 1 && s.r[m].state == PR_FREE);
+        CHECK(s.r[other].state == PR_ACTIVE && !(s.events & POUNCE_EV_MISS));
+    }
+    // Just outside: a miss, and a mouse 13 px away is scared, not caught.
+    for (int off = -POUNCE_CATCH_R - 1; off <= POUNCE_CATCH_R + 1; off += 2 * POUNCE_CATCH_R + 2) {
+        PounceState s = pounce_ready(100);
+        int m = pounce_still(&s, PK_MOUSE, land + off);
+        pounce_leap(&s);
+        CHECK(!(s.events & POUNCE_EV_CATCH) && (s.events & POUNCE_EV_MISS));
+        CHECK(s.points == 0 && s.r[m].state == PR_SCARED);
+    }
+    // Only a mouse is caught by landing on it; the nearest of two.
+    PounceState s = pounce_ready(100);
+    int far = pounce_still(&s, PK_MOUSE, land - 10);
+    int near = pounce_still(&s, PK_MOUSE, land + 3);
+    pounce_leap(&s);
+    CHECK(s.r[near].state == PR_FREE && s.r[far].state == PR_ACTIVE && s.points == 1);
+}
+
+static void test_pounce_miss_scares(void) {
+    int land = 100 + POUNCE_REACH;
+    PounceState s = pounce_ready(100);
+    int in = pounce_still(&s, PK_MOUSE, land - POUNCE_SCARE_R);
+    int out = pounce_still(&s, PK_MOUSE, land + POUNCE_SCARE_R + 1);
+    pounce_leap(&s);
+    CHECK(s.r[in].state == PR_SCARED && s.r[out].state == PR_ACTIVE);
+    // Quiet for two seconds, then back where it was.
+    for (int i = 0; i < POUNCE_SCARE_FRAMES - 2; i++)
+        pounce_step(&s, 0);
+    CHECK(s.r[in].state == PR_SCARED);
+    pounce_step(&s, 0);
+    CHECK(s.r[in].state == PR_ACTIVE && (int)(s.r[in].x / 256) == land - POUNCE_SCARE_R);
+    // A scared rustle makes no burst.
+    s = pounce_ready(100);
+    in = pounce_put(&s, PK_MOUSE, land);
+    s.r[in].turn = 60000;
+    s.r[in].pulse = POUNCE_SCARE_FRAMES / 2;
+    s.r[in].state = PR_SCARED;
+    s.r[in].timer = POUNCE_SCARE_FRAMES;
+    for (int i = 0; i < POUNCE_SCARE_FRAMES - 1; i++) {
+        pounce_step(&s, 0);
+        CHECK(!s.bursts);
+    }
+}
+
+static void test_pounce_bird_flush_distance(void) {
+    // Walking: within 24 px flushes, 25 does not.
+    PounceState s = pounce_ready(100);
+    int b = pounce_still(&s, PK_BIRD, 100 + POUNCE_FLUSH_R + 1);
+    pounce_step(&s, 0);
+    CHECK(s.r[b].state == PR_ACTIVE);
+    s = pounce_ready(100);
+    b = pounce_still(&s, PK_BIRD, 100 + POUNCE_FLUSH_R);
+    pounce_step(&s, 0);
+    CHECK(s.r[b].state == PR_FLY && (s.events & POUNCE_EV_FLUSH));
+    // Crouched, it stays.
+    s = pounce_ready(100);
+    b = pounce_still(&s, PK_BIRD, 100 + 5);
+    for (int i = 0; i < 30; i++)
+        pounce_step(&s, BUTTON_B);
+    CHECK(s.crouch && s.r[b].state == PR_ACTIVE);
+    // Creeping up on it crouched does not flush it either; standing up does.
+    s = pounce_ready(60);
+    b = pounce_still(&s, PK_BIRD, 100);
+    while (pounce_x(&s) < 95)
+        pounce_step(&s, BUTTON_B | BUTTON_RIGHT);
+    CHECK(s.r[b].state == PR_ACTIVE);
+    pounce_step(&s, 0);
+    CHECK(s.r[b].state == PR_FLY);
+    // It flies up and away from the serval, and off the screen.
+    CHECK(s.r[b].vx > 0);
+    int top = 0;
+    for (int i = 0; i < 400 && s.r[b].state == PR_FLY; i++) {
+        pounce_step(&s, 0);
+        if ((int)(s.r[b].h / 256) > top)
+            top = (int)(s.r[b].h / 256);
+    }
+    CHECK(top == POUNCE_BIRD_H && s.r[b].state == PR_FREE);
+    // A mouse is never flushed.
+    s = pounce_ready(100);
+    int m = pounce_still(&s, PK_MOUSE, 100);
+    pounce_step(&s, 0);
+    CHECK(s.r[m].state == PR_ACTIVE);
+}
+
+static void test_pounce_swat(void) {
+    // A bird in the air within reach is swatted by A: +3, a hit.
+    PounceState s = pounce_ready(100);
+    int b = pounce_still(&s, PK_BIRD, 100 + POUNCE_FLUSH_R);
+    pounce_step(&s, 0);
+    CHECK(s.r[b].state == PR_FLY);
+    int other = pounce_still(&s, PK_MOUSE, 100 + POUNCE_REACH + 30);
+    for (int i = 0; i < 4; i++)
+        pounce_step(&s, 0);
+    pounce_step(&s, BUTTON_A);
+    CHECK((s.events & POUNCE_EV_SWAT) && s.points == 3 && s.birds == 1);
+    CHECK(s.r[b].state == PR_FREE);
+    for (int i = 1; i < POUNCE_LEAP_FRAMES; i++)
+        pounce_step(&s, 0);
+    CHECK(!(s.events & POUNCE_EV_MISS) && s.r[other].state == PR_ACTIVE);
+    // Out of reach: no swat, and the leap misses.
+    s = pounce_ready(100);
+    b = pounce_still(&s, PK_BIRD, 100 + POUNCE_FLUSH_R);
+    pounce_step(&s, 0);
+    s.r[b].x = (100 + POUNCE_REACH + 1) * 256;
+    pounce_step(&s, BUTTON_A);
+    CHECK(!(s.events & POUNCE_EV_SWAT) && s.r[b].state == PR_FLY && s.points == 0);
+    // It is swatted from the other side too, the leap turning to it.
+    s = pounce_ready(100);
+    b = pounce_still(&s, PK_BIRD, 100 - POUNCE_FLUSH_R);
+    pounce_step(&s, 0);
+    pounce_step(&s, BUTTON_A);
+    CHECK((s.events & POUNCE_EV_SWAT) && s.face == -1);
+    // A bird the landing is on takes off (a hit, +0).
+    s = pounce_ready(100);
+    b = pounce_still(&s, PK_BIRD, 100 + POUNCE_REACH);
+    pounce_leap(&s);
+    CHECK(s.r[b].state == PR_FLY && s.points == 0 && !(s.events & POUNCE_EV_MISS));
+}
+
+static void test_pounce_round_timer(void) {
+    PounceState s;
+    pounce_start(&s, 1);
+    CHECK(pounce_seconds_left(&s) == 60);
+    for (int i = 1; i < POUNCE_ROUND_FRAMES; i++) {
+        CHECK(pounce_step(&s, 0) == POUNCE_PLAYING);
+        if (i == 1)
+            CHECK(pounce_seconds_left(&s) == 60);
+        if (i == 60)
+            CHECK(pounce_seconds_left(&s) == 59);
+    }
+    CHECK(pounce_seconds_left(&s) == 1);
+    CHECK(pounce_step(&s, 0) == POUNCE_OVER);
+    CHECK(pounce_seconds_left(&s) == 0);
+    // Rustles keep appearing, never more than POUNCE_ACTIVE at a time.
+    pounce_start(&s, 2);
+    int seen = 0;
+    for (int i = 0; i < 1200; i++) {
+        pounce_step(&s, 0);
+        int n = 0;
+        for (int k = 0; k < POUNCE_SLOTS; k++)
+            n += s.r[k].state == PR_ACTIVE || s.r[k].state == PR_SCARED;
+        CHECK(n <= POUNCE_ACTIVE);
+        seen += s.bursts != 0;
+    }
+    CHECK(seen > 5);
+}
+
+static void test_pounce_hearing_and_fun(void) {
+    CHECK(pounce_loudness(0) == 4 && pounce_loudness(27) == 4 && pounce_loudness(28) == 3);
+    CHECK(pounce_loudness(-55) == 3 && pounce_loudness(56) == 2 && pounce_loudness(96) == 1);
+    CHECK(pounce_loudness(POUNCE_HEAR_R - 1) == 1 && pounce_loudness(POUNCE_HEAR_R) == 0);
+    CHECK(pounce_fun(0) == 10 && pounce_fun(12) == 22 && pounce_fun(30) == 40);
+    CHECK(pounce_fun(31) == 40 && pounce_fun(5000) == 40);
+    // A burst heard points the ears at it, and follows the serval.
+    PounceState s = pounce_ready(100);
+    int m = pounce_still(&s, PK_MOUSE, 40);
+    s.r[m].pulse = 1;
+    pounce_step(&s, 0);
+    CHECK(s.bursts == 1 << m);
+    int dx = 0;
+    CHECK(pounce_heard(&s, &dx) > 0 && dx == -60);
+    pounce_step(&s, BUTTON_LEFT);
+    CHECK(pounce_heard(&s, &dx) > 0 && dx > -60 && dx < 0);
+    for (int i = 0; i < POUNCE_HEARD_FRAMES; i++)
+        pounce_step(&s, 0);
+    CHECK(pounce_heard(&s, &dx) == 0);
+    // Too far to hear: no ears.
+    s = pounce_ready(230);
+    m = pounce_still(&s, PK_MOUSE, 40);
+    s.r[m].pulse = 1;
+    pounce_step(&s, 0);
+    CHECK(s.bursts == 1 << m && pounce_heard(&s, &dx) == 0);
+    // Crouching is slower.
+    s = pounce_ready(100);
+    pounce_step(&s, BUTTON_RIGHT);
+    int walked = (int)(s.x - 100 * 256);
+    s = pounce_ready(100);
+    pounce_step(&s, BUTTON_RIGHT | BUTTON_B);
+    CHECK((int)(s.x - 100 * 256) * 2 == walked);
+}
+
 TEST_SUITE(
     den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
     {"pet_neglect_thresholds", test_neglect_thresholds},
@@ -1363,4 +1620,10 @@ TEST_SUITE(
     {"climb_score_and_fun", test_climb_score_and_fun},
     {"climb_early_jump_is_buffered", test_climb_early_jump_is_buffered},
     {"climb_ramp", test_climb_ramp}, {"climb_top_of_the_tree", test_climb_top_of_the_tree},
-    {"climb_bot_climbs", test_climb_bot_climbs});
+    {"climb_bot_climbs", test_climb_bot_climbs},
+    {"pounce_leap_lands_at_reach", test_pounce_leap_lands_at_reach},
+    {"pounce_catch_radius", test_pounce_catch_radius},
+    {"pounce_miss_scares", test_pounce_miss_scares},
+    {"pounce_bird_flush_distance", test_pounce_bird_flush_distance},
+    {"pounce_swat", test_pounce_swat}, {"pounce_round_timer", test_pounce_round_timer},
+    {"pounce_hearing_and_fun", test_pounce_hearing_and_fun});

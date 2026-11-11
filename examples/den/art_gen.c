@@ -15,10 +15,10 @@
 #define REFRESH "cmake --build --preset host --target den_art_data_refresh"
 
 static const char* const sprite_names[SPRITE_COUNT] = {
-    "SPR_KITTEN", "SPR_YOUNG",  "SPR_ADULT",  "SPR_SUN",   "SPR_MOON",  "SPR_LAMP",
-    "SPR_DROP",   "SPR_BOWL",   "SPR_ZZZ",    "SPR_HEART", "SPR_SPARK", "SPR_TOMB",
-    "SPR_ICON",   "SPR_CURSOR", "SPR_PANEL",  "SPR_STRIP", "SPR_BAR",   "SPR_YARN",
-    "SPR_THREAD", "SPR_PAW",    "SPR_BRANCH", "SPR_NEST",
+    "SPR_KITTEN", "SPR_YOUNG", "SPR_ADULT", "SPR_SUN",   "SPR_MOON",    "SPR_LAMP", "SPR_DROP",
+    "SPR_BOWL",   "SPR_ZZZ",   "SPR_HEART", "SPR_SPARK", "SPR_TOMB",    "SPR_ICON", "SPR_CURSOR",
+    "SPR_PANEL",  "SPR_STRIP", "SPR_BAR",   "SPR_YARN",  "SPR_THREAD",  "SPR_PAW",  "SPR_BRANCH",
+    "SPR_NEST",   "SPR_STALK", "SPR_MOUSE", "SPR_BIRD",  "SPR_FEATHER", "SPR_CUE",
 };
 
 static const char* size_name(int size) {
@@ -72,6 +72,7 @@ static void write_c(FILE* f, const ArtDrawing* a) {
     metatiles(f, "art_den_metatiles", "art_den_cells", a->den_metatiles, DEN_W * MAP_H);
     metatiles(f, "art_sky_metatiles", "art_sky_cells", a->sky_metatiles, SKY_W * MAP_H);
     metatiles(f, "art_tree_metatiles", "art_tree_cells", a->tree_metatiles, TREE_W * MAP_H);
+    metatiles(f, "art_field_metatiles", "art_field_cells", a->field_metatiles, DEN_W * MAP_H);
     metatiles(f, "art_csky_metatiles", "art_csky_cells", a->csky_metatiles, TREE_W * MAP_H);
     tiles(f, "art_obj_tiles", a->obj_tiles, a->obj_tile_count);
     fprintf(f, "const SpriteAsset art_sprites[SPRITE_COUNT] = {\n");
@@ -106,6 +107,8 @@ static void write_h(FILE* f, const ArtDrawing* a) {
     fprintf(f, "extern const u16 art_tree_cells[TREE_W * MAP_H];\n");
     fprintf(f, "extern const Metatile art_csky_metatiles[TREE_W * MAP_H];\n");
     fprintf(f, "extern const u16 art_csky_cells[TREE_W * MAP_H];\n");
+    fprintf(f, "extern const Metatile art_field_metatiles[DEN_W * MAP_H];\n");
+    fprintf(f, "extern const u16 art_field_cells[DEN_W * MAP_H];\n");
     fprintf(f, "extern const u32 art_obj_tiles[ART_OBJ_TILES * 8];\n");
     fprintf(f, "extern const SpriteAsset art_sprites[SPRITE_COUNT];\n\n");
     fprintf(f, "#endif // DEN_ART_DATA_H\n");

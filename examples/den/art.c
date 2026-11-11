@@ -44,6 +44,16 @@ static const MapLayer tree_layer = {
     .flags = MAP_LAYER_FIXED | MAP_LAYER_WRAP,
 };
 
+static const MapLayer field_layer = {
+    .width = DEN_W,
+    .height = MAP_H,
+    .cells = art_field_cells,
+    .metatiles = art_field_metatiles,
+    .metatile_count = DEN_W * MAP_H,
+    .bg = DEN_BG,
+    .flags = MAP_LAYER_FIXED,
+};
+
 static const MapLayer climb_sky_layer = {
     .width = TREE_W,
     .height = MAP_H,
@@ -191,6 +201,26 @@ static const Color dry_colors[TREE_COLORS] = {
     COLOR_RGB(240, 212, 120), COLOR_RGB(250, 240, 180),
 };
 
+// High Pounce's sprites by F_*: the grass takes the savanna's colours of the
+// hour (the three after F_OUT are replaced by art_set_scene), the rest is as
+// drawn, tinted by the hour like the other sprites.
+static const Color field_colors[FIELD_COLORS] = {
+    COLOR_RGB(40, 28, 20),    // F_OUT
+    COLOR_RGB(136, 106, 52),  // F_GRASS_DARK
+    COLOR_RGB(196, 160, 76),  // F_GRASS
+    COLOR_RGB(240, 214, 120), // F_GRASS_LIGHT
+    COLOR_RGB(150, 128, 116), // F_MOUSE
+    COLOR_RGB(214, 198, 184), // F_BELLY
+    COLOR_RGB(236, 150, 150), // F_PINK
+    COLOR_RGB(150, 100, 64),  // F_BIRD
+    COLOR_RGB(92, 60, 40),    // F_BIRD_DARK
+    COLOR_RGB(240, 226, 200), // F_CREAM
+    COLOR_RGB(244, 184, 50),  // F_BEAK
+    COLOR_RGB(252, 250, 244), // F_WHITE
+    COLOR_RGB(255, 226, 120), // F_GOLD: the arrow
+    COLOR_RGB(70, 44, 20),    // F_ARROW_DARK
+};
+
 static void sky_obj_colors(int tod, Color* out);
 static const Color item_colors[15];
 
@@ -216,6 +246,13 @@ void art_set_scene(int tod, bool lights_off) {
     for (int i = 0; i < TREE_COLORS; i++)
         c[i] = den_light(dry_colors[i], tod, false, true);
     sprite_set_colors(SPR_BRANCH, PAL_TREE_DRY * 16 + 1, c, TREE_COLORS);
+    // The field's grass, outdoors like the acacia: the savanna's own grass colours.
+    for (int i = 0; i < FIELD_COLORS; i++)
+        c[i] = den_light(field_colors[i], tod, false, true);
+    c[F_GRASS_DARK - 1] = land_colors[tod][L_GRASS_DARK - 1];
+    c[F_GRASS - 1] = land_colors[tod][L_GRASS - 1];
+    c[F_GRASS_LIGHT - 1] = land_colors[tod][L_GRASS_LIGHT - 1];
+    sprite_set_colors(SPR_STALK, PAL_FIELD * 16 + 1, c, FIELD_COLORS);
 }
 
 #define SICK_TINT COLOR_RGB(70, 110, 220)
@@ -365,6 +402,8 @@ static void build_palettes(void) {
         obj_palettes[PAL_TREE][1 + i] = tree_colors[i];
         obj_palettes[PAL_TREE_DRY][1 + i] = dry_colors[i];
     }
+    for (int i = 0; i < FIELD_COLORS; i++)
+        obj_palettes[PAL_FIELD][1 + i] = field_colors[i];
 }
 
 static const Color sun_day[4] = {COLOR_RGB(255, 252, 226), COLOR_RGB(255, 236, 150),
@@ -405,6 +444,14 @@ void art_load_climb(void) {
     map_set_scroll(DEN_BG, 0, 0);
     map_set_scroll(SKY_BG, 0, 0);
     map_load(&tree_layer);
+    map_load(&climb_sky_layer);
+}
+
+void art_load_pounce(void) {
+    load_assets();
+    map_set_scroll(DEN_BG, 0, 0);
+    map_set_scroll(SKY_BG, 0, 0);
+    map_load(&field_layer);
     map_load(&climb_sky_layer);
 }
 

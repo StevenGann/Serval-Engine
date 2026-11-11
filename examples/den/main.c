@@ -43,6 +43,12 @@
 //     map_set_scroll(); the boughs and nests are sprites that sway, crack and
 //     fall; the jump's arc is one function that the rules play and that the
 //     test of the tree's reachability measures
+//   - A third game played by ear (pounce.c, rules in pounce_rules.c,
+//     host-tested): HIGH POUNCE, the adult's. Grass tufts as sprites that
+//     shake where a mouse or a bird hides, a rustle in PSG noise whose volume
+//     rises with the serval's nearness (the engine's sound is mono: an arrow
+//     over the serval's head points to the rustle it last heard), a leap whose
+//     arc and reach are constants of the rules
 //   - PSG sounds (sound.c): a purr, crunches, the serval's chirp, birds by
 //     day and crickets at night
 //
@@ -79,7 +85,7 @@
 //     RIGHT choose, A acts, B backs out. FEED asks MEAL or TREAT (a bowl that
 //     empties as it eats, crunching); PLAY lists YARN BAT, ACACIA CLIMB and
 //     HIGH POUNCE in a box (the ones the pet's stage doesn't allow yet are
-//     grey; HIGH POUNCE says COMING SOON until its game exists; the PLAY button is
+//     grey; the PLAY button is
 //     grey while the pet is asleep, tired or gone); PET gives hearts and a
 //     purr; CLEAN a sweep and sparkles; MEDICINE a sparkle and a chime;
 //     LIGHTS puts the lights out or on (a click; the den goes dark but the
@@ -123,6 +129,26 @@
 //     the screen ends the round. START pauses (RESUME or QUIT); a ROUND OVER
 //     card shows HEIGHT, BEST (NEW! for a record, saved) and FUN +N (10 plus
 //     half the metres, at most 40). Jump, snap and knock have a sound each.
+//   - PLAY > HIGH POUNCE (adult only): the den fades out and in as the savanna
+//     seen from the grass, golden, with far hills, two flat acacias and the
+//     sky behind (its colours follow the hour, clouds drifting). A row of
+//     tall tufts sways across the foot of the screen, the serval (32x32,
+//     adult) among them. SCORE, TIME (60 counting down) and BEST at the top.
+//     Now and then a tuft shakes hard for a moment with a hissing rustle,
+//     louder the nearer the serval is (soft far off, sharp close by), and an
+//     arrow over the serval's head points left or right to the one it heard,
+//     blinking out after a second. LEFT and RIGHT creep; B held crouches
+//     (low, head forward: slower, and quiet: birds aren't startled); A is a
+//     high leap 48 pixels ahead in the direction it faces (a rising arc, a
+//     chirp). Landing within 12 pixels of a mouse's rustle catches it: a
+//     mouse squirms under its paw (+1, a chirp). Some rustles hide a bird,
+//     indistinguishable; walking (not crouched) within 24 pixels startles it
+//     (a flutter): it flies up and away, and A while it is within 48 pixels
+//     swats it in a puff of feathers (+3). A leap that finds nothing scares
+//     the rustles near the landing silent for 2 seconds (the grass ripples,
+//     a falling tone). At 0 the TIME UP! card shows SCORE, BEST (NEW! for a
+//     record, saved), MICE and BIRDS and FUN +N (10 plus the score, at most
+//     40). START pauses (RESUME or QUIT).
 //   - Debug builds only: hold L, then R, and press SELECT: an hour passes (TIME
 //     WARP +1H at the top). Release builds have no warp.
 //   (In mGBA's default keyboard mapping: D-pad = arrow keys, A = X, B = Z,
@@ -143,6 +169,7 @@
 #include "den_save.h"
 #include "menu.h"
 #include "naming.h"
+#include "pounce.h"
 #include "sound.h"
 #include "status.h"
 #include "yarn.h"
@@ -284,6 +311,8 @@ int main(void) {
     menu_set_game(GAME_YARN, yarn_play);
     climb_attach(&save.best[1]);
     menu_set_game(GAME_CLIMB, climb_play);
+    pounce_attach(&save.best[2]);
+    menu_set_game(GAME_POUNCE, pounce_play);
     for (int b = SCREEN_BRIGHTNESS_MIN; b <= 0; b++) {
         frame_begin();
         screen_set_brightness(b);
