@@ -8,6 +8,12 @@
 
 #include <string.h>
 
+#include <serval/random.h>
+#include <serval/save.h>
+
+#include "../examples/den/album.h"
+#include "../examples/den/den_save.h"
+#include "../examples/den/litter.h"
 #include "../examples/den/pet.h"
 
 #define MIDNIGHT 762480000u
@@ -486,6 +492,199 @@ static void test_treats_hurt(void) {
     CHECK(p.treats_recent == 3);
 }
 
+// --- Litter, album and save ---------------------------------------------------
+
+static void test_litter_size_and_names(void) {
+    random_seed(777);
+    int sizes[5] = {0};
+    for (int i = 0; i < 1000; i++) {
+        Coat m = {1, 1, 1}, f = {2, 3, 0};
+        u8 avoid = (u8)(i % 32);
+        Litter l;
+        litter_make(&l, m, f, avoid);
+        CHECK(l.count >= 2 && l.count <= 4);
+        sizes[l.count]++;
+        for (int a = 0; a < l.count; a++) {
+            CHECK(l.names[a] < 32 && l.names[a] != avoid);
+            for (int b = 0; b < a; b++)
+                CHECK(l.names[a] != l.names[b]);
+        }
+    }
+    CHECK(sizes[2] > 0 && sizes[3] > 0 && sizes[4] > 0);
+    // 255 avoids nothing.
+    Litter l;
+    litter_make(&l, (Coat){0, 0, 0}, (Coat){0, 0, 0}, 255);
+    CHECK(l.count >= 2);
+    // The names: 32, A-Z, at most 8 letters, all different.
+    for (int i = 0; i < 32; i++) {
+        size_t n = strlen(litter_names[i]);
+        CHECK(n >= 1 && n <= 8);
+        for (size_t k = 0; k < n; k++)
+            CHECK(litter_names[i][k] >= 'A' && litter_names[i][k] <= 'Z');
+        for (int j = 0; j < i; j++)
+            CHECK(strcmp(litter_names[i], litter_names[j]) != 0);
+    }
+    for (int i = 0; i < 200; i++) {
+        Coat c = litter_visitor_coat();
+        CHECK(c.shade <= 3 && c.spots <= 3 && c.eyes <= 2);
+    }
+}
+
+static void test_litter_inheritance(void) {
+    random_seed(4242);
+    Coat same = {2, 1, 2};
+    int kept = 0, traits = 0;
+    for (int i = 0; i < 500; i++) {
+        Litter l;
+        litter_make(&l, same, same, 255);
+        for (int k = 0; k < l.count; k++) {
+            Coat c = l.coats[k];
+            CHECK(c.shade <= 3 && c.spots <= 3 && c.eyes <= 2);
+            kept += (c.shade == 2) + (c.spots == 1) + (c.eyes == 2);
+            traits += 3;
+        }
+    }
+    CHECK(kept * 100 >= traits * 80);
+    CHECK(kept < traits); // mutations do happen
+    // Different parents: kittens show both parents' traits.
+    int from_m = 0, from_f = 0;
+    for (int i = 0; i < 200; i++) {
+        Litter l;
+        litter_make(&l, (Coat){0, 0, 0}, (Coat){3, 3, 2}, 255);
+        for (int k = 0; k < l.count; k++) {
+            from_m += l.coats[k].shade == 0;
+            from_f += l.coats[k].shade == 3;
+        }
+    }
+    CHECK(from_m > 100 && from_f > 100);
+}
+
+static AlbumEntry entry_n(int n) {
+    AlbumEntry e;
+    memset(&e, 0, sizeof e);
+    e.name[0] = (char)('A' + n % 26);
+    e.generation = (u8)n;
+    e.age_minutes = 1000u * (u32)n;
+    e.best[1] = (u16)n;
+    return e;
+}
+
+static void test_album_ring(void) {
+    album_set(0, 0);
+    CHECK(album_count() == 0 && album_get(0) == 0);
+    for (int i = 1; i <= 17; i++) {
+        AlbumEntry e = entry_n(i);
+        album_add(&e);
+        CHECK(album_count() == (i < 16 ? i : 16));
+    }
+    CHECK(album_count() == 16);
+    CHECK(album_get(0)->generation == 17); // newest first
+    CHECK(album_get(15)->generation == 2); // 1 was dropped
+    CHECK(album_get(16) == 0);
+    AlbumEntry out[ALBUM_MAX];
+    CHECK(album_export(out) == 16 && out[3].generation == 14);
+    album_set(0, 0);
+}
+
+static DenSave sample_save(void) {
+    DenSave s;
+    memset(&s, 0, sizeof s);
+    s.pet = fresh();
+    s.pet.sickness = 1;
+    s.pet.asleep = true;
+    s.pet.droppings = 3;
+    s.pet.treats_recent = 2;
+    s.pet.dropping_clock = 77;
+    s.pet.treat_clock = 33;
+    s.pet.died_at = 0;
+    s.pet.awake_until = T0 + 99;
+    s.pet.energy = 1234;
+    s.best[0] = 11;
+    s.best[1] = 22;
+    s.best[2] = 65535;
+    s.album_count = 3;
+    for (int i = 0; i < 3; i++)
+        s.album[i] = entry_n(i + 1);
+    s.last_seen = T0 + 12345;
+    return s;
+}
+
+static void test_save_round_trip(void) {
+    save_erase(0);
+    DenSave out;
+    CHECK(!den_save_load(&out)); // none
+    DenSave s = sample_save();
+    CHECK(den_save_store(&s));
+    memset(&out, 0xAA, sizeof out);
+    CHECK(den_save_load(&out));
+    CHECK(strcmp(out.pet.name, "Mimi") == 0 && out.pet.coat.shade == 1 && out.pet.coat.spots == 2);
+    CHECK(out.pet.dropping_clock == 77 && out.pet.treat_clock == 33);
+    CHECK(out.pet.awake_until == T0 + 99 && out.pet.energy == 1234 && out.pet.asleep);
+    CHECK(out.pet.born == s.pet.born && out.pet.last_tick == s.pet.last_tick);
+    CHECK(out.best[2] == 65535 && out.album_count == 3 && out.last_seen == s.last_seen);
+    CHECK(out.album[2].generation == 3 && out.album[1].age_minutes == 2000);
+    CHECK(save_slot_size(0) == DEN_SAVE_BYTES);
+    // A second round trip is byte-stable.
+    CHECK(den_save_store(&out));
+    DenSave again;
+    CHECK(den_save_load(&again));
+    CHECK(memcmp(&again.pet, &out.pet, sizeof out.pet) == 0 && again.last_seen == out.last_seen);
+    save_erase(0);
+}
+
+static void test_save_refuses_other_version(void) {
+    save_erase(0);
+    DenSave s = sample_save();
+    CHECK(den_save_store(&s));
+    u8 raw[DEN_SAVE_BYTES];
+    CHECK(save_read(0, raw, sizeof raw, DEN_SAVE_VERSION) == SAVE_OK);
+    CHECK(save_write(0, raw, sizeof raw, 2));
+    DenSave out;
+    CHECK(!den_save_load(&out));
+    CHECK(save_write(0, raw, sizeof raw - 1, DEN_SAVE_VERSION)); // another size
+    CHECK(!den_save_load(&out));
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(den_save_load(&out));
+    save_erase(0);
+}
+
+static void test_save_refuses_garbage(void) {
+    random_seed(99);
+    u8 raw[DEN_SAVE_BYTES];
+    DenSave out;
+    int accepted = 0;
+    for (int t = 0; t < 200; t++) {
+        for (u32 i = 0; i < sizeof raw; i++)
+            raw[i] = (u8)random_range(0, 255);
+        CHECK(save_write(0, raw, sizeof raw, 2)); // wrong version
+        CHECK(!den_save_load(&out));
+        CHECK(save_write(0, raw, sizeof raw - 5, DEN_SAVE_VERSION)); // wrong size
+        CHECK(!den_save_load(&out));
+        CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION)); // right ones, random values
+        accepted += den_save_load(&out);
+    }
+    CHECK(accepted == 0);
+
+    // A good save with one value out of range is refused.
+    DenSave s = sample_save();
+    CHECK(den_save_store(&s));
+    CHECK(save_read(0, raw, sizeof raw, DEN_SAVE_VERSION) == SAVE_OK);
+    u8 good[DEN_SAVE_BYTES];
+    memcpy(good, raw, sizeof raw);
+    raw[9] = 9; // shade
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(!den_save_load(&out));
+    memcpy(raw, good, sizeof raw);
+    raw[25] = 0xFF; // full
+    raw[26] = 0xFF;
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(!den_save_load(&out));
+    memcpy(raw, good, sizeof raw);
+    CHECK(save_write(0, raw, sizeof raw, DEN_SAVE_VERSION));
+    CHECK(den_save_load(&out));
+    save_erase(0);
+}
+
 TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stages", test_stages},
            {"pet_neglect_thresholds", test_neglect_thresholds},
            {"pet_care_resets_neglect", test_care_resets_neglect},
@@ -496,5 +695,10 @@ TEST_SUITE(den_tests, "den", {"pet_new_defaults", test_new_defaults}, {"pet_stag
            {"pet_droppings", test_droppings}, {"pet_health", test_health},
            {"pet_meal_and_litter_gate", test_meal_and_litter_gate},
            {"pet_played_needs_awake_alive", test_played_needs_awake_alive},
+           {"litter_size_and_names", test_litter_size_and_names},
+           {"litter_inheritance", test_litter_inheritance}, {"album_ring", test_album_ring},
+           {"den_save_round_trip", test_save_round_trip},
+           {"den_save_refuses_other_version", test_save_refuses_other_version},
+           {"den_save_refuses_garbage", test_save_refuses_garbage},
            {"pet_litter_due", test_litter_due}, {"pet_care_refusals", test_care_refusals},
            {"pet_play", test_play}, {"pet_treats_hurt", test_treats_hurt});
