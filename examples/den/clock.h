@@ -18,9 +18,12 @@
 //    to) moves the offset instead: the game clock resumes at the time the den
 //    was last seen and the pet is unchanged. The hour of day then follows the
 //    shifted time, not the real one; after a reset the real hour is lost
-//    anyway (until the player sets the clock, which this game doesn't do).
+//    anyway, until the player sets the clock: the jump that makes is then
+//    answered NO, which gives the real hour back.
 //  - A jump past 30 days is the player's to judge (scenes.c asks, at boot
-//    and, for a web page's clock, during play): YES lives it, NO rebases.
+//    and, for a web page's clock, during play): YES lives it, NO takes the
+//    jump out of the offset as far as it goes and rebases the pet
+//    (clock_forgive_jump()).
 
 #include "pet.h"
 
